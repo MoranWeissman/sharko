@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -248,15 +247,24 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := newTestClusterResponse(name, result)
 
-		// If credential fetch failed with "not found", search for similar secrets
-		// and include them as suggestions so the UI can offer one-click correction.
+		// If the credentials are genuinely MISSING, search for similarly-named
+		// secrets and offer them, so the operator can fix a typo in one click.
 		//
-		// This check reads err.Error(), NOT the safe sentence, and that is
-		// deliberate: credsafe.Mark leaves Error() untouched precisely so
-		// internal logic like this keeps working. Nothing from err reaches the
-		// response — only the suggestion list, which is secret NAMES from the
-		// operator's own configured prefix.
-		if strings.Contains(err.Error(), "not found") {
+		// This asks credsafe.IsNotFound, which is errors.Is against a marker the
+		// PROVIDER set at the point it actually knew: the AWS SDK returned
+		// ResourceNotFoundException, or the Kubernetes read was a real NotFound.
+		//
+		// It used to be strings.Contains(err.Error(), "not found"), and that was
+		// wrong in both directions. It could not survive a backend rephrasing
+		// itself, and it fired on any failure whose text happened to contain the
+		// words — an AccessDenied that mentions a missing permission got offered
+		// a list of secret names, sending the operator to fix a typo that was
+		// never there. Now "we were not allowed to look" and "it is not there"
+		// give different answers, which is what they always were.
+		//
+		// Nothing from err reaches the response — only the suggestion list,
+		// which is secret NAMES from the operator's own configured prefix.
+		if credsafe.IsNotFound(err) {
 			suggestions, searchErr := s.credProvider().SearchSecrets(name)
 			if searchErr != nil {
 				slog.Warn("[cluster-test] SearchSecrets failed", "name", name, "error", credsafe.Sentence(searchErr))

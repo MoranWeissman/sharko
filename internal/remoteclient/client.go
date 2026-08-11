@@ -31,9 +31,13 @@ func NewClientFromKubeconfig(kubeconfig []byte) (kubernetes.Interface, error) {
 	// The kubeconfig bytes handed in here ARE the cluster's sign-in details, so
 	// an error built out of them can quote part of them back. Both failures
 	// below are marked as credentials-backend failures — same class as a
-	// token-mint failure — so every public boundary swaps in the fixed sentence.
-	// Mark leaves Error() alone: %w chains, errors.As and verify.ClassifyError
-	// all behave exactly as before.
+	// token-mint failure — so the error's own Error() is the fixed safe
+	// sentence and no boundary can leak client-go's text by forgetting to ask.
+	//
+	// %w chains and errors.As still reach everything underneath, and
+	// verify.ClassifyError still picks the right code: it steps past the mark
+	// with credsafe.Cause to read the real message, and returns one of its own
+	// fixed codes.
 	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
 		return nil, credsafe.Mark(fmt.Errorf("parsing kubeconfig: %w", err))

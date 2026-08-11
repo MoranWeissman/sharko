@@ -23,6 +23,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -59,6 +60,71 @@ func NewAWSSecretsManagerProviderForTest(payload string, eksTokenFn func(ctx con
 		client:     &fixedPayloadSMClient{payload: payload},
 		eksTokenFn: eksTokenFn,
 	}
+}
+
+// failingSMClient fails every AWS Secrets Manager read with one error, and
+// serves a caller-supplied list of names from ListSecrets so the
+// "suggest a similar name" path can be driven too.
+type failingSMClient struct {
+	err   error
+	names []string
+}
+
+func (c *failingSMClient) GetSecretValue(_ context.Context, _ *secretsmanager.GetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+	return nil, c.err
+}
+
+func (c *failingSMClient) ListSecrets(_ context.Context, _ *secretsmanager.ListSecretsInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.ListSecretsOutput, error) {
+	out := &secretsmanager.ListSecretsOutput{}
+	for _, n := range c.names {
+		out.SecretList = append(out.SecretList, types.SecretListEntry{Name: aws.String(n)})
+	}
+	return out, nil
+}
+
+// NewAWSSecretsManagerProviderWithFailingReadForTest builds a REAL
+// AWSSecretsManagerProvider whose every secret read fails with readErr, and
+// whose ListSecrets returns existingNames.
+//
+// This is the seam the suggestion-flow proof needs, and it has to be the real
+// provider rather than a double, because the thing being proven is the
+// provider's own decision: it marks its failure as "the credentials are not
+// there" ONLY when the AWS SDK said ResourceNotFoundException, and NOT when the
+// read failed for any other reason (AccessDenied, a throttle, a timeout). A
+// hand-written double could get that right while the shipped code got it wrong.
+//
+// Pass &types.ResourceNotFoundException{...} for the missing case and any other
+// error for the negative cases.
+func NewAWSSecretsManagerProviderWithFailingReadForTest(readErr error, existingNames []string) *AWSSecretsManagerProvider {
+	return &AWSSecretsManagerProvider{
+		client: &failingSMClient{err: readErr, names: existingNames},
+		eksTokenFn: func(context.Context, string, string, string) (string, error) {
+			return "", fmt.Errorf("the mint must never be reached: no payload was ever read")
+		},
+	}
+}
+
+// NewKubernetesSecretProviderWithFailingReadForTest builds a REAL
+// KubernetesSecretProvider whose Secret GETs fail with getErr, while LIST keeps
+// working and returns the supplied Secret names (each with a kubeconfig key, so
+// the provider's own suggestion filter accepts them).
+//
+// Same reasoning as the AWS arm above: what is being proven is that the provider
+// marks "not there" only for a genuine apierrors.IsNotFound, so it must be the
+// real provider that decides.
+func NewKubernetesSecretProviderWithFailingReadForTest(namespace string, getErr error, existingNames []string) *KubernetesSecretProvider {
+	var objects []runtime.Object
+	for _, n := range existingNames {
+		objects = append(objects, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: n, Namespace: namespace},
+			Data:       map[string][]byte{"kubeconfig": []byte("placeholder")},
+		})
+	}
+	client := fake.NewSimpleClientset(objects...)
+	client.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, getErr
+	})
+	return newKubernetesSecretProviderWithClient(client, namespace)
 }
 
 // NewArgoCDProviderWithFailingMintForTest builds a REAL ArgoCDProvider whose
@@ -107,11 +173,12 @@ func NewArgoCDProviderWithFailingMintForTest(clusterName string, eksTokenFn func
 // returns. Pass a backendErr whose message carries a sentinel to prove that text
 // never gets out.
 //
-// Unlike the mint-failure seam below, this error's text really does reach
-// Error() — which is exactly the point. credsafe.Mark leaves Error() alone on
-// purpose so internal callers keep working, and it is the public boundaries that
-// must swap in the fixed sentence. If any of them forgets, the sentinel shows up
-// and the test says where.
+// backendErr's text really is what the provider wraps internally — that is what
+// makes the fixture meaningful, because there is genuinely something to leak.
+// credsafe.Mark then makes the error the provider HANDS BACK say the one fixed
+// safe sentence, so the sentinel cannot reach a boundary even if the boundary
+// forgets to ask. The sentinel stays reachable through credsafe.Cause, which is
+// how the test proves it was really in play.
 func NewArgoCDProviderWithFailingBackendForTest(backendErr error) *ArgoCDProvider {
 	client := fake.NewSimpleClientset()
 	client.PrependReactor("*", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {

@@ -1,7 +1,7 @@
 package audit
 
 // sanitize_test.go — the audit log stores no credentials-backend error text, and
-// keeps no live error hanging off a stored entry.
+// keeps nothing on a stored entry that says it once did.
 //
 // These are unit tests on Add itself, which is where the fix lives. The
 // end-to-end proofs (through the real provider, the real handlers, GET /audit and
@@ -22,72 +22,99 @@ import (
 // auditSentinel is unique to this file.
 const auditSentinel = "MK2D-audit-sentinel-7t4r1w-never-stored-a9e3"
 
-// TestAdd_CredentialErrorTextIsReplacedInBothPublicFields covers Error AND
-// Detail. Detail is just as public as Error — handlers set it via Enrich, GET
-// /audit returns it, and the SSE stream marshals it — and it was the field the
-// first pass of this fix missed.
-func TestAdd_CredentialErrorTextIsReplacedInBothPublicFields(t *testing.T) {
+// TestAdd_StoredCredentialEntryHasAllFourSafeProperties is the headline test for
+// this package, and it asserts all four properties of a stored credential-failure
+// entry in one place so none of them can be quietly dropped.
+//
+//  1. Error is EXACTLY the fixed safe sentence.
+//  2. Detail is EMPTY. Not "the sentence again" — empty. One answer, one field.
+//  3. The credential-failure flag is cleared, so a stored entry says nothing
+//     about how it was classified.
+//  4. Printed with %+v the entry carries no part of the underlying error.
+//
+// The %+v check matters because a field hidden by json:"-" would not show up in a
+// JSON-only assertion. There is no error-typed field on Entry any more, so it
+// should hold trivially — which is the point: if somebody adds one back, this
+// fails.
+func TestAdd_StoredCredentialEntryHasAllFourSafeProperties(t *testing.T) {
 	credErr := credsafe.Mark(errors.New("AccessDenied while resolving " + auditSentinel))
 
 	log := NewLog(10)
 	log.Add(Entry{
 		Event:  "cluster_secret_create",
 		Action: "get_credentials",
-		Error:  credErr.Error(),
-		Detail: "fetch failed: " + credErr.Error(),
-		Cause:  credErr,
+		// The unsafe shape on purpose: a caller that puts text in both public
+		// fields. Add must fix both.
+		Error:             "AccessDenied while resolving " + auditSentinel,
+		Detail:            "fetch failed: AccessDenied while resolving " + auditSentinel,
+		CredentialFailure: credsafe.Is(credErr),
 	})
 
 	stored := log.List(0)[0]
-	if strings.Contains(stored.Error, auditSentinel) {
-		t.Errorf("the stored Error field still carries the credentials error text: %q", stored.Error)
-	}
-	if strings.Contains(stored.Detail, auditSentinel) {
-		t.Errorf("the stored Detail field still carries the credentials error text: %q", stored.Detail)
-	}
+
+	// 1. Error is the fixed safe sentence, exactly.
 	if stored.Error != credsafe.Message {
-		t.Errorf("stored Error = %q, want %q", stored.Error, credsafe.Message)
+		t.Errorf("stored Error = %q, want exactly the fixed safe sentence %q", stored.Error, credsafe.Message)
 	}
-	if stored.Detail != credsafe.Message {
-		t.Errorf("stored Detail = %q, want %q", stored.Detail, credsafe.Message)
+	// 2. Detail is empty.
+	if stored.Detail != "" {
+		t.Errorf(`stored Detail = %q, want EMPTY.
+
+A credential failure has one answer and it lives in Error. Repeating the same fixed sentence in Detail makes the row look like it carries two separate pieces of information when it carries one.`, stored.Detail)
+	}
+	// 3. The flag is cleared.
+	if stored.CredentialFailure {
+		t.Error("the stored entry still has CredentialFailure set — Add must clear it before storing, so a stored entry says nothing about how it was classified")
+	}
+	// 4. Nothing of the underlying error survives, even under %+v.
+	if strings.Contains(fmt.Sprintf("%+v", stored), auditSentinel) {
+		t.Errorf("the stored entry printed with %%+v carries the sentinel:\n%+v", stored)
 	}
 }
 
-// TestAdd_ClearsTheTypedCauseAlways.
+// TestAdd_StoredEntryHoldsNoLiveError.
 //
-// The cause is cleared whether the entry was credentials-related or not. A live
+// There is no error-typed field on Entry any more, and this is the test that
+// keeps it that way. It walks the stored struct by reflection, so a renamed or
+// newly-added field holding a live error is caught — not only the one field a
+// hand-written assertion would know about.
+//
+// It runs for a credentials entry, a plain one and an empty one, because a live
 // error on a stored entry is a hazard regardless of what it says: the next person
-// to print the entry with %+v, or to reflect over it, gets whatever it holds.
-// json:"-" hides it from ONE reader, not from all of them — which is why this
-// asserts with %+v and reflection rather than JSON.
-func TestAdd_ClearsTheTypedCauseAlways(t *testing.T) {
+// to print the entry with %+v or reflect over it gets whatever it holds, and
+// json:"-" hides it from ONE reader, not from all of them.
+func TestAdd_StoredEntryHoldsNoLiveError(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		cause error
+		entry Entry
 	}{
-		{"a credentials-backend error", credsafe.Mark(errors.New("cred " + auditSentinel))},
-		{"a plain git error", errors.New("git: reference not found")},
-		{"no cause at all", nil},
+		{"a credentials-backend failure", Entry{
+			Event: "e", Error: "cred " + auditSentinel, CredentialFailure: true,
+		}},
+		{"a plain git failure", Entry{
+			Event: "e", Error: "git: reference not found",
+		}},
+		{"nothing special at all", Entry{Event: "e"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			log := NewLog(10)
-			log.Add(Entry{Event: "e", Error: "some text", Cause: tc.cause})
+			log.Add(tc.entry)
 			stored := log.List(0)[0]
 
-			if stored.Cause != nil {
-				t.Errorf("Cause = %v, want nil — Add must clear it before storing", stored.Cause)
+			if stored.CredentialFailure {
+				t.Error("CredentialFailure is still set on the stored entry — Add must clear it")
 			}
 			if strings.Contains(fmt.Sprintf("%+v", stored), auditSentinel) {
 				t.Errorf("the stored entry printed with %%+v carries the sentinel:\n%+v", stored)
 			}
-			// Reflection, so a renamed or newly-added error-typed field is caught
-			// too rather than only the field this test knows about.
 			v := reflect.ValueOf(stored)
 			for i := 0; i < v.NumField(); i++ {
 				f := v.Field(i)
 				if f.Kind() == reflect.Interface && !f.IsNil() {
 					if e, ok := f.Interface().(error); ok {
-						t.Errorf("field %q still holds a live error (%v)", v.Type().Field(i).Name, e)
+						t.Errorf(`field %q holds a live error (%v).
+
+audit.Entry must not carry an error. The classification runs at the credential boundary, where the typed error still exists, and only the ANSWER (a bool) travels here. An error on a stored entry is a leak waiting for the next %%+v.`, v.Type().Field(i).Name, e)
 					}
 				}
 			}
@@ -105,11 +132,11 @@ func TestAdd_UnrelatedErrorsKeepTheirText(t *testing.T) {
 
 	log := NewLog(10)
 	log.Add(Entry{
-		Event:  "cluster_secret_reconcile",
-		Action: "git_read",
-		Error:  gitErr.Error(),
-		Detail: "the managed-clusters file could not be read",
-		Cause:  gitErr,
+		Event:             "cluster_secret_reconcile",
+		Action:            "git_read",
+		Error:             gitErr.Error(),
+		Detail:            "the managed-clusters file could not be read",
+		CredentialFailure: credsafe.Is(gitErr),
 	})
 
 	stored := log.List(0)[0]
@@ -117,31 +144,46 @@ func TestAdd_UnrelatedErrorsKeepTheirText(t *testing.T) {
 		t.Errorf("stored Error = %q, want the git error's own text %q — unrelated errors must not be redacted", stored.Error, gitErr.Error())
 	}
 	if stored.Detail != "the managed-clusters file could not be read" {
-		t.Errorf("stored Detail = %q — an unrelated entry's detail must survive", stored.Detail)
+		t.Errorf("stored Detail = %q — an unrelated entry's detail must survive; only a CREDENTIAL failure's Detail is emptied", stored.Detail)
 	}
 }
 
 // TestAdd_CredentialErrorWrappedByAnotherErrorIsStillCaught is the case that
 // makes type-based classification necessary.
 //
-// A git or Kubernetes error that wraps a credentials error with %w still gets the
-// safe sentence, because the marker travels with the cause and errors.Is finds it
-// through every hop. A filter that matched on the error's WORDS would miss this
-// the moment the wrapper reworded things.
+// A git or Kubernetes error that wraps a credentials error with %w is still
+// recognised by credsafe.Is at the call site, so the entry still gets the safe
+// sentence and an emptied Detail. A filter that matched on the error's WORDS
+// would miss this the moment the wrapper reworded things.
 func TestAdd_CredentialErrorWrappedByAnotherErrorIsStillCaught(t *testing.T) {
 	inner := credsafe.Mark(errors.New("AccessDenied: " + auditSentinel))
 	wrapped := fmt.Errorf("reading configuration/managed-clusters.yaml from git: %w",
 		fmt.Errorf("resolving the cluster Secret: %w", inner))
 
+	if !credsafe.Is(wrapped) {
+		t.Fatal("the marker was lost through the %w chain, so the call site could not have classified this — check that every hop uses %w")
+	}
+
 	log := NewLog(10)
-	log.Add(Entry{Event: "e", Error: wrapped.Error(), Detail: wrapped.Error(), Cause: wrapped})
+	// A caller that puts the wrapper's own text in both fields. The wrapper's
+	// outer words are its own, but the entry is still a credentials failure, so
+	// both fields get the credentials treatment.
+	log.Add(Entry{
+		Event:             "e",
+		Error:             "reading configuration/managed-clusters.yaml from git: AccessDenied: " + auditSentinel,
+		Detail:            "reading configuration/managed-clusters.yaml from git: AccessDenied: " + auditSentinel,
+		CredentialFailure: credsafe.Is(wrapped),
+	})
 
 	stored := log.List(0)[0]
-	if strings.Contains(stored.Error, auditSentinel) || strings.Contains(stored.Detail, auditSentinel) {
-		t.Errorf("a git error WRAPPING a credentials error leaked the inner text.\n\nError: %q\nDetail: %q", stored.Error, stored.Detail)
+	if strings.Contains(fmt.Sprintf("%+v", stored), auditSentinel) {
+		t.Errorf("a git error WRAPPING a credentials error leaked the inner text:\n%+v", stored)
 	}
 	if stored.Error != credsafe.Message {
 		t.Errorf("stored Error = %q, want the safe sentence — the marker must be found through the %%w chain", stored.Error)
+	}
+	if stored.Detail != "" {
+		t.Errorf("stored Detail = %q, want empty", stored.Detail)
 	}
 }
 
@@ -152,13 +194,16 @@ func TestAdd_CredentialErrorWrappedByAnotherErrorIsStillCaught(t *testing.T) {
 // Add sanitizes BEFORE both the append and the fan-out, one fix covers List and
 // the stream, and it cannot be bypassed by the stream.
 func TestAdd_SanitizesTheSTREAMEDCopyToo(t *testing.T) {
-	credErr := credsafe.Mark(errors.New("AccessDenied while resolving " + auditSentinel))
-
 	log := NewLog(10)
 	ch, unsub := log.Subscribe()
 	defer unsub()
 
-	log.Add(Entry{Event: "e", Error: credErr.Error(), Detail: credErr.Error(), Cause: credErr})
+	log.Add(Entry{
+		Event:             "e",
+		Error:             "AccessDenied while resolving " + auditSentinel,
+		Detail:            "AccessDenied while resolving " + auditSentinel,
+		CredentialFailure: true,
+	})
 
 	streamed := <-ch
 	blob, err := json.Marshal(streamed)
@@ -171,7 +216,27 @@ func TestAdd_SanitizesTheSTREAMEDCopyToo(t *testing.T) {
 	if strings.Contains(fmt.Sprintf("%+v", streamed), auditSentinel) {
 		t.Errorf("the STREAMED entry printed with %%+v carries the credentials error text:\n%+v", streamed)
 	}
-	if streamed.Cause != nil {
-		t.Errorf("the streamed entry still carries a live cause (%v)", streamed.Cause)
+	if streamed.Error != credsafe.Message {
+		t.Errorf("the streamed entry's Error = %q, want the fixed safe sentence", streamed.Error)
+	}
+	if streamed.Detail != "" {
+		t.Errorf("the streamed entry's Detail = %q, want empty", streamed.Detail)
+	}
+	if streamed.CredentialFailure {
+		t.Error("the streamed entry still has CredentialFailure set — Add must clear it before the fan-out, not only before the append")
+	}
+}
+
+// TestEntry_CredentialFailureNeverSerializes: the flag is a hop from the call
+// site to Add and nothing else. It must not appear in any API response.
+func TestEntry_CredentialFailureNeverSerializes(t *testing.T) {
+	blob, err := json.Marshal(Entry{Event: "e", CredentialFailure: true})
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	for _, spelling := range []string{"CredentialFailure", "credential_failure", "credentialFailure"} {
+		if strings.Contains(string(blob), spelling) {
+			t.Errorf("the credential-failure flag serializes as %q — it is an internal hop, not an API field: %s", spelling, blob)
+		}
 	}
 }

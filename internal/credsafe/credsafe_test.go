@@ -15,25 +15,72 @@ import (
 
 const sentinel = "VB6N-credsafe-unit-sentinel-2j8s5y-e7c1"
 
-// TestMark_DoesNotChangeWhatErrorSays is the property the whole design rests on.
+// TestMark_ErrorIsTheFixedSafeSentence is the property the whole design rests on.
 //
-// Mark adds a marker and nothing else. That is what lets the fix be introduced
-// without touching a single internal caller: %w chains still read the same,
-// errors.As still finds typed provider errors, and the cluster-test handler's
-// strings.Contains(err.Error(), "not found") check — which drives the secret-name
-// suggestions an operator actually uses — still matches.
-func TestMark_DoesNotChangeWhatErrorSays(t *testing.T) {
-	original := errors.New(`secret for cluster "prod-eu" not found in AWS Secrets Manager`)
+// A marked error SAYS the fixed safe sentence and nothing else. So a boundary
+// that forgets to ask cannot leak — the default answer is already the safe one.
+// err.Error(), "%v", "%s", slog's error field, a log line somebody adds next
+// year: all of them get the sentence.
+//
+// The original is not lost. errors.Is still reaches it, which is how everything
+// that needs to classify keeps working.
+func TestMark_ErrorIsTheFixedSafeSentence(t *testing.T) {
+	original := errors.New(`AccessDenied while resolving ` + sentinel)
 	marked := Mark(original)
 
-	if marked.Error() != original.Error() {
-		t.Errorf("Mark changed Error() from %q to %q — internal callers and existing substring checks would break", original.Error(), marked.Error())
+	if marked.Error() != Message {
+		t.Errorf(`Mark's Error() = %q, want the one fixed safe sentence %q.
+
+This is the guard that makes every other boundary safe by default. If Error() passes the original text through, then every %%v, every log line and every string concatenation anybody adds later is a leak waiting to happen.`, marked.Error(), Message)
 	}
-	if !strings.Contains(marked.Error(), "not found") {
-		t.Error(`the "not found" substring is gone; the cluster-test handler keys its secret-name suggestions off it`)
+	if strings.Contains(marked.Error(), sentinel) {
+		t.Error("a marked error's Error() carries the original text")
 	}
 	if !errors.Is(marked, original) {
-		t.Error("errors.Is can no longer reach the original error through the mark")
+		t.Error("errors.Is can no longer reach the original error through the mark — the cause must stay reachable through Unwrap")
+	}
+}
+
+// TestMark_EveryPrintingVerbGetsTheSafeSentence: %v and %s go through Error(),
+// and those are what a careless log line or a string concatenation uses. This
+// pins that none of them is a way round the sentence.
+func TestMark_EveryPrintingVerbGetsTheSafeSentence(t *testing.T) {
+	marked := Mark(errors.New("AccessDenied: " + sentinel))
+	for _, format := range []string{"%v", "%s", "%v (wrapped: %v)"} {
+		got := fmt.Sprintf(format, marked, marked)
+		if strings.Contains(got, sentinel) {
+			t.Errorf("printing a marked error with %q leaked the original text: %s", format, got)
+		}
+	}
+	// And a %w wrap: the wrapper's own words are its own, but the marked
+	// error's contribution is still the sentence.
+	wrapped := fmt.Errorf("reading the cluster Secret: %w", marked)
+	if strings.Contains(wrapped.Error(), sentinel) {
+		t.Errorf("wrapping a marked error with %%w leaked the original text: %s", wrapped.Error())
+	}
+}
+
+// TestCause_ReachesTheRealErrorForClassificationOnly.
+//
+// credsafe.Cause is what verify.ClassifyError and verify.AssumeRoleHint use to
+// read the real AWS/Kubernetes message and pick one of a fixed set of
+// Sharko-written outcomes. It must step past however many marks there are and
+// hand back the untouched cause.
+func TestCause_ReachesTheRealErrorForClassificationOnly(t *testing.T) {
+	original := errors.New("operation error STS: AssumeRole, api error AccessDenied: " + sentinel)
+	if got := Cause(Mark(original)); got != original {
+		t.Errorf("Cause(marked) = %v, want the original error back", got)
+	}
+	if got := Cause(Mark(Mark(original))); got != original {
+		t.Errorf("Cause(marked twice) = %v, want the original error back", got)
+	}
+	// An unmarked error comes back unchanged, so a caller does not need to know
+	// whether a mark is there.
+	if got := Cause(original); got != original {
+		t.Errorf("Cause(an unmarked error) = %v, want it unchanged", got)
+	}
+	if Cause(nil) != nil {
+		t.Error("Cause(nil) must be nil")
 	}
 }
 
@@ -154,5 +201,112 @@ func TestMessage_SaysSomethingUseful(t *testing.T) {
 	}
 	if !strings.Contains(Message, "log") {
 		t.Errorf("the safe sentence does not tell the operator where to look next: %q", Message)
+	}
+}
+
+// --- the not-found marker --------------------------------------------------
+//
+// This is the second marker, and it exists for one product behaviour: the
+// cluster-test page offers the operator a list of similarly-named secrets when
+// the one it looked for is genuinely absent. That used to be decided by looking
+// for the words "not found" in the error text. These tests pin the replacement.
+
+// TestIsNotFound_SurvivesMarkAndWrapping is the exact combination the real code
+// produces: the provider marks "this is missing", the boundary marks "this came
+// from a credentials backend" on top, and something wraps the pair with %w. Both
+// answers must survive all of it.
+func TestIsNotFound_SurvivesMarkAndWrapping(t *testing.T) {
+	missing := MarkNotFound(errors.New(`secret "prod-eu" does not exist`))
+	if !IsNotFound(missing) {
+		t.Fatal("MarkNotFound's own result is not recognised by IsNotFound")
+	}
+
+	// Mark on top — this is the order the providers use (MarkNotFound inside
+	// getCredentials, Mark at the exported boundary).
+	both := Mark(missing)
+	if !Is(both) {
+		t.Error("the credentials marker was lost when applied on top of the not-found marker")
+	}
+	if !IsNotFound(both) {
+		t.Fatalf(`the not-found marker was lost under Mark.
+
+Mark's wrapper returns a two-element Unwrap so the cause branch is walked. If this fails, that walk is broken and the suggestion flow silently stops working — the operator gets no help finding their typo.`)
+	}
+	// And Error() is still the safe sentence: being recognisable as "missing"
+	// must not be a way to get the text back.
+	if both.Error() != Message {
+		t.Errorf("a marked not-found error says %q, want the fixed safe sentence", both.Error())
+	}
+
+	// Through arbitrary wrapping, in either marker order.
+	for name, err := range map[string]error{
+		"not-found inside, mark outside": Mark(MarkNotFound(errors.New("gone"))),
+		"mark inside, not-found outside": MarkNotFound(Mark(errors.New("gone"))),
+	} {
+		wrapped := fmt.Errorf("layer one: %w", fmt.Errorf("layer two: %w", err))
+		if !Is(wrapped) {
+			t.Errorf("%s: the credentials marker was lost through two %%w hops", name)
+		}
+		if !IsNotFound(wrapped) {
+			t.Errorf("%s: the not-found marker was lost through two %%w hops", name)
+		}
+	}
+}
+
+// TestIsNotFound_SaysNoForEveryOtherKindOfFailure is the half that a substring
+// check got wrong, and it is the reason this marker exists at all.
+//
+// An AccessDenied whose message happens to contain the words "not found" used to
+// be treated as a missing secret, which sent the operator to fix a typo that was
+// never there. Nothing may be inferred from words — only from the marker.
+func TestIsNotFound_SaysNoForEveryOtherKindOfFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"an access denial that happens to say the words", errors.New("AccessDenied: user is not authorized; secret not found in the allowed set")},
+		{"a timeout", errors.New("context deadline exceeded")},
+		{"a throttle", errors.New("ThrottlingException: rate exceeded")},
+		{"a marked credentials failure that is not about absence", Mark(errors.New("AccessDenied: not found"))},
+		{"the safe sentence itself", errors.New(Message)},
+		{"nothing at all", nil},
+	} {
+		if IsNotFound(tc.err) {
+			t.Errorf(`%s was classified as "the credentials are missing" (%v).
+
+Only the provider may say that, with MarkNotFound, at the point it actually knows. Inferring it from words is how the suggestion flow starts firing on failures that are not about absence.`, tc.name, tc.err)
+		}
+	}
+}
+
+// TestMarkNotFound_IsIdempotentAndNilSafe mirrors Mark's own contract so a
+// boundary can call it without checking first.
+func TestMarkNotFound_IsIdempotentAndNilSafe(t *testing.T) {
+	if MarkNotFound(nil) != nil {
+		t.Error("MarkNotFound(nil) must be nil")
+	}
+	once := MarkNotFound(errors.New("gone"))
+	twice := MarkNotFound(once)
+	if once != twice {
+		t.Error("MarkNotFound is not idempotent")
+	}
+	if !IsNotFound(twice) {
+		t.Error("a twice-marked not-found error is no longer recognised")
+	}
+}
+
+// TestMarkNotFound_KeepsTypedErrorsReachable: the ArgoCD provider marks an
+// apierrors.NewNotFound, and existing callers use apierrors.IsNotFound on it.
+// That must keep working through the marker.
+func TestMarkNotFound_KeepsTypedErrorsReachable(t *testing.T) {
+	typed := &fakeTypedErr{code: "some_typed_error"}
+	err := Mark(MarkNotFound(fmt.Errorf("wrapping: %w", typed)))
+
+	var got *fakeTypedErr
+	if !errors.As(err, &got) {
+		t.Fatal("errors.As can no longer find the typed error through both markers")
+	}
+	if got.code != "some_typed_error" {
+		t.Errorf("code = %q, want the original", got.code)
 	}
 }

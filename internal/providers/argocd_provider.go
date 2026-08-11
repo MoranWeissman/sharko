@@ -290,10 +290,17 @@ func (p *ArgoCDProvider) findClusterSecret(ctx context.Context, clusterName stri
 
 	// Mirror the existing not-found shape: wrap a k8s NotFound so callers
 	// (and apierrors.IsNotFound) can recognise it.
-	return nil, apierrors.NewNotFound(
+	//
+	// credsafe.MarkNotFound is added on top because THIS is where "there is no
+	// cluster Secret for that name" is actually KNOWN — the list succeeded and
+	// nothing in it matched. The listing failure above deliberately does not
+	// get the marker: a failed list means Sharko could not look, which is a
+	// different answer. The apierrors.NewNotFound stays reachable through
+	// Unwrap, so apierrors.IsNotFound keeps working for existing callers.
+	return nil, credsafe.MarkNotFound(apierrors.NewNotFound(
 		corev1.Resource("secrets"),
 		clusterName,
-	)
+	))
 }
 
 // GetCredentials fetches credentials for the named cluster from the ArgoCD

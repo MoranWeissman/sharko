@@ -123,10 +123,13 @@ func backendErrCarryingSentinel() error {
 // The ArgoCD provider is where a backend failure's text genuinely travels OUT of
 // the process: it wraps the underlying error with %w into what GetCredentials
 // returns, and that value used to flow into the API response, the audit log, and
-// the reconcile record. So it is the provider the sentinel is pushed down, and
-// its Error() really does carry the sentinel — which is the point. credsafe.Mark
-// leaves Error() alone on purpose, so any boundary that forgets to ask for the
-// safe sentence will show the sentinel and the test will say where.
+// the reconcile record. So it is the provider the sentinel is pushed down.
+//
+// The sentinel is really in the error the BACKEND produced — that is what makes
+// the fixture meaningful — and credsafe.Mark then makes the returned error's
+// Error() say the fixed safe sentence instead. So the sweeps below prove two
+// things at once: that no boundary shows the sentinel, and that the reason none
+// of them can is that the marked error itself refuses to say it.
 func credProviderWithFailingMint() providers.ClusterCredentialsProvider {
 	return providers.NewArgoCDProviderWithFailingBackendForTest(backendErrCarryingSentinel())
 }
@@ -222,26 +225,39 @@ func captureSlog(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-// sanityCheckFixture proves the fixture really does carry the sentinel. Without
-// this, a typo in the payload or the mint stub would make every assertion below
-// pass while proving nothing at all.
+// sanityCheckFixture proves the fixture is real: the fetch fails, the failure is
+// recognised as a credentials-backend one, the sentinel really is in the cause
+// underneath, and the error the provider HANDS BACK already says the fixed safe
+// sentence instead.
+//
+// Without the "the sentinel really is down there" half, a typo in the payload or
+// the mint stub would make every assertion below pass while proving nothing at
+// all — every sweep would be searching for a string that was never in play.
 func sanityCheckFixture(t *testing.T) {
 	t.Helper()
 	_, err := credProviderWithFailingMint().GetCredentials("prod-eu")
 	if err == nil {
-		t.Fatal("sanity check failed: the fixture's mint must FAIL — there is nothing to prove otherwise")
-	}
-	if !strings.Contains(err.Error(), credSentinel) {
-		t.Fatalf(`sanity check failed: the error the provider returns internally must CONTAIN the sentinel, otherwise every assertion below is vacuous.
-
-got: %v
-
-This is deliberate. credsafe.Mark does NOT change what Error() says — internal callers, %%w chains, errors.As on typed provider errors and the handler's own "not found" substring check all keep working. Only what crosses a PUBLIC boundary is swapped for the fixed sentence.`, err)
+		t.Fatal("sanity check failed: the fixture's backend read must FAIL — there is nothing to prove otherwise")
 	}
 	if !credsafe.Is(err) {
 		t.Fatal(`sanity check failed: the error is not marked as a credentials-backend failure, so no boundary can recognise it.
 
 The classification is by TYPE (errors.Is against a sentinel), never by reading the error's words. If this fails, credsafe.Mark is missing from the provider boundary.`)
+	}
+	// The sentinel is in the CAUSE. credsafe.Cause is the classification-only
+	// accessor; using it here is the one place in this file that deliberately
+	// looks underneath, precisely to prove there is something to hide.
+	if !strings.Contains(credsafe.Cause(err).Error(), credSentinel) {
+		t.Fatalf(`sanity check failed: the cause underneath the mark must CONTAIN the sentinel, otherwise every assertion below is vacuous.
+
+got: %v`, credsafe.Cause(err))
+	}
+	// And the error the provider hands back says the safe sentence, not the
+	// cause's text. This is the guard that makes every boundary safe by default.
+	if err.Error() != credsafe.Message {
+		t.Fatalf(`sanity check failed: the marked error's Error() = %q, want the fixed safe sentence %q.
+
+A marked error must SAY the safe sentence. That is what stops a boundary — or a log line somebody adds next year — from leaking by simply forgetting to ask.`, err.Error(), credsafe.Message)
 	}
 }
 
@@ -366,14 +382,22 @@ func TestCredErrorSentinel_SentenceDoesNotVaryWithTheError(t *testing.T) {
 // --- 2. the audit log: stored, listed, and streamed ------------------------
 
 // auditEntryFromFailedCredFetch builds the audit entry a credential-fetch
-// failure produces, exactly the way the cluster reconciler does: Cause carries
-// the real typed error, and Add is what decides what gets stored.
+// failure produces, exactly the way the cluster reconciler does: the CALL SITE
+// runs credsafe.Is while the typed error is still alive and passes the answer as
+// a flag; Add decides what gets stored from that.
+//
+// The Error and Detail strings are built with credsafe.Cause(...).Error() on
+// purpose — the raw backend text, the worst thing a caller could put there.
+// After Mark a caller could not get that text by accident any more, so the test
+// reaches for it deliberately, to prove Add fixes both fields rather than
+// relying on the marked error already being safe.
 func auditEntryFromFailedCredFetch(t *testing.T) (*audit.Log, error) {
 	t.Helper()
 	_, credErr := credProviderWithFailingMint().GetCredentials("prod-eu")
 	if credErr == nil {
-		t.Fatal("expected the mint to fail")
+		t.Fatal("expected the backend read to fail")
 	}
+	raw := credsafe.Cause(credErr).Error()
 	log := audit.NewLog(10)
 	log.Add(audit.Entry{
 		Level:    "error",
@@ -383,23 +407,24 @@ func auditEntryFromFailedCredFetch(t *testing.T) (*audit.Log, error) {
 		Resource: "cluster:prod-eu",
 		Source:   "reconciler",
 		Result:   "failure",
-		// The unsafe shape on purpose: a caller that passes the raw text in both
+		// The unsafe shape on purpose: a caller that puts the raw text in both
 		// public fields. Add must fix BOTH, because both are public.
-		Error:  credErr.Error(),
-		Detail: "credential fetch failed: " + credErr.Error(),
-		Cause:  credErr,
+		Error:             raw,
+		Detail:            "credential fetch failed: " + raw,
+		CredentialFailure: credsafe.Is(credErr),
 	})
 	return log, credErr
 }
 
 // TestCredErrorSentinel_StoredAuditEntry is THE test that proves the fix is at
-// the write side.
+// the write side, and it asserts all four required properties of the stored
+// entry.
 //
 // It reads the entry back out of the ring with List. If the unsafe text were
 // merely hidden by a read handler, it would still be sitting here and this test
-// would fail. It also proves the typed cause is gone — using %+v and reflection,
-// not JSON, because json:"-" would hide a lingering cause from a JSON check
-// while leaving it there for the next person who prints the struct.
+// would fail. The %+v sweep and the reflection walk matter because a field
+// hidden by json:"-" would not show up in a JSON-only assertion — there is no
+// error-typed field on the entry any more, and this is what keeps it that way.
 func TestCredErrorSentinel_StoredAuditEntry(t *testing.T) {
 	sanityCheckFixture(t)
 	log, _ := auditEntryFromFailedCredFetch(t)
@@ -414,26 +439,30 @@ func TestCredErrorSentinel_StoredAuditEntry(t *testing.T) {
 	assertNoCredSentinel(t, "the STORED audit entry's Detail field", e.Detail)
 	assertNoCredSentinel(t, "the STORED audit entry printed with %+v", fmt.Sprintf("%+v", e))
 
+	// 1. Error is exactly the fixed safe sentence.
 	if e.Error != credsafe.Message {
 		t.Errorf("stored Error = %q, want the fixed safe sentence %q", e.Error, credsafe.Message)
 	}
-	if e.Detail != credsafe.Message {
-		t.Errorf("stored Detail = %q, want the fixed safe sentence %q — Detail is just as public as Error", e.Detail, credsafe.Message)
-	}
+	// 2. Detail is EMPTY — not the same sentence a second time.
+	if e.Detail != "" {
+		t.Errorf(`stored Detail = %q, want EMPTY.
 
-	// The typed cause must be gone, not just unserialized.
-	if e.Cause != nil {
-		t.Errorf(`the stored entry still carries a typed cause (%v).
-
-A cause left on a stored entry is a leak waiting for the next person who logs it with %%+v or reflects over it. json:"-" hides it from ONE reader, not from all of them. audit.Add must clear it.`, e.Cause)
+A credential failure has one answer and it lives in Error.`, e.Detail)
 	}
-	// Reflection, so a renamed or added error-typed field is caught too.
+	// 3. The flag is cleared on the stored entry.
+	if e.CredentialFailure {
+		t.Error("the stored entry still has CredentialFailure set — audit.Add must clear it before storing")
+	}
+	// 4. And nothing holds a live error. Reflection, so a renamed or newly-added
+	// error-typed field is caught too rather than only the one this test knows.
 	v := reflect.ValueOf(e)
 	for i := 0; i < v.NumField(); i++ {
 		f := v.Field(i)
 		if f.Kind() == reflect.Interface && !f.IsNil() {
 			if errVal, ok := f.Interface().(error); ok {
-				t.Errorf("stored audit entry field %q still holds a live error (%v) — clear it in audit.Add", v.Type().Field(i).Name, errVal)
+				t.Errorf(`stored audit entry field %q holds a live error (%v).
+
+audit.Entry must not carry an error at all. The classification runs at the credential boundary and only the ANSWER travels here.`, v.Type().Field(i).Name, errVal)
 			}
 		}
 	}
@@ -445,12 +474,13 @@ func TestCredErrorSentinel_AuditListEndpoint(t *testing.T) {
 	sanityCheckFixture(t)
 	_, credErr := credProviderWithFailingMint().GetCredentials("prod-eu")
 
+	raw := credsafe.Cause(credErr).Error()
 	srv := newTestServer()
 	srv.AuditLog().Add(audit.Entry{
 		Level: "error", Event: "cluster_secret_create", User: "sharko",
 		Action: "get_credentials", Resource: "cluster:prod-eu", Source: "reconciler",
 		Result: "failure",
-		Error:  credErr.Error(), Detail: credErr.Error(), Cause: credErr,
+		Error:  raw, Detail: raw, CredentialFailure: credsafe.Is(credErr),
 	})
 	router := NewRouter(srv, nil)
 
@@ -473,6 +503,7 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 	sanityCheckFixture(t)
 	_, credErr := credProviderWithFailingMint().GetCredentials("prod-eu")
 
+	raw := credsafe.Cause(credErr).Error()
 	srv := newTestServer()
 	router := NewRouter(srv, nil)
 
@@ -494,7 +525,7 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 			Level: "error", Event: "cluster_secret_create", User: "sharko",
 			Action: "get_credentials", Resource: "cluster:prod-eu", Source: "reconciler",
 			Result: "failure",
-			Error:  credErr.Error(), Detail: credErr.Error(), Cause: credErr,
+			Error:  raw, Detail: raw, CredentialFailure: credsafe.Is(credErr),
 		})
 		if strings.Contains(w.Body.String(), "cluster:prod-eu") {
 			break
@@ -517,12 +548,13 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 // to be what they say they are (names, ids, fixed vocabularies).
 func TestCredErrorSentinel_AuditSanitizeIsNotBypassableByAnyField(t *testing.T) {
 	_, credErr := credProviderWithFailingMint().GetCredentials("prod-eu")
+	raw := credsafe.Cause(credErr).Error()
 
 	log := audit.NewLog(10)
 	log.Add(audit.Entry{
-		Error:  credErr.Error(),
-		Detail: credErr.Error(),
-		Cause:  credErr,
+		Error:             raw,
+		Detail:            raw,
+		CredentialFailure: credsafe.Is(credErr),
 	})
 	stored := log.List(0)[0]
 
@@ -558,10 +590,35 @@ The marker must travel through every %w hop, and the classification must find it
 	}
 	assertNoCredSentinel(t, "the wrapped error's safe sentence", credsafe.Sentence(wrapped))
 
+	// And the WRAPPER's own Error() is already clean, because the marked error's
+	// contribution to it is the safe sentence. The git wrapper's own words are
+	// still there — those are Sharko's and a file path — but nothing of the
+	// backend's text is.
+	assertNoCredSentinel(t, "the wrapping error's own Error() output", wrapped.Error())
+
+	// The raw cause is still reachable for classification, which is what makes
+	// this test meaningful: there IS something down there to leak.
+	raw := credsafe.Cause(credErr).Error()
+	if !strings.Contains(raw, credSentinel) {
+		t.Fatal("the cause under the wrap no longer carries the sentinel, so this test proves nothing")
+	}
+
 	log := audit.NewLog(10)
-	log.Add(audit.Entry{Error: wrapped.Error(), Detail: wrapped.Error(), Cause: wrapped})
+	// Deliberately the worst caller: raw text in both fields, and a wrapper
+	// around it. The flag is what carries the answer.
+	log.Add(audit.Entry{
+		Error:             "reading configuration/managed-clusters.yaml from git: " + raw,
+		Detail:            "reading configuration/managed-clusters.yaml from git: " + raw,
+		CredentialFailure: credsafe.Is(wrapped),
+	})
 	stored := log.List(0)[0]
 	assertNoCredSentinel(t, "a stored audit entry whose cause is a git error wrapping a credentials error", fmt.Sprintf("%+v", stored))
+	if stored.Error != credsafe.Message {
+		t.Errorf("stored Error = %q, want the fixed safe sentence — the marker must be found through the %%w chain", stored.Error)
+	}
+	if stored.Detail != "" {
+		t.Errorf("stored Detail = %q, want empty", stored.Detail)
+	}
 }
 
 // TestCredErrorSentinel_UnrelatedErrorsKeepTheirText is the other half of the
@@ -583,7 +640,11 @@ func TestCredErrorSentinel_UnrelatedErrorsKeepTheirText(t *testing.T) {
 	}
 
 	log := audit.NewLog(10)
-	log.Add(audit.Entry{Error: gitErr.Error(), Detail: "detail worth keeping", Cause: gitErr})
+	log.Add(audit.Entry{
+		Error:             gitErr.Error(),
+		Detail:            "detail worth keeping",
+		CredentialFailure: credsafe.Is(gitErr),
+	})
 	stored := log.List(0)[0]
 	if stored.Error != gitErr.Error() {
 		t.Errorf(`the stored audit entry lost an unrelated git error's text (got %q).
@@ -591,12 +652,14 @@ func TestCredErrorSentinel_UnrelatedErrorsKeepTheirText(t *testing.T) {
 Blanket redaction would make the audit log useless. Only a credentials-backend failure — including one another error wraps — gets the fixed sentence.`, stored.Error)
 	}
 	if stored.Detail != "detail worth keeping" {
-		t.Errorf("the stored entry lost an unrelated Detail (got %q)", stored.Detail)
+		t.Errorf(`the stored entry lost an unrelated Detail (got %q).
+
+Only a CREDENTIAL failure's Detail is emptied. Emptying every Detail would gut the audit trail.`, stored.Detail)
 	}
-	// The cause is still cleared, safe or not — a live error on a stored entry
-	// is a hazard regardless of what it says.
-	if stored.Cause != nil {
-		t.Errorf("audit.Add must clear Cause on every entry, safe or not; got %v", stored.Cause)
+	// The flag is cleared either way, so a stored entry never says how it was
+	// classified.
+	if stored.CredentialFailure {
+		t.Error("audit.Add must clear CredentialFailure on every entry, credentials-related or not")
 	}
 }
 

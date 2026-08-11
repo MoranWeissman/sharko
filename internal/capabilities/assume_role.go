@@ -71,10 +71,14 @@ func NewAssumeRoleChecker() *AssumeRoleChecker {
 // region may be empty; the checker falls back to fallbackAssumeRoleRegion.
 // credsafe.Mark tags whatever comes back. An STS AssumeRole failure is the
 // same class of thing as an EKS token-mint failure — it comes out of the AWS
-// credential chain, and its text can carry credential material. Mark leaves
-// Error() alone, so verify.AssumeRoleHint still reads the real message to pick
-// its (Sharko-written) hint, and only the PUBLIC boundary swaps in the fixed
-// sentence.
+// credential chain, and its text can carry credential material. So the returned
+// error's Error() is the one fixed safe sentence, and no boundary can leak the
+// AWS message by forgetting to ask.
+//
+// verify.AssumeRoleHint still gives the operator the useful advice: it steps
+// past the mark with credsafe.Cause, reads the real AWS message, and returns one
+// of its own pre-written hints. It echoes no part of the message, which is what
+// makes reading it acceptable.
 func (c *AssumeRoleChecker) Check(ctx context.Context, roleARN, region string) error {
 	timeout := c.timeout
 	if timeout <= 0 {

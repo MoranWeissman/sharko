@@ -268,8 +268,11 @@ func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource, roleARN string)
 			}
 		}
 		// Both routes failed — surface the ORIGINAL backend error so
-		// backend-registered clusters keep their existing failure surface
-		// (typed errors, "not found" substring for the suggestion search).
+		// backend-registered clusters keep their existing failure surface: the
+		// typed provider errors, and the credsafe not-found marker the
+		// cluster-test handler reads to decide whether to offer secret-name
+		// suggestions. Returning the ArgoCD reader's error instead would drop
+		// both, because the backend is the route that was actually meant to work.
 		return nil, backendErr
 	}
 }

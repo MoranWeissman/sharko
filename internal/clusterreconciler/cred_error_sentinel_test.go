@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -86,13 +87,20 @@ func assertNoReconcilerCredSentinel(t *testing.T, where, text string) {
 
 // markedCredErrorWithSentinel is what a credentials backend hands back when its
 // own SDK error picked up credential material. It is MARKED, exactly as every
-// real provider boundary now marks its errors, and its Error() still carries the
-// sentinel — which is deliberate: credsafe.Mark leaves Error() alone so internal
-// callers keep working, and it is the boundaries that must ask for the safe
-// sentence.
+// real provider boundary now marks its errors.
+//
+// The sentinel is in the CAUSE underneath the mark, and the marked error's own
+// Error() is the fixed safe sentence. Both halves matter: the cause is what
+// there is to leak, and the sentence is what stops anything leaking it by
+// forgetting to ask.
 func markedCredErrorWithSentinel() error {
 	return credsafe.Mark(fmt.Errorf("etcdserver: request failed while resolving %s", reconcilerCredSentinel))
 }
+
+// rawCauseOf is the classification-only accessor, used here deliberately to
+// prove there is a real sentinel behind the mark. Nothing in production builds a
+// message from it.
+func rawCauseOf(err error) string { return credsafe.Cause(err).Error() }
 
 // TestReconcilerCredFailure_LeaksNothingIntoAuditOrTheRecord is the headline
 // proof for this package.
@@ -101,11 +109,16 @@ func TestReconcilerCredFailure_LeaksNothingIntoAuditOrTheRecord(t *testing.T) {
 
 	// Sanity: the fixture is real. Without this, a typo would make every
 	// assertion below pass while proving nothing.
-	if !strings.Contains(credErr.Error(), reconcilerCredSentinel) {
-		t.Fatal("sanity check failed: the fixture error must CONTAIN the sentinel")
+	if !strings.Contains(rawCauseOf(credErr), reconcilerCredSentinel) {
+		t.Fatal("sanity check failed: the cause under the mark must CONTAIN the sentinel")
 	}
 	if !credsafe.Is(credErr) {
 		t.Fatal("sanity check failed: the fixture error must be marked as a credentials-backend failure, or no boundary can recognise it")
+	}
+	// And the marked error already refuses to say the sentinel, which is what
+	// makes every boundary safe by default rather than safe-if-it-remembered.
+	if credErr.Error() != credsafe.Message {
+		t.Fatalf("sanity check failed: the marked error says %q, want the fixed safe sentence %q", credErr.Error(), credsafe.Message)
 	}
 
 	body := envelopedWithModes(testClusterEntry{Name: "prod-eu", Labels: map[string]string{"addon-foo": "enabled"}})
@@ -117,11 +130,10 @@ func TestReconcilerCredFailure_LeaksNothingIntoAuditOrTheRecord(t *testing.T) {
 
 	// 1. What the reconciler HANDS to the audit sink.
 	//
-	// Error and Detail — the two PUBLIC fields — must already be safe here.
-	// Cause is deliberately still alive at this point: that is the whole design,
-	// and it is what lets audit.Add classify by type instead of by reading words.
-	// Cause never serializes and Add clears it before storing, which step 1b
-	// below proves against the real log.
+	// Error and Detail — the two PUBLIC fields — must already be safe here, and
+	// the CredentialFailure flag must be set: that is the reconciler's own
+	// classification, made at the credential boundary where the typed error is
+	// still alive. audit.Add acts on the flag, never on the words.
 	entries := audits.Snapshot()
 	if len(entries) == 0 {
 		t.Fatal("the reconciler wrote no audit entry for a failed credential fetch, so this test proved nothing")
@@ -135,10 +147,21 @@ func TestReconcilerCredFailure_LeaksNothingIntoAuditOrTheRecord(t *testing.T) {
 			if e.Error != credsafe.Message {
 				t.Errorf("the credential-failure audit entry's Error = %q, want the fixed safe sentence %q", e.Error, credsafe.Message)
 			}
-			if e.Cause == nil {
-				t.Error(`the credential-failure audit entry carries no Cause.
+			if !e.CredentialFailure {
+				t.Error(`the credential-failure audit entry does not carry the CredentialFailure flag.
 
-Cause is how the real typed error reaches audit.Add, which is the only place that can classify it. Without it, Add would have to read the error's words — the exact thing that makes this bug class come back.`)
+The flag is the reconciler's ANSWER to credsafe.Is, computed where the typed error still exists. It is how audit.Add classifies by type instead of by reading the error's words — which is the exact thing that makes this bug class come back.`)
+			}
+			// No error-typed field on the entry at all. That is what a bool
+			// carrying the decision buys: nothing live travels this far.
+			v := reflect.ValueOf(e)
+			for i := 0; i < v.NumField(); i++ {
+				f := v.Field(i)
+				if f.Kind() == reflect.Interface && !f.IsNil() {
+					if _, ok := f.Interface().(error); ok {
+						t.Errorf("the audit entry the reconciler hands over carries a live error in field %q — the decision travels, the error does not", v.Type().Field(i).Name)
+					}
+				}
 			}
 		}
 	}
@@ -146,17 +169,27 @@ Cause is how the real typed error reaches audit.Add, which is the only place tha
 		t.Error(`no audit entry with action "get_credentials" was written, so the credential-failure path did not run`)
 	}
 
-	// 1b. What actually gets STORED. This is the surface a viewer reads, and it
-	// is where the typed cause must be gone — %+v, not JSON, because json:"-"
-	// would hide a lingering cause from a JSON check.
+	// 1b. What actually gets STORED. This is the surface a viewer reads: the
+	// safe sentence in Error, an EMPTY Detail, and the flag cleared. %+v rather
+	// than JSON, because a json:"-" field would be invisible to a JSON check.
 	log := audit.NewLog(50)
 	for _, e := range entries {
 		log.Add(e)
 	}
 	for _, e := range log.List(0) {
 		assertNoReconcilerCredSentinel(t, "a STORED audit entry printed with %+v", fmt.Sprintf("%+v", e))
-		if e.Cause != nil {
-			t.Errorf("a stored audit entry still carries a live cause (%v) — audit.Add must clear it", e.Cause)
+		if e.CredentialFailure {
+			t.Error("a stored audit entry still has CredentialFailure set — audit.Add must clear it")
+		}
+		if e.Action == "get_credentials" {
+			if e.Error != credsafe.Message {
+				t.Errorf("the stored credential-failure entry's Error = %q, want the fixed safe sentence", e.Error)
+			}
+			if e.Detail != "" {
+				t.Errorf(`the stored credential-failure entry's Detail = %q, want EMPTY.
+
+One answer, one field: it lives in Error.`, e.Detail)
+			}
 		}
 	}
 

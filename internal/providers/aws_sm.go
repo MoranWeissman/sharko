@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -165,7 +166,19 @@ func (p *AWSSecretsManagerProvider) fetchSecret(secretName, clusterRoleARN strin
 		SecretId: aws.String(secretName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+		wrapped := fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+		// THIS is where "the secret is not there" is actually KNOWN — the SDK
+		// says so with its own type. Nothing downstream may infer it from
+		// words, so it is recorded as a marker here and read with
+		// credsafe.IsNotFound. An AccessDenied, a throttle or a network
+		// failure deliberately does NOT get the marker, because a caller acts
+		// on it (the cluster-test handler offers secret-name suggestions) and
+		// "we were not allowed to look" is not "it is missing".
+		var missing *types.ResourceNotFoundException
+		if errors.As(err, &missing) {
+			return nil, credsafe.MarkNotFound(wrapped)
+		}
+		return nil, wrapped
 	}
 
 	if output.SecretString == nil {
@@ -222,9 +235,10 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 // "" is byte-identical to GetCredentials. See buildFromStructured for the
 // precedence decision (SM-secret roleArn > clusterRoleARN > provider default).
 // credsafe.Mark is applied at the boundary — one place every return passes
-// through, so a new failure branch inside cannot forget it. Mark leaves
-// Error() alone, so the "not found" substring the cluster-test handler keys
-// its secret-name suggestions off still matches.
+// through, so a new failure branch inside cannot forget it. After Mark, the
+// returned error's Error() is the fixed safe sentence; what a caller can still
+// learn is carried by TYPE, and for this method that is credsafe.IsNotFound
+// (see below for when it is set and when it deliberately is not).
 func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clusterRoleARN string) (*Kubeconfig, error) {
 	kc, err := p.getCredentialsWithRoleARN(clusterName, clusterRoleARN)
 	return kc, credsafe.Mark(err)
@@ -234,15 +248,31 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 	slog.Info("[provider] GetCredentials called", "cluster", clusterName)
 
 	var tried []string
+	// allMissing tracks whether EVERY attempt that ran failed because AWS said
+	// the secret does not exist. It starts true and only one non-missing failure
+	// (AccessDenied, a throttle, a network error, an unparseable payload) turns
+	// it off for good — because in that case Sharko does not KNOW the secret is
+	// absent, it only knows it could not read it. The caller offers secret-name
+	// suggestions off this answer, and offering "did you mean one of these?"
+	// when the real problem is a missing IAM permission sends the operator to
+	// fix the wrong thing.
+	allMissing := true
+	note := func(err error) {
+		if !credsafe.IsNotFound(err) {
+			allMissing = false
+		}
+	}
 
 	// Step 1: Try with prefix (skipped when prefix is empty or name already contains prefix).
 	if p.prefix != "" {
 		withPrefix := p.prefix + clusterName
 		tried = append(tried, withPrefix)
 		slog.Debug("[provider] trying with prefix", "secretName", withPrefix)
-		if kc, err := p.fetchSecret(withPrefix, clusterRoleARN); err == nil {
+		kc, err := p.fetchSecret(withPrefix, clusterRoleARN)
+		if err == nil {
 			return kc, nil
 		}
+		note(err)
 	}
 
 	// Step 2: Try exact name (handles explicit secretPath values that don't need a prefix).
@@ -250,21 +280,28 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 		tried = append(tried, clusterName)
 	}
 	slog.Debug("[provider] trying exact name", "secretName", clusterName)
-	if kc, err := p.fetchSecret(clusterName, clusterRoleARN); err == nil {
+	kc, err := p.fetchSecret(clusterName, clusterRoleARN)
+	if err == nil {
 		return kc, nil
 	}
+	note(err)
 
-	// Both lookups failed. Return an error — the caller (handleTestCluster) will
-	// call SearchSecrets separately to find suggestions and include them in the response.
+	// Every lookup failed. Return an error — the caller (handleTestCluster) will
+	// call SearchSecrets separately to find suggestions and include them in the
+	// response, but ONLY when this error carries the not-found marker.
 	//
-	// credsafe.Mark tags it as a credentials-backend failure. Error() is
-	// unchanged, so handleTestCluster's existing strings.Contains(err, "not
-	// found") check still fires and still offers secret-name suggestions —
-	// only what crosses a PUBLIC boundary changes.
-	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups", "tried", strings.Join(tried, ", "))
-	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
+	// The sentence below still says "not found" because it is Sharko's own
+	// wording for a person, unchanged. Nothing reads it: the caller asks
+	// credsafe.IsNotFound, which is a type check.
+	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups",
+		"tried", strings.Join(tried, ", "), "allMissing", allMissing)
+	failure := fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
 		"Set secret_path on the cluster to specify the exact name",
 		clusterName, strings.Join(tried, ", "))
+	if allMissing {
+		return nil, credsafe.MarkNotFound(failure)
+	}
+	return nil, failure
 }
 
 // StoredConnectionFacts reports what this backend has STORED for the named
@@ -570,7 +607,8 @@ func (p *AWSSecretsManagerProvider) HealthCheck(ctx context.Context) error {
 	if err != nil {
 		// The health check talks to the credentials backend with Sharko's own
 		// AWS identity, so its error is the same class as a fetch failure and is
-		// marked the same way. Error() is unchanged.
+		// marked the same way: Error() becomes the fixed safe sentence, and the
+		// AWS message stays reachable through Unwrap for classification.
 		return credsafe.Mark(fmt.Errorf("AWS Secrets Manager health check failed: %w", err))
 	}
 	return nil
