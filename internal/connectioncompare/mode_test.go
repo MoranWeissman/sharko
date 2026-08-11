@@ -1,6 +1,9 @@
 package connectioncompare
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
@@ -225,6 +228,180 @@ func TestClassify_UnknownSourceNeverFullNeverFullRepair(t *testing.T) {
 			if p.RepairScope == RepairScopeFullConnection {
 				t.Errorf("backend=%v found=%v: unknown source got a full-connection repair offer", backend, found)
 			}
+		}
+	}
+}
+
+// TestClassify_UnrecognisedSourceIsNeverTrusted is the guard on the allowlist.
+//
+// Before the allowlist, Classify handled the sources it knew and then FELL
+// THROUGH to the widest, most trusting answer — full scope and a full-connection
+// repair — for anything else. So a typo, a value from a newer Sharko, or
+// anything an attacker got into the git record was handed the most trusting
+// treatment available. Every value below must land on unknown_source with a
+// narrow scope and no full repair.
+func TestClassify_UnrecognisedSourceIsNeverTrusted(t *testing.T) {
+	values := []struct {
+		name  string
+		value string
+	}{
+		{"a typo of a real one", "secret-kubeconfg"},
+		{"another typo of a real one", "eks-tokenn"},
+		{"a made-up value", "vault-dynamic-lease"},
+		{"something a future version might write", "workload-identity-federation"},
+		{"the right value in the wrong case", "Secret-Kubeconfig"},
+		{"the right value shouted", "EKS-TOKEN"},
+		{"the right value with leading whitespace", " secret-kubeconfig"},
+		{"the right value with trailing whitespace", "eks-token "},
+		{"the right value with a tab in it", "secret\tkubeconfig"},
+		{"the right value with a newline", "eks-token\n"},
+		{"an injection attempt in the value", "secret-kubeconfig'; DROP TABLE clusters;--"},
+		{"a path traversal attempt in the value", "../../etc/passwd"},
+		{"a template injection attempt", "{{ .Values.credsSource }}"},
+		{"a very long value", string(make([]byte, 4096))},
+	}
+
+	for _, v := range values {
+		t.Run(v.name, func(t *testing.T) {
+			// Every other input set to the most permissive combination there
+			// is, so the only thing under test is the unrecognised source.
+			for _, backend := range []bool{false, true} {
+				p := Classify(ClassifyInput{
+					CredsSource:       v.value,
+					BackendConfigured: backend,
+					LiveSecretFound:   true,
+					LiveManagedBy:     argosecrets.ManagedByValue,
+				})
+				if p.Mode != ModeUnknownSource {
+					t.Errorf("backend=%v: Mode = %q, want %q — an unrecognised credentials source must never be given a recognised mode", backend, p.Mode, ModeUnknownSource)
+				}
+				if p.Scope != ScopeLimited {
+					t.Errorf("backend=%v: Scope = %q, want %q", backend, p.Scope, ScopeLimited)
+				}
+				if p.FullyCheckable() {
+					t.Errorf("backend=%v: an unrecognised credentials source was reported as fully checkable, which lets it claim in sync", backend)
+				}
+				if p.RepairScope == RepairScopeFullConnection {
+					t.Errorf("backend=%v: an unrecognised credentials source was offered a full-connection repair", backend)
+				}
+				if p.LimitReason == "" {
+					t.Errorf("backend=%v: a narrower scope must explain itself", backend)
+				}
+			}
+		})
+	}
+}
+
+// TestClassify_EmptyAndUnrecognisedSayDifferentThings pins that the two
+// situations behind unknown_source get their own sentence. They are the same
+// scope but not the same problem: one record is old and never had the
+// information, the other has information Sharko cannot make sense of. Telling
+// someone "your record is old" when the real problem is a typo sends them
+// looking in the wrong place.
+func TestClassify_EmptyAndUnrecognisedSayDifferentThings(t *testing.T) {
+	base := ClassifyInput{
+		BackendConfigured: true,
+		LiveSecretFound:   true,
+		LiveManagedBy:     argosecrets.ManagedByValue,
+	}
+
+	empty := base
+	empty.CredsSource = ""
+	unrecognised := base
+	unrecognised.CredsSource = "something-nobody-planned-for"
+
+	emptyPolicy := Classify(empty)
+	unrecognisedPolicy := Classify(unrecognised)
+
+	if emptyPolicy.Mode != ModeUnknownSource || unrecognisedPolicy.Mode != ModeUnknownSource {
+		t.Fatalf("both must be %q; got %q and %q", ModeUnknownSource, emptyPolicy.Mode, unrecognisedPolicy.Mode)
+	}
+	if emptyPolicy.LimitReason == unrecognisedPolicy.LimitReason {
+		t.Fatalf("an empty source and an unrecognised source give the same sentence, so a person cannot tell which problem they have: %q", emptyPolicy.LimitReason)
+	}
+	if emptyPolicy.LimitReason != LimitReasonSourceNotRecorded {
+		t.Errorf("empty source reason = %q, want the not-recorded sentence", emptyPolicy.LimitReason)
+	}
+	if unrecognisedPolicy.LimitReason != LimitReasonSourceNotUnderstood {
+		t.Errorf("unrecognised source reason = %q, want the not-understood sentence", unrecognisedPolicy.LimitReason)
+	}
+}
+
+// TestClassify_LimitReasonsAreWrittenForPeople keeps the user-facing sentences
+// free of code. A person reads these; a Go identifier, a struct field name or a
+// YAML key in one of them is a leak of the implementation into the product.
+func TestClassify_LimitReasonsAreWrittenForPeople(t *testing.T) {
+	// Words that would only appear if somebody named an internal thing. The
+	// EKS sentence deliberately names data.config, which is a real thing the
+	// person can see in the Secret, so it is checked separately by its own
+	// exact-string test and skipped here.
+	banned := []string{
+		"credsSource", "creds_source", "CredsSource",
+		"ClassifyInput", "connectionManagedBy", "managed-clusters.yaml",
+		"nil", "struct", "func ",
+	}
+	reasons := []string{
+		LimitReasonSourceNotRecorded,
+		LimitReasonSourceNotUnderstood,
+	}
+	for _, r := range reasons {
+		for _, b := range banned {
+			if regexp.MustCompile(`(?i)` + regexp.QuoteMeta(b)).MatchString(r) {
+				t.Errorf("a sentence a person reads names an internal thing (%q): %q", b, r)
+			}
+		}
+	}
+}
+
+// TestClassify_EveryModelsCredsSourceConstantIsOnTheAllowlist is the loud trap.
+//
+// The allowlist in mode.go is the whole safety property of Point 1: a value that
+// is not on it gets the narrow, no-full-repair treatment. That is correct for a
+// typo. It is WRONG, and silently wrong, for a source Sharko genuinely supports
+// — every cluster using it would be reported at a narrower scope than it
+// deserves, forever, with nobody noticing.
+//
+// So this test reads the credential-source constants straight out of
+// internal/models/credlookup.go and fails if any of them is missing from the
+// allowlist. It reads the source file rather than a hand-written list, because a
+// hand-written list is the thing that goes stale.
+func TestClassify_EveryModelsCredsSourceConstantIsOnTheAllowlist(t *testing.T) {
+	// deliberatelyUnsupported is the escape hatch: a credential source that
+	// internal/models knows about and this comparison genuinely cannot handle.
+	// Empty today — all three known sources are handled. Adding an entry needs
+	// a comment saying why, so the narrow treatment is a decision and not an
+	// oversight.
+	deliberatelyUnsupported := map[string]string{}
+
+	path := filepath.Join("..", "models", "credlookup.go")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+
+	// Matches lines like:  CredsSourceEKSToken = "eks-token"
+	re := regexp.MustCompile(`(?m)^\s*(CredsSource\w+)\s*=\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(string(body), -1)
+	if len(matches) == 0 {
+		t.Fatalf("found no CredsSource constants in %s — this test can no longer see what it is guarding, so fix the pattern rather than deleting the test", path)
+	}
+
+	for _, m := range matches {
+		constName, value := m[1], m[2]
+		if why, exempt := deliberatelyUnsupported[value]; exempt {
+			t.Logf("%s = %q is deliberately not on the allowlist: %s", constName, value, why)
+			continue
+		}
+		if !supportedCredsSources[value] {
+			t.Errorf(`internal/models declares %s = %q, and it is NOT on connectioncompare's supportedCredsSources allowlist.
+
+WHAT THIS MEANS: every cluster recorded with %q is being classified as unknown_source. It gets a limited scope, it can never report in sync, and it is never offered a full repair — silently, forever.
+
+WHAT TO DO: decide, on purpose, which it is.
+  - Sharko really supports this source: add %s to supportedCredsSources in internal/connectioncompare/mode.go AND add a branch for it in Classify, so it gets a mode, a scope and a repair limit that are true for it.
+  - Sharko does not support it here: leave the allowlist alone and add %q to this test's deliberatelyUnsupported list below with a comment saying why.
+
+Do not "fix" this by deleting the test.`, constName, value, value, constName, value)
 		}
 	}
 }

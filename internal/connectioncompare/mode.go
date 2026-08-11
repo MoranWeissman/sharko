@@ -69,11 +69,53 @@ const (
 	// ownership gate (the one Manager.Ensure refuses on), not a new one.
 	ModeForeignOwned Mode = "owned_by_another_tool"
 
-	// ModeUnknownSource — credsSource is empty. The record predates the
-	// field, which every install upgraded from an older Sharko has. Sharko
-	// does not know where these credentials came from, and it never guesses,
-	// never backfills the field, and never reads the live Secret to find out.
+	// ModeUnknownSource — Sharko does not know where this cluster's
+	// credentials are kept. Two different situations land here, and they get
+	// different sentences (see Classify):
+	//
+	//  1. The recorded source is empty. The record predates the field, which
+	//     every install upgraded from an older Sharko has.
+	//  2. The recorded source is a value that is not on the supported list —
+	//     a typo, a hand-edit, or something a future version writes that this
+	//     version has never heard of.
+	//
+	// Either way Sharko never guesses, never backfills the field, and never
+	// reads the live Secret to find out.
 	ModeUnknownSource Mode = "unknown_source"
+)
+
+// supportedCredsSources is the ALLOWLIST of recorded credential sources this
+// version of Sharko understands. Nothing else gets a scope wider than limited,
+// and nothing else is ever offered a full repair.
+//
+// This is an allowlist and not a "handle the ones I know, fall through for the
+// rest" chain on purpose. A fall-through gives the widest, most trusting
+// treatment to exactly the values nobody planned for: a typo in a hand-edited
+// file, a value written by a newer Sharko this binary has never seen, or
+// anything an attacker managed to get into the git record. The safe default for
+// a value Sharko does not understand is to admit it does not understand it.
+//
+// TestClassify_EveryModelsCredsSourceConstantIsOnTheAllowlist fails loudly if
+// a new constant is added to internal/models without being added here.
+var supportedCredsSources = map[string]bool{
+	models.CredsSourceInlineKubeconfig: true,
+	models.CredsSourceSecretKubeconfig: true,
+	models.CredsSourceEKSToken:         true,
+}
+
+// The two sentences for the unknown-source mode. They are separate because the
+// two situations are separate: one is an old record that never had the
+// information, the other is information Sharko cannot make sense of. Telling a
+// person "your record is old" when the real problem is a typo would send them
+// looking in the wrong place.
+const (
+	// LimitReasonSourceNotRecorded — the record has no credential source at
+	// all, because it was written before Sharko had the field.
+	LimitReasonSourceNotRecorded = "This cluster's record does not say where its credentials are kept — it was registered by an older version of Sharko. Sharko will not guess, so it checks the labels and the plain connection facts only."
+
+	// LimitReasonSourceNotUnderstood — the record has a credential source and
+	// this version of Sharko does not know what it means.
+	LimitReasonSourceNotUnderstood = "Sharko does not recognise what this cluster's record says about where its credentials are kept, so it will not assume anything. It checks the labels and the plain connection facts only. Check the cluster's entry in git, or update Sharko if the entry was written by a newer version."
 )
 
 // Scope is how much of the connection Sharko can honestly check for a mode.
@@ -180,9 +222,13 @@ type ClassifyInput struct {
 //     inspect, compare, or offer to change a connection somebody else owns.
 //  2. A self-managed record and an adopted Secret are both "Sharko is a
 //     guest here" — addon labels only.
-//  3. Inline kubeconfig and an unknown source are both "no independent copy
-//     of the credentials" — limited.
-//  4. Only a backend-stored source with a backend actually wired up, on a
+//  3. A recorded source that is not on the supported list — including no
+//     recorded source at all — is "Sharko does not know where the credentials
+//     came from" — limited. This is checked BEFORE any source-specific rule,
+//     so an unrecognised value can never fall through into a wider scope.
+//  4. Inline kubeconfig is "no independent copy of the credentials" —
+//     limited.
+//  5. Only a backend-stored source with a backend actually wired up, on a
 //     connection Sharko owns, reaches the checkable end of the table.
 //
 // It never returns a zero Policy: every path assigns a mode, a scope and a
@@ -225,7 +271,28 @@ func Classify(in ClassifyInput) Policy {
 		}
 	}
 
-	// 3a. Pasted kubeconfig — the live Secret is the only copy.
+	// 3. The recorded source is not one this version of Sharko understands.
+	//
+	// This gate is BEFORE every source-specific rule below, and it is the
+	// reason there is no fall-through at the bottom of this function. An empty
+	// value and an unrecognised value both land here — same scope, same repair
+	// limit — but they are genuinely different situations for the person
+	// reading the answer, so they get different sentences. Neither one is ever
+	// guessed at and neither one is ever backfilled.
+	if !supportedCredsSources[in.CredsSource] {
+		reason := LimitReasonSourceNotUnderstood
+		if in.CredsSource == "" {
+			reason = LimitReasonSourceNotRecorded
+		}
+		return Policy{
+			Mode:        ModeUnknownSource,
+			Scope:       ScopeLimited,
+			RepairScope: RepairScopeAddonLabelsOnly,
+			LimitReason: reason,
+		}
+	}
+
+	// 4. Pasted kubeconfig — the live Secret is the only copy.
 	if in.CredsSource == models.CredsSourceInlineKubeconfig {
 		return Policy{
 			Mode:        ModeInlineKubeconfig,
@@ -235,19 +302,12 @@ func Classify(in ClassifyInput) Policy {
 		}
 	}
 
-	// 3b. The record predates the credsSource field. Never guessed, never
-	// backfilled, never resolved by reading the live Secret.
-	if in.CredsSource == "" {
-		return Policy{
-			Mode:        ModeUnknownSource,
-			Scope:       ScopeLimited,
-			RepairScope: RepairScopeAddonLabelsOnly,
-			LimitReason: "This cluster's record does not say where its credentials are kept — it was registered by an older version of Sharko. Sharko will not guess, so it checks the labels and the plain connection facts only.",
-		}
-	}
-
-	// 4. A backend-stored source. Checkable only when there is a backend to
+	// 5. A backend-stored source. Checkable only when there is a backend to
 	// re-read from; without one Sharko has no independent copy after all.
+	//
+	// Only secret-kubeconfig and eks-token can reach this point: the allowlist
+	// gate above already turned everything else away, so backendMode below is
+	// only ever asked about one of those two.
 	if !in.BackendConfigured {
 		return Policy{
 			Mode:        backendMode(in.CredsSource),
@@ -280,16 +340,33 @@ func Classify(in ClassifyInput) Policy {
 		}
 	}
 
+	if in.CredsSource == models.CredsSourceSecretKubeconfig {
+		return Policy{
+			Mode:        ModeBackendStoredCredentials,
+			Scope:       ScopeFull,
+			RepairScope: RepairScopeFullConnection,
+		}
+	}
+
+	// Nothing reaches here today: the allowlist gate above only lets three
+	// values through, and all three are handled. It exists so that adding a
+	// fourth value to the allowlist and forgetting to handle it here lands on
+	// the narrow answer instead of the trusting one. The widest scope is never
+	// something a value gets by falling off the end of a function.
 	return Policy{
-		Mode:        ModeBackendStoredCredentials,
-		Scope:       ScopeFull,
-		RepairScope: RepairScopeFullConnection,
+		Mode:        ModeUnknownSource,
+		Scope:       ScopeLimited,
+		RepairScope: RepairScopeAddonLabelsOnly,
+		LimitReason: LimitReasonSourceNotUnderstood,
 	}
 }
 
-// backendMode maps a backend-stored creds source to its mode. Only reached
-// with one of the two backend sources; anything else has already been
-// classified above.
+// backendMode maps a backend-stored creds source to its mode.
+//
+// It is only ever called from the "no backend is connected" branch above, which
+// sits AFTER the supportedCredsSources gate — so credsSource here really is one
+// of secret-kubeconfig or eks-token, and this claim is enforced by the gate
+// rather than merely hoped for.
 func backendMode(credsSource string) Mode {
 	if credsSource == models.CredsSourceEKSToken {
 		return ModeEKSExec
