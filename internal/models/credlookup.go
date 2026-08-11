@@ -89,7 +89,30 @@ func CredentialRoutingFor(clusters []Cluster, name string) (lookupKey, credsSour
 // CredentialsResolvable reports whether Sharko has a plausible, resolvable
 // path to this cluster's own credentials — a CHEAP presence-of-config check
 // over the stored record, NOT a live probe (V2-cleanup-88.3 — lazy
-// credentials). Registration succeeds with zero credentials (see
+// credentials).
+//
+// # Not the same question as ExpectedCredentialsRebuildableWithoutLiveSecret
+//
+// These two predicates look interchangeable and are NOT. Read both before
+// touching either, and do not "simplify" them into one function —
+// TestCredentialPredicates_DisagreeOnInlineSharkoManaged in
+// credlookup_test.go fails on purpose if you do.
+//
+//   - This one asks: can Sharko GET credentials for this cluster at all, by
+//     any route, including reading them back out of the ArgoCD cluster
+//     Secret it wrote at registration? An inline-kubeconfig cluster answers
+//     TRUE here.
+//   - The other one asks: can Sharko rebuild what the ArgoCD cluster Secret
+//     SHOULD contain without reading that Secret? An inline-kubeconfig
+//     cluster answers FALSE there, because the pasted credentials were never
+//     stored anywhere else — the live Secret is their only home.
+//
+// The connection-Secret comparison must use the other one. Using this one
+// would have it rebuild the expected Secret out of the live Secret, compare
+// the Secret with itself, always match, and report a cluster as in sync no
+// matter how badly its connection had drifted.
+//
+// Registration succeeds with zero credentials (see
 // RegisterCluster); this predicate is what the read-only
 // Cluster.DerivedHealthStatus-style `addon_secrets_ready` API field keys
 // off, so the UI can show "this cluster needs credentials before you can
@@ -135,4 +158,90 @@ func credentialsResolvable(credsSource, connectionManagedBy string, backendConfi
 	// secret-kubeconfig / eks-token / "" (unknown, pre-field record) all
 	// route through the backend provider — resolvable only when one exists.
 	return backendConfigured
+}
+
+// ExpectedCredentialsRebuildableWithoutLiveSecret reports whether Sharko can
+// work out what this cluster's ArgoCD connection Secret SHOULD contain
+// WITHOUT reading that Secret.
+//
+// # Why this is a separate predicate from CredentialsResolvable
+//
+// CredentialsResolvable (above) answers "can Sharko get credentials for this
+// cluster at all". One of the routes it counts is reading them back out of
+// the live ArgoCD cluster Secret — which is fine for its callers (an
+// enable-addon pre-flight only needs credentials that work, it does not care
+// where they came from) and is exactly wrong for a comparison.
+//
+// A comparison that built its expected Secret from the live Secret would be
+// comparing the Secret with itself. It would match every time, on every
+// cluster, including one whose connection had been hand-edited or clobbered
+// by another tool — and it would tell the user that cluster is in sync. So
+// this predicate exists, narrower on purpose, and the comparison uses it.
+//
+// TRUE only for the two sources whose credential material lives somewhere
+// Sharko can read independently — the secrets backend:
+//
+//   - secret-kubeconfig: a kubeconfig stored in the backend. Fetch it again,
+//     rebuild, compare. The live Secret contributes nothing to the expected
+//     side.
+//   - eks-token: structured EKS metadata stored in the backend. Same, with
+//     one honest limit — see the note on the token below.
+//
+// FALSE for everything else, and each "no" is a different "no":
+//
+//   - inline-kubeconfig: the pasted kubeconfig was written into the ArgoCD
+//     Secret at registration and kept nowhere else. There is no second copy
+//     to rebuild from. (True regardless of who manages the connection —
+//     Sharko-managed inline is the case CredentialsResolvable says TRUE for
+//     and this says FALSE for, which is the whole reason both exist.)
+//   - "" (the record predates the credsSource field — every install upgraded
+//     from an older Sharko has these): Sharko does not know where the
+//     credentials came from. Guessing "probably the backend" would produce
+//     an expected Secret built on an assumption and report drift, or worse
+//     agreement, that is not real. Never guess, never backfill the field
+//     automatically, and never fall back to reading the live Secret.
+//   - a self-managed connection (connectionManagedBy = user): Sharko never
+//     writes this Secret's credential material at all, so it has no expected
+//     value to compare against — there is nothing Sharko intends it to be.
+//
+// backendConfigured reports whether a secrets-provider backend is wired up at
+// the connection level, same meaning as in CredentialsResolvable: a backend
+// source can only be re-read when a backend exists to ask.
+//
+// # The honest limit on eks-token
+//
+// TRUE here means "the non-credential parts of the expected Secret can be
+// rebuilt independently" — the server address, the CA bundle, the labels, the
+// annotations Sharko owns. It does NOT mean every byte of data.config can be
+// compared. For an eks-token cluster the backend mints a FRESH short-lived STS
+// bearer token on every single fetch (see the token mint in
+// internal/providers/aws_sm.go's buildFromStructured), so a rebuilt config
+// carries a different token than the live one every time, without anything
+// having drifted. The comparison treats that token as a field it cannot
+// honestly compare rather than as drift — see the connection-mode policy in
+// internal/connectioncompare.
+func (c Cluster) ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured bool) bool {
+	return expectedCredentialsRebuildableWithoutLiveSecret(c.CredsSource, c.ConnectionManagedBy, backendConfigured)
+}
+
+// ExpectedCredentialsRebuildableWithoutLiveSecret is the ManagedClusterEntry
+// twin of Cluster.ExpectedCredentialsRebuildableWithoutLiveSecret.
+func (e ManagedClusterEntry) ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured bool) bool {
+	return expectedCredentialsRebuildableWithoutLiveSecret(e.CredsSource, e.ConnectionManagedBy, backendConfigured)
+}
+
+func expectedCredentialsRebuildableWithoutLiveSecret(credsSource, connectionManagedBy string, backendConfigured bool) bool {
+	// Sharko never writes a self-managed connection's credential material,
+	// so it holds no expectation about it, whatever the recorded source says.
+	if IsUserManagedConnection(connectionManagedBy) {
+		return false
+	}
+	switch credsSource {
+	case CredsSourceSecretKubeconfig, CredsSourceEKSToken:
+		return backendConfigured
+	default:
+		// inline-kubeconfig (only copy is the live Secret) and "" (source
+		// unknown — never guessed) both land here.
+		return false
+	}
 }
