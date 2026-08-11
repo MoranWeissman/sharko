@@ -316,15 +316,17 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		ConnectivityCheckOn: s.clusterRecon.ConnectivityCheckEnabled(ctx),
 	}
 
-	// The expected credential spec, rebuilt WITHOUT the live Secret.
+	// The expected credential spec, rebuilt WITHOUT the live Secret and
+	// WITHOUT creating any credential.
 	//
 	// Only asked for when the mode says an independent rebuild is possible.
 	// The predicate is models.ExpectedCredentialsRebuildableWithoutLiveSecret
 	// — NOT CredentialsResolvable, which counts reading the live Secret back
 	// as a valid route and would make this compare the Secret with itself. The
-	// fetch itself goes through FetchIndependentOfArgoCDSecret, which refuses
-	// rather than falling back to the live Secret, so even a wrong answer from
-	// the predicate could not produce a self-comparison.
+	// read itself goes through StoredFactsIndependentOfArgoCDSecret, which is a
+	// read-only capability with no path to the EKS token mint and no fallback
+	// to the live Secret, so neither a wrong answer from the predicate nor a
+	// future edit here can produce a self-comparison or a minted credential.
 	if desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendConfigured) {
 		spec, credFailure := s.expectedConnectionSpec(desired.Entry)
 		if credFailure != "" {
@@ -358,7 +360,20 @@ func auditResultFor(status connectioncompare.Status) string {
 }
 
 // expectedConnectionSpec rebuilds the credential half of the expected Secret
-// from the secrets backend, never from the live Secret.
+// from what the secrets backend has STORED — never from the live Secret, and
+// never by creating a credential.
+//
+// THE READ CANNOT MINT. It goes through
+// ClusterCredsRouter.StoredFactsIndependentOfArgoCDSecret, which only ever
+// calls the read-only StoredConnectionFacts capability. There is no branch
+// here, and none in the router, that reaches GetCredentials — so for an EKS
+// cluster no STS sign-in token is created. That matters twice over: creating a
+// real credential is a real risk, and the mode policy has already decided the
+// credential blob is not comparable for that cluster, so the token would be
+// created and thrown away. When the stored payload is EKS metadata, the facts
+// come back with CredentialMintedPerFetch set and no credential at all, and the
+// spec is built without one — the comparison then reports data.config as a field
+// it did not check, which is the honest answer.
 //
 // It returns a fixed safe sentence rather than an error on failure: the
 // backend's error can carry credential material in its text, so it is logged
@@ -369,7 +384,7 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 	if router == nil {
 		return nil, failCredsUnavailable
 	}
-	creds, err := router.FetchIndependentOfArgoCDSecret(entry.CredentialLookupKey(), entry.CredsSource, entry.RoleARN)
+	facts, err := router.StoredFactsIndependentOfArgoCDSecret(entry.CredentialLookupKey(), entry.CredsSource)
 	if err != nil {
 		if errors.Is(err, providers.ErrNoIndependentCredentialSource) {
 			// The mode said a rebuild was possible and the router disagreed —
@@ -380,6 +395,8 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 				"cluster", entry.Name)
 			return nil, ""
 		}
+		// The backend error's own text is never passed through or logged — a
+		// provider error can carry credential material in its message.
 		slog.Warn("[connection-comparison] could not read this cluster's stored sign-in details",
 			"cluster", entry.Name)
 		return nil, failBackendRead
@@ -391,13 +408,13 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 
 	return &argosecrets.ClusterSecretSpec{
 		Name:     entry.Name,
-		Server:   creds.Server,
+		Server:   facts.Server,
 		Region:   entry.Region,
 		RoleARN:  roleARN,
-		Token:    creds.Token,
-		CertData: base64.StdEncoding.EncodeToString(creds.CertData),
-		KeyData:  base64.StdEncoding.EncodeToString(creds.KeyData),
-		CAData:   base64.StdEncoding.EncodeToString(creds.CAData),
+		Token:    facts.Token,
+		CertData: base64.StdEncoding.EncodeToString(facts.CertData),
+		KeyData:  base64.StdEncoding.EncodeToString(facts.KeyData),
+		CAData:   base64.StdEncoding.EncodeToString(facts.CAData),
 	}, ""
 }
 

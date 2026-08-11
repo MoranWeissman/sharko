@@ -73,14 +73,26 @@ func getEKSToken(ctx context.Context, clusterName, region, roleARN string) (stri
 		return "", fmt.Errorf("presigning GetCallerIdentity for cluster %q: %w", clusterName, err)
 	}
 
+	// THE PRESIGNED URL IS THE CREDENTIAL. Anyone holding it can sign in as
+	// Sharko for as long as it lives, so it is never logged — not in full, not
+	// truncated, not as a length, and not as a hash. A prefix, a length and a
+	// hash are all on the forbidden list for the same reason: each one narrows
+	// a guess at the thing itself.
+	//
+	// The one diagnostic kept is a bool: was the cluster-name header actually
+	// attached. That is the setting that stops a token for one cluster being
+	// replayed against another, it is the thing that has actually gone wrong
+	// before, and a yes/no carries no part of the URL.
 	slog.Debug("[auth] STS presigned URL check",
 		"cluster", clusterName,
 		"hasClusterHeader", strings.Contains(req.URL, "x-k8s-aws-id"),
-		"fullURL", req.URL,
 	)
 
 	// Encode the presigned URL as a k8s-aws-v1 token (base64url, no padding).
 	token := v1Prefix + base64.RawURLEncoding.EncodeToString([]byte(req.URL))
-	slog.Info("[auth] EKS token generated", "cluster", clusterName, "tokenLength", len(token))
+	// "a token was minted for this cluster" is worth a line. Its length is not:
+	// the length of a presigned URL narrows what is inside it, and this line
+	// runs at Info, so it is on by default in production.
+	slog.Info("[auth] EKS token generated", "cluster", clusterName)
 	return token, nil
 }

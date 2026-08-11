@@ -251,6 +251,94 @@ func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clust
 		clusterName, strings.Join(tried, ", "))
 }
 
+// StoredConnectionFacts reports what this backend has STORED for the named
+// cluster, and never mints anything.
+//
+// It runs the same two-step lookup GetCredentials does (prefix first, then the
+// exact name) so a cluster found by one is found by the other, and then it
+// STOPS at the payload. On the structured-EKS branch that means it reports the
+// server and the CA bundle and sets CredentialMintedPerFetch — it does NOT go
+// on to buildFromStructured, which is where the STS token mint lives. On the
+// raw-kubeconfig branch there is nothing to mint, so the stored credential is
+// reported as it stands.
+//
+// This is the method the read-only connection comparison uses. GetCredentials
+// stays exactly as it was for every caller that needs credentials that work.
+func (p *AWSSecretsManagerProvider) StoredConnectionFacts(lookupKey string) (*StoredConnectionFacts, error) {
+	raw, err := p.rawPayloadForCluster(lookupKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if structured, ok := sniffStructuredEKSSecret(raw); ok {
+		// The stored payload is EKS metadata. There is no credential in it —
+		// only what is needed to create one — and this method creates nothing.
+		caData, decodeErr := base64.StdEncoding.DecodeString(structured.CAData)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decoding caData for cluster %q: %w", structured.ClusterName, decodeErr)
+		}
+		slog.Info("[provider] stored connection details read without minting a sign-in token",
+			"secretName", lookupKey, "format", "structured")
+		return &StoredConnectionFacts{
+			Server:                   structured.Host,
+			CAData:                   caData,
+			CredentialMintedPerFetch: true,
+		}, nil
+	}
+
+	// A raw kubeconfig holds a fixed credential. Parsing it mints nothing.
+	kc, err := p.buildFromRawKubeconfig(raw, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("[provider] stored connection details read without minting a sign-in token",
+		"secretName", lookupKey, "format", "raw")
+	return &StoredConnectionFacts{
+		Server:   kc.Server,
+		CAData:   kc.CAData,
+		Token:    kc.Token,
+		CertData: kc.CertData,
+		KeyData:  kc.KeyData,
+	}, nil
+}
+
+// rawPayloadForCluster fetches the stored secret bytes for a cluster using the
+// same prefix-then-exact-name lookup GetCredentials uses, and does nothing else
+// with them. No sniff, no parse, no mint.
+func (p *AWSSecretsManagerProvider) rawPayloadForCluster(clusterName string) ([]byte, error) {
+	var tried []string
+	if p.prefix != "" {
+		withPrefix := p.prefix + clusterName
+		tried = append(tried, withPrefix)
+		if raw, err := p.rawSecretValue(withPrefix); err == nil {
+			return raw, nil
+		}
+	}
+	if !sliceContains(tried, clusterName) {
+		tried = append(tried, clusterName)
+	}
+	if raw, err := p.rawSecretValue(clusterName); err == nil {
+		return raw, nil
+	}
+	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
+		"Set secret_path on the cluster to specify the exact name",
+		clusterName, strings.Join(tried, ", "))
+}
+
+// rawSecretValue reads one secret's string payload by exact name.
+func (p *AWSSecretsManagerProvider) rawSecretValue(secretName string) ([]byte, error) {
+	output, err := p.client.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(secretName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+	}
+	if output.SecretString == nil {
+		return nil, fmt.Errorf("secret %q has no string value", secretName)
+	}
+	return []byte(*output.SecretString), nil
+}
+
 // sliceContains checks whether a string slice contains a value.
 func sliceContains(ss []string, s string) bool {
 	for _, v := range ss {

@@ -82,12 +82,30 @@ func DefaultArgoCDReaderFn(base ClusterTestProviderConfig) func() (ClusterCreden
 // credentials that work and do not care where they came from. A comparison
 // cannot use that route: building the expected Secret out of the live Secret
 // compares the Secret with itself, matches every time, and reports a broken
-// connection as fine. So the comparison calls FetchIndependentOfArgoCDSecret,
+// connection as fine. So the comparison calls StoredFactsIndependentOfArgoCDSecret,
 // which refuses with this error instead of falling back.
 var ErrNoIndependentCredentialSource = errors.New("this cluster's credentials are only available from the ArgoCD cluster Secret itself, so there is no independent copy to compare against")
 
-// FetchIndependentOfArgoCDSecret fetches credentials for the named cluster
-// from the secrets BACKEND ONLY, never from the ArgoCD cluster Secret.
+// StoredFactsIndependentOfArgoCDSecret reports what the secrets BACKEND has
+// STORED for the named cluster — never the ArgoCD cluster Secret, and never
+// anything freshly created.
+//
+// # It cannot mint, and that is the point
+//
+// This is the ONLY route the read-only connection comparison takes to a
+// backend, and it goes through StoredConnectionFactsProvider, which is a
+// read-only capability. There is no branch in here that reaches GetCredentials,
+// so there is no branch that reaches the STS token mint in getEKSToken. For an
+// EKS cluster the backend holds metadata, not a credential; asking
+// GetCredentials for it would create a real, usable, short-lived sign-in
+// credential — a thing with a real blast radius — purely so the comparison
+// could throw it away, because the mode policy has already ruled that the
+// credential blob is not comparable. A read-only check must not create
+// credentials as a side effect of checking.
+//
+// A backend that does NOT implement the read-only capability is refused rather
+// than fetched from. Falling back to GetCredentials would reintroduce the mint
+// through the back door.
 //
 // It refuses, with ErrNoIndependentCredentialSource, when:
 //
@@ -95,14 +113,18 @@ var ErrNoIndependentCredentialSource = errors.New("this cluster's credentials ar
 //   - the backend IS the ArgoCD cluster-Secret reader (connection type argocd,
 //     or the in-cluster auto-default), in which case "the backend" and "the
 //     live Secret" are the same place;
+//   - the backend cannot answer read-only (no StoredConnectionFacts method);
 //   - credsSource is anything other than secret-kubeconfig or eks-token —
 //     inline means the pasted kubeconfig only lives in the ArgoCD Secret, and
-//     an empty source means Sharko does not know, and never guesses.
+//     any other value means Sharko does not know, and never guesses.
 //
 // Unlike Fetch there is no healing fallback and no second attempt. A refusal
 // is the right answer: the caller reports a narrower comparison scope rather
 // than a comparison built on a guess.
-func (r *ClusterCredsRouter) FetchIndependentOfArgoCDSecret(lookupKey, credsSource, roleARN string) (*Kubeconfig, error) {
+//
+// roleARN is deliberately NOT a parameter. A role is something you assume in
+// order to mint; there is nothing here to assume it for.
+func (r *ClusterCredsRouter) StoredFactsIndependentOfArgoCDSecret(lookupKey, credsSource string) (*StoredConnectionFacts, error) {
 	if r == nil || r.Backend == nil {
 		return nil, ErrNoIndependentCredentialSource
 	}
@@ -111,10 +133,14 @@ func (r *ClusterCredsRouter) FetchIndependentOfArgoCDSecret(lookupKey, credsSour
 	}
 	switch credsSource {
 	case models.CredsSourceSecretKubeconfig, models.CredsSourceEKSToken:
-		return GetCredentialsWithOptionalRole(r.Backend, lookupKey, roleARN)
 	default:
 		return nil, ErrNoIndependentCredentialSource
 	}
+	reader, ok := r.Backend.(StoredConnectionFactsProvider)
+	if !ok {
+		return nil, ErrNoIndependentCredentialSource
+	}
+	return reader.StoredConnectionFacts(lookupKey)
 }
 
 // Fetch fetches credentials for the named cluster, routing by credsSource

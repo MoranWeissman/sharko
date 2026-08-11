@@ -166,6 +166,11 @@ func variableLengthMasks() []string {
 // comparisonFakeVault hands back a Kubeconfig whose token IS the sentinel, so
 // the sentinel really does flow through the expected-Secret build and the
 // in-memory compare. If the endpoint leaks anything, it has something to leak.
+//
+// It implements StoredConnectionFacts as well as GetCredentials, because the
+// comparison only ever reads through the never-minting StoredConnectionFacts
+// capability — a backend without it is refused. GetCredentials stays here for
+// the other callers a real backend serves.
 type comparisonFakeVault struct {
 	failWith error
 }
@@ -175,6 +180,17 @@ func (v comparisonFakeVault) GetCredentials(name string) (*providers.Kubeconfig,
 		return nil, v.failWith
 	}
 	return &providers.Kubeconfig{
+		Server: "https://" + name + ".invalid",
+		CAData: []byte("not-a-real-ca-just-test-bytes"),
+		Token:  comparisonSentinel,
+	}, nil
+}
+
+func (v comparisonFakeVault) StoredConnectionFacts(name string) (*providers.StoredConnectionFacts, error) {
+	if v.failWith != nil {
+		return nil, v.failWith
+	}
+	return &providers.StoredConnectionFacts{
 		Server: "https://" + name + ".invalid",
 		CAData: []byte("not-a-real-ca-just-test-bytes"),
 		Token:  comparisonSentinel,
@@ -627,6 +643,303 @@ func assertNoSentinel(t *testing.T, where, text string) {
 			t.Errorf("%s contains a mask whose length tracks the secret (%d of %q)", where, len(mask), mask[:1])
 		}
 	}
+}
+
+// --- CC2-4 continued: the sentinel through the REAL EKS metadata path -------
+//
+// The sweep above uses comparisonFakeVault, which is a fake. The product owner
+// pointed out the gap: the EKS path — the one where a real credential gets
+// MINTED — was never exercised, so the sentinel never travelled through it.
+//
+// What follows closes that. eksMetadataAPISentinel sits where real EKS metadata
+// lives (the caData of a structured-EKS payload in a real
+// AWSSecretsManagerProvider, read through the real fake AWS SM client), the
+// comparison runs end to end through the real provider, and then every surface
+// is swept: the response, the generated OpenAPI files, captured logs, the audit
+// entries, the error text, and the scraped /metrics.
+
+// eksMetadataAPISentinel appears nowhere else in this repository. It is
+// deliberately not shaped like a real credential from any provider — a
+// realistic-looking fake in a test file is what somebody later mistakes for a
+// real leaked credential.
+const eksMetadataAPISentinel = "hv2r9k4tzeks-api-sentinel-value-do-not-copy"
+
+// eksAPISentinelForms is every shape a leak of eksMetadataAPISentinel could
+// take: the raw value, four base64 spellings, SHA-256 as hex and as base64, and
+// prefix and suffix fragments.
+func eksAPISentinelForms() []string {
+	sum := sha256.Sum256([]byte(eksMetadataAPISentinel))
+	n := len(eksMetadataAPISentinel)
+	return []string{
+		eksMetadataAPISentinel,
+		base64.StdEncoding.EncodeToString([]byte(eksMetadataAPISentinel)),
+		base64.RawStdEncoding.EncodeToString([]byte(eksMetadataAPISentinel)),
+		base64.URLEncoding.EncodeToString([]byte(eksMetadataAPISentinel)),
+		base64.RawURLEncoding.EncodeToString([]byte(eksMetadataAPISentinel)),
+		hex.EncodeToString(sum[:]),
+		base64.StdEncoding.EncodeToString(sum[:]),
+		eksMetadataAPISentinel[:8],
+		eksMetadataAPISentinel[:16],
+		eksMetadataAPISentinel[n-8:],
+		eksMetadataAPISentinel[n-16:],
+	}
+}
+
+// assertNoEKSAPISentinel fails when text carries the EKS sentinel in any form,
+// its byte length in a labelled shape, or a mask whose length tracks it.
+func assertNoEKSAPISentinel(t *testing.T, where, text string) {
+	t.Helper()
+	n := len(eksMetadataAPISentinel)
+
+	for _, f := range eksAPISentinelForms() {
+		if strings.Contains(text, f) {
+			t.Errorf("%s carries a form of the EKS secret value (%q)", where, f)
+		}
+	}
+	for _, shape := range []string{
+		fmt.Sprintf("%d bytes", n),
+		fmt.Sprintf("%d chars", n),
+		fmt.Sprintf("%d characters", n),
+		fmt.Sprintf(`"length":%d`, n),
+		fmt.Sprintf(`"length": %d`, n),
+		fmt.Sprintf(`"len":%d`, n),
+		fmt.Sprintf(`"len": %d`, n),
+		fmt.Sprintf(`"bytes":%d`, n),
+		fmt.Sprintf(`"size":%d`, n),
+		fmt.Sprintf(`"tokenLength":%d`, n),
+		fmt.Sprintf("length=%d", n),
+		fmt.Sprintf("len=%d", n),
+		fmt.Sprintf("bytes=%d", n),
+	} {
+		if strings.Contains(text, shape) {
+			t.Errorf("%s carries the EKS secret's byte length (%q) — a length narrows a guess", where, shape)
+		}
+	}
+	for _, ch := range []string{"*", "•", "x", "●"} {
+		for _, l := range []int{n - 1, n, n + 1} {
+			if strings.Contains(text, strings.Repeat(ch, l)) {
+				t.Errorf("%s carries a mask whose length tracks the EKS secret (%d of %q)", where, l, ch)
+			}
+		}
+	}
+}
+
+// eksAPIMintCounter counts token mints on the real provider's seam. The
+// comparison must leave it at zero.
+type eksAPIMintCounter struct{ calls int }
+
+func (m *eksAPIMintCounter) fn(_ context.Context, _, _, _ string) (string, error) {
+	m.calls++
+	return "k8s-aws-v1.fake-non-secret-test-token", nil
+}
+
+// eksBackendForAPI builds a REAL AWSSecretsManagerProvider over a fake AWS SM
+// client whose payload is a real structured-EKS descriptor carrying the sentinel
+// in caData, with the token mint replaced by a counter.
+func eksBackendForAPI(t *testing.T, mint *eksAPIMintCounter) providers.ClusterCredentialsProvider {
+	t.Helper()
+	caData := base64.StdEncoding.EncodeToString(
+		[]byte("-----BEGIN CERTIFICATE-----\n" + eksMetadataAPISentinel + "\n-----END CERTIFICATE-----\n"))
+	payload := `{
+		"clusterName": "` + comparisonCluster + `",
+		"host": "https://` + comparisonCluster + `.invalid",
+		"caData": "` + caData + `",
+		"region": "eu-west-1"
+	}`
+	return providers.NewAWSSecretsManagerProviderForTest(payload, mint.fn)
+}
+
+const eksManagedYAML = "clusters:\n- name: " + comparisonCluster + "\n  credsSource: eks-token\n  region: eu-west-1\n  labels:\n    datadog: enabled\n"
+
+// TestConnectionComparison_EKSPath_NeverMintsATokenAndLeaksNothing is the test
+// the product owner asked for: the real EKS metadata path, end to end, with the
+// mint counter at zero and the sentinel absent from every surface.
+func TestConnectionComparison_EKSPath_NeverMintsATokenAndLeaksNothing(t *testing.T) {
+	mint := &eksAPIMintCounter{}
+	backend := eksBackendForAPI(t, mint)
+
+	live := liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		// A live config carrying a token minted at some earlier moment. The
+		// sentinel is in it too, so the in-memory compare really has the value
+		// on both sides and really has something to leak.
+		"config": `{"bearerToken":"` + eksMetadataAPISentinel + `","tlsClientConfig":{}}`,
+	}, nil)
+
+	var logs strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	srv, router, _ := comparisonFixture(t, eksManagedYAML, live, backend)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, comparisonReq(comparisonCluster))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// 1. THE MINT. Zero, not low.
+	if mint.calls != 0 {
+		t.Fatalf(`the read-only comparison minted %d EKS sign-in token(s); it must mint ZERO.
+
+WHY ZERO: a minted EKS token is a real credential that can sign in as Sharko for as long as it lives. The mode policy has already ruled that an EKS credential blob cannot be compared — a fresh token differs from the live one every time with nothing having drifted — so a token minted here is created and thrown away. All of the risk, none of the use.
+
+If this is above zero, the comparison path now reaches GetCredentials somewhere. Find it and take it out; do not raise the expected count.`, mint.calls)
+	}
+
+	// 2. The answer must actually say something, and say the honest thing.
+	var view connectionComparisonView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if view.OwnershipMode != "eks_token" {
+		t.Errorf("ownership_mode = %q, want eks_token", view.OwnershipMode)
+	}
+	if view.Status == "synced" {
+		t.Fatal("an EKS cluster was reported fully in sync; its credential blob was never compared, so that claim cannot be made")
+	}
+	if view.Scope == "full" {
+		t.Error("an EKS cluster must never be reported at full scope")
+	}
+	sawConfigUnchecked := false
+	for _, n := range view.NotChecked {
+		if n.Path == "data.config" {
+			sawConfigUnchecked = true
+		}
+	}
+	if !sawConfigUnchecked {
+		t.Errorf("data.config must be reported as not checked on an EKS cluster, got %+v", view.NotChecked)
+	}
+
+	// 3. The response body.
+	assertNoEKSAPISentinel(t, "response body", w.Body.String())
+
+	// 4. The response's numbers: the byte length must not appear as a value.
+	assertNoEKSAPILengthInJSON(t, "response body", w.Body.Bytes())
+
+	// 5. Everything that was logged while the comparison ran.
+	assertNoEKSAPISentinel(t, "log output", logs.String())
+
+	// 6. The audit entries this endpoint writes.
+	if srv.AuditLog() == nil {
+		t.Fatal("no audit log on the test server, so the audit sweep proves nothing")
+	}
+	entries := srv.AuditLog().List(1000)
+	if len(entries) == 0 {
+		t.Fatal("the comparison wrote no audit entry, so the audit sweep proves nothing")
+	}
+	auditJSON, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("encoding audit entries: %v", err)
+	}
+	assertNoEKSAPISentinel(t, "audit entries", string(auditJSON))
+
+	// 7. The scraped metrics.
+	m := httptest.NewRecorder()
+	router.ServeHTTP(m, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if m.Code == http.StatusOK {
+		assertNoEKSAPISentinel(t, "metrics output", m.Body.String())
+	}
+
+	// 8. The generated OpenAPI files.
+	for _, path := range []string{
+		"../../docs/swagger/swagger.json",
+		"../../docs/swagger/swagger.yaml",
+		"../../docs/swagger/docs.go",
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		assertNoEKSAPISentinel(t, path, string(body))
+	}
+}
+
+// TestConnectionComparison_EKSPath_BackendErrorTextNeverPassedThrough: the
+// backend fails with the sentinel inside its own error message — a provider SDK
+// that puts credential material into its text. Neither the response nor the logs
+// may carry it.
+func TestConnectionComparison_EKSPath_BackendErrorTextNeverPassedThrough(t *testing.T) {
+	backend := providers.NewFailingStoredFactsBackendForTest(
+		fmt.Errorf("the secrets backend blew up while handling %s", eksMetadataAPISentinel))
+
+	live := liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"bearerToken":"` + eksMetadataAPISentinel + `"}`,
+	}, nil)
+
+	var logs strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	_, router, _ := comparisonFixture(t, eksManagedYAML, live, backend)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, comparisonReq(comparisonCluster))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var view connectionComparisonView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if view.Status != "check_failed" {
+		t.Fatalf("status = %q, want check_failed — a backend that could not be read is not proof of anything", view.Status)
+	}
+	if strings.Contains(w.Body.String(), "blew up") {
+		t.Error("the backend's own error text was passed through to the caller")
+	}
+	if strings.Contains(logs.String(), "blew up") {
+		t.Error("the backend's own error text was logged; a provider error can carry credential material in its message")
+	}
+	assertNoEKSAPISentinel(t, "response body", w.Body.String())
+	assertNoEKSAPISentinel(t, "log output", logs.String())
+}
+
+// assertNoEKSAPILengthInJSON walks a decoded response and fails when the EKS
+// secret's byte length appears as an actual value. Same shape and same
+// checked_field_count exemption as assertNoSentinelLengthInJSON above, for the
+// same reasons.
+func assertNoEKSAPILengthInJSON(t *testing.T, where string, body []byte) {
+	t.Helper()
+	n := float64(len(eksMetadataAPISentinel))
+	nStr := strconv.Itoa(len(eksMetadataAPISentinel))
+
+	var walk func(path string, v interface{})
+	walk = func(path string, v interface{}) {
+		switch val := v.(type) {
+		case map[string]interface{}:
+			for k, inner := range val {
+				if k == "checked_field_count" {
+					continue
+				}
+				walk(path+"."+k, inner)
+			}
+		case []interface{}:
+			for i, inner := range val {
+				walk(fmt.Sprintf("%s[%d]", path, i), inner)
+			}
+		case float64:
+			if val == n {
+				t.Errorf("%s: %s is the EKS secret's byte length as a number", where, path)
+			}
+		case string:
+			if val == nStr {
+				t.Errorf("%s: %s is the EKS secret's byte length as a string", where, path)
+			}
+		}
+	}
+
+	var decoded interface{}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("%s: decoding: %v", where, err)
+	}
+	walk("", decoded)
 }
 
 // --- the endpoint's own behaviour -----------------------------------------
