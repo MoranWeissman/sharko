@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
@@ -170,16 +171,16 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 		} else {
 			slog.Error("remediation: terminate operation failed", "app", app.Name, "error", err)
 			r.deps.AuditFn(audit.Entry{
-				Level:    "error",
-				Event:    "argocd_auto_remediation_failed",
-				User:     "sharko",
-				Action:   "terminate_operation",
-				Resource: "app:" + app.Name,
-				Source:   "remediation",
-				Result:   "failure",
-				Error:    err.Error(),
-				Cause:    err,
-				Detail:   fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
+				Level:             "error",
+				Event:             "argocd_auto_remediation_failed",
+				User:              "sharko",
+				Action:            "terminate_operation",
+				Resource:          "app:" + app.Name,
+				Source:            "remediation",
+				Result:            "failure",
+				Error:             err.Error(),
+				CredentialFailure: credsafe.Is(err),
+				Detail:            fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
 			})
 			return
 		}
@@ -188,16 +189,16 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 	if err := r.deps.ArgoClient.SyncApplication(ctx, app.Name); err != nil {
 		slog.Error("remediation: re-sync failed", "app", app.Name, "error", err)
 		r.deps.AuditFn(audit.Entry{
-			Level:    "error",
-			Event:    "argocd_auto_remediation_failed",
-			User:     "sharko",
-			Action:   "sync_application",
-			Resource: "app:" + app.Name,
-			Source:   "remediation",
-			Result:   "failure",
-			Error:    err.Error(),
-			Cause:    err,
-			Detail:   fmt.Sprintf("terminated stale sync for %s but re-sync failed after PR #%d merged", app.Name, pr.PRID),
+			Level:             "error",
+			Event:             "argocd_auto_remediation_failed",
+			User:              "sharko",
+			Action:            "sync_application",
+			Resource:          "app:" + app.Name,
+			Source:            "remediation",
+			Result:            "failure",
+			Error:             err.Error(),
+			CredentialFailure: credsafe.Is(err),
+			Detail:            fmt.Sprintf("terminated stale sync for %s but re-sync failed after PR #%d merged", app.Name, pr.PRID),
 		})
 		return
 	}

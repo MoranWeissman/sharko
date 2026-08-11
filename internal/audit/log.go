@@ -30,25 +30,24 @@ type Entry struct {
 	AttributionMode AttributionMode `json:"attribution_mode,omitempty"` // how the resulting Git commit was attributed
 	Tier            Tier            `json:"tier,omitempty"`             // attribution tier of the endpoint
 
-	// Cause carries the REAL error behind Error / Detail, alive and typed,
-	// only as far as Log.Add. It is never serialized and it is never stored:
-	// Add reads it, decides whether this entry is about a credentials-backend
-	// failure, and then CLEARS it before the entry goes into the ring or out
-	// to an SSE subscriber.
+	// CredentialFailure says "this entry is about a credentials-backend
+	// failure". It is a DECISION, not an error — a plain bool that never
+	// serializes and never gets stored.
 	//
-	// WHY IT EXISTS AT ALL. Error and Detail are plain strings, and every
-	// caller builds them with err.Error(). Once an error is a string its type
-	// is gone, so errors.Is and errors.As can no longer see through it — and
-	// the classification MUST be by type, because matching on words is how this
-	// bug class comes back the day a backend rephrases its errors. Cause is how
-	// the type survives the trip from the call site to the one place that can
-	// act on it.
+	// WHY A FLAG AND NOT THE ERROR ITSELF. The classification must be by type,
+	// because matching on words is how this bug class comes back the day a
+	// backend rephrases its errors. So somebody has to run credsafe.Is while
+	// the typed error is still alive. That somebody is the CALL SITE, at the
+	// credential boundary, where the error is right there — and what travels to
+	// Add is the answer, one bool. Carrying the error itself this far would put
+	// a live credentials error on a struct that gets logged, reflected over and
+	// stored, and json:"-" hides such a field from exactly one reader.
 	//
-	// WHY IT IS CLEARED. A typed cause left hanging on a stored entry is a leak
-	// waiting for the next person who logs the entry with %+v or reflects over
-	// it. json:"-" hides it from one reader, not from all of them.
-	// TestAudit_StoredEntryKeepsNoTypedCause pins that it is nil after Add.
-	Cause error `json:"-"`
+	// WHY IT IS CLEARED. Add sets it back to false before the entry goes into
+	// the ring or out to an SSE subscriber, so a stored entry carries no hint
+	// about what it used to be. TestAdd_StoredCredentialEntryHasAllFourSafeProperties
+	// pins all of that.
+	CredentialFailure bool `json:"-"`
 }
 
 // Fields contains semantic enrichment that handlers attach to the in-flight audit entry.
