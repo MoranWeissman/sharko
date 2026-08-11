@@ -8,6 +8,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -39,9 +40,13 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// PUBLIC BOUNDARY. A credentials-backend error's text never reaches the
+	// response body; credsafe.Sentence swaps in the fixed sentence for that
+	// case and leaves any other error's text alone.
 	creds, err := s.fetchClusterCredentials(r.Context(), name)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "fetching cluster credentials: "+err.Error())
+		slog.Error("[cluster-secrets] listing failed", "cluster", name, "step", "fetch-credentials")
+		writeError(w, http.StatusBadGateway, "fetching cluster credentials: "+credsafe.Sentence(err))
 		return
 	}
 

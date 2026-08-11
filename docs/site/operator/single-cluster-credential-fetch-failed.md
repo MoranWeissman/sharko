@@ -2,18 +2,22 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The audit
-> `action=get_credentials` with `result=failure` and the error log
-> `"[clusterreconciler] vault GetCredentials failed — skipping cluster
-> (others still reconcile)"` are verified verbatim against
-> `internal/clusterreconciler/reconciler.go:555-572` as shipped. The
-> per-cluster error-isolation contract (one cluster's vault failure
-> does NOT block reconciliation of the others — design section 10)
-> is implemented at the same call site by the `return` after the audit
-> entry, not `continue` or panic. Re-verify before changing the
-> reconciler's per-cluster error-isolation contract or the audit-entry
-> shape — both are anchors here and in
-> [`cluster-reconciler.md`](cluster-reconciler.md).
+> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
+> after the provider-error hotfix. The per-cluster error-isolation
+> contract is unchanged and re-read in
+> `internal/clusterreconciler/reconciler.go`: one cluster's credential
+> failure returns from the per-cluster path and the tick continues, and
+> the audit entry is still `action=get_credentials` / `result=failure`.
+> What changed: neither the log line nor the audit `error` field carries
+> the credentials backend's own error text any more. The log line now
+> carries `cluster`, `cred_key` and `step=get-credentials`; the audit
+> `error` field carries the fixed sentence from `internal/credsafe`, and
+> the entry is sanitized at `audit.Log.Add` so nothing unsafe is ever
+> stored (`GET /audit` is open to the viewer role). Verified by
+> `internal/clusterreconciler/cred_error_sentinel_test.go` and
+> `internal/audit/sanitize_test.go`. Re-verify before changing the
+> error-isolation contract, the audit-entry shape, or the credsafe
+> boundary.
 
 One specific cluster's credential fetch from the configured secrets
 provider (AWS Secrets Manager, Kubernetes Secrets, or Vault) is failing
@@ -47,7 +51,7 @@ What an operator sees when this fires:
 - **Per-tick error log** from the reconciler, named per cluster:
 
   ```
-  {"time":"...","level":"ERROR","msg":"[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)","cluster":"prod-eu","cred_key":"prod-eu","error":"<provider-specific error>"}
+  {"time":"...","level":"ERROR","msg":"[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)","cluster":"prod-eu","cred_key":"prod-eu","step":"get-credentials"}
   ```
 
   The `cluster` and `cred_key` fields identify which cluster failed.
@@ -55,23 +59,43 @@ What an operator sees when this fires:
   `secret_path: <override>`, `cred_key` is the override path; otherwise
   it equals the cluster name.
 
-- **Per-tick audit entry** correlated by `request_id` (synthetic
-  `recon-<ts>` ID per tick):
+  **There is no `error` field on this line any anymore, and there is no
+  provider error text anywhere in Sharko for you to read.** A
+  credentials backend's error text can carry credential material, so it
+  stays inside the process. What you work from is: **request id,
+  cluster, region where relevant, and step** — plus the provider's own
+  answer when you probe it directly in Diagnosis step 3, which is the
+  better source anyway.
+
+- **Per-tick audit entry**, and the `error` field is Sharko's own fixed
+  sentence:
 
   ```json
   {
     "time": "...",
     "level": "error",
-    "event": "cluster_secret_reconcile",
+    "event": "cluster_secret_create",
     "user": "sharko",
     "action": "get_credentials",
     "resource": "cluster:prod-eu",
     "source": "reconciler",
     "result": "failure",
-    "error": "<provider-specific error>",
+    "error": "Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed.",
     "request_id": "recon-..."
   }
   ```
+
+  This matters more than it looks: `GET /api/v1/audit` is open to the
+  **viewer** role — the lowest one there is — and the SSE stream at
+  `GET /api/v1/audit/stream` sends the same entries. So the audit log is
+  a read-by-anyone surface, and a credentials backend's error text does
+  not belong in it. The entry is made safe before it is STORED, not on
+  the way out, so nothing unsafe is sitting in memory either.
+
+  What the entry still gives you, and what to do with it: `resource`
+  names the cluster, `action=get_credentials` names the failing stage,
+  `result=failure` is what to filter on, and `request_id` correlates it
+  with the log line above.
 
 - **Other clusters reconcile successfully in the same tick**. Query
   the audit ring for the same `request_id`:
@@ -88,8 +112,10 @@ What an operator sees when this fires:
   shows `action=get_credentials` with `result=failure`.
 
 - **Dashboard** displays the affected cluster with status `Stale` or
-  `Reconcile failed` and (if the column is surfaced) a `last_error`
-  tooltip showing the provider-specific error string. The fleet's
+  `Reconcile failed` and a tooltip reading "Sharko couldn't get
+  credentials for this cluster. Check that Sharko can reach that
+  cluster, then click Refresh." — Sharko's own sentence, never the
+  provider's error text. The fleet's
   overall health stays Green because the other clusters are fine.
 
 - **ArgoCD-side symptom (downstream)**: if the affected cluster had
@@ -117,9 +143,11 @@ If the audit log shows `action=get_credentials` with `result=failure`
 
 ## Diagnosis
 
-Three checks. Step 1 confirms the failure is per-cluster (not
-fleet-wide). Step 2 identifies the failure shape from the error
-string. Step 3 inspects the provider-side state.
+Three checks, built on what Sharko actually gives you: **request id,
+cluster, `cred_key`, and step**. Step 1 confirms the failure is
+per-cluster and not fleet-wide. Step 2 reads the `step` field to pick a
+lane. Step 3 probes the provider directly, which is where you get the
+provider's own reason first-hand.
 
 ### 1. Confirm the failure is per-cluster, not fleet-wide
 
@@ -142,24 +170,52 @@ You want to see a mix: most rows `INFO`, one row `ERROR` for the
 affected cluster. If all rows are `ERROR`, jump to the fleet-wide
 runbook above.
 
-### 2. Identify the failure shape from the error string
+### 2. Work out WHICH provider step failed — from `step`, then by probing
 
-The error wrapped in the audit entry's `error` field tells you which
-provider step failed. Common shapes:
+This step used to be "read the error string and match it against a table
+of substrings". That table is gone, because the error string is gone: a
+credentials backend's error text can carry credential material, so
+Sharko does not keep it. Here is what replaces it, and it is more
+reliable than substring matching ever was.
 
-| Error substring | Provider | Root cause lane |
+**First, the `step` field.** Every credential-path failure log line
+carries one, and it says which stage gave up:
+
+```sh
+CLUSTER=prod-eu
+kubectl -n "$SHARKO_NS" logs -l app=sharko --since=15m \
+  | jq -c --arg c "$CLUSTER" 'select(.cluster == $c and .step != null)' \
+  | jq -r '"\(.time)  \(.step)  \(.msg)"'
+```
+
+| `step` | What it means | Where to go |
 |---|---|---|
-| `not found in AWS Secrets Manager` | AWS-SM | path mismatch — [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) |
-| `presigning GetCallerIdentity` | AWS-SM (EKS) | IRSA / role chain — [`eks-token-generation-failed.md`](eks-token-generation-failed.md) |
-| `AccessDenied` on `GetSecretValue` | AWS-SM | IAM policy missing `secretsmanager:GetSecretValue` on the cluster's secret ARN |
-| `secret not found in namespace` | K8s Secrets | wrong namespace or wrong name — [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) |
-| `Forbidden` on `secrets/<path>` | Vault (future) | Vault policy missing read on the path |
-| `connection refused` / `timeout` | Any | sub-case of [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md) — but only for THIS cluster's path, often a network policy carve-out |
-| `cannot parse kubeconfig` / `invalid kubeconfig` | AWS-SM (raw kubeconfig) | upstream cluster operator stored a malformed kubeconfig at the cluster's secret path |
+| `get-credentials` | The reconciler's fetch for this cluster failed. Which backend, and why, is what the probe below answers. | continue here |
+| `all-lookups` | AWS-SM tried both secret paths and found nothing. The same line carries `tried` with the exact paths. | [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) |
+| `fetch` | The Kubernetes-Secrets backend could not read the Secret. The line carries the `namespace`. | [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) |
+| `sts` / `mint-eks-token` | The secret was found; minting the EKS sign-in token failed. | [`eks-token-generation-failed.md`](eks-token-generation-failed.md) |
+| `load-aws-config` / `presign-get-caller-identity` | The AWS credential chain itself. Pairs with `sts` above on the same request id. | [`eks-token-generation-failed.md`](eks-token-generation-failed.md) |
+| `find-cluster-secret` | The ArgoCD cluster-Secret reader could not find or read the Secret. | continue here; probe the argocd namespace |
 
-If the error shape matches a more-specific runbook above, jump
-there for the mitigation. This runbook continues with the
-generic per-cluster lane.
+**Then probe the provider directly** (Diagnosis step 3), which returns
+the provider's OWN current error to your terminal —
+`ResourceNotFoundException`, `AccessDeniedException`, `Forbidden`, a
+connection timeout — in AWS's or Kubernetes' own words. That is strictly
+better than reading a stale copy Sharko relayed: it is current, it is
+first-hand, and it is the same identity Sharko uses because you run it
+from the Sharko pod.
+
+The root-cause lanes are unchanged, they are just reached by `step` plus
+a probe now instead of by substring:
+
+| What the probe shows | Provider | Root cause lane |
+|---|---|---|
+| `ResourceNotFoundException` | AWS-SM | path mismatch — [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) |
+| `AccessDeniedException` on `GetSecretValue` | AWS-SM | IAM policy missing `secretsmanager:GetSecretValue` on the cluster's secret ARN |
+| `NotFound` on the Secret | K8s Secrets | wrong namespace or wrong name — [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) |
+| `Forbidden` on `secrets/<path>` | Vault (future) | Vault policy missing read on the path |
+| connection refused / timeout | Any | sub-case of [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md) — but only for THIS cluster's path, often a network policy carve-out |
+| the payload is there but malformed | AWS-SM (raw kubeconfig) | the upstream cluster operator stored a malformed kubeconfig at the cluster's secret path; Diagnosis step 3's last probe checks this |
 
 ### 3. Inspect the provider-side state for this cluster
 
@@ -455,8 +511,12 @@ email the maintainer: `moran.weissman@gmail.com`. Include:
 
 - The runbook URL you used (this page)
 - The cluster name(s) affected
-- The output of Diagnosis step 2 (the error string)
-- The output of Diagnosis step 3 (provider-side state)
+- The `step` value(s), request id and `cred_key` from Diagnosis step 2
+  (Sharko does not log the provider's error text, so these are what it
+  has)
+- The output of Diagnosis step 3 — the provider's OWN error from the
+  direct probe. This is the detail that used to be pasted out of the log
+  line, and it is better: first-hand and current.
 - The Sharko version (`sharko version` or the Helm chart version)
 - 5 minutes of relevant logs filtered by `request_id` per the
   [correlation pattern](../developer-guide/logging.md#correlation-ids)

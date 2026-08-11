@@ -13,6 +13,15 @@
 > covers the **fleet-wide** failure where the entire provider is
 > unreachable. Re-verify when provider constructors or the
 > `health.Check` interface change.
+>
+> **Updated 2026-08-11 (provider-error hotfix,
+> `fix/provider-error-leaks`):** no credentials-backend error text
+> reaches a log line, an API response, an audit entry or a Kubernetes
+> event any more — it can carry credential material. The symptom
+> examples and diagnosis below were rewritten around what Sharko
+> actually reports: **request id, cluster, region, and step**. The
+> provider's own reason still comes from probing the provider directly
+> from the pod, which every diagnosis step here already did.
 
 The active secrets provider — AWS Secrets Manager, Kubernetes Secrets,
 or a future Vault backend — is completely unreachable. Every cluster
@@ -42,44 +51,53 @@ details differ; the runbook calls them out per section.
 What an operator sees when this fires:
 
 - **Every `POST /api/v1/clusters` returns 502** because cluster
-  registration cannot fetch credentials. The response body cites the
-  provider:
+  registration cannot fetch credentials. The response body carries
+  Sharko's own fixed sentence, never the provider's error text:
 
   ```
   HTTP/1.1 502 Bad Gateway
-  {"error":"failed to fetch cluster credentials: <provider-specific error>"}
+  {"error":"failed to fetch cluster credentials: Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed."}
   ```
+
+  **Every credentials-backend failure reads the same on this surface —
+  deliberately.** A sentence that varied with the cause would be a
+  channel back to the cause. To tell an outage from a permissions
+  problem from a bad path, use the `step` field on the log line (below)
+  and the direct provider probe in Diagnosis.
 
 - **Health probe response surfaces the failure**:
 
   ```sh
   curl -sS http://sharko/api/v1/health | jq '.providers'
+  curl -sS -H "Authorization: Bearer ${SHARKO_TOKEN}" \
+    http://sharko/api/v1/providers | jq '{type, region, status, status_error}'
   ```
 
-  Expected on healthy: `{"aws-sm": {"reachable": true, ...}}` or
-  equivalent per provider. Bypass signal: `reachable: false` with a
-  specific `error` value (e.g. `"InvalidUserID.NotFound"`,
-  `"connection timeout"`, `"403 Forbidden"`).
+  On healthy: `status: "connected"`. When the provider is unreachable:
+  `status: "error"` and `status_error` carrying the same fixed sentence.
+  The value of this probe is the `status` flip and the `type`/`region`
+  it reports — not the message.
 
-- **Sharko logs show a burst of provider-fetch failures**, one per
-  fetch attempt:
+- **Sharko logs show a burst of provider failures**, one per attempt,
+  and none of them carries the provider's error value:
 
   ```
-  {"time":"...","level":"ERROR","msg":"secrets provider fetch failed","request_id":"req-...","provider":"aws-sm","error":"..."}
+  {"time":"...","level":"ERROR","msg":"[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)","cluster":"...","cred_key":"...","step":"get-credentials"}
+  {"time":"...","level":"ERROR","msg":"[provider] GetCredentials failed","cluster":"...","step":"all-lookups","tried":"clusters/..., ..."}
+  {"time":"...","level":"WARN","msg":"[provider] HealthCheck failed","type":"aws-sm","region":"...","prefix":"...","error":"Sharko could not read this cluster's sign-in details from the configured credentials source. ..."}
   ```
 
-  For AWS-SM specifically:
-  ```
-  {"time":"...","level":"ERROR","msg":"GetSecretValue failed","cluster":"...","error":"..."}
-  ```
-
-  For EKS STS (AWS auth chain) — this one carries no error text on
-  purpose, because an AWS SDK error can carry credential material in
-  its message; `step` is `load-aws-config` or
-  `presign-get-caller-identity`:
+  For the EKS STS chain — `step` is `load-aws-config` or
+  `presign-get-caller-identity`, and that field is what tells the two
+  apart:
   ```
   {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","cluster":"...","region":"...","step":"..."}
   ```
+
+  **The fleet-wide tell is the SHAPE, not the message**: the same `step`
+  repeating across every cluster in the same tick. One cluster failing
+  while others succeed is the P1 case —
+  [`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md).
 
 - **Reconciler tick failures** — the reconciler attempts to mint
   per-cluster kubeconfigs for state validation and the mint fails:
@@ -247,25 +265,46 @@ If TCP succeeds but the API call fails, the issue is auth (jump to
 Mitigation step 2). If TCP fails, the issue is network (jump to
 Mitigation step 3).
 
-### 3. Audit-log correlation
+### 3. Log correlation — count the shape, not the message
 
 ```sh
 SHARKO_NS=<sharko-ns>
 kubectl -n "$SHARKO_NS" logs -l app=sharko --since=30m \
-  | jq -c 'select(.msg | test("provider|GetSecretValue|EKS token|secrets fetch"; "i"))' \
-  | jq -c '{time, level, msg, provider, cluster, error}' \
+  | jq -c 'select(.step != null)' \
+  | jq -r '"\(.time)\t\(.level)\t\(.step)\t\(.cluster // "-")\t\(.msg)"' \
   | head -30
 ```
 
-Patterns:
+And the fleet-wide question in one line — how many DISTINCT clusters are
+failing at the same step:
 
-- Burst starts at a specific timestamp → cross-reference with provider
-  status page (AWS Service Health Dashboard) or recent IAM changes
-  (CloudTrail).
-- All failures have `error: "Unable to locate credentials"` → IRSA
-  isn't resolving (Pod missing AWS env injection).
-- All failures have `error: "AccessDenied"` → IAM policy was tightened
-  out of band.
+```sh
+kubectl -n "$SHARKO_NS" logs -l app=sharko --since=30m \
+  | jq -r 'select(.step != null and .level == "ERROR") | "\(.step)\t\(.cluster // "-")"' \
+  | sort -u | awk -F'\t' '{c[$1]++} END {for (s in c) print c[s], "cluster(s) failing at step", s}'
+```
+
+Patterns to read off that:
+
+- **Every cluster failing at the same `step`** → fleet-wide, this
+  runbook. **One or a few** → the P1 case,
+  [`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md).
+- **`step=load-aws-config` across the board** → the pod has no AWS
+  identity at all. IRSA is not resolving. Confirm with Diagnosis step 2's
+  `sts get-caller-identity`, which prints AWS's own answer (`Unable to
+  locate credentials`) directly to you.
+- **`step=presign-get-caller-identity` or `step=all-lookups` across the
+  board** → the identity exists but is being refused, or the path
+  configuration is wrong fleet-wide. Diagnosis step 2's `list-secrets`
+  probe returns AWS's own `AccessDenied` if it is IAM.
+- **Burst starts at a specific timestamp** → cross-reference the AWS
+  Service Health Dashboard or recent IAM changes (CloudTrail
+  `PutRolePolicy`).
+
+**Sharko does not log the provider's error text**, so do not grep for
+`AccessDenied` or `Unable to locate credentials` in Sharko's logs — they
+are not there. Those strings come from Diagnosis step 2's direct probes,
+where AWS tells you itself.
 
 ---
 

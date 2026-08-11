@@ -29,6 +29,26 @@ type Entry struct {
 	Detail          string          `json:"detail,omitempty"`           // semantic detail set by handlers via Enrich
 	AttributionMode AttributionMode `json:"attribution_mode,omitempty"` // how the resulting Git commit was attributed
 	Tier            Tier            `json:"tier,omitempty"`             // attribution tier of the endpoint
+
+	// Cause carries the REAL error behind Error / Detail, alive and typed,
+	// only as far as Log.Add. It is never serialized and it is never stored:
+	// Add reads it, decides whether this entry is about a credentials-backend
+	// failure, and then CLEARS it before the entry goes into the ring or out
+	// to an SSE subscriber.
+	//
+	// WHY IT EXISTS AT ALL. Error and Detail are plain strings, and every
+	// caller builds them with err.Error(). Once an error is a string its type
+	// is gone, so errors.Is and errors.As can no longer see through it — and
+	// the classification MUST be by type, because matching on words is how this
+	// bug class comes back the day a backend rephrases its errors. Cause is how
+	// the type survives the trip from the call site to the one place that can
+	// act on it.
+	//
+	// WHY IT IS CLEARED. A typed cause left hanging on a stored entry is a leak
+	// waiting for the next person who logs the entry with %+v or reflects over
+	// it. json:"-" hides it from one reader, not from all of them.
+	// TestAudit_StoredEntryKeepsNoTypedCause pins that it is nil after Add.
+	Cause error `json:"-"`
 }
 
 // Fields contains semantic enrichment that handlers attach to the in-flight audit entry.
@@ -124,6 +144,15 @@ func NewLog(maxSize int) *Log {
 // Add prepends entry (newest first) and trims to maxSize.
 // A new UUID and current timestamp are assigned automatically when the entry
 // does not already carry them.
+//
+// THE SANITIZE STEP IS HERE ON PURPOSE, AND IT CANNOT BE BYPASSED.
+// This function does two things with the value: it appends it to the ring
+// (which List and ListFiltered read) and it fans the same value out to every
+// SSE subscriber (which GET /audit/stream marshals raw). Sanitizing before
+// both means one fix covers the table and the live stream — and a future
+// reader added downstream inherits it for free, because the unsafe text was
+// never stored in the first place. A fix at either read side would have missed
+// the other.
 func (l *Log) Add(entry Entry) {
 	if entry.ID == "" {
 		entry.ID = uuid.NewString()
@@ -131,6 +160,7 @@ func (l *Log) Add(entry Entry) {
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
+	entry = sanitize(entry)
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

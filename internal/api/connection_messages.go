@@ -16,6 +16,7 @@ package api
 // the raw error text.
 
 import (
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
@@ -35,6 +36,14 @@ func connectionErrorFields(kind string, err error) map[string]interface{} {
 	msg := plainConnectionError(kind, err)
 	body := map[string]interface{}{"status": "error", "message": msg}
 	_, cause, hint, code := shapeError(err, msg)
+	// PUBLIC BOUNDARY. "cause" is the one field here that can carry an
+	// underlying error's own text (classifyBoundaryError returns err.Error()
+	// for its service.ErrValidation and Kubernetes StatusError branches). A
+	// credentials-backend failure gets the fixed sentence instead; every other
+	// kind of cause is untouched, so a git or ArgoCD test keeps its diagnosis.
+	if cause != "" && credsafe.Is(err) {
+		cause = credsafe.Message
+	}
 	// Review findings r1, M9: shapeError's hint for ERR_AUTH comes from
 	// verify.Hint, which is written for cluster-registration credentials
 	// ("regenerate the kubeconfig/token") — correct for that flow, wrong for

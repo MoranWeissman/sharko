@@ -58,6 +58,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
@@ -613,6 +614,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 				Source:    "reconciler",
 				Result:    "failure",
 				Error:     rdErr.Err.Error(),
+				Cause:     rdErr.Err,
 				RequestID: logging.RequestID(ctx),
 			})
 			// M5a — see the git-read-failure branch below for the rationale.
@@ -630,6 +632,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 				Source:    "reconciler",
 				Result:    "failure",
 				Error:     rdErr.Err.Error(),
+				Cause:     rdErr.Err,
 				RequestID: logging.RequestID(ctx),
 			})
 			// M5a: this pass never reaches the per-cluster work below, so
@@ -869,6 +872,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
+			Cause:     err,
 			RequestID: logging.RequestID(ctx),
 		})
 		// P2-D: this abort was previously invisible to stats.Errors, which
@@ -1382,6 +1386,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
+			Cause:     err,
 			RequestID: logging.RequestID(ctx),
 		})
 		// M1: this tick's write never landed, so the fight-check baseline
@@ -1488,6 +1493,7 @@ func (r *Reconciler) syncConnectivityCheckLabel(ctx context.Context, name string
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
+			Cause:     err,
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(name, OutcomeFailed,
@@ -1582,6 +1588,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
+			Cause:     err,
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(name, OutcomeFailed,
@@ -1933,6 +1940,7 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     getErr.Error(),
+			Cause:     getErr,
 			RequestID: logging.RequestID(ctx),
 		})
 		return
@@ -1988,6 +1996,7 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
+			Cause:     err,
 			RequestID: logging.RequestID(ctx),
 		})
 		return
@@ -2056,6 +2065,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     getErr.Error(),
+			Cause:     getErr,
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
@@ -2094,22 +2104,39 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	creds, vaultErr := providers.GetCredentialsWithOptionalRole(r.deps.Vault, credKey, entry.RoleARN)
 	if vaultErr != nil {
 		stats.Errors++
+		// The credentials error's own value is not logged. A credentials
+		// backend's error text can carry credential material, and this is the
+		// line that used to write it into the pod log verbatim. The cluster,
+		// the lookup key (Git/config metadata) and the step are what a person
+		// needs to find this.
 		log.Error("[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)",
-			"cluster", entry.Name, "cred_key", credKey, "error", vaultErr,
+			"cluster", entry.Name, "cred_key", credKey, "step", "get-credentials",
 		)
 		r.audit(audit.Entry{
-			Level:     "error",
-			Event:     "cluster_secret_create",
-			User:      "sharko",
-			Action:    "get_credentials",
-			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
-			Source:    "reconciler",
-			Result:    "failure",
-			Error:     vaultErr.Error(),
+			Level:    "error",
+			Event:    "cluster_secret_create",
+			User:     "sharko",
+			Action:   "get_credentials",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "failure",
+			// Error carries Sharko's own sentence and Cause carries the real,
+			// typed error only as far as audit.Add — which recognises a
+			// credentials-backend failure by TYPE, swaps in the fixed safe
+			// sentence, and clears Cause before the entry is stored or streamed.
+			// Passing the sentence here as well as the cause means the entry is
+			// safe even if Add's classification is ever wrong.
+			Error:     credsafe.Message,
+			Cause:     vaultErr,
 			RequestID: logging.RequestID(ctx),
 		})
+		// The reconcile record's message is read by the API (it becomes
+		// LastReconcile.Message and the managed-secrets rows), so it gets
+		// Sharko's own words too. The fixed prefix is unchanged, so
+		// FailureSentence's "credentials" branch still classifies it and
+		// classifyFailureReason still buckets the metric the same way.
 		r.recordReconcile(entry.Name, OutcomeFailed,
-			"Sharko couldn't fetch this cluster's credentials from the secrets backend: "+vaultErr.Error(), nil)
+			"Sharko couldn't fetch this cluster's credentials from the secrets backend. "+credsafe.Message, nil)
 		return
 	}
 
@@ -2206,6 +2233,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     buildErr.Error(),
+			Cause:     buildErr,
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
@@ -2245,6 +2273,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     createErr.Error(),
+			Cause:     createErr,
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
@@ -2315,6 +2344,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 			Source:    "reconciler",
 			Result:    "failure",
 			Error:     err.Error(),
+			Cause:     err,
 			RequestID: logging.RequestID(ctx),
 		})
 		// L10: without this, an orphan Sharko repeatedly fails to delete

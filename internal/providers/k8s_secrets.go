@@ -10,6 +10,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // KubernetesSecretProvider reads kubeconfigs from Kubernetes Secrets.
@@ -168,7 +170,14 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 // GetCredentials fetches credentials for the named cluster. It tries the exact
 // secret name first; if not found it searches for secrets whose name contains
 // the cluster name as a substring and returns them as suggestions.
+// credsafe.Mark is applied at the boundary — see the ArgoCDProvider's
+// GetCredentials for why every return goes through one place.
 func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	kc, err := p.getCredentials(clusterName)
+	return kc, credsafe.Mark(err)
+}
+
+func (p *KubernetesSecretProvider) getCredentials(clusterName string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called (k8s)", "cluster", clusterName)
 
 	// Step 1: Try exact name.
@@ -185,7 +194,7 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 			clusterName, p.namespace, strings.Join(suggestions, ", "))
 	}
 
-	slog.Error("[provider] GetCredentials failed (k8s)", "cluster", clusterName, "step", "fetch", "error", "secret not found in namespace "+p.namespace)
+	slog.Error("[provider] GetCredentials failed (k8s)", "cluster", clusterName, "namespace", p.namespace, "step", "fetch")
 	return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. "+
 		"Set --secret-path to specify the exact secret name", clusterName, p.namespace)
 }
@@ -202,7 +211,7 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 func (p *KubernetesSecretProvider) StoredConnectionFacts(lookupKey string) (*StoredConnectionFacts, error) {
 	kc, err := p.fetchK8sSecret(lookupKey)
 	if err != nil {
-		return nil, err
+		return nil, credsafe.Mark(err)
 	}
 	return &StoredConnectionFacts{
 		Server:   kc.Server,
@@ -247,7 +256,7 @@ func (p *KubernetesSecretProvider) HealthCheck(ctx context.Context) error {
 		Limit:         limit,
 	})
 	if err != nil {
-		return fmt.Errorf("Kubernetes Secrets health check failed: %w", err)
+		return credsafe.Mark(fmt.Errorf("Kubernetes Secrets health check failed: %w", err))
 	}
 	return nil
 }

@@ -2,16 +2,22 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. Both error
-> emission sites are verified against
-> `internal/providers/aws_auth.go`: the first at line 40 wraps
-> `awsconfig.LoadDefaultConfig` failure with `slog.Error("[auth] EKS
-> token generation failed", ...)`; the second at line 72 wraps
-> `presignClient.PresignGetCallerIdentity` failure with the same
-> error msg shape. Both are returned wrapped via `fmt.Errorf` and
-> bubble up to the API layer through the AWS-SM provider's
-> `buildFromStructured` at `aws_sm.go:238-242`. Re-verify when
-> `getEKSToken`'s error wrapping or the STS presign flow changes.
+> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
+> after the provider-error hotfix. Both emission sites re-read in
+> `internal/providers/aws_auth.go`: the config-load failure logs
+> `step=load-aws-config` and the presign failure logs
+> `step=presign-get-caller-identity`, and NEITHER logs the AWS SDK
+> error's value. `internal/providers/aws_sm.go` logs `step=sts` on a
+> mint failure with no error value and no `tokenPrefix`.
+> `internal/providers/argocd_provider.go` returns
+> `ArgoCDProviderError{Code: argocd_provider_iam_required}` whose
+> `Detail` is Sharko's own sentence — the mint error is kept on the
+> unexported `Cause`, which never serializes. The API response carries
+> the safe sentence from `internal/credsafe`. Verified by
+> `TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix`,
+> `TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength` and
+> `internal/api/cred_error_sentinel_test.go`. Re-verify when the
+> token-mint flow or the credsafe boundary changes.
 
 A specific EKS cluster's credential fetch failed at the AWS STS
 token-mint step. The cluster's AWS-SM secret is the structured JSON
@@ -43,50 +49,78 @@ mint call.
 What an operator sees when this fires:
 
 - **API: `POST /api/v1/clusters/{name}/test`** for the affected EKS
-  cluster returns 502 / 500 with the wrapped error:
+  cluster returns a result whose reason is Sharko's own fixed
+  sentence. The AWS SDK's own text is NOT in the response:
 
   ```
-  HTTP/1.1 502 Bad Gateway
-  {"error":"generating EKS token for cluster \"prod-eu\": presigning GetCallerIdentity for cluster \"prod-eu\": ..."}
+  HTTP/1.1 200 OK
+  {"name":"prod-eu","reachable":false,"stage":"credentials","error_code":"ERR_AUTH",
+   "error_message":"Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed."}
   ```
 
-  The inner error (after the colon) carries the AWS SDK's
-  identification — typically `AccessDenied`, `RegionDisabled`,
-  `InvalidClientTokenId`, or a config-load failure.
+  For a cluster whose connection is the AWS-IAM shape, the same
+  failure comes back as a 503 with a stable `error_code`:
 
-- **Sharko logs two related error lines** (one from each `slog.Error`
-  in `aws_auth.go`). Neither carries the AWS SDK's error text: an SDK
-  error can carry credential material in its own message — a wrapped
-  presigned URL, a token fragment, a credential from a provider chain
-  — so the log line says which STEP failed and the error itself only
-  goes back to the caller in the API response above. Read the `step`
-  field to tell the two apart:
+  ```
+  HTTP/1.1 503 Service Unavailable
+  {"error_code":"argocd_provider_iam_required",
+   "error":"Cluster \"prod-eu\" needs Sharko's own AWS identity (IRSA / EKS Pod Identity) to use this cluster's IAM-based connection, and minting an EKS sign-in token failed. The server log for this request id says which step failed."}
+  ```
 
-  Config load failure:
+  **This changed, and it changed on purpose.** The response used to
+  carry the wrapped AWS error, and operators were told to read
+  `AccessDenied` / `RegionDisabled` / `InvalidClientTokenId` out of it.
+  An AWS SDK error can carry credential material in its own message —
+  a wrapped presigned URL, a token fragment, a credential a provider
+  chain put into its text — so it is no longer returned. **Sharko never
+  shows you the AWS error, anywhere.** What you work from instead is
+  the four facts below, and they are enough:
+
+  | Fact | Where it comes from |
+  |---|---|
+  | **request id** | the `request_id` on every log line for the request; also correlate by time |
+  | **cluster** | the `cluster` field on the log line, and the name in your request |
+  | **region** | the `region` field on the log line |
+  | **step** | the `step` field — this is the one that tells you WHICH failure it was |
+
+  Diagnosis below is built entirely on those four, plus AWS's own
+  answers to `sts get-caller-identity` and `sts assume-role`, which you
+  run yourself and which report AWS's real reason directly to you. That
+  is a better source than Sharko relaying it: you get the current
+  answer, from AWS, with your own eyes.
+
+- **Sharko logs one error line per failed step, and no line carries the
+  AWS SDK's error value.** Read the `step` field — it is what tells the
+  three possible failures apart:
+
+  Config load failed (`aws_auth.go`) — the SDK could not even load
+  credentials:
   ```
   {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","step":"load-aws-config"}
   ```
 
-  Presign failure:
+  Presigning failed (`aws_auth.go`) — credentials loaded, the STS call
+  itself was refused or misrouted:
   ```
   {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","step":"presign-get-caller-identity"}
   ```
 
-  The AWS detail (`AccessDenied`, `RegionDisabled`,
-  `InvalidClientTokenId`, and so on) is in the API response body, not
-  in the log.
+  The mint failed as seen by the caller (`aws_sm.go` for an AWS-SM
+  secret, `argocd_provider.go` for an AWS-IAM connection):
+  ```
+  {"time":"...","level":"ERROR","msg":"[provider] GetCredentials failed","cluster":"prod-eu","region":"eu-west-1","step":"sts"}
+  {"time":"...","level":"ERROR","msg":"[provider] EKS token mint failed for argocd cluster — Sharko has no usable AWS identity for this cluster","cluster":"prod-eu","server":"https://...","eksClusterName":"prod-eu","region":"eu-west-1","step":"mint-eks-token"}
+  ```
 
 - **The cluster row in the dashboard** shows status **Test failed**
-  with the wrapped error in the tooltip; other EKS and non-EKS
-  clusters in the fleet show **Healthy**.
+  with the safe sentence; other EKS and non-EKS clusters in the fleet
+  show **Healthy**.
 
-- **If the failure mode is the inner `AssumeRole` step (when
-  `roleArn` is set in the secret), the error wraps a `stscreds`
-  failure**:
-
-  ```
-  presigning GetCallerIdentity for cluster "prod-eu": operation error STS: AssumeRole, AccessDenied: ...
-  ```
+- **When `roleArn` is set on the secret, the failing step is still
+  `presign-get-caller-identity`** — the AssumeRole hop happens inside
+  the presign path. Diagnosis step 4's explicit `sts assume-role` is
+  how you separate "cannot assume the role" from "assumed it, presign
+  still refused", and it gives you AWS's own error directly.
 
 - **No specific Prometheus alert fires** for a single EKS cluster's
   token failure. Repeated per-cluster failures fan into
@@ -103,54 +137,68 @@ investigate fleet-wide IRSA misconfiguration — see
 
 ## Diagnosis
 
-Four checks. Step 1 confirms per-cluster; Step 2 identifies which of
-the two error-emission sites fired; Step 3 inspects the
-secret's `roleArn` and the IRSA chain; Step 4 probes STS directly from
-the pod.
+Four checks, built on the four facts Sharko actually gives you —
+**request id, cluster, region, and step**. Step 1 confirms whether it is
+one cluster or the whole fleet; Step 2 reads the `step` field, which is
+what picks your mitigation lane; Step 3 checks the secret's own fields;
+Step 4 asks AWS directly, which is where you get AWS's real reason.
 
 ### 1. Confirm the failure is per-cluster, not fleet-wide
+
+Sharko no longer puts AWS error text in `test_error`, so match on the
+safe sentence and on the cluster's test status:
 
 ```sh
 curl -sS http://sharko/api/v1/fleet/status \
   -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.clusters[] | select(.test_error | test("EKS token|presigning|GetCallerIdentity"; "i")) | {name, test_status, test_error}'
+  | jq '.clusters[] | select(.test_error | test("sign-in details"; "i")) | {name, test_status, test_error}'
 ```
 
-If only one cluster fails this shape, single-cluster mitigation
-applies (Mitigation step 2+). If multiple clusters fail at once and
-they share the same `roleArn`, the cross-account role is broken
-(Mitigation step 3). If every EKS cluster fails (regardless of
-roleArn), the Sharko pod's IRSA itself is broken (escalate to
+If only one cluster fails this way, single-cluster mitigation applies
+(Mitigation step 2+). If several fail at once, get their `roleArn`
+values from Step 3 — a shared one means the cross-account role is broken
+(Mitigation step 3). If EVERY EKS cluster fails, the Sharko pod's own
+IRSA is broken (escalate to
 [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)).
 
-### 2. Distinguish config-load vs presign failure
+### 2. Read the `step` field — it picks your mitigation lane
 
-The two error-emission sites in `aws_auth.go` map to different
-mitigation lanes, and the log line names which one fired in its
-`step` field:
+This is the single most useful thing in the log, and it is there
+precisely so you do not need the AWS error text to tell the failures
+apart. Get the request id from the failed response's `request_id` (or
+just filter by cluster and time):
 
 ```sh
-REQ_ID=req-<id-from-failed-response>
+REQ_ID=req-<id-from-the-failed-response>
 kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
-  | jq -c --arg id "$REQ_ID" \
-    'select(.request_id == $id and .msg == "[auth] EKS token generation failed")' \
-  | jq -r '.step'
+  | jq -c --arg id "$REQ_ID" 'select(.request_id == $id)' \
+  | jq -r 'select(.step != null) | "\(.step)\t\(.cluster // "-")\t\(.region // "-")\t\(.msg)"'
 ```
 
-If `step` is `load-aws-config`, the SDK couldn't even load
-credentials. This is almost always a Sharko-pod IRSA failure
-(Mitigation step 1).
+No request id to hand? Filter by cluster instead — every one of these
+lines names it:
 
-If `step` is `presign-get-caller-identity`, the SDK loaded credentials
-fine but the STS call itself was denied or routed wrong. This is
-either a `roleArn` trust-policy issue (Mitigation step 3) or a
-region-routing issue (Mitigation step 4).
+```sh
+kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+  | jq -c 'select(.cluster == "prod-eu" and .step != null)' \
+  | jq -r '"\(.time)\t\(.step)\t\(.region // "-")"'
+```
 
-The AWS SDK's own message is deliberately not in the log — it can
-carry credential material. For the AWS detail, read the wrapped error
-in the API response body (Symptoms, first bullet); the two prefixes
-there (`loading AWS config for EKS token:` and `presigning
-GetCallerIdentity for cluster`) match the two step names above.
+What each `step` means, and where to go next:
+
+| `step` | What failed | Go to |
+|---|---|---|
+| `load-aws-config` | The SDK could not load any AWS credentials at all. Almost always the Sharko pod's IRSA. | Mitigation step 1 |
+| `presign-get-caller-identity` | Credentials loaded; the STS call itself was refused or misrouted. Either a `roleArn` trust-policy problem or a wrong region. | Mitigation step 3 or 4 |
+| `sts` | The AWS-SM path saw the mint fail. Pair it with the `load-aws-config` / `presign-get-caller-identity` line from the same request id — that one says which half. | as above |
+| `mint-eks-token` | The AWS-IAM connection path saw the mint fail. Same pairing rule. | as above |
+
+**Sharko will not show you the AWS error, and you do not need it.**
+`load-aws-config` versus `presign-get-caller-identity` already splits
+"no identity at all" from "identity refused", which is the split that
+decides what you fix. For AWS's own words, Step 4 asks AWS directly and
+prints its answer straight to your terminal — fresher and more
+trustworthy than anything Sharko could have relayed.
 
 ### 3. Inspect the AWS-SM secret structure to confirm the chain
 
@@ -213,8 +261,8 @@ Sharko pod's IRSA role to assume it (Mitigation step 3).
 
 ## Mitigation (try in order)
 
-1. **For "loading AWS config" failures (Diagnosis step 2 line 40),
-   repair the Sharko pod's IRSA chain.** The pod has no AWS
+1. **For `step=load-aws-config` (Diagnosis step 2), repair the Sharko
+   pod's IRSA chain.** The pod has no AWS
    credentials at all; STS can't even start the mint.
 
    Verify the pod's SA annotation:
@@ -246,8 +294,8 @@ Sharko pod's IRSA role to assume it (Mitigation step 3).
    [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
    for the fleet-wide repair.
 
-2. **For "presigning GetCallerIdentity" failures on a cluster
-   without `roleArn` — the pod's IRSA role lacks the action.**
+2. **For `step=presign-get-caller-identity` on a cluster WITHOUT
+   `roleArn` — the pod's IRSA role lacks the action.**
    `sts:GetCallerIdentity` is in the default AWS-managed policy
    set, but some restrictive policies omit it.
 
@@ -266,8 +314,8 @@ Sharko pod's IRSA role to assume it (Mitigation step 3).
    The action operates on the caller — there's no resource scoping.
    Verify by re-running Diagnosis step 4.
 
-3. **For "presigning" failures on a cluster WITH `roleArn` — repair
-   the cross-account trust policy.** The Sharko pod's IRSA role
+3. **For `step=presign-get-caller-identity` on a cluster WITH `roleArn`
+   — repair the cross-account trust policy.** The Sharko pod's IRSA role
    needs to assume `roleArn` (defined in the cluster's AWS-SM
    secret) in the target account.
 
@@ -397,9 +445,8 @@ missing, points at a non-existent role, or the role's trust policy
 doesn't trust the cluster's OIDC provider. Every STS call fails at
 config-load.
 
-Diagnostic signature: Diagnosis step 2 line 40 fired
-(`loading AWS config for EKS token`). Diagnosis step 4's
-`sts get-caller-identity` fails.
+Diagnostic signature: Diagnosis step 2 shows `step=load-aws-config`.
+Diagnosis step 4's `sts get-caller-identity` fails.
 
 Fix is Mitigation step 1 plus the broader fleet-wide repair if
 needed.
@@ -411,10 +458,11 @@ different AWS account. The trust policy on that role doesn't permit
 the Sharko pod's IRSA role to assume it (or the source account's
 policy is missing `sts:AssumeRole` on the target role).
 
-Diagnostic signature: Diagnosis step 2 line 72 fired
-(`presigning GetCallerIdentity`); the error wraps
-`AssumeRole` or `not authorized to perform: sts:AssumeRole`.
-Diagnosis step 4's explicit `assume-role` fails.
+Diagnostic signature: Diagnosis step 2 shows
+`step=presign-get-caller-identity`, and Diagnosis step 4's explicit
+`sts assume-role` fails — that command is where you see AWS's own
+`not authorized to perform: sts:AssumeRole` message, printed to you by
+AWS rather than relayed by Sharko.
 
 Fix is Mitigation step 3 — update both directions of the trust.
 
@@ -466,11 +514,14 @@ the cluster's mode).
 
 - **Monitoring — per-cluster STS mint failure counter.** A V2-3.x
   follow-up metric
-  `sharko_provider_eks_token_errors_total{cluster, stage, reason}`
-  with stages `config_load` / `presign` / `assume_role` would
-  surface this failure with full triage detail. Today, the only
-  signal is the slog.Error line and the per-cluster
-  `test_status` in `/api/v1/fleet/status`.
+  `sharko_provider_eks_token_errors_total{cluster, stage}` with stages
+  `config_load` / `presign` / `assume_role` would surface this failure
+  without any triage work. The stage label would be the same `step`
+  value the log line already carries. Note the label set deliberately
+  has no `reason` dimension taken from the AWS error: a metric label
+  built from provider error text is both unbounded cardinality and a
+  leak. Today the signal is the `step` field on the error log line plus
+  the per-cluster `test_status` in `/api/v1/fleet/status`.
 
 - **Gating — `sharko add-cluster` should pre-flight the STS chain.**
   Before committing the cluster registration, the add handler could
@@ -526,8 +577,12 @@ critical, email the maintainer: `moran.weissman@gmail.com`. Include:
 - The cluster name and the secret's structured fields from Diagnosis
   step 3 (REDACT `caData` — it's the cluster's CA cert, not a
   secret per se, but defensive redaction is the rule)
-- The two error strings from Diagnosis step 2 (config-load vs
-  presign)
+- The `step` value(s) from Diagnosis step 2, the request id, the
+  cluster and the region (Sharko does not log the AWS error text, so
+  these four are what it has)
+- The exact output of Diagnosis step 4's `sts get-caller-identity` and
+  `sts assume-role` — that is AWS's own reason, and it is the detail
+  the maintainer needs
 - The CloudTrail event ID for the most recent IAM policy / trust
   change (if any) on the source IRSA role and the target roleArn
 - The Sharko version
@@ -539,7 +594,7 @@ operator's AWS account; escalation is rare.
 <!-- Style-guide compliance checklist (V2-4.1):
 - [x] Title matches `# <Failure name>`
 - [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current
+- [x] Verified-by-execution header + date current (re-authored 2026-08-11, provider-error hotfix)
 - [x] Symptoms section appears BEFORE Diagnosis
 - [x] Symptoms include exact log lines / error messages
 - [x] Diagnosis has 3+ concrete checks (4 named) with exact commands

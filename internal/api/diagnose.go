@@ -7,6 +7,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/diagnose"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/verify"
@@ -43,10 +44,13 @@ func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
 	// override (V2-cleanup-55.1) AND routes by the cluster's stored
 	// creds_source — an inline-registered cluster is read from the ArgoCD
 	// cluster Secret regardless of the configured backend type.
+	// PUBLIC BOUNDARY. Neither the log line nor the response carries a
+	// credentials-backend error's own text any more.
 	creds, err := s.fetchClusterCredentials(r.Context(), name)
 	if err != nil {
-		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "error", err)
-		writeError(w, http.StatusBadGateway, "failed to fetch credentials: "+err.Error())
+		safeMsg := credsafe.Sentence(err)
+		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "step", "fetch-credentials", "error", safeMsg)
+		writeError(w, http.StatusBadGateway, "failed to fetch credentials: "+safeMsg)
 		return
 	}
 

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -94,8 +95,11 @@ func (r *Reconciler) scanOrphans(ctx context.Context, plan pushPlan) {
 	for _, c := range plan.clusters {
 		creds, err := r.credProvider.GetCredentials(c.credLookup)
 		if err != nil {
+			// A credentials-backend error's own text never reaches this log
+			// line; credsafe.Sentence swaps in the fixed sentence for exactly
+			// that case and leaves every other error alone.
 			log.Warn("[secrets] orphan scan: could not get credentials — keeping this cluster's previous leftover-secret records",
-				"cluster", c.name, "error", err)
+				"cluster", c.name, "error", credsafe.Sentence(err))
 			continue
 		}
 		client, err := r.remoteClientFn(creds.Raw)

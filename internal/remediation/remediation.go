@@ -178,6 +178,7 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 				Source:   "remediation",
 				Result:   "failure",
 				Error:    err.Error(),
+				Cause:    err,
 				Detail:   fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
 			})
 			return
@@ -195,6 +196,7 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 			Source:   "remediation",
 			Result:   "failure",
 			Error:    err.Error(),
+			Cause:    err,
 			Detail:   fmt.Sprintf("terminated stale sync for %s but re-sync failed after PR #%d merged", app.Name, pr.PRID),
 		})
 		return

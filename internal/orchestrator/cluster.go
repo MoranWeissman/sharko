@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -261,8 +262,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 				// cluster Sharko was never given credentials for). Skip
 				// verification instead of failing the whole registration;
 				// the reason is logged in the unified block below.
+				// credsSkippedReason only ever reaches a log line today, but it
+				// reads like a message and it is one edit away from a response
+				// body — so it carries the safe sentence for a
+				// credentials-backend failure like every other boundary here.
 				creds = nil
-				credsSkippedReason = "credentials lookup failed: " + fetchErr.Error()
+				credsSkippedReason = "credentials lookup failed: " + credsafe.Sentence(fetchErr)
 			} else {
 				steps = append(steps, "fetch_credentials")
 			}

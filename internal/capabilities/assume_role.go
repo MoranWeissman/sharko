@@ -7,6 +7,8 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // defaultAssumeRoleTimeout bounds a single sts:AssumeRole attempt so a
@@ -67,6 +69,12 @@ func NewAssumeRoleChecker() *AssumeRoleChecker {
 // nil on success (the role was assumed — nothing about that session is kept),
 // or the AWS error otherwise (access denied, no usable identity, etc.).
 // region may be empty; the checker falls back to fallbackAssumeRoleRegion.
+// credsafe.Mark tags whatever comes back. An STS AssumeRole failure is the
+// same class of thing as an EKS token-mint failure — it comes out of the AWS
+// credential chain, and its text can carry credential material. Mark leaves
+// Error() alone, so verify.AssumeRoleHint still reads the real message to pick
+// its (Sharko-written) hint, and only the PUBLIC boundary swaps in the fixed
+// sentence.
 func (c *AssumeRoleChecker) Check(ctx context.Context, roleARN, region string) error {
 	timeout := c.timeout
 	if timeout <= 0 {
@@ -74,7 +82,7 @@ func (c *AssumeRoleChecker) Check(ctx context.Context, roleARN, region string) e
 	}
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return c.assumeRoleFn(cctx, roleARN, region)
+	return credsafe.Mark(c.assumeRoleFn(cctx, roleARN, region))
 }
 
 // defaultAssumeRole loads the default AWS config (resolving IRSA / EKS Pod

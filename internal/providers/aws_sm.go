@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // secretsManagerClient is the slice of the AWS Secrets Manager API this
@@ -219,7 +221,16 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 // recorded on the cluster's managed-clusters.yaml entry at registration;
 // "" is byte-identical to GetCredentials. See buildFromStructured for the
 // precedence decision (SM-secret roleArn > clusterRoleARN > provider default).
+// credsafe.Mark is applied at the boundary — one place every return passes
+// through, so a new failure branch inside cannot forget it. Mark leaves
+// Error() alone, so the "not found" substring the cluster-test handler keys
+// its secret-name suggestions off still matches.
 func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clusterRoleARN string) (*Kubeconfig, error) {
+	kc, err := p.getCredentialsWithRoleARN(clusterName, clusterRoleARN)
+	return kc, credsafe.Mark(err)
+}
+
+func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clusterRoleARN string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called", "cluster", clusterName)
 
 	var tried []string
@@ -245,6 +256,11 @@ func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clust
 
 	// Both lookups failed. Return an error — the caller (handleTestCluster) will
 	// call SearchSecrets separately to find suggestions and include them in the response.
+	//
+	// credsafe.Mark tags it as a credentials-backend failure. Error() is
+	// unchanged, so handleTestCluster's existing strings.Contains(err, "not
+	// found") check still fires and still offers secret-name suggestions —
+	// only what crosses a PUBLIC boundary changes.
 	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups", "tried", strings.Join(tried, ", "))
 	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
 		"Set secret_path on the cluster to specify the exact name",
@@ -267,7 +283,7 @@ func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clust
 func (p *AWSSecretsManagerProvider) StoredConnectionFacts(lookupKey string) (*StoredConnectionFacts, error) {
 	raw, err := p.rawPayloadForCluster(lookupKey)
 	if err != nil {
-		return nil, err
+		return nil, credsafe.Mark(err)
 	}
 
 	if structured, ok := sniffStructuredEKSSecret(raw); ok {
@@ -275,7 +291,9 @@ func (p *AWSSecretsManagerProvider) StoredConnectionFacts(lookupKey string) (*St
 		// only what is needed to create one — and this method creates nothing.
 		caData, decodeErr := base64.StdEncoding.DecodeString(structured.CAData)
 		if decodeErr != nil {
-			return nil, fmt.Errorf("decoding caData for cluster %q: %w", structured.ClusterName, decodeErr)
+			// A decode failure's text is produced from the stored payload, so
+			// it is marked like every other failure on this path.
+			return nil, credsafe.Mark(fmt.Errorf("decoding caData for cluster %q: %w", structured.ClusterName, decodeErr))
 		}
 		slog.Info("[provider] stored connection details read without minting a sign-in token",
 			"secretName", lookupKey, "format", "structured")
@@ -289,7 +307,9 @@ func (p *AWSSecretsManagerProvider) StoredConnectionFacts(lookupKey string) (*St
 	// A raw kubeconfig holds a fixed credential. Parsing it mints nothing.
 	kc, err := p.buildFromRawKubeconfig(raw, lookupKey)
 	if err != nil {
-		return nil, err
+		// A kubeconfig parse error is produced FROM the credential material,
+		// so client-go's message can quote part of it back.
+		return nil, credsafe.Mark(err)
 	}
 	slog.Info("[provider] stored connection details read without minting a sign-in token",
 		"secretName", lookupKey, "format", "raw")
@@ -355,7 +375,13 @@ func sliceContains(ss []string, s string) bool {
 func (p *AWSSecretsManagerProvider) SearchSecrets(query string) ([]string, error) {
 	results, err := p.searchSimilar(query)
 	if err != nil {
-		slog.Warn("[provider] SearchSecrets failed (likely AccessDenied, returning empty)", "query", query, "error", err)
+		// The AWS error's own value is not logged. This is the same rule the
+		// mint-failure branch follows, and the log-source guard caught this line
+		// when the guard was extended to this file — a real leak the brief's
+		// file:line list did not name. The query (a cluster name the caller
+		// already sent) and the step are what a person needs; the outcome is
+		// unchanged, an empty suggestion list.
+		slog.Warn("[provider] SearchSecrets failed (likely AccessDenied, returning empty)", "query", query, "prefix", p.prefix, "step", "list-secrets")
 		return nil, nil
 	}
 	return results, nil
@@ -443,29 +469,36 @@ func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret, c
 	}
 	token, err := tokenFn(context.Background(), name, s.Region, roleARN)
 	if err != nil {
-		slog.Error("[provider] GetCredentials failed", "cluster", name, "step", "sts", "error", err)
+		// THE ERROR VALUE IS NOT LOGGED — same rule as aws_auth.go's two
+		// failure branches, and this is the line that receives what they
+		// return. An AWS SDK error can carry credential material in its own
+		// text: a wrapped presigned URL, a token fragment, a credential a
+		// provider chain put into its message. So the log line carries the
+		// cluster, the region and WHICH step failed, and nothing else.
+		//
+		// The returned error still wraps the cause with %w — that is correct
+		// and unchanged, so a developer reading a stack still gets the cause.
+		// GetCredentialsWithRoleARN marks every error this path returns, so a
+		// public boundary can recognise a credentials-backend failure by TYPE
+		// (errors.Is against a sentinel, never by reading its words) and say a
+		// fixed safe sentence instead.
+		slog.Error("[provider] GetCredentials failed", "cluster", name, "region", s.Region, "step", "sts")
 		return nil, fmt.Errorf("generating EKS token for cluster %q: %w", name, err)
 	}
 
-	// tokenPrefix (task #152 story D, reviewed): the first 20 characters of
-	// an EKS bearer token are provably non-secret, not just "probably
-	// short enough to be safe". The token is v1Prefix ("k8s-aws-v1.", 11
-	// chars) + base64url(presigned STS URL). Every presigned URL this
-	// codebase ever produces starts with the literal "https://" (HTTPS is
-	// not optional here), and base64 encodes input in fixed 3-byte groups —
-	// so the first 9 base64 characters are determined ENTIRELY by those
-	// first 7 bytes of the literal scheme, before the host, region,
-	// account, or signature ever enter the encoding. 11 + 9 = 20. Verified
-	// empirically: token[:20] is the same constant string
-	// "k8s-aws-v1.aHR0cHM6L" for every region, credential, and signature —
-	// nothing variable, let alone secret, is in it. If this ever changes
-	// (a different URL scheme, a different prefix length), this comment's
-	// claim stops holding and the field should be re-judged, not assumed.
-	tokenPreview := token
-	if len(tokenPreview) > 20 {
-		tokenPreview = tokenPreview[:20] + "..."
-	}
-	slog.Info("[provider] STS token generated", "cluster", name, "region", s.Region, "tokenPrefix", tokenPreview)
+	// "a token was minted for this cluster" is worth a line. A PREFIX of it is
+	// not, and the field that used to carry one is gone.
+	//
+	// The old comment here argued the first 20 characters were provably the
+	// constant "k8s-aws-v1.aHR0cHM6L" and therefore non-secret. The argument
+	// was careful and it did not matter. If the value really is a constant then
+	// logging it tells an operator nothing they could not read here in the
+	// source; and if the assumption ever quietly stopped holding — a different
+	// URL scheme, a different prefix length, a non-EKS token flowing through
+	// this path — it would start leaking with a comment vouching for it. A
+	// prefix of a credential is on the forbidden list for the same reason a
+	// length and a hash are: each one narrows a guess at the thing itself.
+	slog.Info("[provider] STS token generated", "cluster", name, "region", s.Region)
 
 	// Build kubeconfig YAML so remoteclient.NewClientFromKubeconfig can use Raw.
 	// certificate-authority-data expects base64 — use s.CAData (original base64 string).
@@ -535,7 +568,10 @@ func (p *AWSSecretsManagerProvider) HealthCheck(ctx context.Context) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("AWS Secrets Manager health check failed: %w", err)
+		// The health check talks to the credentials backend with Sharko's own
+		// AWS identity, so its error is the same class as a fetch failure and is
+		// marked the same way. Error() is unchanged.
+		return credsafe.Mark(fmt.Errorf("AWS Secrets Manager health check failed: %w", err))
 	}
 	return nil
 }
