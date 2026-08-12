@@ -2094,7 +2094,22 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		// already happened, the Secret is in hand, and this is about to refuse
 		// — no extra cost, no backend read. The notice does not change whether
 		// the write is refused; this adds awareness, it does not add a repair.
-		r.noticeConnectionShapeDrift(ctx, entry.Name, existing, true)
+		//
+		// R3-10 criterion 4: distinguish genuinely-foreign Secrets (another tool
+		// stamped managed-by) from Sharko Secrets that lost the label (no managed-by
+		// or empty). Only notice the latter — reporting another tool's correct Secret
+		// as Sharko's fault would be wrong.
+		managedByValue := existing.Labels[argosecrets.LabelManagedBy]
+		if managedByValue != "" && managedByValue != argosecrets.ManagedByValue {
+			// Another tool owns this — genuinely foreign, not Sharko's drift.
+			// Skip the notice; the Adopt-territory refusal below is correct.
+		} else {
+			// No managed-by label, or managed-by is empty/corrupted. This is a Secret
+			// that SHOULD be Sharko's (it's in managed-clusters.yaml) but lacks the
+			// label. Pass selfManaged=false because this is NOT a deliberately-unlabeled
+			// guest connection — it's a Sharko connection in trouble.
+			r.noticeConnectionShapeDrift(ctx, entry.Name, existing, false)
+		}
 
 		// Adopt territory — do not touch.
 		stats.SkippedUnlabeled++
