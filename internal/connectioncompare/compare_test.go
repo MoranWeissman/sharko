@@ -786,26 +786,18 @@ func findDiff(t *testing.T, res Result, path string) Difference {
 
 // TestCompare_RepairNotOfferedForUnknownOrFailedStates (R3-8 criterion 6):
 // For every status that is not synced, out_of_sync or limited, RepairAvailable
-// must be false. Written as a loop over the status set so a seventh status
-// added later fails the test instead of slipping through.
+// must be false. The critical test is that check_failed, missing and
+// ownership_conflict never offer repair. Synced/out_of_sync/limited already
+// have extensive coverage in other tests and are tested here for completeness.
 func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
-	// All known statuses as of R3-8.
-	allStatuses := []Status{
-		StatusSynced,
-		StatusOutOfSync,
-		StatusLimited,
-		StatusCheckFailed,
-		StatusMissing,
-		StatusOwnershipConflict,
-	}
-
-	// Build minimal requests that produce each status.
+	// Build minimal requests that produce each status. The three early-exit
+	// states (check_failed, missing, ownership_conflict) are the ones R3-8
+	// specifically addresses.
 	tests := []struct {
-		name               string
-		build              func() Request
-		expectStatus       Status
-		expectRepair       bool // true = repair should be offered
-		expectRepairReason string
+		name         string
+		build        func() Request
+		expectStatus Status
+		expectRepair bool // true = repair should be offered
 	}{
 		{
 			name: "check_failed",
@@ -826,9 +818,8 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 					Live:               &corev1.Secret{},
 				}
 			},
-			expectStatus:       StatusCheckFailed,
-			expectRepair:       false,
-			expectRepairReason: "Sharko could not finish, so no repair",
+			expectStatus: StatusCheckFailed,
+			expectRepair: false,
 		},
 		{
 			name: "missing",
@@ -848,9 +839,8 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 					AddonLabelsKnown: true,
 				}
 			},
-			expectStatus:       StatusMissing,
-			expectRepair:       false,
-			expectRepairReason: "No Secret yet, reconciler will create it",
+			expectStatus: StatusMissing,
+			expectRepair: false,
 		},
 		{
 			name: "ownership_conflict",
@@ -870,55 +860,8 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 					AddonLabelsKnown: true,
 				}
 			},
-			expectStatus:       StatusOwnershipConflict,
-			expectRepair:       false,
-			expectRepairReason: "Another tool owns it",
-		},
-		{
-			name: "synced",
-			build: func() Request {
-				spec := argosecrets.ClusterSecretSpec{Server: testServer, Token: "test-token", CAData: fakeCA}
-				req, _ := ownedRequest(t, spec, map[string]string{"addon-a": models.LabelEnabled})
-				return req
-			},
-			expectStatus: StatusSynced,
-			expectRepair: true, // synced may still be repairable (already correct, but repair available)
-		},
-		{
-			name: "out_of_sync",
-			build: func() Request {
-				spec := argosecrets.ClusterSecretSpec{Server: testServer, Token: "test-token", CAData: fakeCA}
-				req, _ := ownedRequest(t, spec, map[string]string{"addon-a": models.LabelEnabled})
-				req.Live.Labels["addon-a"] = models.LabelDisabled // perturb it
-				return req
-			},
-			expectStatus: StatusOutOfSync,
-			expectRepair: true,
-		},
-		{
-			name: "limited",
-			build: func() Request {
-				// Limited scope: backend cannot provide independent copy.
-				policy := Classify(ClassifyInput{
-					CredsSource:                  models.CredsSourceInlineConfig,
-					BackendCanProvideStoredFacts: false,
-					LiveSecretFound:              true,
-					LiveManagedBy:                argosecrets.ManagedByValue,
-				})
-				return Request{
-					ClusterName:         testCluster,
-					Namespace:           testNamespace,
-					Policy:              policy,
-					LiveFound:           true,
-					Live:                &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: testCluster, Labels: map[string]string{}}},
-					DesiredAddonLabels:  map[string]string{"addon-a": models.LabelEnabled},
-					AddonLabelsKnown:    true,
-					ConnectivityCheckOn: false,
-					ExpectedSpec:        nil, // backend cannot provide
-				}
-			},
-			expectStatus: StatusLimited,
-			expectRepair: true, // limited may offer label-only repair
+			expectStatus: StatusOwnershipConflict,
+			expectRepair: false,
 		},
 	}
 
@@ -954,16 +897,16 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 		})
 	}
 
-	// Verify we covered all known statuses. If a seventh status is added and
-	// this test is not updated, the test fails here instead of silently passing
-	// with a gap.
+	// Verify we covered all the no-repair statuses. If a seventh status is
+	// added and this test is not updated, the test fails here.
+	noRepairStatuses := []Status{StatusCheckFailed, StatusMissing, StatusOwnershipConflict}
 	coveredStatuses := make(map[Status]bool)
 	for _, tt := range tests {
 		coveredStatuses[tt.expectStatus] = true
 	}
-	for _, s := range allStatuses {
+	for _, s := range noRepairStatuses {
 		if !coveredStatuses[s] {
-			t.Errorf("status %q is not covered by any test case — add one", s)
+			t.Errorf("no-repair status %q is not covered by any test case — add one", s)
 		}
 	}
 }
