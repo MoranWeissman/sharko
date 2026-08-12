@@ -6479,8 +6479,8 @@ paths:
         is refused so what was reviewed is what gets written. The response carries
         a fresh comparison so the caller can see what the repair achieved. No value
         is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected,
-        and sensitive true. The request identifies a cluster and nothing else — no
-        candidate value, no expected manifest, no hash, no backend path, no namespace.'
+        and sensitive true. The request identifies a cluster and the commit that was
+        reviewed — no caller-supplied value, manifest or hash of one is ever accepted.'
       parameters:
       - description: Cluster name
         in: path
