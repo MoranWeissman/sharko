@@ -809,13 +809,13 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 					LiveManagedBy:                argosecrets.ManagedByValue,
 				})
 				return Request{
-					ClusterName:        testCluster,
-					Namespace:          testNamespace,
-					Policy:             policy,
-					CheckFailure:       "Credential backend did not respond.",
-					AddonLabelsKnown:   true,
-					LiveFound:          true,
-					Live:               &corev1.Secret{},
+					ClusterName:      testCluster,
+					Namespace:        testNamespace,
+					Policy:           policy,
+					CheckFailure:     "Credential backend did not respond.",
+					AddonLabelsKnown: true,
+					LiveFound:        true,
+					Live:             &corev1.Secret{},
 				}
 			},
 			expectStatus: StatusCheckFailed,

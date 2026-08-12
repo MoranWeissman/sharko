@@ -12,16 +12,16 @@ import (
 // TestOwnershipCheckConsistency documents the INTENTIONAL differences between
 // the three ownership predicates used in connection repair:
 //
-// 1. IsManagedBySharko (clusterreconciler/labels.go) — checks for the
-//    managed-by=sharko label specifically. Used by listManagedSecrets to filter.
+//  1. IsManagedBySharko (clusterreconciler/labels.go) — checks for the
+//     managed-by=sharko label specifically. Used by listManagedSecrets to filter.
 //
-// 2. RepairOwnedConnection (argosecrets/repair.go) — requires managed-by=sharko
-//    AND rejects adopted Secrets. Full repairs must never touch adopted Secrets
-//    because the connection material is the user's.
+//  2. RepairOwnedConnection (argosecrets/repair.go) — requires managed-by=sharko
+//     AND rejects adopted Secrets. Full repairs must never touch adopted Secrets
+//     because the connection material is the user's.
 //
-// 3. RepairAddonLabelsWithOwnershipCheck (argosecrets/manager.go) — considers
-//    EITHER managed-by=sharko OR adopted as "owned". Labels-only repairs CAN
-//    touch adopted Secrets' addon labels (that's the point of adoption).
+//  3. RepairAddonLabelsWithOwnershipCheck (argosecrets/manager.go) — considers
+//     EITHER managed-by=sharko OR adopted as "owned". Labels-only repairs CAN
+//     touch adopted Secrets' addon labels (that's the point of adoption).
 //
 // These differences are intentional and correct for their purposes. This test
 // fails if someone accidentally makes them agree when they should differ.
