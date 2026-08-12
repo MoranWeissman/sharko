@@ -729,13 +729,30 @@ The repair reads the backend through the read-only stored-facts capability, whic
 // addon labels and touches nothing else.
 func TestRepair_GuestConnectionGetsLabelsOnly(t *testing.T) {
 	selfYAML := "clusters:\n- name: " + comparisonCluster + "\n  connectionManagedBy: user\n  credsSource: secret-kubeconfig\n  labels:\n    datadog: enabled\n"
-	live := liveConnectionSecret(
-		map[string]string{"datadog": "disabled"},
-		map[string]string{
-			"name":   comparisonCluster,
-			"server": "https://their-own-address.invalid",
-			"config": `{"bearerToken":"theirs"}`,
-		}, nil)
+	// R3-11 fix: self-managed means the user maintains this Secret, so it should
+	// NOT have managed-by=sharko. The old test used liveConnectionSecret which
+	// always adds that label, creating a mismatch: the policy says self-managed
+	// (expectedOwned=false) but the Secret has the label (live says owned), so
+	// the primitive's ownership check rejects it.
+	//
+	// Correct: build the Secret without the managed-by label to match what a
+	// self-managed connection actually looks like.
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      comparisonCluster,
+			Namespace: "argocd",
+			Labels: map[string]string{
+				"argocd.argoproj.io/secret-type": "cluster",
+				"datadog":                        "disabled",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte(comparisonCluster),
+			"server": []byte("https://their-own-address.invalid"),
+			"config": []byte(`{"bearerToken":"theirs"}`),
+		},
+	}
 
 	_, router, argoClient := repairFixture(t, selfYAML, live, repairFakeVault{})
 

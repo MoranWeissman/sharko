@@ -27,6 +27,7 @@ var HandlerTier = map[string]audit.Tier{
 	"handleRefreshClusterCredentials": audit.Tier1,
 	"handleReconcileCluster":          audit.Tier1,
 	"handleResyncCluster":             audit.Tier1,
+	"handleRepairConnection":          audit.Tier1, // connection repair (step 3 of 4)
 	"handleTestCluster":               audit.Tier1,
 	"handleDiagnoseCluster":           audit.Tier1,
 	"handleDoctorCluster":             audit.Tier1,
