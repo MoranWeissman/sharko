@@ -124,15 +124,21 @@ Run with --check-only to look without changing anything.`,
 			return nil
 		}
 
-		// Nothing to do, or nothing Sharko may do.
-		if !check.RepairAvailable {
-			fmt.Println()
-			fmt.Println("Sharko will not change this connection.")
-			if check.LimitReason != "" {
-				fmt.Printf("  %s\n", check.LimitReason)
-			}
-			return nil
-		}
+		// R3-11 ordering fix: check_failed and empty-commit must come BEFORE
+		// !repair_available, so they exit non-zero. Once PR A's blocker 1 lands
+		// (making a failed check set repair_available=false), the old order would
+		// hit !repair_available first and return nil — a script could not tell
+		// "I looked and it was fine" from "I could not look at all".
+		//
+		// The correct order:
+		//  1. check_failed → error (EXIT NON-ZERO) — the check did not finish
+		//  2. empty commit → error (EXIT NON-ZERO) — git cannot report a commit
+		//  3. !repair_available → nil (EXIT ZERO) — looked, and no repair allowed
+		//
+		// A script can now distinguish: non-zero exit means "something failed",
+		// zero exit with "will not change" printed means "looked successfully, and
+		// this connection is not Sharko's to repair".
+
 		if check.Status == "check_failed" {
 			fmt.Println()
 			fmt.Println("The check did not finish, so Sharko will not change anything.")
@@ -148,6 +154,15 @@ Run with --check-only to look without changing anything.`,
 			fmt.Println("Sharko cannot tell which commit your git branch is on, so it will not rewrite this connection.")
 			fmt.Println("Sharko only makes this change when it can name the exact commit it is matching.")
 			return fmt.Errorf("no commit could be confirmed for %q", name)
+		}
+		// Now check !repair_available LAST, after the error cases.
+		if !check.RepairAvailable {
+			fmt.Println()
+			fmt.Println("Sharko will not change this connection.")
+			if check.LimitReason != "" {
+				fmt.Printf("  %s\n", check.LimitReason)
+			}
+			return nil
 		}
 
 		// STEP 2 — confirm, naming what will be touched.
