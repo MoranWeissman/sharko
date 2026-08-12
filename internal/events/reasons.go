@@ -41,4 +41,21 @@ const (
 	ReasonPRMerged           = "PRMerged"           // PR merged successfully
 	ReasonConnectionRestored = "ConnectionRestored" // Connection to external service restored
 	ReasonConnectionRepaired = "ConnectionRepaired" // R3-11: Connection repaired to match git
+
+	// ReasonAddonLabelsRepaired is the labels-only repair's own reason
+	// (R3-16). It is separate from ReasonConnectionRepaired on purpose.
+	//
+	// The two are different operations with different reach. A
+	// full-connection repair rewrites the sign-in details from the secrets
+	// backend; a labels-only repair re-applies the addon on/off labels git
+	// declares and never reads or writes a credential. An operator watching
+	// events, or an automation switching on the reason, has to be able to
+	// tell those apart without parsing the message text — which is what a
+	// reason is FOR. Reusing ReasonConnectionRepaired would make a
+	// label write look like a credential write.
+	//
+	// There was no existing addon-label reason to reuse. The nearest,
+	// ReasonClusterReconciled, is the periodic pass, and a person asking for
+	// a repair is not a background tick.
+	ReasonAddonLabelsRepaired = "AddonLabelsRepaired" // R3-16: addon labels re-applied to match git
 )

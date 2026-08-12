@@ -11,8 +11,10 @@ package argosecrets
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -968,5 +970,190 @@ func TestRepairAddonLabelsWithOwnershipCheck_BreakAndRestoreProof_V4StaleKeyDele
 		t.Errorf(`takeover-preserved v4 label was deleted: addons.sharko.dev/datadog = %q, want enabled.
 
 Break-and-restore proof: the v4 stale-key loop (manager.go lines 950-958) does not check PreservedLabelKeys before deleting. This is a real bug — fix it.`, after.Labels[models.V4AddonLabelPrefix+"datadog"])
+	}
+}
+
+// --- R3-16: the primitive reports what it actually changed ---
+
+func TestRepairAddonLabelsWithOwnershipCheck_ReportsRemovalOnlyRepair(t *testing.T) {
+	// The test that would have caught the whole story. A repair whose only job
+	// is deleting a stale addon label used to report ZERO fields changed while
+	// having changed something, because the caller built the list from the
+	// DESIRED labels and a removed key is not in that set. The response then
+	// said "0 label(s) converged" for a write that really happened.
+
+	live := addonLabelsTestSecret("cluster-removal-only", map[string]string{
+		"datadog": "enabled",
+		"logging": "enabled",
+	}, nil, true)
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	// Git still declares logging and no longer declares datadog. Nothing is
+	// added and no value changes: the ONLY change is the removal.
+	pinned := map[string]string{"logging": "enabled"}
+
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-removal-only", pinned, true)
+	if err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if !found {
+		t.Fatal("repair reported the Secret not found")
+	}
+	if !outcome.Changed {
+		t.Fatal("a removal is a change; the repair reported Changed = false")
+	}
+
+	want := []string{"metadata.labels[datadog]"}
+	if !reflect.DeepEqual(outcome.FieldsWritten, want) {
+		t.Errorf(`a removal-only repair reported FieldsWritten = %v, want %v.
+
+A repair whose only job was deleting a stale label must SAY it deleted it. Reporting zero fields for a write that really happened is the response telling the reader nothing changed while the object changed underneath them.`, outcome.FieldsWritten, want)
+	}
+
+	after, _ := client.CoreV1().Secrets("argocd").Get(context.Background(), "cluster-removal-only", metav1.GetOptions{})
+	if _, still := after.Labels["datadog"]; still {
+		t.Error("the stale label was reported as removed but is still on the Secret")
+	}
+}
+
+func TestRepairAddonLabelsWithOwnershipCheck_ReportsOnlyTheOneFieldThatChanged(t *testing.T) {
+	// Twenty desired labels, exactly one of them wrong. The report must name
+	// ONE field. The caller used to list every desired label whenever any single
+	// one of them changed, so this said twenty.
+
+	liveLabels := make(map[string]string, 20)
+	pinned := make(map[string]string, 20)
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("addon-%02d", i)
+		liveLabels[key] = "enabled"
+		pinned[key] = "enabled"
+	}
+	// One drifted value.
+	liveLabels["addon-07"] = "disabled"
+
+	live := addonLabelsTestSecret("cluster-one-of-many", liveLabels, nil, true)
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-one-of-many", pinned, true)
+	if err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if !found || !outcome.Changed {
+		t.Fatal("repair should have found the Secret and changed the one drifted label")
+	}
+
+	want := []string{"metadata.labels[addon-07]"}
+	if !reflect.DeepEqual(outcome.FieldsWritten, want) {
+		t.Errorf(`one wrong label out of twenty reported FieldsWritten = %v (%d field(s)), want %v.
+
+Reporting every desired label as repaired tells the reader twenty things changed when one did.`, outcome.FieldsWritten, len(outcome.FieldsWritten), want)
+	}
+}
+
+func TestRepairAddonLabelsWithOwnershipCheck_FieldListIsSorted(t *testing.T) {
+	// Go map iteration order is randomised per run, so a list built by walking a
+	// map prints differently for two identical repairs. These keys are chosen so
+	// the sorted answer is not the insertion order of either map.
+
+	live := addonLabelsTestSecret("cluster-sorted", map[string]string{
+		"zulu":    "disabled",
+		"mike":    "disabled",
+		"alpha":   "disabled",
+		"tango":   "enabled", // git no longer declares it: a removal
+		"bravo":   "disabled",
+		"yankee":  "disabled",
+		"charlie": "disabled",
+	}, nil, true)
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	pinned := map[string]string{
+		"zulu":    "enabled",
+		"mike":    "enabled",
+		"alpha":   "enabled",
+		"bravo":   "enabled",
+		"yankee":  "enabled",
+		"charlie": "enabled",
+	}
+
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-sorted", pinned, true)
+	if err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if !found || !outcome.Changed {
+		t.Fatal("repair should have found the Secret and changed several labels")
+	}
+
+	want := []string{
+		"metadata.labels[alpha]",
+		"metadata.labels[bravo]",
+		"metadata.labels[charlie]",
+		"metadata.labels[mike]",
+		"metadata.labels[tango]",
+		"metadata.labels[yankee]",
+		"metadata.labels[zulu]",
+	}
+	if !reflect.DeepEqual(outcome.FieldsWritten, want) {
+		t.Errorf(`FieldsWritten = %v,
+want                                %v
+
+The list must be sorted. An unsorted list makes two identical repairs print two different answers, which reads as instability that is not there.`, outcome.FieldsWritten, want)
+	}
+}
+
+func TestRepairAddonLabelsWithOwnershipCheck_ReportsRealPreservationCounts(t *testing.T) {
+	// The preserved counts used to be hard zero on this path, so a repair that
+	// preserved plenty reported preserving nothing. They must be real — and they
+	// must still be COUNTS, never names: a foreign label key or data key belongs
+	// to whoever put it there.
+
+	live := addonLabelsTestSecret("cluster-preserved-counts", map[string]string{
+		"datadog":                       "disabled", // Sharko's, converged
+		"their-tool.io/label":           "keep-me",  // foreign
+		"other-tool.example/owner":      "them",     // foreign
+		"app.kubernetes.io/instance":    "argocd",   // foreign (ArgoCD tracking)
+		"sharko.dev/connectivity-check": "passed",   // Sharko's own derived label
+	}, map[string]string{
+		AnnotationTakeoverPreservedLabels: "env",
+	}, true)
+	live.Labels["env"] = "prod" // takeover-preserved: foreign by record
+	live.Data["shard"] = []byte("3")
+	live.Data["namespaces"] = []byte("team-a,team-b")
+
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-preserved-counts",
+		map[string]string{"datadog": "enabled"}, true)
+	if err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if !found || !outcome.Changed {
+		t.Fatal("repair should have found the Secret and changed the datadog label")
+	}
+
+	// Foreign labels: their-tool.io/label, other-tool.example/owner,
+	// app.kubernetes.io/instance, plus the takeover-preserved "env".
+	// NOT counted: datadog and the connectivity-check label (Sharko's own), and
+	// managed-by / secret-type (Sharko's own system labels).
+	if outcome.PreservedForeignLabels != 4 {
+		t.Errorf("PreservedForeignLabels = %d, want 4 — the count was reported as %d for a Secret carrying four labels that are not Sharko's",
+			outcome.PreservedForeignLabels, outcome.PreservedForeignLabels)
+	}
+	// Foreign data keys: shard and namespaces. name / server / config are
+	// Sharko's three.
+	if outcome.PreservedForeignDataKeys != 2 {
+		t.Errorf("PreservedForeignDataKeys = %d, want 2", outcome.PreservedForeignDataKeys)
+	}
+
+	// And nothing foreign is NAMED anywhere in what comes back.
+	for _, path := range outcome.FieldsWritten {
+		for _, foreign := range []string{"their-tool.io", "other-tool.example", "shard", "namespaces", "env"} {
+			if strings.Contains(path, foreign) {
+				t.Errorf("FieldsWritten names foreign material: %q contains %q — counts only for somebody else's keys", path, foreign)
+			}
+		}
 	}
 }

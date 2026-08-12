@@ -231,12 +231,18 @@ func (r *Reconciler) stampAppliedRevisionTo(name, revision string) {
 	r.appliedRevMu.Unlock()
 }
 
-// EmitConnectionRepairEvent records a Kubernetes event for a repair a person
-// asked for. Nil-safe through the recorder itself.
+// EmitConnectionRepairEvent records a Kubernetes event for a FULL-CONNECTION
+// repair a person asked for. Nil-safe through the recorder itself.
 //
 // It exists so an operator watching `kubectl get events` sees the same story the
 // audit log tells. The message names the cluster and how many owned fields
 // changed — never a field's value.
+//
+// It is for the full path ONLY. The labels-only path has its own function below,
+// because this message says Sharko rewrote the stored sign-in details and a
+// labels-only repair never reads or writes them. An event that overstates what
+// happened is the same class of problem as a success event carrying a fault
+// reason: the text is what an operator acts on, so it has to be true.
 func (r *Reconciler) EmitConnectionRepairEvent(cluster string, fieldsWritten int) {
 	if r == nil || r.eventRecorder == nil {
 		return
@@ -246,5 +252,28 @@ func (r *Reconciler) EmitConnectionRepairEvent(cluster string, fieldsWritten int
 		"Cluster %s: Sharko repaired its ArgoCD connection to match git and the stored sign-in details (%d owned field(s) rewritten).",
 		events.EventTypeNormal,
 		cluster, fieldsWritten,
+	)
+}
+
+// EmitAddonLabelsRepairEvent records a Kubernetes event for a labels-only repair
+// a person asked for. Nil-safe through the recorder itself.
+//
+// It claims exactly what that repair does and nothing more: the addon on/off
+// labels git declares were re-applied. No mention of sign-in details, because
+// none were read; no mention of the connection as a whole, because the
+// connection was not rewritten. A count of labels, never a label's value and
+// never a label's key.
+//
+// Its reason is ReasonAddonLabelsRepaired, not ReasonConnectionRepaired — see
+// the constant for why the two are separate.
+func (r *Reconciler) EmitAddonLabelsRepairEvent(cluster string, labelsWritten int) {
+	if r == nil || r.eventRecorder == nil {
+		return
+	}
+	r.eventRecorder.Eventf(
+		events.ReasonAddonLabelsRepaired,
+		"Cluster %s: Sharko re-applied the addon labels git declares for this connection (%d label(s) rewritten). The connection's sign-in details were not read or changed.",
+		events.EventTypeNormal,
+		cluster, labelsWritten,
 	)
 }
