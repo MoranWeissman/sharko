@@ -863,6 +863,64 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 			expectStatus: StatusOwnershipConflict,
 			expectRepair: false,
 		},
+		// R3-8 criterion 6: test ALL statuses, not just the three critical ones.
+		// A seventh status added later should fail this test.
+		{
+			name: "synced",
+			build: func() Request {
+				spec := argosecrets.ClusterSecretSpec{
+					Name:   testCluster,
+					Server: "https://synced.invalid",
+					Token:  "synced-token",
+					Labels: map[string]string{"addon-foo": "enabled"},
+				}
+				req, _ := ownedRequest(t, spec, spec.Labels)
+				// ownedRequest builds a synced state (live == desired)
+				return req
+			},
+			expectStatus: StatusSynced,
+			expectRepair: true, // synced can offer repair
+		},
+		{
+			name: "out_of_sync",
+			build: func() Request {
+				spec := argosecrets.ClusterSecretSpec{
+					Name:   testCluster,
+					Server: "https://drift.invalid",
+					Token:  "drift-token",
+					Labels: map[string]string{"addon-foo": "enabled"},
+				}
+				req, _ := ownedRequest(t, spec, spec.Labels)
+				// Perturb live to make it drift from expected
+				req.Live.Data["server"] = []byte("https://different.invalid")
+				return req
+			},
+			expectStatus: StatusOutOfSync,
+			expectRepair: true, // out_of_sync can offer repair
+		},
+		{
+			name: "limited",
+			build: func() Request {
+				// EKS-shape connection (limited scope: can't compare credentials)
+				policy := Classify(ClassifyInput{
+					CredsSource:                  models.CredsSourceEKSToken,
+					BackendCanProvideStoredFacts: false, // EKS can't compare credentials
+					LiveSecretFound:              true,
+					LiveManagedBy:                argosecrets.ManagedByValue,
+				})
+				spec := argosecrets.ClusterSecretSpec{
+					Name:   testCluster,
+					Server: "https://eks.invalid",
+					Token:  "eks-token",
+					Labels: map[string]string{"addon-foo": "enabled"},
+				}
+				req, _ := ownedRequest(t, spec, spec.Labels)
+				req.Policy = policy // override to EKS mode
+				return req
+			},
+			expectStatus: StatusLimited,
+			expectRepair: true, // limited can offer repair (addon labels)
+		},
 	}
 
 	for _, tt := range tests {
@@ -897,16 +955,26 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 		})
 	}
 
-	// Verify we covered all the no-repair statuses. If a seventh status is
-	// added and this test is not updated, the test fails here.
-	noRepairStatuses := []Status{StatusCheckFailed, StatusMissing, StatusOwnershipConflict}
+	// Verify we covered ALL six statuses. If a seventh status is added and this
+	// test is not updated, the test fails here (R3-8 criterion 6).
+	allStatuses := []Status{
+		StatusSynced,
+		StatusOutOfSync,
+		StatusMissing,
+		StatusCheckFailed,
+		StatusOwnershipConflict,
+		StatusLimited,
+	}
 	coveredStatuses := make(map[Status]bool)
 	for _, tt := range tests {
 		coveredStatuses[tt.expectStatus] = true
 	}
-	for _, s := range noRepairStatuses {
+	for _, s := range allStatuses {
 		if !coveredStatuses[s] {
-			t.Errorf("no-repair status %q is not covered by any test case — add one", s)
+			t.Errorf("status %q is not covered by any test case — add one", s)
 		}
+	}
+	if len(coveredStatuses) > len(allStatuses) {
+		t.Errorf("test covers %d statuses but allStatuses only lists %d — a new status was added, update allStatuses[]", len(coveredStatuses), len(allStatuses))
 	}
 }
