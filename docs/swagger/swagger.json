@@ -3905,6 +3905,106 @@
                 }
             }
         },
+        "/clusters/{name}/connection-repair": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Rewrites the parts of this cluster's ArgoCD connection Secret that Sharko owns so they match the configured git branch plus, where one exists, an independently stored copy of the cluster's sign-in details. What it is allowed to touch depends on the kind of connection: a connection Sharko owns whose credentials it can read independently gets the whole connection rewritten; a connection Sharko is only a guest on gets its addon labels re-applied and nothing else; a connection another tool owns is refused. Sign-in details are re-fetched from the secrets backend and never read back out of the connection being repaired. The update happens in place — never a delete and recreate — and Sharko re-checks who owns the connection immediately before writing, refusing if anything else has taken it over. Foreign labels, foreign annotations, unrelated data keys and labels a takeover carried over all survive untouched. Git is never written. The self-heal setting is neither read nor changed. Requires the commit the caller reviewed; if the branch has moved since, the repair is refused so what was reviewed is what gets written. The response carries a fresh comparison so the caller can see what the repair achieved. No value is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Repair a cluster's ArgoCD connection to match what Sharko intends",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The commit the caller reviewed, from the connection check's compared_commit",
+                        "name": "reviewed_commit",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The repair result plus a fresh comparison",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.connectionRepairView"
+                        }
+                    },
+                    "400": {
+                        "description": "Cluster name or reviewed commit is missing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — requires admin role",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "This cluster is not in the git-managed cluster list",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The git branch moved since the caller reviewed it, or the connection changed underneath — nothing was written",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "This kind of connection cannot be repaired, or is not Sharko's to change",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Sharko could not read what the connection should be, so it changed nothing",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Sharko is missing something it needs to run the repair",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/diagnose": {
             "post": {
                 "security": [
@@ -12809,6 +12909,77 @@
                 },
                 "values_never_returned": {
                     "description": "ValuesNeverReturned is always true. It is in the body so the promise is\nvisible to anyone reading the API, not only to anyone reading this file.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.connectionRepairView": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "description": "Branch is the configured git branch. Sharko never discovers a default\nbranch.",
+                    "type": "string"
+                },
+                "cluster": {
+                    "description": "Cluster is the cluster this answer is about.",
+                    "type": "string"
+                },
+                "comparison": {
+                    "description": "Comparison is the FRESH comparison re-run after the repair, so the caller\nsees what the repair achieved rather than being told \"done\" and having to\nask. Same sanitized shape the read-only endpoint returns: a sensitive\nfield carries a path, a status and sensitive true, with no expected value\nand no live value present at all.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_api.connectionComparisonView"
+                        }
+                    ]
+                },
+                "fields_repaired": {
+                    "description": "FieldsRepaired are the owned field paths that changed, sorted. PATHS\nonly — data.config appears by name when the credential blob was\nrewritten, and its contents appear nowhere in this response or anywhere\nelse.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "label_diff": {
+                    "description": "LabelDiff reports the addon-label changes for a labels-only repair, the\nsame shape POST /resync reports.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff"
+                        }
+                    ]
+                },
+                "message": {
+                    "description": "Message is one plain sentence about what happened.",
+                    "type": "string"
+                },
+                "preserved_foreign_data_keys": {
+                    "type": "integer"
+                },
+                "preserved_foreign_labels": {
+                    "description": "PreservedForeignLabels and PreservedForeignDataKeys count what the repair\ndeliberately left alone. Counts, not names: naming somebody else's keys\nwould be reporting on their data.",
+                    "type": "integer"
+                },
+                "repaired": {
+                    "description": "Repaired is true when Sharko actually changed something. False with a\nsuccessful response means the connection already matched what Sharko\nintends — worth saying plainly rather than implying a fix happened.",
+                    "type": "boolean"
+                },
+                "repaired_at": {
+                    "description": "RepairedAt is when the repair ran, RFC3339.",
+                    "type": "string"
+                },
+                "repaired_at_commit": {
+                    "description": "RepairedAtCommit is the commit this repair was built from and verified\nagainst. Always set on a successful repair — a repair with an unknown\ncommit is refused rather than performed (see the revision guard).",
+                    "type": "string"
+                },
+                "scope_applied": {
+                    "description": "ScopeApplied is what this repair was allowed to touch: full_connection or\naddon_labels_only. It comes from the mode policy, never from the request.",
+                    "type": "string"
+                },
+                "self_heal_unchanged": {
+                    "description": "SelfHealUnchanged is always true. Repair does not read the self-heal\nsetting as a precondition, does not write it, and does not depend on it.\nIt is in the body so the promise is visible to anyone reading the API.",
+                    "type": "boolean"
+                },
+                "values_never_returned": {
+                    "description": "ValuesNeverReturned is always true, same promise the comparison makes.",
                     "type": "boolean"
                 }
             }

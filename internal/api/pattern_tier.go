@@ -48,6 +48,7 @@ var mutatingPatternTier = map[string]audit.Tier{
 	"DELETE /api/v1/v4/clusters/{name}/addons/{addon}":         audit.Tier1,
 	"POST /api/v1/clusters/{name}/secrets/refresh":             audit.Tier1,
 	"POST /api/v1/clusters/{name}/resync":                      audit.Tier1,
+	"POST /api/v1/clusters/{name}/connection-repair":           audit.Tier1,
 
 	// Brownfield takeover (v4 Wave 2, Epic 6). The takeover itself stamps
 	// its own tier through GitProviderForTier, so only the label drop —

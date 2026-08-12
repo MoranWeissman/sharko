@@ -94,6 +94,26 @@ var ActionRequirements = map[string]Role{
 	"cluster.takeover":             RoleAdmin,
 	"cluster.takeover.drop-labels": RoleAdmin,
 
+	// Repairing a cluster's ArgoCD connection (POST
+	// /clusters/{name}/connection-repair, step 3 of the connection-Secret
+	// feature). Admin, deliberately NOT the Operator cluster.resync just
+	// below.
+	//
+	// cluster.resync re-applies Sharko's own addon labels: the worst a
+	// mistake there does is deploy or undeploy an addon. This action can
+	// rewrite the credential material ArgoCD signs in to the cluster
+	// with, so a mistake takes the cluster offline until somebody fixes
+	// it — the same blast radius as cluster.takeover above and
+	// cluster.remove, both of which are admin.
+	//
+	// Widening cluster.resync to cover both acts would have been the
+	// cheap way to avoid this entry, and it would have silently handed
+	// every operator the bigger one. The read-only comparison that tells
+	// you WHETHER a repair is needed stays at secret.resource.read
+	// (Operator), so an operator can still see the problem and ask an
+	// admin to fix it.
+	"cluster.connection.repair": RoleAdmin,
+
 	// Operator+ actions
 	"addon.enable":                RoleOperator,
 	"addon.disable":               RoleOperator,
