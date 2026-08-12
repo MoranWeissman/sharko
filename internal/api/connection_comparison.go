@@ -356,6 +356,19 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	}
 
 	result := connectioncompare.Compare(req)
+
+	// R3-8: when the git provider cannot report a commit (revision is empty),
+	// the comparison may still run and report what it could check, but the
+	// repair offer must be withdrawn. Sharko only rewrites a connection when it
+	// can name the exact commit it is matching — otherwise a repair's
+	// git-revision guard (R3-4) would always refuse, and offering the button
+	// would mislead the user.
+	if revision == "" && result.RepairAvailable {
+		result.RepairAvailable = false
+		result.RepairScope = connectioncompare.RepairScopeNone
+		result.LimitReason = "Sharko cannot tell which commit your git branch is on, so it will not offer to rewrite this connection. Sharko only makes this change when it can name the exact commit it is matching."
+	}
+
 	s.auditSecretResourceRead(r, fmt.Sprintf("cluster:%s", cluster),
 		"compared the cluster connection with what Sharko intends", auditResultFor(result.Status))
 	writeJSON(w, http.StatusOK, finishView(view, result))

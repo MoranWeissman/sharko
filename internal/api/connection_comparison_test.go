@@ -1701,3 +1701,93 @@ func TestConnectionComparison_SelfManagedThroughTheEndpoint(t *testing.T) {
 	}
 	assertNoSentinel(t, "response body", w.Body.String())
 }
+
+// ============================================================================
+// R3-8: Empty-commit gating
+// ============================================================================
+
+// TestComparison_RefusesRepairWhenCommitUnknown proves that when
+// ResolveComparedRevision returns empty (the git provider cannot report a
+// commit), the comparison endpoint reports repair_available=false and
+// repair_scope=none with a safe reason explaining that Sharko cannot name the
+// commit it would be matching. The read-only comparison still runs and reports
+// everything it could check — only the repair offer is withdrawn.
+func TestComparison_RefusesRepairWhenCommitUnknown(t *testing.T) {
+	// Set up a cluster in managed-clusters.yaml with a live Secret that drifted.
+	managedYAML := backendManagedYAML
+	live := driftedOwnedSecret()
+
+	// The git provider reports NO commit (empty headSHA).
+	gp := &comparisonGP{managedYAML: []byte(managedYAML), headSHA: ""}
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   argoClient,
+		Vault:        comparisonFakeVault{},
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Hour,
+		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, comparisonFakeVault{}, nil, nil)
+
+	// Call the comparison endpoint.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/"+comparisonCluster+"/connection-comparison", nil)
+	req.Header.Set("X-Sharko-User", "operator")
+	req.Header.Set("X-Sharko-Role", "operator")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Assert: the endpoint returned 200 (not an error — the comparison ran).
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// Parse the response.
+	var view struct {
+		Cluster         string `json:"cluster"`
+		Status          string `json:"status"`
+		ComparedCommit  string `json:"compared_commit"`
+		RepairAvailable bool   `json:"repair_available"`
+		RepairScope     string `json:"repair_scope"`
+		LimitReason     string `json:"limit_reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+
+	// Assert: the compared_commit is empty (the git provider couldn't report it).
+	if view.ComparedCommit != "" {
+		t.Errorf("compared_commit = %q, want empty (git provider returned no commit)", view.ComparedCommit)
+	}
+
+	// Assert: repair_available is false.
+	if view.RepairAvailable {
+		t.Error("repair_available = true, want false when the commit is unknown")
+	}
+
+	// Assert: repair_scope is "none".
+	if view.RepairScope != "none" {
+		t.Errorf("repair_scope = %q, want 'none' when repair is not available", view.RepairScope)
+	}
+
+	// Assert: limit_reason explains why the repair offer was withdrawn.
+	if !strings.Contains(view.LimitReason, "cannot tell which commit") {
+		t.Errorf("limit_reason does not explain the empty-commit refusal:\n%s", view.LimitReason)
+	}
+	if !strings.Contains(view.LimitReason, "can name the exact commit") {
+		t.Errorf("limit_reason does not mention the requirement:\n%s", view.LimitReason)
+	}
+
+	// Assert: the comparison still ran (status is not check_failed).
+	if view.Status == "check_failed" {
+		t.Error("status = check_failed, but the comparison should have run and reported what it could check")
+	}
+}
