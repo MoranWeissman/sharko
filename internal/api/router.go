@@ -1193,6 +1193,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/reconcile", srv.handleReconcileCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/resync", srv.handleResyncCluster)
+	// "Make this cluster's ArgoCD connection match what Sharko intends."
+	// A separate route from /resync above on purpose: that one re-applies
+	// addon labels and is unchanged by this step, while this one can
+	// rewrite the whole connection and is admin-gated for that reason.
+	// See connection_repair.go's header.
+	mux.HandleFunc("POST /api/v1/clusters/{name}/connection-repair", srv.handleRepairConnection)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/doctor", srv.handleDoctorCluster)

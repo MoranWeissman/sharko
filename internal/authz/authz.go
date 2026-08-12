@@ -94,6 +94,15 @@ var ActionRequirements = map[string]Role{
 	"cluster.takeover":             RoleAdmin,
 	"cluster.takeover.drop-labels": RoleAdmin,
 
+	// Connection repair (POST /clusters/{name}/connection-repair) can rewrite
+	// the whole credential material ArgoCD signs in with, not just addon labels.
+	// That is a bigger blast radius than cluster.resync (label-only, Operator),
+	// so this sits at Admin. The comparison that tells a user whether a repair
+	// is needed runs through cluster.compare, which is read-only and Operator+
+	// (Operator), so an operator can still see the problem and ask an admin to
+	// fix it.
+	"cluster.connection.repair": RoleAdmin,
+
 	// Operator+ actions
 	"addon.enable":                RoleOperator,
 	"addon.disable":               RoleOperator,

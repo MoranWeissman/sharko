@@ -221,6 +221,66 @@ func (r *Reconciler) RepairAddonLabelsOnly(ctx context.Context, name string) (Re
 	return r.ResyncClusterLabels(ctx, name)
 }
 
+// RepairAddonLabelsWithPinnedDesired is the NEW SAFE PRIMITIVE WRAPPER for the
+// connection repair endpoint's labels-only path (R3-9, PR B). It routes the
+// endpoint's pre-resolved pinned labels and verified ownership mode through to
+// argosecrets.Manager.RepairAddonLabelsWithOwnershipCheck, which does NO further
+// git read and performs the ownership recheck immediately before writing.
+//
+// This thin wrapper exists to keep provenance stamping in the one place that owns
+// it (the reconciler), while the argosecrets primitive stays focused on the
+// K8s Secret write itself. The endpoint supplies the pinned labels (computed from
+// a verified commit) and the expected ownership mode (classified once, used here),
+// which is why this wiring lives in PR B rather than PR A.
+//
+// Parameters match what the endpoint has and what the primitive needs:
+//   - pinnedAddonLabels: desired labels, already computed from the reviewed commit
+//   - comparedRevision: the commit those labels came from, for provenance stamping
+//   - expectedOwned: classified ownership mode (true = Sharko-owned, false = guest)
+//
+// Returns:
+//   - changed: true if the write happened
+//   - found: false if the Secret does not exist (not an error for labels-only)
+//   - error: ErrRepairOwnershipChanged on ownership mismatch, other errors as-is
+func (r *Reconciler) RepairAddonLabelsWithPinnedDesired(
+	ctx context.Context,
+	name string,
+	pinnedAddonLabels map[string]string,
+	comparedRevision string,
+	expectedOwned bool,
+) (changed bool, found bool, err error) {
+	if r.deps.ArgoClient == nil {
+		return false, false, ErrRepairNoClient
+	}
+
+	// Call the new safe primitive with the pinned labels and expected ownership.
+	// No git read happens inside this path — the caller already verified the
+	// commit and computed these labels from it.
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	changed, found, err = mgr.RepairAddonLabelsWithOwnershipCheck(
+		ctx, name, pinnedAddonLabels, expectedOwned,
+	)
+	if err != nil {
+		return changed, found, err
+	}
+
+	// Stamp the reviewed commit as the applied revision, same as the full-connection
+	// path does. The provenance stamping lives here in the reconciler, not in the
+	// argosecrets write primitive, so there's one place that owns it.
+	if changed {
+		r.stampAppliedRevisionTo(name, comparedRevision)
+	}
+
+	// Drift notice clearing: a labels-only repair that fixed something means the
+	// drift that was there is no longer drift. Clear the notice state so a NEW
+	// drift episode later gets its own event (connection_drift_notice.go).
+	if changed {
+		r.clearConnectionDriftNotice(name)
+	}
+
+	return changed, found, nil
+}
+
 // stampAppliedRevisionTo records an explicit commit as the one this cluster's
 // last successful write was built from.
 //
