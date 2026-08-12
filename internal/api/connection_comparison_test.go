@@ -784,7 +784,7 @@ func TestConnectionComparison_EKSPath_NeverMintsATokenAndLeaksNothing(t *testing
 	if mint.calls != 0 {
 		t.Fatalf(`the read-only comparison minted %d EKS sign-in token(s); it must mint ZERO.
 
-WHY ZERO: a minted EKS token is a real credential that can sign in as Sharko for as long as it lives. The mode policy has already ruled that an EKS credential blob cannot be compared — a fresh token differs from the live one every time with nothing having drifted — so a token minted here is created and thrown away. All of the risk, none of the use.
+WHY ZERO: a minted EKS token is a real credential that can sign in as Sharko for as long as it lives. The mode policy has already ruled that an EKS credential blob cannot be compared — the stored EKS payload holds cluster metadata, not a credential, so there is nothing on the expected side to compare against — so a token minted here is created and thrown away. All of the risk, none of the use.
 
 If this is above zero, the comparison path now reaches GetCredentials somewhere. Find it and take it out; do not raise the expected count.`, mint.calls)
 	}
@@ -1459,7 +1459,7 @@ WHY IT IS NOT COSMETIC: step 3 reads repair_scope off this policy. A full-connec
 	// exempting anything else has to be an argued decision rather than a quiet
 	// widening of this check.
 	if view.Status == "limited" && view.RepairScope == "full_connection" && view.OwnershipMode != "eks_token" {
-		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (its token changes every time) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
+		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (the stored EKS payload holds cluster metadata, not a credential, so there is nothing on the expected side to compare against) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
 			where, view.OwnershipMode)
 	}
 }

@@ -718,7 +718,7 @@ func TestRepair_EKSKeepsFullRepairAndNeverClaimsSynced(t *testing.T) {
 	if view.Comparison.Status == "synced" {
 		t.Fatal(`an EKS cluster was reported synced after a repair.
 
-Its credential blob was never comparable — a fresh token differs every time — so "in sync" is a claim about something Sharko did not check. Rule 13.`)
+Its credential blob was never comparable — the stored EKS payload holds cluster metadata, not a credential, so there is nothing on the expected side to compare against — so "in sync" is a claim about something Sharko did not check. Rule 13.`)
 	}
 	if view.Comparison.OwnershipMode != "eks_token" {
 		t.Errorf("ownership_mode = %q, want eks_token", view.Comparison.OwnershipMode)
