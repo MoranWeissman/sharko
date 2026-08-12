@@ -889,14 +889,39 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 // ErrRepairSecretChangedUnderneath — the same error the full-connection path
 // uses for the same situation.
 //
-// A guest-scope repair (expectedOwned: false) converges ONLY the addon keys.
-// It must not add managed-by, must not add argocd.argoproj.io/secret-type, and
-// must not remove them either — it leaves the ownership and type labels exactly
-// as found.
+// ADDON LABELS AND NOTHING ELSE, IN EITHER STANCE (R4-1).
+//
+// Whatever ownership mode the caller expected, this function converges only the
+// keys IsAddonLabelKey accepts: an unqualified addon-enablement key, or Sharko's
+// own v4 addons.sharko.dev/<addon> vocabulary. That filter is applied to the
+// pinned input BEFORE anything is written, so it binds the apply side and not
+// only the delete side.
+//
+// Every system label is therefore untouchable here, structurally rather than by
+// a rule somebody has to remember — they are all DNS-qualified, so the predicate
+// rejects them:
+//
+//   - app.kubernetes.io/managed-by
+//   - argocd.argoproj.io/secret-type
+//   - sharko.dev/connectivity-check (and its legacy sharko.io/ spelling)
+//
+// None of the three is added, changed or removed on any path, at either stance.
+// A Secret comes out of a labels-only repair carrying exactly the values it
+// carried on those keys going in.
+//
+// A key in pinnedAddonLabels that is not an addon key is IGNORED, not an error.
+// The caller asked for something outside what this writer promises, so the
+// writer declines quietly rather than failing a repair that is otherwise fine.
+//
+// A missing ownership label is not fixed here — it is reported. The
+// reconciler's connection drift notice raises ShapeProblemOwnershipLabelMissing
+// for that shape, and re-stamping the label inside a label repair would hide
+// the very thing the notice exists to surface.
 //
 // Parameters:
 //   - pinnedAddonLabels: the desired addon labels, already computed from the
-//     reviewed git commit by the caller. Passed in, not re-resolved.
+//     reviewed git commit by the caller. Passed in, not re-resolved. Non-addon
+//     keys in it are skipped.
 //   - expectedOwned: the ownership mode the comparison classified. true means
 //     Sharko-owned (managed or adopted), false means guest (self-managed).
 //
@@ -972,18 +997,43 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 		return RepairOutcome{}, true, ErrRepairOwnershipChanged
 	}
 
-	// Normalize addon labels to canonical vocabulary.
+	// Normalize addon labels to canonical vocabulary, and drop anything that is
+	// not an addon key.
+	//
+	// R4-1 rule 1: the filter is on the APPLY side, not only the delete side.
+	// This function promises addon labels and nothing else, and the promise has
+	// to hold at the writer — a promise only its callers enforce is not
+	// enforced. IsAddonLabelKey is the boundary, and it excludes every system
+	// label structurally: they are all DNS-qualified, so managed-by,
+	// argocd.argoproj.io/secret-type and sharko.dev/connectivity-check all
+	// carry a "/" and none of them can arrive through here. The one qualified
+	// key that IS Sharko's own, the v4 addons.sharko.dev/<addon> vocabulary,
+	// is accepted by that same predicate.
+	//
+	// A key outside the boundary is IGNORED, not an error. The caller asked for
+	// something this writer does not promise; declining quietly is better than
+	// failing a repair that is otherwise correct and complete.
 	desired := make(map[string]string, len(pinnedAddonLabels))
 	for k, v := range pinnedAddonLabels {
+		if !IsAddonLabelKey(k) {
+			continue
+		}
 		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
 			v = normalized
 		}
 		desired[k] = v
 	}
 
-	// Guest stance (expectedOwned: false): strip connectivity-check label.
-	// Sharko-owned stance: keep it as-is in the desired set (the caller
-	// already computed it with the correct featureOn setting).
+	// Guest stance (expectedOwned: false): the connectivity-check label is
+	// never Sharko's on a connection the user manages, so it is not in the
+	// desired set and is therefore never ADDED. The filter above already
+	// excludes that key (it is DNS-qualified); this stays as the explicit
+	// statement of the guest stance rather than an effect of the filter.
+	//
+	// It strips the DESIRED set only. It must never strip updated.Labels — that
+	// map is what gets written, so removing the key there would DELETE a system
+	// label that was already on the Secret, which this function does not
+	// promise and must not do (R4-1 rule 4).
 	if !expectedOwned {
 		models.RemoveConnectivityCheckLabels(desired)
 	}
@@ -1031,26 +1081,30 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 		updated.Labels[k] = v
 	}
 
-	// R3-9 rule 4: A guest-scope repair must never stamp or remove ownership
-	// labels. Sharko-owned repair re-applies them (same defensive re-stamp
-	// SyncManagedClusterLabels does, correct here too).
-	if expectedOwned {
-		// For adopted Secrets, ownership labels are already there and this is
-		// a no-op. For managed (non-adopted) Secrets, this defensively
-		// re-applies them so a Secret that lost its label is repaired — same
-		// logic SyncManagedClusterLabels uses.
-		isAdopted := IsAdopted(existing.Annotations)
-		if !isAdopted {
-			updated.Labels[LabelManagedBy] = ManagedByValue
-			updated.Labels[LabelSecretType] = "cluster"
-		}
-	}
-	// else: guest repair. Leave managed-by and secret-type exactly as found.
-	// The desired set already omits the check label, so the remove call below
-	// is redundant but harmless (removes-if-present, no error if absent).
-	if !expectedOwned {
-		models.RemoveConnectivityCheckLabels(updated.Labels)
-	}
+	// NO OWNERSHIP LABEL IS WRITTEN HERE, IN EITHER STANCE.
+	//
+	// R4-1 rule 3. This used to re-stamp managed-by and secret-type on the
+	// owned, non-adopted path — a defensive re-stamp copied from
+	// SyncManagedClusterLabels. It is right THERE, because that writer owns the
+	// whole managed label set and converging it is its job. It is wrong HERE for
+	// two reasons that both stand on their own:
+	//
+	//   - This function CHECKS ownership (see the recheck above). Writing an
+	//     ownership label back is CHANGING ownership, which is the one thing a
+	//     check must never do. The recheck and the re-stamp contradicted each
+	//     other inside the same function.
+	//   - A connection that really lost its managed-by label is the reconciler's
+	//     business on its normal pass, and it is already REPORTED:
+	//     clusterreconciler's connection drift notice raises
+	//     ShapeProblemOwnershipLabelMissing for exactly that shape
+	//     (connection_drift_notice.go). Quietly fixing it inside a label repair
+	//     hides the thing that notice exists to surface.
+	//
+	// The apply-side filter above makes this structural rather than a rule to
+	// remember: managed-by, secret-type and the connectivity-check label are all
+	// DNS-qualified, so IsAddonLabelKey rejects them and no path through this
+	// function can add, change or remove one. Whatever the Secret carried on
+	// those three keys, it still carries, byte for byte, value included.
 
 	// What actually changed, and what was left alone. Both come from the shared
 	// helpers in repair.go, so the two repair paths report the same way.
