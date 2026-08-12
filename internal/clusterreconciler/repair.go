@@ -228,7 +228,7 @@ func (r *Reconciler) EmitConnectionRepairEvent(cluster string, fieldsWritten int
 		return
 	}
 	r.eventRecorder.Eventf(
-		events.ReasonDriftDetected,
+		events.ReasonConnectionRepaired,
 		"Cluster %s: Sharko repaired its ArgoCD connection to match git and the stored sign-in details (%d owned field(s) rewritten).",
 		events.EventTypeNormal,
 		cluster, fieldsWritten,
