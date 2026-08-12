@@ -690,6 +690,18 @@ differences: %+v`, view.Comparison.Status, view.Comparison.Differences)
 	if after.Annotations["their-tool.io/note"] != "keep me" {
 		t.Error("a foreign annotation was lost in the repair")
 	}
+
+	// The success message must say "configured credentials source", not "stored
+	// sign-in details". The old wording was only true for connections whose
+	// credentials sit in the backend as a stored kubeconfig. For an EKS connection
+	// the backend stores cluster metadata, and the credential is created at write
+	// time, so nothing "stored" was rewritten.
+	if !strings.Contains(view.Message, "configured credentials source") {
+		t.Errorf("the success message says %q; it must contain 'configured credentials source' to accurately describe both stored-kubeconfig and EKS connections", view.Message)
+	}
+	if strings.Contains(view.Message, "stored sign-in details") {
+		t.Errorf("the success message says %q; it must not claim 'stored sign-in details' were rewritten (not true for EKS)", view.Message)
+	}
 }
 
 // TestRepair_EKSKeepsFullRepairAndNeverClaimsSynced is rule 13, and it is the one
