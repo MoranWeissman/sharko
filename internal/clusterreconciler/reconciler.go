@@ -42,7 +42,6 @@ package clusterreconciler
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -2132,14 +2131,15 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		return
 	}
 
-	// Resolve credentials. SecretPath overrides Name for the vault lookup
-	// (shared resolver — V2-cleanup-55.1).
+	// Resolve credentials, through the ONE route a write takes — the same
+	// function an asked-for repair calls (repair_credentials.go). It forwards the
+	// entry's per-cluster roleArn so EKS token minting for a cross-account
+	// cluster assumes the cluster's own role, applies the per-cluster role
+	// precedence, and returns the whole credential half of the spec so both
+	// writers hand buildSecretConfig the same evidence and get the same
+	// connection shape.
 	credKey := entry.CredentialLookupKey()
-	// Forward the entry's per-cluster roleArn (V2-cleanup-62.2) so EKS token
-	// minting for a cross-account cluster assumes the cluster's own role.
-	// Empty roleArn — and any backend without the role capability — is
-	// byte-identical to a plain GetCredentials call.
-	creds, vaultErr := providers.GetCredentialsWithOptionalRole(r.deps.Vault, credKey, entry.RoleARN)
+	credSpec, vaultErr := r.ConnectionCredentialSpecForWrite(entry)
 	if vaultErr != nil {
 		stats.Errors++
 		// The credentials error's own value is not logged. A credentials
@@ -2205,39 +2205,12 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// server setting (V2-cleanup-85.4) — either signal disabling the check
 	// wins.
 	models.ApplyConnectivityCheckLabel(clusterLabels, !r.effectiveDisableConnectivityCheck(ctx))
-	// Per-cluster roleArn from the entry wins over the connection-level
-	// default (V2-cleanup-62.2) — the same identity ArgoCD's argocd-k8s-auth
-	// exec shape must assume for a cross-account cluster. Matches the
-	// DefaultRoleARN doc: "for clusters whose entry does NOT specify one".
-	specRoleARN := entry.RoleARN
-	if specRoleARN == "" {
-		specRoleARN = r.deps.DefaultRoleARN
-	}
-	spec := argosecrets.ClusterSecretSpec{
-		Name:    entry.Name,
-		Server:  creds.Server,
-		Region:  entry.Region,
-		RoleARN: specRoleARN,
-		// Carry ALL the credential material through so buildSecretConfig can
-		// pick the right shape (precedence: cert pair > token > exec,
-		// V2-cleanup-56.1):
-		//   - CertData+KeyData set (client-certificate kubeconfig — kind /
-		//     kubeadm / on-prem): plain-TLS shape. Without this the spec fell
-		//     into the exec branch and ArgoCD ran argocd-k8s-auth against a
-		//     non-AWS cluster — connection Failed forever.
-		//   - Token set (bearer-token kubeconfig): bearerToken shape. Without
-		//     this the exec branch would clobber the good bearer-token Secret
-		//     written at registration.
-		//   - Neither (EKS / IAM clusters): exec shape (RoleARN/Region
-		//     preserved).
-		Token: creds.Token,
-		// EncodeToString(nil) == "" so clusters without a cert pair leave
-		// these fields empty and never take the cert branch.
-		CertData: base64.StdEncoding.EncodeToString(creds.CertData),
-		KeyData:  base64.StdEncoding.EncodeToString(creds.KeyData),
-		CAData:   base64.StdEncoding.EncodeToString(creds.CAData),
-		Labels:   clusterLabels,
-	}
+	// The credential half — server, region, role and every piece of credential
+	// material — came from ConnectionCredentialSpecForWrite above, so the
+	// precedence buildSecretConfig applies (cert pair > token > exec) sees the
+	// same evidence here as it does on a repair. The labels are this pass's own.
+	spec := credSpec
+	spec.Labels = clusterLabels
 
 	// The canonical builder in internal/argosecrets is the ONE place a full
 	// connection Secret is assembled from a spec — the same function
@@ -2322,7 +2295,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	stats.Created++
 	recordWrite("created")
 	log.Info("[clusterreconciler] cluster Secret created",
-		"cluster", entry.Name, "namespace", r.namespace, "server", creds.Server,
+		"cluster", entry.Name, "namespace", r.namespace, "server", credSpec.Server,
 	)
 	r.audit(audit.Entry{
 		Level:     "info",
