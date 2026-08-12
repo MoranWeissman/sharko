@@ -443,6 +443,56 @@ These keys are unqualified, so IsAddonLabelKey calls them Sharko's — the prese
 	}
 }
 
+// --- TEST 6a: takeover-preserved label wins when pinned set collides ---
+
+func TestRepairAddonLabelsWithOwnershipCheck_PreservedLabelWinsOverPinnedCollision(t *testing.T) {
+	// A takeover recorded "env" as preserved, AND the pinned label set
+	// independently declares "env" with a DIFFERENT value. The preserved value
+	// must win — the takeover promised the user their label would be kept, and
+	// git declaring a key that happens to collide with a legacy one does not
+	// override that promise.
+
+	live := addonLabelsTestSecret("cluster-collision", map[string]string{
+		"env":     "prod",
+		"datadog": "disabled",
+	}, map[string]string{
+		AnnotationTakeoverPreservedLabels: "env",
+	}, true)
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	// Pinned set declares "env: staging" — a genuine collision with the
+	// preserved key. Also declares "datadog: enabled" — NOT preserved, should
+	// be applied.
+	pinned := map[string]string{
+		"env":     "staging",
+		"datadog": "enabled",
+	}
+
+	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-collision", pinned, true)
+	if err != nil {
+		t.Fatalf("repair failed: %v", err)
+	}
+	if !found || !changed {
+		t.Fatal("repair should have found the Secret and changed the datadog label")
+	}
+
+	after, _ := client.CoreV1().Secrets("argocd").Get(context.Background(), "cluster-collision", metav1.GetOptions{})
+
+	// The preserved key wins: env must still be "prod", never overwritten to "staging".
+	if after.Labels["env"] != "prod" {
+		t.Errorf(`the apply loop overwrote a takeover-preserved label: env = %q, want prod.
+
+This label was recorded in the takeover annotation, and the takeover promised the user it would be kept. Git independently declared a key that collides, but that collision does not override the takeover promise.`, after.Labels["env"])
+	}
+
+	// The non-preserved addon label must still be applied, proving the function
+	// did not skip the whole apply loop just to satisfy this test.
+	if after.Labels["datadog"] != "enabled" {
+		t.Errorf("the non-preserved addon label was not repaired: datadog = %q, want enabled", after.Labels["datadog"])
+	}
+}
+
 // --- TEST 7: no churn when labels already match ---
 
 func TestRepairAddonLabelsWithOwnershipCheck_NoChurnWhenConverged(t *testing.T) {
