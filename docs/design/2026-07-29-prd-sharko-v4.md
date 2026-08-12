@@ -585,8 +585,12 @@ Secret, the repair cannot go further than the labels.
   start of the request and checked again immediately before writing. If the git branch moved
   in between, the server refuses with a 409 and writes nothing. Where the git provider cannot
   name a commit at all (a provider without the optional commit-resolution capability, or a
-  call that failed), a full repair is not offered — only the labels-only repair from FR35 may
-  be offered, because that one does not require a reviewable commit.
+  call that failed), a full repair is not offered.
+
+  This applies to the labels-only repair too. Every repair through the repair action needs the
+  reviewed commit, whatever it is allowed to change — the request is refused outright without
+  one. The separate one-time re-apply FR35 already promised is the only thing that works
+  without a commit, because it never claimed to write what somebody had just looked at.
 
 **What is never touched.** Every repair, full or labels-only:
 
