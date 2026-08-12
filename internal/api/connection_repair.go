@@ -376,13 +376,38 @@ func (s *Server) repairFullConnection(
 		return
 	}
 
-	spec, credErr := s.storedSpecForRepair(desired.Entry)
+	// THE ONE ROUTE A WRITE TAKES TO CREDENTIALS (R3-14).
+	//
+	// ConnectionCredentialSpecForWrite is what the periodic reconcile pass calls
+	// too, so a repair and a normal write hand argosecrets.buildSecretConfig the
+	// SAME evidence and therefore produce the SAME connection shape. For a stored
+	// EKS payload that means minting exactly one sign-in token, the same as the
+	// pass — because the thing being written has to let ArgoCD sign in
+	// afterwards.
+	//
+	// This used to be storedSpecForRepair, the read-only no-mint route the
+	// COMPARISON uses. For a stored EKS payload that route returns the server and
+	// the CA bundle and no token, and buildSecretConfig picks the shape by
+	// precedence (cert pair > token > exec) — so with no token and no cert pair
+	// it fell through to the execProviderConfig (argocd-k8s-auth) shape while
+	// every normal write for that same cluster produced the bearerToken shape.
+	// Clicking repair silently changed HOW ArgoCD signs in. If argocd-k8s-auth
+	// is not usable from that ArgoCD's environment, the repair broke the
+	// connection it was asked to fix, and the fresh check afterwards compared
+	// against the wrong shape and called it correct.
+	//
+	// storedSpecForRepair is still the comparison's read, on both of its call
+	// sites, and it stays no-mint. A read-only check must create nothing. The two
+	// paths need DIFFERENT reads — see repair_credentials.go for the whole story.
+	spec, credErr := s.clusterRecon.ConnectionCredentialSpecForWrite(desired.Entry)
 	if credErr != nil {
-		// A credentials-backend error already SAYS the one fixed safe sentence —
-		// credsafe.Mark makes Error() return it — so nothing here reads its
-		// words, and nothing builds a sentence from it. The audit entry carries
-		// the flag set from the live typed error, and Log.Add replaces the text.
-		slog.Warn("[connection-repair] could not read this cluster's stored sign-in details",
+		// NOTHING IS WRITTEN. The error keeps its type and its credsafe marker;
+		// a marked error already SAYS the one fixed safe sentence, so nothing
+		// here reads its words and nothing builds a sentence from it. There is
+		// deliberately no fallback to a spec with no credential in it — that is
+		// exactly how a missing token became a changed sign-in method instead of
+		// a refusal.
+		slog.Warn("[connection-repair] could not read this cluster's sign-in details for the write",
 			"cluster", cluster)
 		s.auditRepairCredentialFailure(r, cluster, credErr)
 		writeError(w, http.StatusBadGateway, credsafe.Sentence(credErr))
@@ -405,7 +430,7 @@ func (s *Server) repairFullConnection(
 	spec.Annotations = nil
 
 	// THE CANONICAL BUILDER, and the only thing that builds a connection Secret.
-	built, buildErr := argosecrets.BuildClusterSecret(*spec, ns)
+	built, buildErr := argosecrets.BuildClusterSecret(spec, ns)
 	if buildErr != nil {
 		slog.Warn("[connection-repair] could not build the expected connection", "cluster", cluster)
 		s.finishRepairAudit(r, cluster, "failed: could not build the expected connection")
@@ -491,6 +516,11 @@ func (s *Server) repairFullConnection(
 // The OLD UNSAFE PATH (RepairAddonLabelsOnly → ResyncClusterLabels) is kept for
 // POST /clusters/{name}/resync, where re-reading the latest git state IS the
 // point and there is no reviewed commit.
+//
+// What it reports comes from the write and nothing else. The primitive returns
+// the label paths it really changed — additions, value changes and removals,
+// sorted — plus the counts of foreign material it left alone, and those go
+// straight into the response. Nothing here recomputes them from the desired set.
 func (s *Server) repairAddonLabelsOnly(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	cluster, ns, branch, reviewedCommit string,
@@ -558,22 +588,33 @@ func (s *Server) repairAddonLabelsOnly(
 	// Sharko holds no marker. So:
 	expectedOwned := policy.Mode != connectioncompare.ModeSelfManaged
 
-	changed, found, err := s.clusterRecon.RepairAddonLabelsWithPinnedDesired(
+	outcome, found, err := s.clusterRecon.RepairAddonLabelsWithPinnedDesired(
 		ctx, cluster, desired.AddonLabels, revisionNow, expectedOwned,
 	)
 
-	// R3-9 rule 3: ownership mismatch refuses and writes nothing. Same error shape
-	// the full path uses (ErrRepairOwnershipChanged → 422) so the endpoint has one
-	// mapping, not two.
+	// ONE MAPPING FOR ONE SITUATION, ON BOTH PATHS.
+	//
+	// repairRefusal is the full path's mapper and it is now this path's mapper
+	// too, because the primitive can return the same refusals: an ownership
+	// change, and a Kubernetes version conflict when something else wrote the
+	// Secret in the window (ErrRepairSecretChangedUnderneath → 409).
+	//
+	// This branch used to recognise only ErrRepairOwnershipChanged and send
+	// everything else to a 502, so a conflict was a bad gateway here and a 409
+	// on the full path — one cause, two answers, depending on which scope the
+	// cluster happened to fall into. A caller cannot write sane retry logic
+	// against that.
 	if err != nil {
-		if errors.Is(err, argosecrets.ErrRepairOwnershipChanged) {
-			s.finishRepairAudit(r, cluster, "refused: ownership changed — the connection is not Sharko's to change any more, or became Sharko's when a guest repair was expected")
-			writeError(w, http.StatusUnprocessableEntity, "Sharko will not change this cluster's connection because its ownership changed while Sharko was preparing the repair. Re-run the comparison to see the current state, then try again if a repair is still needed.")
-			return
-		}
-		slog.Warn("[connection-repair] could not re-apply the addon labels", "cluster", cluster, "error", err)
-		s.finishRepairAudit(r, cluster, "failed: could not re-apply the addon labels")
-		writeError(w, http.StatusBadGateway, repairFailWrite)
+		status, message, detail := repairRefusal(err)
+		// The error's text is not passed to the caller — repairRefusal returns
+		// one of this file's fixed sentences. It is logged, because a
+		// Kubernetes error here is a Kubernetes error: the credential read on
+		// this path never happens at all, so there is nothing credential-shaped
+		// to leak.
+		slog.Warn("[connection-repair] the labels-only repair did not complete",
+			"cluster", cluster, "error", err)
+		s.finishRepairAudit(r, cluster, detail)
+		writeError(w, status, message)
 		return
 	}
 
@@ -586,54 +627,50 @@ func (s *Server) repairAddonLabelsOnly(
 		return
 	}
 
-	// R3-9 DECISION: The new primitive returns (changed bool, found bool, err error)
-	// and does not provide the old label diff (Added/Removed/Changed/Unchanged).
-	// Computing that diff would require reading the Secret BEFORE the write to compare,
-	// which duplicates the read the primitive itself does. That read would also be
-	// stale by the time the write happens.
+	// WHAT CHANGED IS REPORTED, NOT WORKED OUT AGAIN HERE.
 	//
-	// CHOSEN: Drop the label_diff field for labels-only repairs. The FieldsRepaired
-	// list reports the addon label keys that were converged (all of them when changed
-	// is true). The message says "N label(s) converged" without claiming to enumerate
-	// which were added/removed/changed, because the new path does not know that
-	// distinction — and honestly reporting "I don't know" is better than fabricating
-	// a diff from a stale pre-write read.
+	// The primitive diffs the label map it is about to write against the one it
+	// read, and that same diff is what decides whether it writes at all. So its
+	// answer and its decision cannot disagree, and this handler's job is to
+	// repeat it — not to reconstruct it.
 	//
-	// POST /resync keeps its diff because it uses the old path (ResyncClusterLabels),
-	// which computes it. This endpoint and that one now return different shapes for
-	// labels-only writes, which is correct: they use different primitives.
-
-	// Build the field paths changed. The primitive returns a bool (changed or not);
-	// we infer the fields from the pinned labels set since that's what was converged.
-	// This matches the full-connection path's FieldsWritten reporting.
-	fieldsRepaired := make([]string, 0, len(desired.AddonLabels))
-	if changed {
-		for k := range desired.AddonLabels {
-			fieldsRepaired = append(fieldsRepaired, "metadata.labels["+k+"]")
-		}
-	}
+	// It used to reconstruct it, from a bare bool plus the desired label set, and
+	// every part of that was visibly wrong to whoever read the response: change
+	// one label out of twenty and it listed all twenty; a repair that only
+	// REMOVED a label reported zero fields for a write that really happened; the
+	// order came out of a map so it was different every call; and the preserved
+	// counts were never set, so they always read zero even on a connection full
+	// of somebody else's labels.
+	//
+	// LabelDiff stays nil on this path. POST /resync reports its own
+	// Added/Removed/Changed diff because it uses the older primitive that
+	// computes one; FieldsWritten is the same information in the shape both
+	// repair scopes share.
 
 	view := connectionRepairView{
-		Cluster:             cluster,
-		Repaired:            changed,
-		ScopeApplied:        string(repairScopeAddonLabelsOnly),
-		FieldsRepaired:      fieldsRepaired,
-		Branch:              branch,
-		RepairedAtCommit:    revisionNow,
-		RepairedAt:          time.Now().UTC().Format(time.RFC3339),
-		SelfHealUnchanged:   true,
-		ValuesNeverReturned: true,
-		// LabelDiff is nil — see DECISION comment above
+		Cluster:                  cluster,
+		Repaired:                 outcome.Changed,
+		ScopeApplied:             string(repairScopeAddonLabelsOnly),
+		FieldsRepaired:           outcome.FieldsWritten,
+		PreservedForeignLabels:   outcome.PreservedForeignLabels,
+		PreservedForeignDataKeys: outcome.PreservedForeignDataKeys,
+		Branch:                   branch,
+		RepairedAtCommit:         revisionNow,
+		RepairedAt:               time.Now().UTC().Format(time.RFC3339),
+		SelfHealUnchanged:        true,
+		ValuesNeverReturned:      true,
 	}
 
-	if changed {
-		view.Message = fmt.Sprintf("Sharko re-applied this cluster's addon labels to match git — %d label(s) converged. Sharko is a guest on this connection, so it changed nothing else. The self-heal setting was not changed.",
-			len(fieldsRepaired))
-		// Emit an event for a repair that actually changed something. Same rule the
-		// full-connection path follows.
-		s.clusterRecon.EmitConnectionRepairEvent(cluster, len(fieldsRepaired))
+	if outcome.Changed {
+		view.Message = fmt.Sprintf("Sharko re-applied this cluster's addon labels to match git — %d label(s) changed. Sharko never read or changed this connection's sign-in details. The self-heal setting was not changed.",
+			len(outcome.FieldsWritten))
+		// The LABELS event, not the connection one. EmitConnectionRepairEvent's
+		// message says Sharko rewrote the stored sign-in details, and this path
+		// never reads them — the event text is what an operator acts on, so it
+		// has to be true.
+		s.clusterRecon.EmitAddonLabelsRepairEvent(cluster, len(outcome.FieldsWritten))
 	} else {
-		view.Message = "This cluster's addon labels already matched git, so nothing was changed. Sharko is a guest on this connection and never changes its connection details. The self-heal setting was not changed."
+		view.Message = "This cluster's addon labels already matched git, so nothing was changed. Sharko never read or changed this connection's sign-in details. The self-heal setting was not changed."
 	}
 
 	// A guest connection's fresh comparison is built with no expected credential
@@ -641,7 +678,7 @@ func (s *Server) repairAddonLabelsOnly(
 	// which is the whole reason the repair was labels-only.
 	view.Comparison = s.freshComparisonAfterRepair(ctx, cluster, ns, branch, revisionNow, desired, false)
 
-	s.finishRepairAudit(r, cluster, repairOutcomeDetail(changed, len(view.FieldsRepaired), view.Comparison.Status))
+	s.finishRepairAudit(r, cluster, repairOutcomeDetail(outcome.Changed, len(outcome.FieldsWritten), view.Comparison.Status))
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -723,15 +760,36 @@ func (s *Server) freshComparisonAfterRepair(
 }
 
 // storedSpecForRepair reads what the secrets BACKEND has stored for this cluster
-// and builds the credential half of the expected Secret from it.
+// and builds the credential half of the EXPECTED Secret from it — the side a
+// COMPARISON compares against.
 //
-// IT CANNOT MINT, and it never reads the live Secret. It goes through
+// Its name says repair for historical reasons; the repair does not call it any
+// more (R3-14). Its two callers are both checks: expectedConnectionSpec's twin in
+// connection_comparison.go, and freshComparisonAfterRepair below — the re-check
+// that runs after a write.
+//
+// # Why a check reads differently from a write, and why that is right
+//
+// A CHECK must create nothing while answering "what should this look like?". For
+// a stored EKS payload the backend holds metadata and not a credential, so the
+// honest answer is "there is no credential on the expected side", and the check
+// reports the credential fields as not checked rather than minting a real
+// short-lived sign-in token to compare against and throw away. A read with a
+// blast radius is not a read.
+//
+// A WRITE asks a different question — "what do I need to WRITE?" — and a write
+// needs credentials that actually work, so it mints. Its route is
+// clusterreconciler.ConnectionCredentialSpecForWrite, which both writers share.
+//
+// Sharing one read between the two would either make the check mint or make the
+// repair write a spec with no credential in it. The second is what happened: the
+// repair took this route, got no token for an EKS payload, and the builder's
+// precedence fell through to the exec shape — changing how ArgoCD signs in.
+//
+// So this one CANNOT MINT, and it never reads the live Secret. It goes through
 // ClusterCredsRouter.StoredFactsIndependentOfArgoCDSecret, which only ever calls
 // the read-only StoredConnectionFacts capability — there is no branch here or in
-// the router that reaches GetCredentials, so no EKS sign-in token is created. That
-// matters more on the repair path than on the read path: a token minted here would
-// be written into the connection, and the mode policy has already ruled that an
-// EKS credential blob cannot be compared anyway.
+// the router that reaches GetCredentials. Do not widen it.
 //
 // The returned error is whatever the router gave back. It is NOT inspected by
 // text, ever: a credentials-backend error is marked, so its Error() is one fixed

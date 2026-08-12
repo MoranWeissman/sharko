@@ -120,24 +120,40 @@ Run with --check-only to look without changing anything.`,
 		}
 		printConnectionCheck(&check)
 
-		if checkOnly {
-			return nil
-		}
-
-		// R3-11 ordering fix: check_failed and empty-commit must come BEFORE
-		// !repair_available, so they exit non-zero. Once PR A's blocker 1 lands
-		// (making a failed check set repair_available=false), the old order would
-		// hit !repair_available first and return nil — a script could not tell
-		// "I looked and it was fine" from "I could not look at all".
+		// A FAILED CHECK IS A FAILED CHECK, WHETHER OR NOT A WRITE WAS COMING.
 		//
-		// The correct order:
-		//  1. check_failed → error (EXIT NON-ZERO) — the check did not finish
-		//  2. empty commit → error (EXIT NON-ZERO) — git cannot report a commit
-		//  3. !repair_available → nil (EXIT ZERO) — looked, and no repair allowed
+		// This test used to be an early `if checkOnly { return nil }` sitting
+		// ABOVE the check_failed branch, so `repair-connection X --check-only`
+		// printed a failed check and exited ZERO. A script reading that exit code
+		// got the wrong answer: it could not tell "I looked and it was fine" from
+		// "I could not look at all". Round 2 fixed the ordering for the repair
+		// path and left the early return in front of it.
 		//
-		// A script can now distinguish: non-zero exit means "something failed",
-		// zero exit with "will not change" printed means "looked successfully, and
-		// this connection is not Sharko's to repair".
+		// So the failure cases run first and --check-only stops AFTER them, not
+		// before. --check-only still writes nothing, ever, on any path — the only
+		// thing it changes is that the command stops before the confirm prompt and
+		// the POST. A healthy check with --check-only still exits zero.
+		//
+		// The order:
+		//  1. check_failed → error (EXIT NON-ZERO), in BOTH modes — the check
+		//     did not finish, and that is true whoever asked
+		//  2. --check-only → nil (EXIT ZERO) — asked to look only, and the look
+		//     succeeded. Nothing below this line runs, so nothing is written
+		//  3. empty commit → error (EXIT NON-ZERO) — only reached when a write
+		//     was coming, because it is only a reason not to WRITE
+		//  4. !repair_available → nil (EXIT ZERO) — looked, and no repair allowed
+		//
+		// Non-zero means "the check did not finish, or the write was refused".
+		// Zero means "the check finished".
+		//
+		// Why the missing-commit test is on the WRITE side of --check-only: the
+		// comparison really did answer, so the check did not fail. Not being able
+		// to name the branch's commit only stops Sharko REWRITING the connection,
+		// and --check-only was never going to rewrite anything. Printing "Sharko
+		// will not rewrite this connection" to somebody who only asked to look is
+		// the same class of wrong answer as this whole fix is about; and the check
+		// output already says "Sharko could not confirm which commit" in the line
+		// above.
 
 		if check.Status == "check_failed" {
 			fmt.Println()
@@ -149,6 +165,11 @@ Run with --check-only to look without changing anything.`,
 			// "looked and it was fine".
 			return fmt.Errorf("the connection check for %q did not finish", name)
 		}
+
+		if checkOnly {
+			return nil
+		}
+
 		if check.ComparedCommit == "" {
 			fmt.Println()
 			fmt.Println("Sharko cannot tell which commit your git branch is on, so it will not rewrite this connection.")
