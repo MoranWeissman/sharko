@@ -27,17 +27,22 @@ var HandlerTier = map[string]audit.Tier{
 	"handleRefreshClusterCredentials": audit.Tier1,
 	"handleReconcileCluster":          audit.Tier1,
 	"handleResyncCluster":             audit.Tier1,
-	"handleTestCluster":               audit.Tier1,
-	"handleDiagnoseCluster":           audit.Tier1,
-	"handleDoctorCluster":             audit.Tier1,
-	"handleUnadoptCluster":            audit.Tier1,
-	"handleEnableAddon":               audit.Tier1,
-	"handleDisableAddon":              audit.Tier1,
-	"handleEnableAddonV4":             audit.Tier1,
-	"handleDisableAddonV4":            audit.Tier1,
-	"handleRestartAddonSync":          audit.Tier1,
-	"handleBatchRegisterClusters":     audit.Tier1,
-	"handleAdoptClusters":             audit.Tier1,
+	// Repairing a cluster's ArgoCD connection. Operational, and it never
+	// touches Git at all — it writes the live connection Secret to match what
+	// Git already says. Same bucket as handleResyncCluster just above, which
+	// is the smaller version of the same act.
+	"handleRepairConnection":      audit.Tier1,
+	"handleTestCluster":           audit.Tier1,
+	"handleDiagnoseCluster":       audit.Tier1,
+	"handleDoctorCluster":         audit.Tier1,
+	"handleUnadoptCluster":        audit.Tier1,
+	"handleEnableAddon":           audit.Tier1,
+	"handleDisableAddon":          audit.Tier1,
+	"handleEnableAddonV4":         audit.Tier1,
+	"handleDisableAddonV4":        audit.Tier1,
+	"handleRestartAddonSync":      audit.Tier1,
+	"handleBatchRegisterClusters": audit.Tier1,
+	"handleAdoptClusters":         audit.Tier1,
 
 	// Brownfield takeover (v4 Wave 2, Epic 6) — operational: it changes
 	// who owns a live cluster connection and adds the cluster to the
