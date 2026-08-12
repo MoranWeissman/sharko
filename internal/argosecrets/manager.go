@@ -874,9 +874,20 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 // sits between the re-read and the Update — the same rule RepairOwnedConnection
 // follows for the full-connection path.
 //
-// Ownership mismatch (the Secret has become Sharko-owned when a guest repair
-// was expected, or vice versa) refuses and writes nothing, returning
-// ErrRepairOwnershipChanged so the endpoint has one mapping for both paths.
+// Two things refuse, both writing nothing:
+//
+//   - Another tool's ownership marker, whatever expectedOwned says. A
+//     non-empty managed-by that is not Sharko's value is somebody else's
+//     connection, and an adopted marker alongside it does not change that.
+//     Returns ErrRepairOwnershipChanged.
+//   - An ownership mismatch: the Secret has become Sharko-owned when a guest
+//     repair was expected, or the other way round. Also
+//     ErrRepairOwnershipChanged, so the endpoint has one mapping for both
+//     paths.
+//
+// A Kubernetes version conflict on the Update returns
+// ErrRepairSecretChangedUnderneath — the same error the full-connection path
+// uses for the same situation.
 //
 // A guest-scope repair (expectedOwned: false) converges ONLY the addon keys.
 // It must not add managed-by, must not add argocd.argoproj.io/secret-type, and
@@ -890,36 +901,75 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 //     Sharko-owned (managed or adopted), false means guest (self-managed).
 //
 // Returns:
-//   - changed: true if the write happened
-//   - found: false if the Secret does not exist
-//   - error: ErrRepairOwnershipChanged on ownership mismatch, other errors as-is
+//   - outcome: what the repair actually changed — the same RepairOutcome shape
+//     the full-connection path returns, so a caller reports a repair ONE way
+//     whichever path ran. Changed says whether a write happened; FieldsWritten
+//     names the label paths that really changed, additions, value changes and
+//     removals alike, sorted; the two Preserved counts say how much was left
+//     alone. Field paths and counts only — never a label value, never a
+//     foreign key's name.
+//   - found: false if the Secret does not exist. That is NOT an error on this
+//     path: the labels-only repair is asked for on connections Sharko does not
+//     necessarily own, and "there is nothing there" is an answer rather than a
+//     failure. This is the one place the two repair paths' contracts differ.
+//   - error: ErrRepairOwnershipChanged for a foreign owner or an ownership
+//     mismatch, ErrRepairSecretChangedUnderneath for a version conflict, other
+//     errors as-is
 func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 	ctx context.Context,
 	name string,
 	pinnedAddonLabels map[string]string,
 	expectedOwned bool,
-) (changed bool, found bool, err error) {
+) (outcome RepairOutcome, found bool, err error) {
 	// R3-9 rule 2: re-read the Secret and confirm ownership mode matches what
 	// was classified. This Get and the Update below have nothing but in-memory
 	// map work between them — no git read, no backend fetch, no lock.
 	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(getErr) {
-		return false, false, nil
+		return RepairOutcome{}, false, nil
 	}
 	if getErr != nil {
-		return false, false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+		return RepairOutcome{}, false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+
+	// ── ANOTHER TOOL'S CONNECTION IS NEVER WRITTEN ────────────────────────
+	// This runs BEFORE the expected-mode comparison below, and it does not
+	// consult expectedOwned at all, because "somebody else owns this" is not a
+	// mode Sharko can be in — it is a refusal whatever the caller expected.
+	//
+	// The mode comparison alone cannot catch it. It asks only "does Sharko's
+	// own marker match what the caller classified", and it reads any foreign
+	// marker as simply "not Sharko's". So a Secret labelled
+	// managed-by: another-tool looked exactly like an unlabelled connection to
+	// it, and a guest-scope request (expectedOwned: false) matched and wrote.
+	//
+	// Those two are not the same thing, and only one of them is writable:
+	//
+	//   - no marker at all: a connection the user manages, where the addon
+	//     labels really are Sharko's to converge. This is the guest
+	//     arrangement, it is legitimate, and it keeps working.
+	//   - a marker naming another tool: that tool's connection. Sharko writes
+	//     nothing on it, not even a label inside its own vocabulary.
+	//
+	// An adopted marker does not change the answer. Adoption is a record of an
+	// arrangement between the user and Sharko; it cannot launder an ownership
+	// label that names somebody else. So the foreign check comes first and an
+	// adopted annotation underneath it is never reached.
+	if liveManagedBy := existing.Labels[LabelManagedBy]; liveManagedBy != "" && liveManagedBy != ManagedByValue {
+		return RepairOutcome{}, true, ErrRepairOwnershipChanged
 	}
 
 	// Confirm ownership mode matches expected. Sharko-owned means: has the
 	// managed-by label OR the adopted annotation (covers both Sharko-owned
-	// modes: managed and adopted). Guest means neither.
+	// modes: managed and adopted). Guest means neither — an ABSENT or EMPTY
+	// marker, since a foreign one was already refused above.
 	hasManagedByLabel := existing.Labels != nil && existing.Labels[LabelManagedBy] == ManagedByValue
 	hasAdoptedAnnotation := IsAdopted(existing.Annotations)
 	actualOwned := hasManagedByLabel || hasAdoptedAnnotation
 
 	if actualOwned != expectedOwned {
 		// R3-9 rule 3: ownership mismatch refuses and writes nothing.
-		return false, true, ErrRepairOwnershipChanged
+		return RepairOutcome{}, true, ErrRepairOwnershipChanged
 	}
 
 	// Normalize addon labels to canonical vocabulary.
@@ -1002,12 +1052,29 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 		models.RemoveConnectivityCheckLabels(updated.Labels)
 	}
 
-	// No-op when converged set already matches.
-	if labelsEqual(existing.Labels, updated.Labels) {
+	// What actually changed, and what was left alone. Both come from the shared
+	// helpers in repair.go, so the two repair paths report the same way.
+	//
+	// The changed set is a DIFF of the label map about to be written against
+	// the one that was read, so it covers additions, value changes AND
+	// removals. It is computed here, once, and it is also what decides whether
+	// to write at all — so the answer in the response and the decision to write
+	// cannot disagree. Reporting used to be the caller's guess from a bare
+	// bool, which listed every desired label whenever any one of them changed
+	// and never mentioned a removal at all.
+	outcome = RepairOutcome{FieldsWritten: changedLabelPaths(existing.Labels, updated.Labels)}
+	outcome.PreservedForeignLabels, outcome.PreservedForeignDataKeys =
+		foreignPreservationCounts(updated.Labels, updated.Data, preserved)
+
+	// No-op when the converged set already matches. len(FieldsWritten) == 0 and
+	// labelsEqual are the same question asked two ways; the diff is the one that
+	// is reported, so the diff is the one that decides.
+	if len(outcome.FieldsWritten) == 0 {
 		slog.Debug("[argosecrets] cluster secret addon labels already converged (pinned repair), skipping",
 			"cluster", name, "namespace", m.namespace, "expectedOwned", expectedOwned,
 		)
-		return false, true, nil
+		outcome.Changed = false
+		return outcome, true, nil
 	}
 
 	// R3-9 rule 2 continued: Update using the resourceVersion from the Get
@@ -1018,13 +1085,28 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 	// Data / StringData / Annotations are deliberately NOT touched — DeepCopy
 	// preserved them all.
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
-		return false, true, fmt.Errorf("repairing addon labels on secret %q in namespace %q: %w", name, m.namespace, updateErr)
+		// A version conflict is the compare-and-swap doing its job: something
+		// else wrote the Secret between the Get above and this Update, so
+		// nothing was written. It is the SAME situation the full-connection
+		// path names, so it returns the SAME error —
+		// ErrRepairSecretChangedUnderneath, mapped by the endpoint to 409. A
+		// second error type for one situation would mean two answers for one
+		// cause, which is how this path came to report a conflict as a bad
+		// gateway in the first place.
+		if apierrors.IsConflict(updateErr) {
+			return RepairOutcome{}, true, ErrRepairSecretChangedUnderneath
+		}
+		return RepairOutcome{}, true, fmt.Errorf("repairing addon labels on secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}
 
+	outcome.Changed = true
 	slog.Info("[argosecrets] cluster secret addon labels repaired with ownership check",
 		"cluster", name, "namespace", m.namespace, "expectedOwned", expectedOwned,
+		"fields_written", len(outcome.FieldsWritten),
+		"foreign_labels_preserved", outcome.PreservedForeignLabels,
+		"foreign_data_keys_preserved", outcome.PreservedForeignDataKeys,
 	)
-	return true, true, nil
+	return outcome, true, nil
 }
 
 // IsAddonLabelKey reports whether a cluster-Secret label key is one of

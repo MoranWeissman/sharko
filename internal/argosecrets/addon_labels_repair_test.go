@@ -11,11 +11,17 @@ package argosecrets
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sort"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -65,14 +71,14 @@ func TestRepairAddonLabelsWithOwnershipCheck_ConvergesPinnedLabels(t *testing.T)
 		"monitoring": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-a", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-a", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
 	if !found {
 		t.Fatal("repair reported Secret not found")
 	}
-	if !changed {
+	if !outcome.Changed {
 		t.Fatal("repair reported no change, but labels genuinely drifted")
 	}
 
@@ -116,11 +122,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_UsesOnlyPinnedLabels(t *testing.T) 
 		"logging": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-b", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-b", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found and changed the Secret")
 	}
 
@@ -139,17 +145,25 @@ func TestRepairAddonLabelsWithOwnershipCheck_UsesOnlyPinnedLabels(t *testing.T) 
 // --- TEST 3: guest mode never stamps ownership ---
 
 func TestRepairAddonLabelsWithOwnershipCheck_GuestModeNeverStampsOwnership(t *testing.T) {
-	// A guest-scope repair (expectedOwned=false) is for a Secret another tool
-	// owns. The addon labels are Sharko's, but the connection and the ownership
-	// marker are not. This test verifies that a guest repair leaves managed-by
-	// and secret-type exactly as found.
+	// A guest-scope repair (expectedOwned=false) is for a connection the USER
+	// manages: no ownership marker at all. The addon labels are Sharko's; the
+	// connection is not. This test verifies that a guest repair neither adds nor
+	// removes managed-by, and leaves the secret-type label exactly as found.
+	//
+	// The fixture used to carry managed-by: another-tool. That is not a guest
+	// connection, it is somebody ELSE'S connection, and this test asserting a
+	// successful write on it was pinning a real bug: Sharko stamping addon
+	// labels onto another tool's Secret. A foreign owner is now refused —
+	// TestRepairAddonLabelsWithOwnershipCheck_RefusesForeignOwner_GuestScope
+	// below — and this test keeps the part that was always right, which is that
+	// a guest repair never stamps ownership.
 
 	live := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "cluster-guest",
 			Namespace: "argocd",
 			Labels: map[string]string{
-				LabelManagedBy:  "another-tool",
+				// No managed-by at all: the real guest shape.
 				LabelSecretType: "cluster",
 				"datadog":       "disabled",
 			},
@@ -168,11 +182,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_GuestModeNeverStampsOwnership(t *te
 		"datadog": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-guest", pinned, false)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-guest", pinned, false)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found and changed the addon label")
 	}
 
@@ -182,14 +196,269 @@ func TestRepairAddonLabelsWithOwnershipCheck_GuestModeNeverStampsOwnership(t *te
 	if after.Labels["datadog"] != "enabled" {
 		t.Errorf("addon label not repaired: datadog = %q", after.Labels["datadog"])
 	}
-	// Ownership label UNCHANGED.
-	if after.Labels[LabelManagedBy] != "another-tool" {
-		t.Errorf("guest repair changed managed-by: %q, want another-tool — guest repair must never stamp ownership", after.Labels[LabelManagedBy])
+	// managed-by NOT ADDED.
+	if got, added := after.Labels[LabelManagedBy]; added {
+		t.Errorf("guest repair added managed-by = %q — a guest repair must never stamp ownership", got)
 	}
 	// Secret-type label UNCHANGED.
 	if after.Labels[LabelSecretType] != "cluster" {
 		t.Errorf("guest repair changed secret-type: %q, want cluster", after.Labels[LabelSecretType])
 	}
+}
+
+// --- R3-15: another tool's connection is never written ---
+
+func TestRepairAddonLabelsWithOwnershipCheck_RefusesForeignOwner_GuestScope(t *testing.T) {
+	// The headline R3-15 case. A Secret labelled managed-by: another-tool with a
+	// guest-scope request (expectedOwned=false) used to PASS the check and get
+	// written, because the check only asked "does Sharko's own marker match what
+	// we classified" and read any foreign marker as simply "not Sharko's" —
+	// indistinguishable from an unlabelled connection.
+	//
+	// It must be refused, and the Secret must come back byte-for-byte identical.
+
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-theirs",
+			Namespace: "argocd",
+			Labels: map[string]string{
+				LabelManagedBy:  "another-tool",
+				LabelSecretType: "cluster",
+				"datadog":       "disabled",
+			},
+			Annotations: map[string]string{"their-tool.io/note": "ours"},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("cluster-theirs"),
+			"server": []byte("https://cluster-theirs.test.invalid"),
+			"config": []byte(`{"bearerToken":"theirs"}`),
+		},
+	}
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	before, getErr := client.CoreV1().Secrets("argocd").Get(context.Background(), "cluster-theirs", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("test setup: reading the fixture back: %v", getErr)
+	}
+
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-theirs",
+		map[string]string{"datadog": "enabled"}, false)
+
+	if !errors.Is(err, ErrRepairOwnershipChanged) {
+		t.Fatalf(`a guest-scope repair on a Secret owned by another tool returned err = %v, want ErrRepairOwnershipChanged.
+
+expectedOwned=false means "an unlabelled connection the user manages, where Sharko's addon labels really are Sharko's". It does NOT mean "somebody else's connection". Only the first is writable.`, err)
+	}
+	if !found {
+		t.Error("the Secret exists, so found must be true")
+	}
+	if outcome.Changed {
+		t.Error("a refusal reported Changed = true")
+	}
+	if len(outcome.FieldsWritten) != 0 {
+		t.Errorf("a refusal reported %d written field(s): %v", len(outcome.FieldsWritten), outcome.FieldsWritten)
+	}
+
+	// No write action reached the client at all.
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "update" || a.GetVerb() == "create" || a.GetVerb() == "patch" || a.GetVerb() == "delete" {
+			t.Errorf("a refusal still issued a %q action against another tool's Secret", a.GetVerb())
+		}
+	}
+
+	// And the object is byte-for-byte what it was.
+	assertSecretByteForByteUnchanged(t, before, client, "cluster-theirs")
+}
+
+func TestRepairAddonLabelsWithOwnershipCheck_RefusesForeignOwner_EvenWithAdoptedMarker(t *testing.T) {
+	// An adopted marker records an arrangement between the user and Sharko. It
+	// cannot launder an ownership label that names somebody else. So a Secret
+	// carrying BOTH managed-by: another-tool AND the adopted annotation is still
+	// another tool's connection and is still refused — at both expected modes,
+	// because the foreign owner decides it and expectedOwned never gets a say.
+
+	for _, expectedOwned := range []bool{true, false} {
+		name := "cluster-foreign-adopted-owned"
+		if !expectedOwned {
+			name = "cluster-foreign-adopted-guest"
+		}
+		live := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "argocd",
+				Labels: map[string]string{
+					LabelManagedBy: "another-tool",
+					"datadog":      "disabled",
+				},
+				Annotations: map[string]string{AnnotationAdopted: "true"},
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: map[string][]byte{"name": []byte(name)},
+		}
+		client := fake.NewSimpleClientset(live)
+		mgr := NewManager(client, "argocd")
+
+		before, getErr := client.CoreV1().Secrets("argocd").Get(context.Background(), name, metav1.GetOptions{})
+		if getErr != nil {
+			t.Fatalf("test setup: reading the fixture back: %v", getErr)
+		}
+
+		_, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), name,
+			map[string]string{"datadog": "enabled"}, expectedOwned)
+
+		if !errors.Is(err, ErrRepairOwnershipChanged) {
+			t.Errorf(`expectedOwned=%v on a Secret with managed-by: another-tool PLUS the adopted annotation returned err = %v, want ErrRepairOwnershipChanged.
+
+An adopted marker does not launder somebody else's ownership label.`, expectedOwned, err)
+		}
+		if !found {
+			t.Errorf("expectedOwned=%v: the Secret exists, so found must be true", expectedOwned)
+		}
+		assertSecretByteForByteUnchanged(t, before, client, name)
+	}
+}
+
+func TestRepairAddonLabelsWithOwnershipCheck_RefusesOwnerChangedBetweenClassifyAndWrite(t *testing.T) {
+	// The race R3-15 names: the request classified a guest connection, and
+	// between that classification and the write another tool stamped its own
+	// ownership label. The primitive re-reads the Secret immediately before
+	// writing, so it sees the new label and refuses — the classification is
+	// stale and a stale classification never authorises a write.
+	//
+	// The fixture is the state AFTER the other tool's stamp; expectedOwned=false
+	// is what the earlier classification decided. That is exactly the pair of
+	// facts the recheck exists to catch.
+
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-raced",
+			Namespace: "argocd",
+			Labels: map[string]string{
+				"datadog": "disabled",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"name": []byte("cluster-raced")},
+	}
+	client := fake.NewSimpleClientset(live)
+	mgr := NewManager(client, "argocd")
+
+	// The other tool stamps its label after Sharko classified this as a guest.
+	raced, err := client.CoreV1().Secrets("argocd").Get(context.Background(), "cluster-raced", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("test setup: %v", err)
+	}
+	raced.Labels[LabelManagedBy] = "another-tool"
+	if _, err := client.CoreV1().Secrets("argocd").Update(context.Background(), raced, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("test setup: stamping the other tool's label: %v", err)
+	}
+	before, getErr := client.CoreV1().Secrets("argocd").Get(context.Background(), "cluster-raced", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("test setup: reading the raced fixture back: %v", getErr)
+	}
+	updatesBefore := countActions(client, "update")
+
+	_, found, repairErr := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-raced",
+		map[string]string{"datadog": "enabled"}, false)
+
+	if !errors.Is(repairErr, ErrRepairOwnershipChanged) {
+		t.Fatalf(`ownership changing to another tool between the classification and the write returned err = %v, want ErrRepairOwnershipChanged`, repairErr)
+	}
+	if !found {
+		t.Error("the Secret exists, so found must be true")
+	}
+	if got := countActions(client, "update") - updatesBefore; got != 0 {
+		t.Errorf("the refusal issued %d update action(s); it must issue none", got)
+	}
+	assertSecretByteForByteUnchanged(t, before, client, "cluster-raced")
+}
+
+// --- R3-15: a version conflict is the shared changed-underneath error ---
+
+func TestRepairAddonLabelsWithOwnershipCheck_ConflictIsChangedUnderneath(t *testing.T) {
+	// The compare-and-swap did its job: something else wrote the Secret between
+	// the Get and the Update, so nothing was written. That is the SAME situation
+	// the full-connection path names, so it returns the SAME error, which the
+	// endpoint maps to 409. Before this, every Update failure including a
+	// conflict was wrapped into a generic error and answered 502.
+
+	live := addonLabelsTestSecret("cluster-conflict", map[string]string{"datadog": "disabled"}, nil, true)
+	client := fake.NewSimpleClientset(live)
+	client.PrependReactor("update", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(
+			schema.GroupResource{Resource: "secrets"}, "cluster-conflict",
+			errors.New("the object has been modified"))
+	})
+	mgr := NewManager(client, "argocd")
+
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-conflict",
+		map[string]string{"datadog": "enabled"}, true)
+
+	if !errors.Is(err, ErrRepairSecretChangedUnderneath) {
+		t.Fatalf(`a version conflict on the labels-only Update returned err = %v, want ErrRepairSecretChangedUnderneath.
+
+A conflict means nothing was written because somebody else got there first, which is a 409 and not a bad gateway. The full-connection path already answers it this way; both paths must give one answer for one cause, through this one existing error.`, err)
+	}
+	if !found {
+		t.Error("the Secret exists, so found must be true")
+	}
+	if outcome.Changed {
+		t.Error("a conflict reported Changed = true; nothing was written")
+	}
+}
+
+// assertSecretByteForByteUnchanged proves a refusal left the object exactly as
+// it was: the SAME label map, the SAME annotation map, the SAME data map, and
+// the same resourceVersion.
+//
+// It is deliberately stricter than assertSecretUnchanged in repair_test.go,
+// which checks that the expected keys are still present with the expected
+// values. That one would pass if a refusal ADDED a key, and "writes nothing"
+// has to mean nothing — so this one compares the whole maps and the
+// resourceVersion, which moves on any write at all.
+func assertSecretByteForByteUnchanged(t *testing.T, before *corev1.Secret, client *fake.Clientset, name string) {
+	t.Helper()
+	after, err := client.CoreV1().Secrets("argocd").Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading %q back after the refusal: %v", name, err)
+	}
+	if !reflect.DeepEqual(before.Labels, after.Labels) {
+		t.Errorf("labels changed despite the refusal:\n before %v\n after  %v", before.Labels, after.Labels)
+	}
+	if !reflect.DeepEqual(before.Annotations, after.Annotations) {
+		t.Errorf("annotations changed despite the refusal:\n before %v\n after  %v", before.Annotations, after.Annotations)
+	}
+	if !reflect.DeepEqual(before.Data, after.Data) {
+		// Key names only. A connection Secret's data VALUES are credential
+		// material and never belong in test output either.
+		t.Errorf("data changed despite the refusal: keys before %v, keys after %v",
+			sortedDataKeys(before.Data), sortedDataKeys(after.Data))
+	}
+	if before.ResourceVersion != after.ResourceVersion {
+		t.Errorf("resourceVersion moved despite the refusal: %q → %q — something wrote the object",
+			before.ResourceVersion, after.ResourceVersion)
+	}
+}
+
+func sortedDataKeys(data map[string][]byte) []string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func countActions(client *fake.Clientset, verb string) int {
+	n := 0
+	for _, a := range client.Actions() {
+		if a.GetVerb() == verb {
+			n++
+		}
+	}
+	return n
 }
 
 func TestRepairAddonLabelsWithOwnershipCheck_GuestModeWithNoOwnershipLabelsAtAll(t *testing.T) {
@@ -218,11 +487,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_GuestModeWithNoOwnershipLabelsAtAll
 		"datadog": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-unlabeled", pinned, false)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-unlabeled", pinned, false)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found and changed the addon label")
 	}
 
@@ -346,11 +615,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_PreservesForeignLabelsAnnotationsAn
 		"monitoring": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-foreign", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-foreign", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found and changed the addon labels")
 	}
 
@@ -418,11 +687,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_HonoursTakeoverPreservedLabels(t *t
 		"datadog": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-takeover", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-takeover", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found and changed the datadog label")
 	}
 
@@ -469,11 +738,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_PreservedLabelWinsOverPinnedCollisi
 		"datadog": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-collision", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-collision", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found the Secret and changed the datadog label")
 	}
 
@@ -508,14 +777,14 @@ func TestRepairAddonLabelsWithOwnershipCheck_NoChurnWhenConverged(t *testing.T) 
 		"monitoring": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-converged", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-converged", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
 	if !found {
 		t.Fatal("repair reported Secret not found")
 	}
-	if changed {
+	if outcome.Changed {
 		t.Error("repair reported a change, but labels already matched")
 	}
 
@@ -541,14 +810,14 @@ func TestRepairAddonLabelsWithOwnershipCheck_MissingSecretNotAnError(t *testing.
 		"datadog": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-missing", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-missing", pinned, true)
 	if err != nil {
 		t.Errorf("missing Secret returned an error: %v — the contract is found=false, err=nil", err)
 	}
 	if found {
 		t.Error("missing Secret reported found=true")
 	}
-	if changed {
+	if outcome.Changed {
 		t.Error("missing Secret reported changed=true")
 	}
 }
@@ -588,11 +857,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_AcceptsAdoptedSecretWhenExpectedOwn
 		"datadog": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-adopted", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-adopted", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v — adopted Secrets are owned for labels-only purposes", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have found and changed the addon label")
 	}
 
@@ -636,11 +905,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_BreakAndRestoreProof_IgnoresPinned(
 		"proof-test": "pinned-value",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-proof", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-proof", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have added the pinned label")
 	}
 
@@ -684,11 +953,11 @@ func TestRepairAddonLabelsWithOwnershipCheck_BreakAndRestoreProof_V4StaleKeyDele
 		"monitoring": "enabled",
 	}
 
-	changed, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-v4-proof", pinned, true)
+	outcome, found, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "cluster-v4-proof", pinned, true)
 	if err != nil {
 		t.Fatalf("repair failed: %v", err)
 	}
-	if !found || !changed {
+	if !found || !outcome.Changed {
 		t.Fatal("repair should have added the monitoring label")
 	}
 

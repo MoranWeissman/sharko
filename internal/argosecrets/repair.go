@@ -109,6 +109,74 @@ type RepairOutcome struct {
 	PreservedForeignDataKeys int
 }
 
+// changedLabelPaths reports which label keys differ between two label maps, as
+// metadata.labels[<key>] paths, sorted.
+//
+// It is a DIFF, not a running tally, and that is the point: a tally has to be
+// updated at every mutation site and silently drifts the day somebody adds
+// another one. Diffing the label map Sharko is about to write against the one
+// it read cannot drift — additions, value changes and removals all fall out of
+// the same comparison, and "nothing changed" is exactly an empty result, so the
+// no-write decision and the reported field list can never disagree.
+//
+// It names KEYS, never values. A label key is Sharko's own vocabulary or a
+// foreign key that is already visible to anyone who can read the object's
+// metadata; a label VALUE never appears here, and neither does anything from
+// Data.
+func changedLabelPaths(before, after map[string]string) []string {
+	var paths []string
+	for k, afterVal := range after {
+		beforeVal, wasThere := before[k]
+		if !wasThere || beforeVal != afterVal {
+			paths = append(paths, "metadata.labels["+k+"]")
+		}
+	}
+	for k := range before {
+		if _, stillThere := after[k]; !stillThere {
+			paths = append(paths, "metadata.labels["+k+"]")
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// foreignPreservationCounts counts the material a repair deliberately left
+// alone: labels that are not Sharko's to converge, and data keys Sharko never
+// writes.
+//
+// COUNTS ONLY, never names. A foreign label key or data key belongs to whoever
+// put it there, and listing them would be Sharko reporting on somebody else's
+// material. The count is enough to say "your things are still there".
+//
+// Both repair paths call this so a repair reports preservation the same way
+// whichever path ran. The definition of "foreign" is the same on both, too: the
+// three connection data keys and Sharko's own label vocabulary are Sharko's,
+// everything else is not. The labels-only path never writes Data at all, so on
+// that path this number says what a full repair WOULD have left alone — the
+// same sentence, the same meaning, one place that decides it.
+//
+// preserved is the set of label keys a takeover recorded as the previous
+// owner's. Those are foreign by record even though their bare keys look like
+// Sharko's vocabulary.
+func foreignPreservationCounts(labels map[string]string, data map[string][]byte, preserved map[string]struct{}) (foreignLabels, foreignDataKeys int) {
+	for k := range labels {
+		if _, isPreserved := preserved[k]; isPreserved {
+			foreignLabels++
+			continue
+		}
+		if !IsAddonLabelKey(k) && k != LabelManagedBy && k != LabelSecretType &&
+			!models.HasConnectivityCheckLabel(map[string]string{k: ""}) {
+			foreignLabels++
+		}
+	}
+	for k := range data {
+		if k != dataKeyName && k != dataKeyServer && k != dataKeyConfig {
+			foreignDataKeys++
+		}
+	}
+	return foreignLabels, foreignDataKeys
+}
+
 // RepairOwnedConnection rewrites the connection fields Sharko owns on the named
 // cluster's ArgoCD connection Secret, in place, and leaves everything else
 // exactly as it was.
@@ -238,23 +306,12 @@ func (m *Manager) RepairOwnedConnection(ctx context.Context, desired *corev1.Sec
 	// server-side merge re-apply old values.
 	updated.StringData = nil
 
-	// Count what was deliberately left alone, for an honest report.
+	// Count what was deliberately left alone, for an honest report. The count
+	// runs through the shared helper both repair paths use, so "foreign" means
+	// one thing across the whole feature.
 	outcome := RepairOutcome{}
-	for k := range updated.Labels {
-		if _, isPreserved := preserved[k]; isPreserved {
-			outcome.PreservedForeignLabels++
-			continue
-		}
-		if !IsAddonLabelKey(k) && k != LabelManagedBy && k != LabelSecretType &&
-			!models.HasConnectivityCheckLabel(map[string]string{k: ""}) {
-			outcome.PreservedForeignLabels++
-		}
-	}
-	for k := range updated.Data {
-		if k != dataKeyName && k != dataKeyServer && k != dataKeyConfig {
-			outcome.PreservedForeignDataKeys++
-		}
-	}
+	outcome.PreservedForeignLabels, outcome.PreservedForeignDataKeys =
+		foreignPreservationCounts(updated.Labels, updated.Data, preserved)
 
 	if len(written) == 0 {
 		// Already what Sharko intends. No write, no churn, and no provenance
