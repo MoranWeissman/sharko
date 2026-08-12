@@ -1459,7 +1459,7 @@ WHY IT IS NOT COSMETIC: step 3 reads repair_scope off this policy. A full-connec
 	// exempting anything else has to be an argued decision rather than a quiet
 	// widening of this check.
 	if view.Status == "limited" && view.RepairScope == "full_connection" && view.OwnershipMode != "eks_token" {
-		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (the stored EKS payload holds cluster metadata, not a credential, so there is nothing on the expected side to compare against) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
+		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (the backend stores EKS cluster details, not a reusable sign-in credential, so there is no stored credential to compare against) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
 			where, view.OwnershipMode)
 	}
 }
