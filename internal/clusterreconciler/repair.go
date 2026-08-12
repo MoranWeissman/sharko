@@ -187,11 +187,25 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 // RepairAddonLabelsOnly re-applies just Sharko's addon labels for one cluster,
 // which is the whole of what a repair may do on a guest connection.
 //
-// It is ResyncClusterLabels under a name that says which scope it serves. There
-// is deliberately no second implementation: the label write already had exactly
-// one code path (selfHealManagedCluster for a Sharko-owned Secret,
-// syncSelfManaged for a user-owned one), and adding another here would give the
-// same action two behaviours depending on which door it came through.
+// IMPORTANT: This is the OLD UNSAFE PATH. It delegates to ResyncClusterLabels,
+// which resolves git at the CURRENT BRANCH HEAD and re-reads the cluster
+// definition to build addon labels. This is correct for the periodic reconciler
+// and for `POST /clusters/{name}/resync` (where re-reading the latest git state
+// is the whole point), but it is NOT correct for the repair endpoint.
+//
+// The repair endpoint must use the NEW SAFE PRIMITIVE:
+//
+//	argosecrets.Manager.RepairAddonLabelsWithOwnershipCheck(ctx, name, pinnedAddonLabels, expectedOwned)
+//
+// That primitive accepts PRE-RESOLVED pinned labels built from a VERIFIED commit,
+// and performs the ownership recheck immediately before writing. The pinned
+// labels and the verified commit are both supplied by the endpoint (PR B), which
+// is why the wiring to the new primitive belongs in PR B, not here.
+//
+// This function remains as-is in PR A (core) so that:
+// 1. PR A builds and passes with no endpoint wired.
+// 2. POST /clusters/{name}/resync keeps its current behaviour (re-read git).
+// 3. Nobody wires the repair endpoint to this function by accident.
 func (r *Reconciler) RepairAddonLabelsOnly(ctx context.Context, name string) (ResyncResult, error) {
 	return r.ResyncClusterLabels(ctx, name)
 }

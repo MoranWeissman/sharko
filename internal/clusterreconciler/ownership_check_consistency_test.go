@@ -1,10 +1,13 @@
 package clusterreconciler
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 )
@@ -47,9 +50,14 @@ func TestOwnershipCheckConsistency(t *testing.T) {
 	// - Line 158: fullyOwned.Labels[LabelManagedBy] == ManagedByValue ✓
 	// - Line 165: !IsAdopted(nil) ✓
 
-	// RepairAddonLabelsWithOwnershipCheck logic (manager.go:916-918):
-	// hasManagedByLabel = true, hasAdoptedAnnotation = false, actualOwned = true.
-	// If expectedOwned=true, it passes.
+	// RepairAddonLabelsWithOwnershipCheck should accept this when expectedOwned=true.
+	client := fake.NewSimpleClientset(fullyOwned)
+	mgr := argosecrets.NewManager(client, "argocd")
+	pinnedLabels := map[string]string{"datadog": "enabled"}
+	_, _, err := mgr.RepairAddonLabelsWithOwnershipCheck(context.Background(), "fully-owned", pinnedLabels, true)
+	if err != nil {
+		t.Errorf("RepairAddonLabelsWithOwnershipCheck rejected a fully-owned Secret with expectedOwned=true: %v", err)
+	}
 
 	// Case 2: adopted Secret (no managed-by label, but has adopted annotation).
 	// IsManagedBySharko should return false (no label).
@@ -78,8 +86,14 @@ func TestOwnershipCheckConsistency(t *testing.T) {
 	}
 
 	// This is the key difference: RepairOwnedConnection would reject this Secret
-	// (line 165-166 in repair.go), but RepairAddonLabelsWithOwnershipCheck would
+	// (line 165-166 in repair.go), but RepairAddonLabelsWithOwnershipCheck should
 	// accept it when expectedOwned=true (line 918 in manager.go: hasAdoptedAnnotation = true).
+	client2 := fake.NewSimpleClientset(adopted)
+	mgr2 := argosecrets.NewManager(client2, "argocd")
+	_, _, err2 := mgr2.RepairAddonLabelsWithOwnershipCheck(context.Background(), "adopted", pinnedLabels, true)
+	if err2 != nil {
+		t.Errorf("RepairAddonLabelsWithOwnershipCheck rejected an adopted Secret with expectedOwned=true: %v — adopted Secrets ARE owned for labels-only purposes", err2)
+	}
 
 	// Case 3: genuinely foreign Secret (another tool's managed-by label).
 	// All three should agree this is NOT owned.
@@ -98,8 +112,14 @@ func TestOwnershipCheckConsistency(t *testing.T) {
 	}
 
 	// RepairOwnedConnection would reject (line 158: != ManagedByValue).
-	// RepairAddonLabelsWithOwnershipCheck with expectedOwned=true would reject
+	// RepairAddonLabelsWithOwnershipCheck with expectedOwned=true should reject
 	// (line 916: hasManagedByLabel = false, so actualOwned = false, mismatch).
+	client3 := fake.NewSimpleClientset(foreign)
+	mgr3 := argosecrets.NewManager(client3, "argocd")
+	_, _, err3 := mgr3.RepairAddonLabelsWithOwnershipCheck(context.Background(), "foreign", pinnedLabels, true)
+	if !errors.Is(err3, argosecrets.ErrRepairOwnershipChanged) {
+		t.Errorf("RepairAddonLabelsWithOwnershipCheck accepted a foreign Secret with expectedOwned=true: err = %v, want ErrRepairOwnershipChanged", err3)
+	}
 
 	// Case 4: unlabeled Secret (no managed-by, not adopted).
 	// All three should agree this is NOT owned.
@@ -116,8 +136,14 @@ func TestOwnershipCheckConsistency(t *testing.T) {
 	}
 
 	// RepairOwnedConnection would reject (line 158: != ManagedByValue).
-	// RepairAddonLabelsWithOwnershipCheck with expectedOwned=true would reject
+	// RepairAddonLabelsWithOwnershipCheck with expectedOwned=true should reject
 	// (actualOwned = false, mismatch).
+	client4 := fake.NewSimpleClientset(unlabeled)
+	mgr4 := argosecrets.NewManager(client4, "argocd")
+	_, _, err4 := mgr4.RepairAddonLabelsWithOwnershipCheck(context.Background(), "unlabeled", pinnedLabels, true)
+	if !errors.Is(err4, argosecrets.ErrRepairOwnershipChanged) {
+		t.Errorf("RepairAddonLabelsWithOwnershipCheck accepted an unlabeled Secret with expectedOwned=true: err = %v, want ErrRepairOwnershipChanged", err4)
+	}
 }
 
 // TestOwnershipCheckDocumentation is a documentation test: it exists to make

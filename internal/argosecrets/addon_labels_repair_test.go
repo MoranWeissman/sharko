@@ -327,13 +327,13 @@ func TestRepairAddonLabelsWithOwnershipCheck_RefusesOwnershipMismatch_ExpectedGu
 
 func TestRepairAddonLabelsWithOwnershipCheck_PreservesForeignLabelsAnnotationsAndData(t *testing.T) {
 	live := addonLabelsTestSecret("cluster-foreign", map[string]string{
-		"datadog":                      "disabled",
-		"their-tool.io/label":          "keep-me",
-		"app.kubernetes.io/instance":   "argocd-tracking",
+		"datadog":                       "disabled",
+		"their-tool.io/label":           "keep-me",
+		"app.kubernetes.io/instance":    "argocd-tracking",
 		"sharko.dev/connectivity-check": "passed",
 	}, map[string]string{
 		"their-tool.io/annotation": "also-keep-me",
-		"notes":                   "user notes",
+		"notes":                    "user notes",
 	}, true)
 	live.Data["shard"] = []byte("3")
 	live.Data["namespaces"] = []byte("team-a,team-b")
@@ -358,8 +358,8 @@ func TestRepairAddonLabelsWithOwnershipCheck_PreservesForeignLabelsAnnotationsAn
 
 	// Foreign labels survive.
 	for key, want := range map[string]string{
-		"their-tool.io/label":          "keep-me",
-		"app.kubernetes.io/instance":   "argocd-tracking",
+		"their-tool.io/label":           "keep-me",
+		"app.kubernetes.io/instance":    "argocd-tracking",
 		"sharko.dev/connectivity-check": "passed",
 	} {
 		if got := after.Labels[key]; got != want {
@@ -378,7 +378,7 @@ func TestRepairAddonLabelsWithOwnershipCheck_PreservesForeignLabelsAnnotationsAn
 	// Annotations unchanged.
 	for key, want := range map[string]string{
 		"their-tool.io/annotation": "also-keep-me",
-		"notes":                   "user notes",
+		"notes":                    "user notes",
 	} {
 		if got := after.Annotations[key]; got != want {
 			t.Errorf("annotation %q = %q, want %q — labels-only repair must not touch annotations", key, got, want)
@@ -622,7 +622,7 @@ func TestRepairAddonLabelsWithOwnershipCheck_BreakAndRestoreProof_V4StaleKeyDele
 
 	live := addonLabelsTestSecret("cluster-v4-proof", map[string]string{
 		models.V4AddonLabelPrefix + "datadog": "enabled",
-		"env": "prod", // unqualified preserved key
+		"env":                                 "prod", // unqualified preserved key
 	}, map[string]string{
 		AnnotationTakeoverPreservedLabels: models.V4AddonLabelPrefix + "datadog",
 	}, true)
