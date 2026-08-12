@@ -179,29 +179,38 @@ type Result struct {
 //  5. Then, and only then, fields are compared.
 func Compare(req Request) Result {
 	res := Result{
-		Scope:           req.Policy.Scope,
-		Mode:            req.Policy.Mode,
-		LimitReason:     req.Policy.LimitReason,
-		RepairAvailable: req.Policy.RepairOffered(),
-		RepairScope:     req.Policy.RepairScope,
+		Scope:       req.Policy.Scope,
+		Mode:        req.Policy.Mode,
+		LimitReason: req.Policy.LimitReason,
+		// R3-8: RepairAvailable and RepairScope computed AFTER status is known,
+		// not before. check_failed, missing and ownership_conflict must all
+		// return repair_available: false.
 	}
 
 	// 1. Sharko could not finish.
 	if req.CheckFailure != "" {
 		res.Status = StatusCheckFailed
 		res.FailureReason = req.CheckFailure
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	// 2. Somebody else owns it.
 	if req.Policy.Scope == ScopeOwnershipConflict {
 		res.Status = StatusOwnershipConflict
+		res.LimitReason = "Another tool owns this connection, so Sharko will not change it."
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	// 3. There is nothing there.
 	if !req.LiveFound || req.Live == nil {
 		res.Status = StatusMissing
+		res.LimitReason = "This cluster has no connection Secret yet. The reconciler will create it on its next pass."
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
@@ -252,6 +261,13 @@ func Compare(req Request) Result {
 	default:
 		res.Status = StatusLimited
 	}
+
+	// R3-8: Repair offer computed AFTER the status is known. Only out_of_sync,
+	// synced and limited reach here; the early exits (check_failed, missing,
+	// ownership_conflict) already set repair_available: false above.
+	res.RepairAvailable = req.Policy.RepairOffered()
+	res.RepairScope = req.Policy.RepairScope
+
 	return res
 }
 
