@@ -557,8 +557,9 @@ depends on the kind:
   owned labels, and provenance.
 - **EKS connections with independently readable metadata** (the EKS cluster metadata lives in
   the backend and can be read independently) → full repair, but never reported as fully in
-  sync afterwards, because the sign-in token is minted fresh on every check and the credential
-  blob can never be compared.
+  sync afterwards, because the stored EKS payload holds cluster metadata, not a credential.
+  There is no credential on the expected side to compare the live credential blob against, so
+  Sharko will not claim a match for something it never read.
 - **Inline credentials** (the kubeconfig was pasted at registration and is only stored in the
   connection itself, with no independent copy) → labels only, same as FR35.
 - **User-managed connections** (`connectionManagedBy: user` in git) → labels only.
@@ -631,9 +632,5 @@ action still must not be called Repair, because for that one the 2026-08-10 obje
 word for word: calling a labels-only action "Repair" would promise something the code does not
 do.
 
-**Status of the implementation.** The implementation is under review in two stacked pull
-requests as of 2026-08-12 and is not yet released. Both PRs are open and green on CI, awaiting
-the product owner's review. The full-connection write primitive was reviewed in PR #827 and
-approved; that approved primitive is carried forward unchanged into the replacement PRs. The
-walkthrough and the no-merge gate belong to step 4, which brings the detail page and the
-visible demonstration of the drift → comparison → repair → synced flow.
+The walkthrough and the no-merge gate belong to step 4, which brings the connection detail
+page and the visible demonstration of the drift → comparison → repair → synced flow.
