@@ -1116,17 +1116,24 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_FullConnection(t *testing.T) {
 // LABELS-ONLY path (a guest connection). This ensures both paths are protected
 // by the same gate.
 func TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection(t *testing.T) {
-	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  ownership_mode: guest\n  credsSource: secret-kubeconfig\n"
-	// Live secret is a guest connection (ownership_mode=guest in managed YAML,
-	// but still carries Sharko's managed-by label so Sharko can repair the labels).
-	live := liveConnectionSecret(nil, map[string]string{
-		"name":   comparisonCluster,
-		"server": "https://" + comparisonCluster + ".invalid",
-		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
-	}, nil)
-	live.Labels = map[string]string{
-		"app.kubernetes.io/managed-by":   "sharko",
-		"argocd.argoproj.io/secret-type": "cluster",
+	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  connectionManagedBy: user\n  credsSource: secret-kubeconfig\n"
+	// Live secret is a self-managed (guest) connection. A self-managed connection
+	// means the user maintains it, so it should NOT carry Sharko's managed-by
+	// label, consistent with TestRepair_GuestConnectionGetsLabelsOnly.
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      comparisonCluster,
+			Namespace: "argocd",
+			Labels: map[string]string{
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte(comparisonCluster),
+			"server": []byte("https://" + comparisonCluster + ".invalid"),
+			"config": []byte(`{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`),
+		},
 	}
 
 	gp := &v4GitProviderNoClusterAddons{managedYAML: []byte(managedYAML), headSHA: repairHeadSHA}
@@ -1157,6 +1164,13 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection(t *testing.T) {
 		t.Fatalf("expected 422 when addon labels unknown on guest path, got %d (body=%s)", w.Code, w.Body.String())
 	}
 
+	// Assert: the response scope_applied field is NOT present (or is empty), proving
+	// we refused before reaching the repair path branch.
+	var view connectionRepairView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err == nil && view.ScopeApplied != "" {
+		t.Errorf("A refusal response should not carry scope_applied, got %q. This means the test passed for the wrong reason — it went down the full-connection path and was refused there, not on the guest path.", view.ScopeApplied)
+	}
+
 	// Assert: the refusal is for the same reason (addon labels unknown).
 	body := w.Body.String()
 	if !strings.Contains(body, "could not read which addons should run on this cluster") {
@@ -1173,7 +1187,7 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection(t *testing.T) {
 // RepairAddonLabelsWithPinnedDesired, not the old RepairAddonLabelsOnly that
 // re-reads git at the branch.
 func TestRepair_WritesPinnedLabels_NotBranchHead(t *testing.T) {
-	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  ownership_mode: guest\n  credsSource: secret-kubeconfig\n"
+	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  connectionManagedBy: user\n  credsSource: secret-kubeconfig\n"
 	// The reviewed commit (which we'll pass to the repair endpoint) has
 	// addon-foo enabled. The branch head (a different, newer commit) has
 	// addon-bar enabled instead. If the repair goes back through the git
@@ -1208,15 +1222,23 @@ addons:
 `),
 	}
 
-	// Live secret is a guest connection with no addon labels yet.
-	live := liveConnectionSecret(nil, map[string]string{
-		"name":   comparisonCluster,
-		"server": "https://" + comparisonCluster + ".invalid",
-		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
-	}, nil)
-	live.Labels = map[string]string{
-		"app.kubernetes.io/managed-by":   "sharko",
-		"argocd.argoproj.io/secret-type": "cluster",
+	// Live secret is a self-managed connection with no addon labels yet.
+	// Self-managed means the user maintains this Secret, so it should NOT
+	// carry managed-by=sharko (matching the fix in TestRepair_GuestConnectionGetsLabelsOnly).
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      comparisonCluster,
+			Namespace: "argocd",
+			Labels: map[string]string{
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte(comparisonCluster),
+			"server": []byte("https://" + comparisonCluster + ".invalid"),
+			"config": []byte(`{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`),
+		},
 	}
 
 	argo := newStubArgoSrv(t, []map[string]interface{}{
@@ -1244,6 +1266,16 @@ addons:
 	// Assert: the repair succeeded.
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// Assert: the response says scope_applied=addon_labels_only, proving this test
+	// actually exercised the labels-only path (the whole point of the test).
+	var view connectionRepairView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if view.ScopeApplied != "addon_labels_only" {
+		t.Fatalf("scope_applied = %q, want addon_labels_only. The test went down the wrong path and passed for the wrong reason.", view.ScopeApplied)
 	}
 
 	// Assert: the Secret now has addons.sharko.dev/foo=enabled (from the reviewed
