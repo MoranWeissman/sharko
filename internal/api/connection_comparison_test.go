@@ -2015,11 +2015,14 @@ body: %s`, body["status"], w.Body.String())
 //
 // So there is no honest way to drive it from the outside. Faking one would mean a
 // test that passes while proving nothing about the real path, which is the exact
-// failure mode this whole round is cleaning up. That exit is covered where it can
-// be reached, by the package's own tests
-// (internal/connectioncompare/compare_exits_test.go), and the sweep above covers
-// every exit the endpoint CAN reach — including any new one, since it asserts the
-// property rather than a list.
+// failure mode this whole round is cleaning up.
+//
+// It is covered where it can be: the core's
+// TestCompare_EveryReturnInCompareSetsRepairScopeExplicitly reads the SOURCE of
+// Compare and fails if any return in it is not preceded by an explicit
+// res.RepairScope assignment, which holds that exit to the contract without
+// needing to reach it. The sweep above covers every exit the endpoint CAN reach —
+// including any new one, since it asserts the property rather than a list.
 
 // foreignOwnedLiveSecret is a connection whose ownership marker names another
 // tool, which is what drives the ownership-conflict exit.
