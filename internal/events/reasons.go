@@ -36,8 +36,9 @@ const (
 	ReasonDriftDetected   = "DriftDetected"   // Drift detected between Git and ArgoCD
 
 	// Success events (emit sparingly, only on meaningful milestones)
-	ReasonClusterRegistered  = "ClusterRegistered"  // Cluster successfully registered
-	ReasonClusterReconciled  = "ClusterReconciled"  // Cluster reconciled successfully
-	ReasonPRMerged           = "PRMerged"           // PR merged successfully
-	ReasonConnectionRestored = "ConnectionRestored" // Connection to external service restored
+	ReasonClusterRegistered    = "ClusterRegistered"    // Cluster successfully registered
+	ReasonClusterReconciled    = "ClusterReconciled"    // Cluster reconciled successfully
+	ReasonPRMerged             = "PRMerged"             // PR merged successfully
+	ReasonConnectionRestored   = "ConnectionRestored"   // Connection to external service restored
+	ReasonConnectionRepaired   = "ConnectionRepaired"   // R3-11: Connection repaired to match git
 )
