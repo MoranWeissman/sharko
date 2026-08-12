@@ -478,20 +478,33 @@ func (s *Server) repairFullConnection(
 	writeJSON(w, http.StatusOK, view)
 }
 
-// repairAddonLabelsOnly re-applies just Sharko's addon labels, which is the whole
-// of what a repair may do on a guest connection.
+// repairAddonLabelsOnly re-applies just Sharko's addon labels using PRE-RESOLVED
+// pinned labels from the VERIFIED reviewed commit, which is the whole of what a
+// repair may do on a guest connection.
 //
-// It goes through the reconciler's existing label path, the same one
-// POST /clusters/{name}/resync uses — there is one code path that writes these
-// labels, and this is not a second one.
+// R3-9 fix: this function now calls the NEW SAFE PRIMITIVE wrapper
+// (Reconciler.RepairAddonLabelsWithPinnedDesired) which routes to
+// argosecrets.Manager.RepairAddonLabelsWithOwnershipCheck. That primitive accepts
+// pinned labels (not re-reading git) and performs the ownership recheck immediately
+// before writing (not trusting the classification from earlier in the request).
+//
+// The OLD UNSAFE PATH (RepairAddonLabelsOnly → ResyncClusterLabels) is kept for
+// POST /clusters/{name}/resync, where re-reading the latest git state IS the
+// point and there is no reviewed commit.
 func (s *Server) repairAddonLabelsOnly(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	cluster, ns, branch, reviewedCommit string,
 	policy connectioncompare.Policy,
 	desired clusterreconciler.DesiredConnectionState,
 ) {
-	// The second resolve applies here too: a labels-only repair still writes,
-	// and it still writes what somebody reviewed.
+	// R3-9 rule 1: the repair does NO further git reads after the reviewed commit
+	// is verified. The desired addon labels were computed once from the pinned
+	// commit; they are passed into the writer, not re-resolved.
+	//
+	// R3-9 rule 7 test guard: resolve again here, verify it still matches reviewed,
+	// and refuse if not. This is the ONLY place the labels-only path resolves git
+	// after the handler's top-level verification, and it does so to REFUSE when the
+	// branch moved — not to read new labels from it.
 	revisionNow := s.clusterRecon.ResolveComparedRevision(ctx)
 	if revisionNow == "" {
 		s.finishRepairAudit(r, cluster, "refused: git could not report the branch commit at write time")
@@ -504,52 +517,121 @@ func (s *Server) repairAddonLabelsOnly(
 		return
 	}
 
-	result, err := s.clusterRecon.RepairAddonLabelsOnly(ctx, cluster)
+	// R3-9 rule 2: the writer is given the pinned desired labels (from the reviewed
+	// commit) and the expected ownership mode (classified once, at the top of the
+	// handler). It re-reads the Secret, confirms ownership matches, and only then
+	// Updates. The re-read and the Update have nothing but in-memory map work
+	// between them.
+	//
+	// expectedOwned: derived from the classification. Sharko-owned means this is a
+	// connection Sharko created (has managed-by=sharko label) OR adopted (has the
+	// adopted annotation). Guest means neither — we're only applying labels to
+	// somebody else's connection.
+	//
+	// The key insight: labels-only scope means we're a guest. Everything that
+	// reached labels-only scope is either self-managed, adopted, or something
+	// Sharko doesn't fully own. For the ownership check in the primitive, owned
+	// means "has one of Sharko's markers": managed-by label OR adopted annotation.
+	// So we reverse-engineer: if the policy gave us labels-only scope AND we have
+	// a live Secret (we must have one to repair labels), then this must be either
+	// self-managed (no markers) or adopted (adopted marker). The primitive needs to
+	// know whether Sharko's marker should be present.
+	//
+	// HOWEVER, the classification already told us whether the live Secret has these
+	// markers in ClassifyInput. Rather than re-reading the Secret here just to set
+	// this flag, we use the fact that labels-only scope on a FOUND Secret means
+	// one of three things:
+	//   1. Self-managed record → no markers expected → expectedOwned = false
+	//   2. Adopted Secret → adopted marker expected → expectedOwned = true
+	//   3. Inline kubeconfig → managed-by expected → expectedOwned = true
+	//   4. Unknown source → could be either → need to check the live Secret
+	//
+	// Looking at the modes that reach labels-only scope (mode.go:287-335):
+	// - ModeSelfManaged (connectionManagedBy = user) → no markers
+	// - ModeAdopted (live has adopted annotation) → adopted marker
+	// - ModeInlineKubeconfig (credsSource = inline-kubeconfig) → managed-by
+	// - ModeUnknownSource (empty or unrecognized) → managed-by
+	//
+	// The safe, simple rule: labels-only scope in the repair endpoint means Sharko
+	// either created this Secret (inline/unknown → managed-by label) or adopted it
+	// (adopted → annotation). Self-managed is the ONLY labels-only case where
+	// Sharko holds no marker. So:
+	expectedOwned := policy.Mode != connectioncompare.ModeSelfManaged
+
+	changed, found, err := s.clusterRecon.RepairAddonLabelsWithPinnedDesired(
+		ctx, cluster, desired.AddonLabels, revisionNow, expectedOwned,
+	)
+
+	// R3-9 rule 3: ownership mismatch refuses and writes nothing. Same error shape
+	// the full path uses (ErrRepairOwnershipChanged → 422) so the endpoint has one
+	// mapping, not two.
 	if err != nil {
-		if errors.Is(err, clusterreconciler.ErrClusterNotManaged) {
-			s.finishRepairAudit(r, cluster, "refused: cluster is not in the git-managed list")
-			writeError(w, http.StatusNotFound, repairFailNotManaged)
+		if errors.Is(err, argosecrets.ErrRepairOwnershipChanged) {
+			s.finishRepairAudit(r, cluster, "refused: ownership changed — the connection is not Sharko's to change any more, or became Sharko's when a guest repair was expected")
+			writeError(w, http.StatusUnprocessableEntity, "Sharko will not change this cluster's connection because its ownership changed while Sharko was preparing the repair. Re-run the comparison to see the current state, then try again if a repair is still needed.")
 			return
 		}
-		slog.Warn("[connection-repair] could not re-apply the addon labels", "cluster", cluster)
+		slog.Warn("[connection-repair] could not re-apply the addon labels", "cluster", cluster, "error", err)
 		s.finishRepairAudit(r, cluster, "failed: could not re-apply the addon labels")
 		writeError(w, http.StatusBadGateway, repairFailWrite)
 		return
 	}
 
-	changed := len(result.Added) > 0 || len(result.Removed) > 0 || len(result.Changed) > 0
+	// Not found is not an error for labels-only: a missing connection is the
+	// reconciler's job to create on its normal pass, and doing it here would
+	// conflate "repair" with "provision".
+	if !found {
+		s.finishRepairAudit(r, cluster, "no-op: the ArgoCD connection Secret does not exist yet")
+		writeError(w, http.StatusNotFound, "This cluster's ArgoCD connection Secret does not exist yet. Wait for the reconciler to create it on its next pass, then repair if needed.")
+		return
+	}
+
+	// R3-9 DECISION: The new primitive returns (changed bool, found bool, err error)
+	// and does not provide the old label diff (Added/Removed/Changed/Unchanged).
+	// Computing that diff would require reading the Secret BEFORE the write to compare,
+	// which duplicates the read the primitive itself does. That read would also be
+	// stale by the time the write happens.
+	//
+	// CHOSEN: Drop the label_diff field for labels-only repairs. The FieldsRepaired
+	// list reports the addon label keys that were converged (all of them when changed
+	// is true). The message says "N label(s) converged" without claiming to enumerate
+	// which were added/removed/changed, because the new path does not know that
+	// distinction — and honestly reporting "I don't know" is better than fabricating
+	// a diff from a stale pre-write read.
+	//
+	// POST /resync keeps its diff because it uses the old path (ResyncClusterLabels),
+	// which computes it. This endpoint and that one now return different shapes for
+	// labels-only writes, which is correct: they use different primitives.
+
+	// Build the field paths changed. The primitive returns a bool (changed or not);
+	// we infer the fields from the pinned labels set since that's what was converged.
+	// This matches the full-connection path's FieldsWritten reporting.
+	fieldsRepaired := make([]string, 0, len(desired.AddonLabels))
+	if changed {
+		for k := range desired.AddonLabels {
+			fieldsRepaired = append(fieldsRepaired, "metadata.labels["+k+"]")
+		}
+	}
+
 	view := connectionRepairView{
-		Cluster:      cluster,
-		Repaired:     changed,
-		ScopeApplied: string(repairScopeAddonLabelsOnly),
-		FieldsRepaired: func() []string {
-			paths := make([]string, 0, len(result.Added)+len(result.Removed)+len(result.Changed))
-			for _, k := range result.Added {
-				paths = append(paths, "metadata.labels["+k+"]")
-			}
-			for _, k := range result.Removed {
-				paths = append(paths, "metadata.labels["+k+"]")
-			}
-			for _, k := range result.Changed {
-				paths = append(paths, "metadata.labels["+k+"]")
-			}
-			return paths
-		}(),
-		LabelDiff: &models.ClusterResyncLabelDiff{
-			Added:     result.Added,
-			Removed:   result.Removed,
-			Changed:   result.Changed,
-			Unchanged: result.Unchanged,
-		},
+		Cluster:             cluster,
+		Repaired:            changed,
+		ScopeApplied:        string(repairScopeAddonLabelsOnly),
+		FieldsRepaired:      fieldsRepaired,
 		Branch:              branch,
 		RepairedAtCommit:    revisionNow,
 		RepairedAt:          time.Now().UTC().Format(time.RFC3339),
 		SelfHealUnchanged:   true,
 		ValuesNeverReturned: true,
+		// LabelDiff is nil — see DECISION comment above
 	}
+
 	if changed {
-		view.Message = fmt.Sprintf("Sharko re-applied this cluster's addon labels to match git — %d added, %d removed, %d changed. Sharko is a guest on this connection, so it changed nothing else. The self-heal setting was not changed.",
-			len(result.Added), len(result.Removed), len(result.Changed))
+		view.Message = fmt.Sprintf("Sharko re-applied this cluster's addon labels to match git — %d label(s) converged. Sharko is a guest on this connection, so it changed nothing else. The self-heal setting was not changed.",
+			len(fieldsRepaired))
+		// Emit an event for a repair that actually changed something. Same rule the
+		// full-connection path follows.
+		s.clusterRecon.EmitConnectionRepairEvent(cluster, len(fieldsRepaired))
 	} else {
 		view.Message = "This cluster's addon labels already matched git, so nothing was changed. Sharko is a guest on this connection and never changes its connection details. The self-heal setting was not changed."
 	}
