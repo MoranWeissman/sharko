@@ -344,6 +344,16 @@ type Reconciler struct {
 	passMu       sync.RWMutex
 	passCompared currentPassRevisionState
 
+	// driftNoticeMu guards driftNotice. See connection_drift_notice.go (R3-5 —
+	// so a person learns a connection drifted without opening a page).
+	driftNoticeMu sync.Mutex
+	// driftNotice holds, per cluster, whether a drift notice has already gone
+	// out for the CURRENT episode, so a connection that stays broken for hours
+	// produces one event rather than one every 30 seconds. In memory only,
+	// same non-persisted stance as lastReconcile and fightState: a restart
+	// just means the next pass re-notices.
+	driftNotice map[string]connectionDriftState
+
 	// appliedRevMu guards appliedRevision — the commit the last SUCCESSFUL
 	// WRITE to each cluster's secret was built from (P2-C1's
 	// generation/observedGeneration pair). In memory only, keyed by
@@ -937,6 +947,13 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			continue
 		}
 		if secret := existing[name]; secret != nil {
+			// R3-5: notice a structurally broken or disowned connection while
+			// this pass already has the Secret in hand — no extra API call, no
+			// backend read. Reads only: it records the fact and emits at most
+			// one event per drift episode. The repair stays a separate action
+			// somebody asks for.
+			r.noticeConnectionShapeDrift(ctx, name, secret, false)
+
 			// v4 adds one extra question to "are we in sync?". labelsMatch
 			// is a SUBSET check, which is the right question for v3 (off is
 			// recorded as `<addon>: disabled`, a value change it catches)
@@ -2073,6 +2090,12 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		return
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
+		// R3-10: Notice if this connection lost its ownership label. The Get
+		// already happened, the Secret is in hand, and this is about to refuse
+		// — no extra cost, no backend read. The notice does not change whether
+		// the write is refused; this adds awareness, it does not add a repair.
+		r.noticeConnectionShapeDrift(ctx, entry.Name, existing, true)
+
 		// Adopt territory — do not touch.
 		stats.SkippedUnlabeled++
 		log.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (Adopt territory)",
