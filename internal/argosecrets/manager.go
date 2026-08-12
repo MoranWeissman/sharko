@@ -945,23 +945,39 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 		updated.Labels = make(map[string]string, len(desired))
 	}
 
-	// Stale v4 addon keys that git no longer declares must be deleted (same
-	// rule SyncLabelsOnly follows). v3 repos carry no such key, inert there.
-	staleV4 := make([]string, 0)
+	// Labels a takeover carried over from the previous owner are never
+	// convergence candidates — same rule SyncLabelsOnly and RepairOwnedConnection
+	// follow. A legacy key like "env: prod" has no "/" in it, so IsAddonLabelKey
+	// would call it Sharko's, and the delete loops below would quietly undo the
+	// takeover's "every legacy label preserved" promise.
+	preserved := make(map[string]struct{})
+	for _, k := range PreservedLabelKeys(existing.Annotations) {
+		preserved[k] = struct{}{}
+	}
+
+	// Remove stale addon keys that git no longer declares. Both unqualified keys
+	// (no "/") and v4-vocabulary keys (addons.sharko.dev/<addon>) are Sharko's
+	// own namespace and full-convergence candidates.
 	for k := range existing.Labels {
-		if !models.IsV4AddonLabelKey(k) {
+		if _, isPreserved := preserved[k]; isPreserved {
 			continue
 		}
-		if _, want := desired[k]; !want {
-			staleV4 = append(staleV4, k)
+		if !IsAddonLabelKey(k) {
+			continue
+		}
+		if _, stillWanted := desired[k]; !stillWanted {
+			delete(updated.Labels, k)
 		}
 	}
 
-	// Converge addon keys.
-	for _, k := range staleV4 {
-		delete(updated.Labels, k)
-	}
+	// Apply every label the pinned set declares. A preserved takeover key is
+	// skipped even here: the pinned set cannot know about it, so a collision
+	// means git independently declared a key that matches a legacy one. The
+	// takeover promise overrides git.
 	for k, v := range desired {
+		if _, isPreserved := preserved[k]; isPreserved {
+			continue
+		}
 		updated.Labels[k] = v
 	}
 
