@@ -131,6 +131,75 @@ There was no expected value to compare against, so neither "same" nor "different
 	}
 }
 
+// TestCompare_EKSNotCheckedReasonIsExact pins the sentence the API returns as
+// the `reason` on the unchecked `data.config` field.
+//
+// Nothing pinned it before, and that is how the old framing survived four
+// rounds of review: the two tests above only asserted the reason was non-empty,
+// so any wording at all passed. This sentence is the product owner's, decided on
+// 2026-08-13 — a paraphrase is a change to the product and needs their word plus
+// an update to this test in the same commit.
+//
+// The framing it replaced said the sign-in details are issued fresh every time.
+// That suggested the check creates them, and the read-only check creates nothing
+// — so that idea is banned by name below, not only by exact text.
+func TestCompare_EKSNotCheckedReasonIsExact(t *testing.T) {
+	const want = "The backend stores EKS cluster details, not a reusable sign-in credential. Sharko therefore has no stored credential to compare with `data.config`."
+
+	policy := Classify(ClassifyInput{
+		CredsSource:                  models.CredsSourceEKSToken,
+		BackendCanProvideStoredFacts: true,
+		LiveSecretFound:              true,
+		LiveManagedBy:                argosecrets.ManagedByValue,
+	})
+
+	spec := eksNoCredentialSpec()
+	buildSpec := spec
+	buildSpec.Name = testCluster
+	specLabels := map[string]string{}
+	models.ApplyConnectivityCheckLabel(specLabels, false)
+	buildSpec.Labels = specLabels
+	built, err := argosecrets.BuildClusterSecret(buildSpec, testNamespace)
+	if err != nil {
+		t.Fatalf("building the live side: %v", err)
+	}
+	live := liveFrom(built)
+	live.Data["config"] = []byte(`{"bearerToken":"a-token-created-by-some-earlier-write"}`)
+
+	res := Compare(Request{
+		ClusterName:      testCluster,
+		Namespace:        testNamespace,
+		Policy:           policy,
+		Live:             live,
+		LiveFound:        true,
+		AddonLabelsKnown: true,
+		ExpectedSpec:     &spec,
+	})
+
+	var got string
+	found := false
+	for _, n := range res.NotChecked {
+		if n.Path == FieldPathDataConfig {
+			found = true
+			got = n.Reason
+		}
+	}
+	if !found {
+		t.Fatalf("%q is not in NotChecked: %+v", FieldPathDataConfig, res.NotChecked)
+	}
+	if got != want {
+		t.Errorf("the unchecked-credential reason was changed.\n got: %q\nwant: %q\n\nThis wording was signed off exactly as it is. If it really needs to change, change it with the product owner and update this test in the same commit.", got, want)
+	}
+	if reasonEKSNoStoredCredential != want {
+		t.Errorf("the constant no longer holds the signed-off sentence: %q", reasonEKSNoStoredCredential)
+	}
+	for _, banned := range []string{"changes every time", "issued fresh", "never the same twice"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("the unchecked-credential reason says %q again.\n\nThat framing was removed on purpose: it suggests the check creates a sign-in credential, and the read-only check creates nothing. Say there is no stored credential to compare with instead.", banned)
+		}
+	}
+}
+
 // TestCompare_EKSNoCredentialAnswerCarriesNoCredentialMaterial is the security
 // sentinel for this shape.
 //

@@ -67,8 +67,14 @@ type NotCheckedField struct {
 // Reasons a field is not checked. Fixed literals — never a provider error,
 // never anything derived from a value.
 const (
-	reasonFreshTokenEveryFetch = "This cluster's sign-in details are issued fresh every time, so they are never the same twice and there is nothing stable to compare them against."
-	reasonNoIndependentCopy    = "Sharko has no copy of these details outside the connection itself, so the only thing it could compare them against is the connection — which would always agree and tell you nothing."
+	// reasonEKSNoStoredCredential is the product owner's wording (2026-08-13).
+	// It replaced a sentence saying the sign-in details are issued fresh every
+	// time, which suggested the check creates them. It does not — the read-only
+	// path stops at the stored payload. The real limit is that there is no
+	// stored credential to compare against. Pinned by
+	// TestCompare_EKSNotCheckedReasonIsExact.
+	reasonEKSNoStoredCredential = "The backend stores EKS cluster details, not a reusable sign-in credential. Sharko therefore has no stored credential to compare with `data.config`."
+	reasonNoIndependentCopy     = "Sharko has no copy of these details outside the connection itself, so the only thing it could compare them against is the connection — which would always agree and tell you nothing."
 )
 
 // On a connection Sharko does not own, the connection details are not listed
@@ -469,7 +475,7 @@ func compareConnectionData(req Request, expectedSecret *corev1.Secret, checked *
 		// expected side comes from providers.StoredConnectionFacts, which stops
 		// at the stored payload. A WRITE creates a token, once. A check creates
 		// none.
-		notChecked = append(notChecked, NotCheckedField{Path: FieldPathDataConfig, Reason: reasonFreshTokenEveryFetch})
+		notChecked = append(notChecked, NotCheckedField{Path: FieldPathDataConfig, Reason: reasonEKSNoStoredCredential})
 		return diffs, notChecked
 	}
 

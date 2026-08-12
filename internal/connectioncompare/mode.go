@@ -129,14 +129,21 @@ const (
 	// this version of Sharko does not know what it means.
 	LimitReasonSourceNotUnderstood = "Sharko does not recognise what this cluster's record says about where its credentials are kept, so it will not assume anything. It checks the labels and the plain connection facts only. Check the cluster's entry in git, or update Sharko if the entry was written by a newer version."
 
-	// LimitReasonEKSTokenChangesEveryTime is the EKS answer, and it is exact
+	// LimitReasonEKSNoStoredCredential is the EKS answer, and it is exact
 	// wording the product owner signed off character for character. It names
 	// what WAS checked instead of claiming "everything else" — the old sentence
 	// said everything else was checked, which was not true, because a
 	// deliberately empty annotation set and the guest-scope rules mean "the
-	// rest" is a specific list and not all of it. It is pinned by
-	// TestClassify_EKSTokenLimitReasonIsExact so nobody paraphrases it later.
-	LimitReasonEKSTokenChangesEveryTime = "Sharko checked the Secret identity, type, server, and owned labels. It did not compare `data.config`, because the EKS sign-in token changes every time it is created."
+	// rest" is a specific list and not all of it.
+	//
+	// The reason half used to say the sign-in token changes every time it is
+	// created. That reading suggested the check creates a token, which it does
+	// not: the read-only path stops at the stored payload and creates nothing.
+	// The real limit is that there is no stored credential to compare against at
+	// all, and that is what the sentence says now (product owner's wording,
+	// 2026-08-13). It is pinned by TestClassify_EKSTokenLimitReasonIsExact so
+	// nobody paraphrases it later.
+	LimitReasonEKSNoStoredCredential = "Sharko checked the Secret identity, type, server, and owned labels. The backend stores EKS cluster details, not a reusable sign-in credential. Sharko therefore has no stored credential to compare with `data.config`."
 )
 
 // Scope is how much of the connection Sharko can honestly check for a mode.
@@ -381,7 +388,7 @@ func Classify(in ClassifyInput) Policy {
 			Mode:        ModeEKSToken,
 			Scope:       ScopeLimited,
 			RepairScope: RepairScopeFullConnection,
-			LimitReason: LimitReasonEKSTokenChangesEveryTime,
+			LimitReason: LimitReasonEKSNoStoredCredential,
 		}
 	}
 
