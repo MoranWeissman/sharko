@@ -470,3 +470,194 @@ func (v *countingVault) SearchSecrets(string) ([]string, error) {
 	v.calls++
 	return nil, nil
 }
+
+// TestCreateOne_NoticesOwnershipLabelLoss_FullPassWiring is the R3-10 criterion 3
+// full-pass test: drive a REAL reconciler pass with a git-managed cluster in the
+// desired state and a same-name Secret in the fake Kubernetes client with the
+// ownership label stripped. Assert the drift was noticed and the drift state was
+// recorded.
+//
+// This is the test whose absence let the R3-10 bug through: the previous
+// implementation passed selfManaged=true, which caused noticeConnectionShapeDrift
+// to immediately clear the drift notice. The hand-fed detector tests kept passing
+// because they call noticeConnectionShapeDrift directly; only a full pass through
+// createOne exposes the wiring bug.
+func TestCreateOne_NoticesOwnershipLabelLoss_FullPassWiring(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Git says this cluster should exist.
+	body := envelopedManagedClusters("drift-victim")
+
+	// The fake backend has credentials for it.
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"drift-victim": {
+				Server: "https://drift.example.com",
+				CAData: []byte("ca-bytes"),
+				Token:  "token-for-drift-victim",
+			},
+		},
+	}
+
+	// A same-name Secret already exists, but WITHOUT Sharko's ownership label.
+	// This is the drift condition: a Secret that SHOULD be Sharko's (it's in
+	// managed-clusters.yaml) but has lost the label.
+	unlabeled := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "drift-victim",
+			Namespace: DefaultArgoCDNamespace,
+			Labels: map[string]string{
+				argosecrets.LabelSecretType: "cluster",
+				// NO managed-by label — this is the drift condition
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("drift-victim"),
+			"server": []byte("https://stale.invalid"),
+			"config": []byte("{}"),
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(unlabeled)
+
+	audits := &auditCollector{}
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+
+	// Run a real pass.
+	r.pollOnce(ctx)
+
+	// The pass should have noticed the drift and recorded it.
+	if got := r.ConnectionShapeProblems("drift-victim"); got == "" {
+		t.Fatal("the drift notice was not recorded; createOne's call to noticeConnectionShapeDrift did not fire")
+	}
+
+	// The Secret should NOT have been written (createOne refuses when !IsManagedBySharko).
+	// Verify the Secret is still the unlabeled one we put there.
+	after, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "drift-victim", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting secret after pass: %v", err)
+	}
+	if after.Labels[argosecrets.LabelManagedBy] != "" {
+		t.Errorf("createOne wrote the Secret (label is now %q); it should have refused", after.Labels[argosecrets.LabelManagedBy])
+	}
+	if string(after.Data["server"]) != "https://stale.invalid" {
+		t.Errorf("createOne wrote the Secret (server changed from stale.invalid to %q); it should have refused", string(after.Data["server"]))
+	}
+}
+
+// TestCreateOne_SkipsGenuinelyForeignSecrets is the R3-10 criterion 4 test:
+// a same-name Secret that carries ANOTHER tool's managed-by label must not produce
+// a "Sharko lost its label" notice — that would be reporting somebody else's
+// correct Secret as Sharko's fault.
+func TestCreateOne_SkipsGenuinelyForeignSecrets(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Git says this cluster should exist.
+	body := envelopedManagedClusters("foreign-cluster")
+
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"foreign-cluster": {
+				Server: "https://foreign.example.com",
+				CAData: []byte("ca-bytes"),
+				Token:  "token-for-foreign",
+			},
+		},
+	}
+
+	// A same-name Secret exists with ANOTHER tool's managed-by label.
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foreign-cluster",
+			Namespace: DefaultArgoCDNamespace,
+			Labels: map[string]string{
+				argosecrets.LabelManagedBy:  "external-tool", // Another tool owns this
+				argosecrets.LabelSecretType: "cluster",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("foreign-cluster"),
+			"server": []byte("https://foreign-tool.invalid"),
+			"config": []byte("{}"),
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(foreign)
+
+	audits := &auditCollector{}
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+
+	// Run a real pass.
+	r.pollOnce(ctx)
+
+	// The pass should NOT have noticed this as Sharko's drift — it's someone else's Secret.
+	if got := r.ConnectionShapeProblems("foreign-cluster"); got != "" {
+		t.Errorf("a genuinely foreign Secret was reported as Sharko's drift: %q", got)
+	}
+}
+
+// TestCreateOne_NoticesEmptyOrCorruptedManagedBy is the other half of criterion 4:
+// a Secret with no managed-by label at all, or with an empty value, should be noticed
+// as potential Sharko drift (it MIGHT be a Sharko Secret that got corrupted).
+func TestCreateOne_NoticesEmptyOrCorruptedManagedBy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cases := []struct {
+		name         string
+		managedByVal string // "" means delete the label, other values are set as-is
+	}{
+		{"no managed-by label at all", ""},
+		{"managed-by is empty string", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := envelopedManagedClusters("corrupted-cluster")
+			vault := &fakeVault{
+				creds: map[string]*providers.Kubeconfig{
+					"corrupted-cluster": {
+						Server: "https://corrupted.example.com",
+						CAData: []byte("ca-bytes"),
+						Token:  "token-for-corrupted",
+					},
+				},
+			}
+
+			// A same-name Secret exists with no managed-by or empty managed-by.
+			labels := map[string]string{
+				argosecrets.LabelSecretType: "cluster",
+			}
+			if tc.managedByVal != "" {
+				labels[argosecrets.LabelManagedBy] = tc.managedByVal
+			}
+			unlabeled := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "corrupted-cluster",
+					Namespace: DefaultArgoCDNamespace,
+					Labels:    labels,
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: map[string][]byte{
+					"name":   []byte("corrupted-cluster"),
+					"server": []byte("https://stale.invalid"),
+					"config": []byte("{}"),
+				},
+			}
+			k8sClient := fake.NewSimpleClientset(unlabeled)
+
+			audits := &auditCollector{}
+			r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+
+			// Run a real pass.
+			r.pollOnce(ctx)
+
+			// The pass should have noticed this as drift.
+			if got := r.ConnectionShapeProblems("corrupted-cluster"); got == "" {
+				t.Errorf("a Secret with no/empty managed-by was not noticed as drift")
+			}
+		})
+	}
+}
