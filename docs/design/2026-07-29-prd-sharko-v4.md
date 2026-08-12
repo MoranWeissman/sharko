@@ -24,10 +24,11 @@ documentCounts:
 ---
 
 > **Where this file comes from.** This is the canonical v4 product requirements document, committed
-> here so anyone can read it in the repo. The working copy lives outside version control, so this is
-> the copy to trust and to quote. The status line above lists every amendment and its date — check
-> it before treating a requirement as missing, because copies circulated by email or chat go stale.
-> Last amended directly in the repo on 2026-08-12; the working copy was updated at the same time.
+> here so anyone can read it in the repo. Both copies are tracked in the repo, and this one under
+> `docs/design/` is the one to trust and to quote. The status line above lists every amendment and
+> its date — check it before treating a requirement as missing, because copies circulated by email
+> or chat go stale. Last amended directly in the repo on 2026-08-12; the working copy was updated
+> at the same time.
 
 
 # Product Requirements Document - Sharko

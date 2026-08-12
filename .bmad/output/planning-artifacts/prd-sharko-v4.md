@@ -1,6 +1,6 @@
 ---
 stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-12-complete']
-status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model + secret ownership — see the two Amendment notes under the title) · AMENDED 2026-08-10 (the Secrets area — names, navigation, routes; see the amendment at the end)
+status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model + secret ownership — see the two Amendment notes under the title) · AMENDED 2026-08-10 (the Secrets area — names, navigation, routes; see the amendment at the end) · AMENDED 2026-08-12 (connection repair widened — see the amendment at the end)
 inputDocuments:
   - .bmad/output/architecture/2026-07-25-sharko-oss-professional-design.md
   - .bmad/output/brainstorming/2026-07-24-blind-vs-biased-diff.md
@@ -384,8 +384,9 @@ The addon layer ArgoCD fleets simply have — possibly under argoproj-labs one d
 ### Watching: Drift, Diagnostics, Events
 
 - FR34: Sharko detects drift between git and live cluster state within its stated window and shows a read-only diff.
-- FR35: From the drift view, a user can trigger a one-time re-apply of Sharko's own addon labels — the same keys FR36 names, and nothing else — without enabling self-heal. *(Wording narrowed 2026-08-10: the earlier "make the cluster match git now" promised more than the action does.)*
+- FR35: From the drift view, a user can trigger a one-time re-apply of Sharko's own addon labels — the same keys FR36 names, and nothing else — without enabling self-heal. *(Wording narrowed 2026-08-10: the earlier "make the cluster match git now" promised more than the action does. For the full-connection repair, see FR45.)*
 - FR36: A user can opt in to self-heal; when on, Sharko re-applies only its own addon-label keys — never anything else.
+- FR45: Where a cluster's connection can be rebuilt from git and an independently readable credentials backend — and Sharko owns that connection — a user can repair the whole connection: all three credential data keys, all of Sharko's owned labels, and Sharko's provenance. What may be repaired depends on the connection kind: backend-stored credentials and EKS connections with independently readable metadata get a full repair; inline credentials, user-managed connections, adopted connections, and connections whose credential source cannot be read or is not recorded get only the label repair FR35 already promises; another tool's connection is refused outright and never changed. The repair is in place, never a delete-and-recreate. The write is guarded: Sharko re-checks ownership immediately before writing and refuses if another owner appeared; the write itself is a Kubernetes compare-and-swap, so any change made by anyone else in that window causes the repair to fail rather than overwrite; and the repair requires the commit the user reviewed — if the git branch moved between the check and the repair, the server refuses and nothing is written. No secret value is returned in any form. Git is never written. The self-heal setting is neither read as a precondition nor changed. Foreign labels, foreign annotations, unrelated data keys, and labels a previous takeover preserved all survive. *(Added 2026-08-12 — the action was widened; see the 2026-08-12 amendment at the end.)*
 - FR37: When something breaks, diagnostics say what, where, and why in plain words — including parser errors with file and line.
 - FR38: Sharko emits Kubernetes events for failures and important transitions, never including secret values.
 - FR39: A user can see the whole fleet's state on one dashboard.
@@ -457,7 +458,7 @@ What v4 actually changes, on one page.
 - Takeover: the preflight (4 checks) and takeover registration (same name/address, legacy labels preserved by default) — the brownfield migration features (FR13–FR16).
 - Catalog approved-list model *(amended 2026-08-08 — replaced the delta model)*: the org's file is the full approved list; the curated list is a display-only discovery window. Plus extended entry fields + internal addons as first-class citizens (FR17–FR19).
 - Deployment-settings-as-data with catalog quirk defaults (FR24).
-- API token lifecycle: expiry by default, renew, revoke (FR11). One-time re-apply of Sharko's own addon labels from the drift view (FR35, wording narrowed 2026-08-10). Unregister with warn-and-confirm (FR16).
+- API token lifecycle: expiry by default, renew, revoke (FR11). One-time re-apply of Sharko's own addon labels from the drift view (FR35, wording narrowed 2026-08-10); full connection repair where the connection can be rebuilt independently (FR45, added 2026-08-12). Unregister with warn-and-confirm (FR16).
 - The honesty pass: SBOM real or claim dropped, threat model surfaced, arm64 images, docs lead with Kubernetes Secrets, stated limits (multi-tenancy, single replica, coarse roles).
 - The migration playbook with the honest downtime statement (docs).
 
@@ -523,3 +524,108 @@ Both are separate decisions with real work behind them.
 
 Below the UI nothing is renamed: REST endpoints, CLI commands, internal Go packages, metrics
 and stored fields keep their current names.
+
+---
+
+## Amendment (2026-08-12) — connection repair widened to full connections where Sharko can rebuild them
+
+The connection repair action was widened from labels-only to full connections where Sharko can
+honestly rebuild what the connection should be without reading the live Secret. This change
+resolves the 2026-08-10 "Note on Repair" above, which said the Repair term could be used for
+the connection action "either when the action is widened or the label and its description are
+narrowed to labels only." The condition is met: the action was widened. A new requirement,
+FR45, describes the full promise.
+
+**What changed and why.** The connection action now repairs the whole connection — the three
+credential data keys (`name`, `server`, `config`), all of Sharko's owned labels, and Sharko's
+provenance — where the connection can be rebuilt from git and an independently readable
+credentials backend, and where Sharko owns the connection. The 2026-08-10 note said the action
+at that time only re-applied addon labels; that is still what happens on some connections
+(inline credentials, user-managed, adopted), but on backend-stored and EKS connections where
+Sharko holds the connection, the full connection is now rewritten.
+
+**Which connections get what.** Seven kinds of connection exist, and what may be repaired
+depends on the kind:
+
+- **Backend-stored credentials** (the kubeconfig lives in a secrets backend and that backend
+  can be read independently of the live ArgoCD Secret) → full repair: the three data keys, all
+  owned labels, and provenance.
+- **EKS connections with independently readable metadata** (the EKS cluster metadata lives in
+  the backend and can be read independently) → full repair, but never reported as fully in
+  sync afterwards, because the stored EKS payload holds cluster metadata, not a credential.
+  There is no credential on the expected side to compare the live credential blob against, so
+  Sharko will not claim a match for something it never read.
+- **Inline credentials** (the kubeconfig was pasted at registration and is only stored in the
+  connection itself, with no independent copy) → labels only, same as FR35.
+- **User-managed connections** (`connectionManagedBy: user` in git) → labels only.
+- **Adopted connections** (the connection existed before Sharko and was adopted) → labels only.
+- **Unknown credential source** (the git record predates the `credsSource` field, or the
+  recorded source is a value this version of Sharko does not recognise) → labels only.
+- **Another tool's connection** (the live Secret's `managed-by` names a different tool) →
+  refused outright, nothing changed.
+
+The boundary between labels-only and full repair is exactly the boundary the step 2 comparison
+already drew: where Sharko cannot rebuild the expected connection without reading the live
+Secret, the repair cannot go further than the labels.
+
+**The guards that protect the write.** Every repair is guarded, whether labels-only or full:
+
+- Sharko re-reads the live Secret and re-checks ownership **immediately before the write** —
+  nothing but in-memory map work sits between the ownership recheck and the Update. If another
+  owner appeared in that window, the repair refuses and writes nothing.
+- The write itself is a Kubernetes compare-and-swap using the resourceVersion from the
+  pre-write read. If anything at all changed the Secret between the read and the write — even
+  something that did not touch the ownership label — the API server rejects the write with a
+  conflict and nothing is written.
+- The repair requires the commit the user reviewed. The reviewed commit is resolved at the
+  start of the request and checked again immediately before writing. If the git branch moved
+  in between, the server refuses with a 409 and writes nothing. Where the git provider cannot
+  name a commit at all (a provider without the optional commit-resolution capability, or a
+  call that failed), a full repair is not offered.
+
+  This applies to the labels-only repair too. Every repair through the repair action needs the
+  reviewed commit, whatever it is allowed to change — the request is refused outright without
+  one. The separate one-time re-apply FR35 already promised is the only thing that works
+  without a commit, because it never claimed to write what somebody had just looked at.
+
+**What is never touched.** Every repair, full or labels-only:
+
+- Is in place, always one Update against one live object — never a Delete and never a Create.
+  A delete-and-recreate would lose every field Sharko does not model and would briefly leave
+  ArgoCD with no connection at all.
+- Leaves foreign labels, foreign annotations, unrelated data keys, and labels a previous
+  takeover recorded as preserved all exactly as they were. The count of what was preserved is
+  reported; the names are not (naming somebody else's keys would be reporting on their data).
+- Never writes to git. The repair fixes the cluster to match git; it never changes git.
+- Never reads the self-heal setting as a precondition and never changes it as a side effect. A
+  repair is an immediate one-time action, whether self-heal is on or off.
+- Never returns a secret value in any form. A sensitive field returns the field path, one of
+  `same` / `different` / `missing` / `unexpected`, and a flag saying it is sensitive — no
+  `expected` property, no `live` property, nothing that carries a value or the shape of one.
+
+**What is unchanged from the earlier requirements.** FR34 (drift detection and read-only
+diff), FR36 (opt-in self-heal on addon labels only), FR43 (secret values never appear), and
+NFR6 (the enforced-by-tests rule) all stand exactly as written. The self-heal promise is not
+widened — it remains addon labels only, which is exactly what it said before this amendment.
+The ownership gate from the 2026-08-08 amendment is not weakened — the repair refuses to touch
+a connection another tool owns, and the refusal happens whether that ownership was there from
+the start or appeared mid-request. Git is never written. The diff is still read-only.
+
+**UI naming for the EKS case.** The EKS connection gets a full repair but is never reported as
+fully in sync, because the credential blob cannot be compared. The UI action for that case is
+labelled `Refresh EKS connection`, not Repair — a separate product-owner decision that says
+what that specific action does rather than using the general term. FR45 uses "repair" as the
+general term for all full-connection writes; the UI may call the EKS variant something more
+specific where that is clearer.
+
+**The 2026-08-10 note resolution.** The note above said the Repair term could be used for the
+connection action when either the action was widened or the label and description were
+narrowed. The action was widened, so the note's condition is met. The Repair term may now be
+used where the repair genuinely is a full connection, which is backend-stored and EKS
+connections where Sharko owns the connection and the backend can be read. The labels-only
+action still must not be called Repair, because for that one the 2026-08-10 objection stands
+word for word: calling a labels-only action "Repair" would promise something the code does not
+do.
+
+The walkthrough and the no-merge gate belong to step 4, which brings the connection detail
+page and the visible demonstration of the drift → comparison → repair → synced flow.
