@@ -232,6 +232,13 @@ func (r *Reconciler) checkOneSecret(name string, desiredLabels map[string]string
 // recordCompared writes down the result of comparing one live secret's addon
 // labels against what git asks for — the exact comparison the write pass
 // makes before it decides whether to repair anything, minus the repair.
+//
+// R3-5 note: connection-shape drift is noticed by the WRITE pass (reconcileDiff),
+// not here. Both passes hold the same Secrets, so either could do it — but the
+// check pass is what a person's Refresh click drives, and noticing there would
+// tie "how often does a drift event fire" to how often somebody clicks. The
+// write pass runs on the steady 30-second tick, so one loop owns the notice and
+// its once-per-episode behaviour is predictable.
 func (r *Reconciler) recordCompared(name string, desiredLabels map[string]string, secret *corev1.Secret, v4Repo bool) {
 	inSync := labelsMatch(desiredLabels, secret.Labels)
 	if inSync && v4Repo && hasStaleV4AddonLabels(desiredLabels, secret.Labels) {
