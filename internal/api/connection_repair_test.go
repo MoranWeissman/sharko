@@ -21,19 +21,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/record"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/settings"
@@ -716,12 +724,228 @@ Its credential blob was never comparable — a fresh token differs every time �
 		t.Errorf("ownership_mode = %q, want eks_token", view.Comparison.OwnershipMode)
 	}
 
-	// THE MINT. Zero, not low — on the write path as much as the read path.
-	if mint.calls != 0 {
-		t.Fatalf(`the repair minted %d EKS sign-in token(s); it must mint ZERO.
+	// THE MINT — EXACTLY ONE, per repair (R3-14).
+	//
+	// This used to assert ZERO, and zero was the bug. The repair built its spec
+	// from the read-only no-mint route, so for a stored EKS payload it got no
+	// token, and argosecrets.buildSecretConfig's precedence (cert pair > token >
+	// exec) fell through to the execProviderConfig shape — while every normal
+	// Sharko write for that same cluster mints a token and produces bearerToken.
+	// Clicking repair silently changed how ArgoCD signs in to that cluster.
+	//
+	// A WRITE needs credentials that work, so a write mints. One, because one
+	// write happened. And ONE and not two: the fresh comparison this response
+	// carries runs after the write, on the no-mint route, so it must add nothing
+	// to this count. If this number is two, that comparison has started minting.
+	if mint.calls != 1 {
+		t.Fatalf(`the repair minted %d EKS sign-in token(s); it must mint EXACTLY ONE.
 
-The repair reads the backend through the read-only stored-facts capability, which cannot reach GetCredentials. A minted token here would be written into the connection, and the mode policy has already ruled that blob cannot be compared anyway.`, mint.calls)
+One, because a write needs credentials that actually work — the same single mint the reconcile pass performs for this cluster. Zero would mean the write is back on the no-mint read, which produces the exec shape and changes how ArgoCD signs in. Two would mean the fresh comparison inside this response has started minting, and a read must create nothing.`, mint.calls)
 	}
+}
+
+// TestRepair_MintsOnceForTheWriteAndNeverForACheck is the R3-14 counter proof,
+// with the repair endpoint and the comparison endpoint driven against ONE mint
+// counter in one test.
+//
+// Two separate tests would each pass while the pair of them was wrong — that is
+// how the bug survived a review round. Sharing the counter makes the difference
+// between the two paths the thing being asserted: a write mints once, a check
+// mints never, and the total after both is exactly one.
+func TestRepair_MintsOnceForTheWriteAndNeverForACheck(t *testing.T) {
+	mint := &eksAPIMintCounter{}
+	backend := eksBackendForAPI(t, mint)
+
+	_, router, _ := repairFixture(t, eksManagedYAML, driftedOwnedSecret(), backend)
+
+	// 1. The read-only comparison endpoint, on its own, mints nothing.
+	c := httptest.NewRecorder()
+	router.ServeHTTP(c, comparisonReq(comparisonCluster))
+	if c.Code != http.StatusOK {
+		t.Fatalf("the comparison endpoint returned %d (body=%s)", c.Code, c.Body.String())
+	}
+	if mint.calls != 0 {
+		t.Fatalf(`the read-only comparison minted %d EKS sign-in token(s); it must mint ZERO.
+
+A minted EKS token is a real credential that can sign in as Sharko for as long as it lives. A check must not create one. If this is above zero the comparison path now reaches GetCredentials — find it and take it out; do not raise the expected count.`, mint.calls)
+	}
+
+	// 2. The repair mints once — and the fresh comparison it runs afterwards adds
+	//    nothing, so the total is one and not two.
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the repair endpoint returned %d (body=%s)", w.Code, w.Body.String())
+	}
+	if mint.calls != 1 {
+		t.Fatalf(`after one comparison and one repair the mint count is %d; it must be exactly 1.
+
+The comparison contributes zero and the repair contributes one. A 0 means the write is back on the no-mint read (the exec-shape bug). A 2 or more means a read has started minting.`, mint.calls)
+	}
+
+	// 3. Another comparison still adds nothing.
+	c2 := httptest.NewRecorder()
+	router.ServeHTTP(c2, comparisonReq(comparisonCluster))
+	if c2.Code != http.StatusOK {
+		t.Fatalf("the second comparison returned %d (body=%s)", c2.Code, c2.Body.String())
+	}
+	if mint.calls != 1 {
+		t.Errorf("a comparison run after the repair took the mint count to %d; a read must create nothing", mint.calls)
+	}
+}
+
+// TestRepair_WritesTheSameConnectionShapeANormalWriteWould is the other half of
+// R3-14: the repair's own output, not just its mint count.
+//
+// It asserts the AUTHENTICATION METHOD and the top-level keys of the repaired
+// data.config against what the reconciler's own write route produces for the same
+// cluster and the same stored payload — never the token bytes, which are different
+// on every mint and are not this test's business anyway.
+func TestRepair_WritesTheSameConnectionShapeANormalWriteWould(t *testing.T) {
+	mint := &eksAPIMintCounter{}
+	backend := eksBackendForAPI(t, mint)
+
+	_, router, argoClient := repairFixture(t, eksManagedYAML, driftedOwnedSecret(), backend)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	after, err := argoClient.CoreV1().Secrets("argocd").Get(
+		context.Background(), comparisonCluster, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading the repaired connection: %v", err)
+	}
+	repairedMethod, repairedKeys := connectionConfigShape(t, string(after.Data["config"]))
+
+	// What a NORMAL write produces for this cluster, from the same backend
+	// through the same route the reconcile pass uses.
+	normalSpec, err := normalWriteSpecFor(t, backend, comparisonCluster, "eu-west-1")
+	if err != nil {
+		t.Fatalf("building the normal write's spec: %v", err)
+	}
+	normalBuilt, err := argosecrets.BuildClusterSecret(normalSpec, "argocd")
+	if err != nil {
+		t.Fatalf("building the normal write's connection: %v", err)
+	}
+	normalMethod, normalKeys := connectionConfigShape(t, normalBuilt.StringData["config"])
+
+	if repairedMethod != normalMethod {
+		t.Errorf(`the repair wrote the %q authentication method; a normal Sharko write for this cluster produces %q.
+
+A repair must not change HOW ArgoCD signs in to a cluster. This is exactly the R3-14 bug: the repair built its spec from the read-only no-mint route, got no token, and the builder's precedence fell through to the exec shape.
+repaired top-level keys: %v
+normal   top-level keys: %v`, repairedMethod, normalMethod, repairedKeys, normalKeys)
+	}
+	if repairedMethod != "bearerToken" {
+		t.Errorf(`the repaired connection uses %q, want bearerToken for a stored EKS payload whose token was minted for the write.`, repairedMethod)
+	}
+	if strings.Join(repairedKeys, ",") != strings.Join(normalKeys, ",") {
+		t.Errorf("the repaired connection's top-level config keys are %v; a normal write produces %v", repairedKeys, normalKeys)
+	}
+}
+
+// TestRepair_BackendThatCannotProvideCredentialsRefusesAndWritesNothing: the
+// write route fails, so the repair refuses with the one fixed safe sentence and
+// the connection is left byte-for-byte as it was.
+//
+// The refusal is the point. A write that cannot get credentials must never fall
+// back to a spec with no credential in it — that fallback is exactly how a
+// missing token became a changed sign-in method instead of a refusal.
+func TestRepair_BackendThatCannotProvideCredentialsRefusesAndWritesNothing(t *testing.T) {
+	backend := providers.NewFailingStoredFactsBackendForTest(
+		credsafe.Mark(fmt.Errorf("the backend is unreachable, and here is %s", repairSentinelValue)))
+
+	_, router, argoClient := repairFixture(t, backendManagedYAML, driftedOwnedSecret(), backend)
+
+	before, err := argoClient.CoreV1().Secrets("argocd").Get(
+		context.Background(), comparisonCluster, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading before: %v", err)
+	}
+	beforeJSON, _ := json.Marshal(before)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 when the credentials cannot be read, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding the refusal: %v", err)
+	}
+	if got, _ := body["error"].(string); got != credsafe.Message {
+		t.Errorf(`the refusal says %q, want the one fixed safe sentence.
+
+Every credential failure says the SAME sentence. A sentence that changed with the cause would be a channel back to the cause.`, got)
+	}
+	assertNoRepairSentinel(t, "the refusal body", w.Body.String())
+
+	after, _ := argoClient.CoreV1().Secrets("argocd").Get(
+		context.Background(), comparisonCluster, metav1.GetOptions{})
+	afterJSON, _ := json.Marshal(after)
+	if string(beforeJSON) != string(afterJSON) {
+		t.Errorf("the connection was changed even though the credential read failed.\nbefore %s\nafter  %s", beforeJSON, afterJSON)
+	}
+	assertNoWriteAction(t, argoClient)
+}
+
+// connectionConfigShape reports which authentication method a connection
+// Secret's data.config carries, and its top-level keys, sorted.
+//
+// It reads the SHAPE and never a value. The method name comes from which keys
+// are present; the key list is JSON field names. The token itself changes on
+// every mint, so there is nothing to compare there — and nothing to print.
+func connectionConfigShape(t *testing.T, rawConfig string) (method string, keys []string) {
+	t.Helper()
+	if rawConfig == "" {
+		t.Fatal("the connection Secret has no data.config")
+	}
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawConfig), &cfg); err != nil {
+		t.Fatalf("data.config is not JSON: %v", err)
+	}
+	for k := range cfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	switch {
+	case cfg["execProviderConfig"] != nil:
+		method = "execProviderConfig"
+	case cfg["bearerToken"] != nil:
+		method = "bearerToken"
+	default:
+		method = "tlsClientConfig-only"
+	}
+	return method, keys
+}
+
+// normalWriteSpecFor assembles the credential half of a connection spec the way
+// every WRITER does, straight from the backend through GetCredentials.
+//
+// It mirrors clusterreconciler.ConnectionCredentialSpecForWrite field for field.
+// It is spelled out rather than called because that method hangs off a
+// Reconciler and this only needs the mapping — and if the mapping ever stops
+// being faithful, the writer's own tests in clusterreconciler catch it.
+func normalWriteSpecFor(t *testing.T, backend providers.ClusterCredentialsProvider, cluster, region string) (argosecrets.ClusterSecretSpec, error) {
+	t.Helper()
+	kc, err := providers.GetCredentialsWithOptionalRole(backend, cluster, "")
+	if err != nil {
+		return argosecrets.ClusterSecretSpec{}, err
+	}
+	return argosecrets.ClusterSecretSpec{
+		Name:     cluster,
+		Server:   kc.Server,
+		Region:   region,
+		Token:    kc.Token,
+		CertData: base64.StdEncoding.EncodeToString(kc.CertData),
+		KeyData:  base64.StdEncoding.EncodeToString(kc.KeyData),
+		CAData:   base64.StdEncoding.EncodeToString(kc.CAData),
+	}, nil
 }
 
 // TestRepair_GuestConnectionGetsLabelsOnly is rule 12 for the guest modes: a
@@ -1440,4 +1664,415 @@ func (g *v4GitProviderWithPinnedCommit) GetPullRequestStatus(_ context.Context, 
 }
 func (g *v4GitProviderWithPinnedCommit) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	return nil, nil
+}
+
+// --- R3-16 (surface): the response reports what the write returned ----------
+//
+// Everything below reads the RESPONSE BODY, not a struct the handler happened to
+// build. The bug these cover was visible to whoever read the response, so the
+// response is where they look.
+
+// guestLabelsOnlyFixture wires the labels-only path for one cluster: a
+// self-managed record in git (connectionManagedBy: user → the guest modes → the
+// addon-labels-only repair scope) with the declared addon labels, against a live
+// Secret carrying the labels, foreign labels and data keys given.
+//
+// It returns the server, the router, the fake Kubernetes client and a fake event
+// recorder, so a test can assert the write, the response AND the event from one
+// run.
+func guestLabelsOnlyFixture(
+	t *testing.T,
+	declaredAddons map[string]string,
+	liveLabels map[string]string,
+	liveData map[string][]byte,
+) (http.Handler, *fake.Clientset, *record.FakeRecorder) {
+	t.Helper()
+
+	managed := "clusters:\n- name: " + comparisonCluster + "\n  connectionManagedBy: user\n  credsSource: secret-kubeconfig\n  labels:\n"
+	// Sorted, so the YAML this test hands git is the same every run.
+	declaredKeys := make([]string, 0, len(declaredAddons))
+	for k := range declaredAddons {
+		declaredKeys = append(declaredKeys, k)
+	}
+	sort.Strings(declaredKeys)
+	for _, k := range declaredKeys {
+		managed += "    " + k + ": " + declaredAddons[k] + "\n"
+	}
+
+	// A self-managed connection: the user maintains it, so it carries no
+	// managed-by=sharko marker. That is what makes the policy classify it guest
+	// and what the primitive's ownership recheck expects to find.
+	labels := map[string]string{"argocd.argoproj.io/secret-type": "cluster"}
+	for k, v := range liveLabels {
+		labels[k] = v
+	}
+	data := map[string][]byte{
+		"name":   []byte(comparisonCluster),
+		"server": []byte("https://their-own-address.invalid"),
+		"config": []byte(`{"bearerToken":"theirs"}`),
+	}
+	for k, v := range liveData {
+		data[k] = v
+	}
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: comparisonCluster, Namespace: "argocd", Labels: labels,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	gp := &comparisonGP{managedYAML: []byte(managed), headSHA: repairHeadSHA}
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	fakeEvents := record.NewFakeRecorder(64)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:   func() gitprovider.GitProvider { return gp },
+		ArgoClient:    argoClient,
+		Vault:         repairFakeVault{},
+		AuditFn:       func(audit.Entry) {},
+		Namespace:     "argocd",
+		TickInterval:  time.Hour,
+		SelfHealFn:    settingsStore.IsManagedClusterSelfHealEnabled,
+		EventRecorder: events.NewRecorderForTest(fakeEvents, "sharko"),
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, repairFakeVault{}, nil, nil)
+
+	return router, argoClient, fakeEvents
+}
+
+// labelsOnlyRepairBody runs the repair and returns the decoded response, having
+// checked it really did take the labels-only path — a test that silently went
+// down the full-connection path would prove nothing about this branch.
+func labelsOnlyRepairBody(t *testing.T, router http.Handler) connectionRepairView {
+	t.Helper()
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var view connectionRepairView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding the response body: %v", err)
+	}
+	if view.ScopeApplied != "addon_labels_only" {
+		t.Fatalf(`scope_applied = %q, want addon_labels_only.
+
+This test went down the full-connection path and would have passed for the wrong reason. A "guest" fixture that is not actually a guest is how a passing test came to prove nothing last round.`, view.ScopeApplied)
+	}
+	return view
+}
+
+// TestRepairLabelsOnly_RemovalOnlyRepairReportsTheRemovedKey: git no longer
+// declares an addon, the live connection still has its label, so the repair
+// REMOVES one label and writes nothing else.
+//
+// The old code reported ZERO fields for this — it listed the desired labels, and
+// a removed label is by definition not one of those. So a write that really
+// happened came back looking like nothing had happened.
+func TestRepairLabelsOnly_RemovalOnlyRepairReportsTheRemovedKey(t *testing.T) {
+	router, argoClient, _ := guestLabelsOnlyFixture(t,
+		// git declares one addon, and the live Secret already agrees about it.
+		map[string]string{"datadog": "enabled"},
+		// The live Secret also carries an addon label git no longer declares.
+		map[string]string{"datadog": "enabled", "retired-addon": "enabled"},
+		nil)
+
+	view := labelsOnlyRepairBody(t, router)
+
+	if !view.Repaired {
+		t.Fatal(`the response says repaired: false, but a label really was removed.
+
+A removal is a write. Reporting it as "nothing changed" is the same lie in the other direction.`)
+	}
+	want := "metadata.labels[retired-addon]"
+	if len(view.FieldsRepaired) != 1 || view.FieldsRepaired[0] != want {
+		t.Errorf(`fields_repaired = %v, want exactly [%s].
+
+The one thing that changed was the REMOVAL of an addon label git no longer declares. The old code built this list out of the DESIRED labels, so a removal appeared nowhere and a removal-only repair reported zero fields.`, view.FieldsRepaired, want)
+	}
+	if !strings.Contains(view.Message, "1 label(s) changed") {
+		t.Errorf("the message says %q; it must give the real count of labels that changed", view.Message)
+	}
+
+	// And the write really did what the response says.
+	after, _ := argoClient.CoreV1().Secrets("argocd").Get(
+		context.Background(), comparisonCluster, metav1.GetOptions{})
+	if _, still := after.Labels["retired-addon"]; still {
+		t.Error("the retired addon label is still on the connection")
+	}
+	if after.Labels["datadog"] != "enabled" {
+		t.Errorf("datadog = %q, want enabled — the label git still declares must stay", after.Labels["datadog"])
+	}
+}
+
+// TestRepairLabelsOnly_RemovalWithNothingDeclaredStillReportsTheWrite is the
+// sharpest shape of the same bug: git declares NO addons for this cluster, so the
+// desired label set is empty, and the only thing the repair does is remove the one
+// addon label that is left over.
+//
+// The old code built its field list by looping over the desired set. An empty
+// desired set means an empty loop, so a repair that really wrote to Kubernetes
+// came back with repaired: true and ZERO fields — "I changed something, and it was
+// nothing".
+func TestRepairLabelsOnly_RemovalWithNothingDeclaredStillReportsTheWrite(t *testing.T) {
+	router, argoClient, _ := guestLabelsOnlyFixture(t,
+		// git declares nothing.
+		nil,
+		// The live connection still carries a leftover addon label.
+		map[string]string{"retired-addon": "enabled"},
+		nil)
+
+	view := labelsOnlyRepairBody(t, router)
+
+	if !view.Repaired {
+		t.Fatal("the response says repaired: false, but the leftover label really was removed")
+	}
+	if len(view.FieldsRepaired) == 0 {
+		t.Fatalf(`fields_repaired is empty on a repair that reported repaired: true.
+
+git declares no addons here, so the old code's loop over the desired set produced nothing at all, and a real write to Kubernetes came back with zero fields. "I changed something, and it was nothing" is not an answer.`)
+	}
+	want := "metadata.labels[retired-addon]"
+	if len(view.FieldsRepaired) != 1 || view.FieldsRepaired[0] != want {
+		t.Errorf("fields_repaired = %v, want exactly [%s]", view.FieldsRepaired, want)
+	}
+
+	after, _ := argoClient.CoreV1().Secrets("argocd").Get(
+		context.Background(), comparisonCluster, metav1.GetOptions{})
+	if _, still := after.Labels["retired-addon"]; still {
+		t.Error("the leftover addon label is still on the connection, so no write happened at all")
+	}
+}
+
+// TestRepairLabelsOnly_OneChangeAmongManyReportsExactlyOneField: git declares six
+// addons, the live connection has five of them right and one wrong, so exactly
+// one field changed.
+//
+// The old code listed ALL SIX, because it looped over the desired label set
+// whenever the bool said "something changed". Change one of twenty and it claimed
+// twenty.
+func TestRepairLabelsOnly_OneChangeAmongManyReportsExactlyOneField(t *testing.T) {
+	declared := map[string]string{
+		"datadog":      "enabled",
+		"nginx":        "enabled",
+		"cert-mgr":     "enabled",
+		"prometheus":   "disabled",
+		"grafana":      "disabled",
+		"external-dns": "enabled",
+	}
+	// The live connection agrees about everything except nginx.
+	liveLabels := map[string]string{}
+	for k, v := range declared {
+		liveLabels[k] = v
+	}
+	liveLabels["nginx"] = "disabled"
+
+	router, _, _ := guestLabelsOnlyFixture(t, declared, liveLabels, nil)
+
+	view := labelsOnlyRepairBody(t, router)
+
+	if !view.Repaired {
+		t.Fatal("the response says repaired: false, but one label really was wrong")
+	}
+	want := "metadata.labels[nginx]"
+	if len(view.FieldsRepaired) != 1 || view.FieldsRepaired[0] != want {
+		t.Errorf(`fields_repaired = %v (%d entries), want exactly [%s].
+
+One label out of six was wrong, so one field changed. The old code listed every desired label whenever any one of them changed, so this response claimed six writes for one.`, view.FieldsRepaired, len(view.FieldsRepaired), want)
+	}
+	if !strings.Contains(view.Message, "1 label(s) changed") {
+		t.Errorf("the message says %q; it must give the real count", view.Message)
+	}
+}
+
+// TestRepairLabelsOnly_FieldListIsSorted: three labels change at once and the
+// response lists them in a fixed order.
+//
+// The old code iterated a Go map, so the order was different on every call. A
+// caller diffing two responses, or a person reading two runs, saw churn that was
+// not there.
+func TestRepairLabelsOnly_FieldListIsSorted(t *testing.T) {
+	declared := map[string]string{
+		"zulu":    "enabled",
+		"alpha":   "enabled",
+		"mike":    "enabled",
+		"charlie": "enabled",
+	}
+	// Every one of them is wrong on the live connection, so all four change.
+	liveLabels := map[string]string{
+		"zulu": "disabled", "alpha": "disabled", "mike": "disabled", "charlie": "disabled",
+	}
+
+	router, _, _ := guestLabelsOnlyFixture(t, declared, liveLabels, nil)
+	view := labelsOnlyRepairBody(t, router)
+
+	if len(view.FieldsRepaired) != 4 {
+		t.Fatalf("fields_repaired = %v, want four entries", view.FieldsRepaired)
+	}
+	if !sort.StringsAreSorted(view.FieldsRepaired) {
+		t.Errorf(`fields_repaired is not sorted: %v.
+
+Map iteration order is random in Go, so a response built by walking a map is different on every call and a caller cannot diff two of them.`, view.FieldsRepaired)
+	}
+}
+
+// TestRepairLabelsOnly_PreservedCountsAreReal: the live connection carries two
+// labels that are not Sharko's and two data keys Sharko never writes, and the
+// response counts them.
+//
+// The old code never set these fields at all, so they were always zero — a
+// connection full of somebody else's material reported "nothing preserved", which
+// is precisely the promise this feature makes and the one the response failed to
+// evidence.
+func TestRepairLabelsOnly_PreservedCountsAreReal(t *testing.T) {
+	router, argoClient, _ := guestLabelsOnlyFixture(t,
+		map[string]string{"datadog": "enabled"},
+		map[string]string{
+			"datadog":                   "disabled", // so a write really happens
+			"some-other-tool.io/owner":  "them",     // foreign label 1
+			"another-tool.example/tier": "gold",     // foreign label 2
+		},
+		map[string][]byte{
+			"shard":            []byte("7"),        // foreign data key 1
+			"their-tool-state": []byte("whatever"), // foreign data key 2
+		})
+
+	view := labelsOnlyRepairBody(t, router)
+
+	if !view.Repaired {
+		t.Fatal("the fixture's label was wrong, so a write should have happened")
+	}
+	if view.PreservedForeignLabels != 2 {
+		t.Errorf(`preserved_foreign_labels = %d, want 2.
+
+Two labels on this connection are not Sharko's. The response is where a person confirms their things survived, and the old code never set this field at all, so it always read zero.`, view.PreservedForeignLabels)
+	}
+	if view.PreservedForeignDataKeys != 2 {
+		t.Errorf(`preserved_foreign_data_keys = %d, want 2 (a labels-only repair never touches Data at all, and says so honestly).`, view.PreservedForeignDataKeys)
+	}
+
+	// The counts are true: the material really is still there.
+	after, _ := argoClient.CoreV1().Secrets("argocd").Get(
+		context.Background(), comparisonCluster, metav1.GetOptions{})
+	if after.Labels["some-other-tool.io/owner"] != "them" {
+		t.Error("a foreign label was lost")
+	}
+	if string(after.Data["shard"]) != "7" {
+		t.Error("a foreign data key was lost")
+	}
+	if string(after.Data["config"]) != `{"bearerToken":"theirs"}` {
+		t.Error("a labels-only repair rewrote the user's own credential blob")
+	}
+}
+
+// TestRepairLabelsOnly_VersionConflictIs409NotBadGateway: something else writes
+// the Secret between the primitive's read and its Update, so Kubernetes rejects
+// the write with a conflict and nothing changes.
+//
+// That is the SAME situation the full-connection path reports as a 409. The
+// labels-only branch used to recognise only the ownership error and send
+// everything else to a 502, so one cause had two answers depending on which scope
+// the cluster fell into — and a caller cannot write sane retry logic against that.
+func TestRepairLabelsOnly_VersionConflictIs409NotBadGateway(t *testing.T) {
+	router, argoClient, _ := guestLabelsOnlyFixture(t,
+		map[string]string{"datadog": "enabled"},
+		map[string]string{"datadog": "disabled"}, // so a write is really attempted
+		nil)
+
+	// The Update fails with a version conflict, exactly as the API server's
+	// compare-and-swap does when the object moved under us.
+	argoClient.PrependReactor("update", "secrets",
+		func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewConflict(
+				schema.GroupResource{Resource: "secrets"}, comparisonCluster,
+				fmt.Errorf("the object has been modified"))
+		})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf(`a version conflict on the labels-only path returned %d, want 409 (body=%s).
+
+This is the same situation the full-connection path answers with a 409: something else wrote the connection in the window, so nothing was written. One cause, one answer, whichever scope the cluster fell into. A 502 here says "the upstream broke" about a race that the caller should simply re-check and retry.`, w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "changed this cluster's connection while Sharko was repairing it") {
+		t.Errorf("the 409 does not say what happened: %s", w.Body.String())
+	}
+}
+
+// TestRepairLabelsOnly_EventIsTheAddonLabelsOneAndClaimsNothingElse: the event a
+// labels-only repair emits carries the addon-label reason and a message that says
+// only what happened.
+//
+// The full-connection event's message says Sharko rewrote the stored sign-in
+// details. A labels-only repair never reads them. An event that overstates what
+// happened is the same class of problem as a success event carrying a fault
+// reason: the text is what an operator acts on, so it has to be true.
+func TestRepairLabelsOnly_EventIsTheAddonLabelsOneAndClaimsNothingElse(t *testing.T) {
+	router, _, fakeEvents := guestLabelsOnlyFixture(t,
+		map[string]string{"datadog": "enabled"},
+		map[string]string{"datadog": "disabled"},
+		nil)
+
+	view := labelsOnlyRepairBody(t, router)
+	if !view.Repaired {
+		t.Fatal("no write happened, so no event would be emitted and this proves nothing")
+	}
+
+	var emitted []string
+	for {
+		select {
+		case e := <-fakeEvents.Events:
+			emitted = append(emitted, e)
+			continue
+		default:
+		}
+		break
+	}
+	if len(emitted) == 0 {
+		t.Fatal("a labels-only repair that changed something emitted no event")
+	}
+
+	var sawAddonLabelsEvent bool
+	for _, e := range emitted {
+		if strings.Contains(e, events.ReasonConnectionRepaired) {
+			t.Errorf(`a labels-only repair emitted the FULL-CONNECTION event reason (%s):
+
+  %s
+
+That reason's message says Sharko rewrote the stored sign-in details, and this repair never read them. An operator or an automation switching on the reason cannot tell a label write from a credential write.`, events.ReasonConnectionRepaired, e)
+		}
+		if !strings.Contains(e, events.ReasonAddonLabelsRepaired) {
+			continue
+		}
+		sawAddonLabelsEvent = true
+
+		// The message must not claim anything about the sign-in details or the
+		// connection as a whole.
+		for _, forbidden := range []string{
+			"repaired its ArgoCD connection",
+			"owned field",
+		} {
+			if strings.Contains(e, forbidden) {
+				t.Errorf("the labels-only event message contains %q, which is a claim about the whole connection:\n  %s", forbidden, e)
+			}
+		}
+		if !strings.Contains(e, "1 label(s) rewritten") {
+			t.Errorf("the labels-only event does not give the real count of labels:\n  %s", e)
+		}
+		if !strings.Contains(e, "sign-in details were not read or changed") {
+			t.Errorf("the labels-only event does not say the sign-in details were left alone:\n  %s", e)
+		}
+	}
+	if !sawAddonLabelsEvent {
+		t.Errorf("no %s event was emitted; the events seen were %v", events.ReasonAddonLabelsRepaired, emitted)
+	}
 }
