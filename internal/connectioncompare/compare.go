@@ -218,6 +218,8 @@ func Compare(req Request) Result {
 	if !req.AddonLabelsKnown {
 		res.Status = StatusCheckFailed
 		res.FailureReason = "Sharko could not read which addons should be on for this cluster, so it cannot tell whether this connection's labels are right. Check that the cluster's addon file is readable in git, then check again."
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
@@ -225,6 +227,8 @@ func Compare(req Request) Result {
 	if buildFailed != "" {
 		res.Status = StatusCheckFailed
 		res.FailureReason = buildFailed
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
