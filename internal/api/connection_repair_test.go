@@ -1040,3 +1040,372 @@ func assertNoWriteAction(t *testing.T, client *fake.Clientset) {
 		}
 	}
 }
+
+// ============================================================================
+// R3-13: Round-2 security checks for addon-labels refusal and pinned-labels
+// ============================================================================
+
+// TestRepair_RefusesWhenAddonLabelsUnknown_FullConnection proves that when a
+// v4 cluster's addon-assignment file cannot be read (AddonLabelsKnown=false),
+// the repair endpoint refuses the request on the FULL-connection path with a
+// safe error sentence, and that NO write action reaches the Kubernetes client.
+// This covers the full-connection repair path where all Secret fields would be
+// rewritten.
+func TestRepair_RefusesWhenAddonLabelsUnknown_FullConnection(t *testing.T) {
+	// Set up a backend that reports a v4 repo with the cluster in
+	// managed-clusters.yaml, but NO cluster-addons/<cluster>.yaml file. This
+	// makes AddonLabelsKnown=false.
+	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  credsSource: secret-kubeconfig\n"
+	// Live secret is a full Sharko-managed owned connection (OwnershipMode=owned).
+	live := liveConnectionSecret(nil, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
+	}, nil)
+	live.Labels = map[string]string{
+		"app.kubernetes.io/managed-by": "sharko",
+		"argocd.argoproj.io/secret-type": "cluster",
+	}
+
+	// The git provider returns the managed-clusters file, but the reconciler
+	// will fail to find cluster-addons/test-cluster.yaml, causing
+	// AddonLabelsKnown to be false.
+	gp := &v4GitProviderNoClusterAddons{managedYAML: []byte(managedYAML), headSHA: repairHeadSHA}
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   argoClient,
+		Vault:        repairFakeVault{},
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Hour,
+		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, repairFakeVault{}, nil, nil)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+
+	// Assert: the endpoint refused with 422.
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 when addon labels unknown, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// Assert: the error message is the safe sentence explaining the refusal.
+	body := w.Body.String()
+	if !strings.Contains(body, "could not read which addons should run on this cluster") {
+		t.Errorf("error message does not explain the addon-labels refusal:\n%s", body)
+	}
+	if !strings.Contains(body, "cluster-addons file missing or unparseable") {
+		t.Errorf("error message does not mention the v4-specific cause:\n%s", body)
+	}
+
+	// Assert: NO write action reached the Kubernetes client.
+	assertNoWriteAction(t, argoClient)
+}
+
+// TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection proves that when
+// addon labels are unknown, the repair endpoint refuses even on the
+// LABELS-ONLY path (a guest connection). This ensures both paths are protected
+// by the same gate.
+func TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection(t *testing.T) {
+	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  ownership_mode: guest\n  credsSource: secret-kubeconfig\n"
+	// Live secret is a guest connection (ownership_mode=guest in managed YAML,
+	// but still carries Sharko's managed-by label so Sharko can repair the labels).
+	live := liveConnectionSecret(nil, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
+	}, nil)
+	live.Labels = map[string]string{
+		"app.kubernetes.io/managed-by": "sharko",
+		"argocd.argoproj.io/secret-type": "cluster",
+	}
+
+	gp := &v4GitProviderNoClusterAddons{managedYAML: []byte(managedYAML), headSHA: repairHeadSHA}
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   argoClient,
+		Vault:        repairFakeVault{},
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Hour,
+		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, repairFakeVault{}, nil, nil)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+
+	// Assert: the endpoint refused with 422.
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 when addon labels unknown on guest path, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// Assert: the refusal is for the same reason (addon labels unknown).
+	body := w.Body.String()
+	if !strings.Contains(body, "could not read which addons should run on this cluster") {
+		t.Errorf("guest-connection refusal does not explain the addon-labels reason:\n%s", body)
+	}
+
+	// Assert: NO write action reached the Kubernetes client.
+	assertNoWriteAction(t, argoClient)
+}
+
+// TestRepair_WritesPinnedLabels_NotBranchHead proves that a labels-only repair
+// (guest connection) writes the addon labels from the REVIEWED commit, not from
+// the branch head. This is the R3-9 wiring: the repair must call
+// RepairAddonLabelsWithPinnedDesired, not the old RepairAddonLabelsOnly that
+// re-reads git at the branch.
+func TestRepair_WritesPinnedLabels_NotBranchHead(t *testing.T) {
+	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  ownership_mode: guest\n  credsSource: secret-kubeconfig\n"
+	// The reviewed commit (which we'll pass to the repair endpoint) has
+	// addon-foo enabled. The branch head (a different, newer commit) has
+	// addon-bar enabled instead. If the repair goes back through the git
+	// provider and reads at the branch head, addon-bar lands. If it correctly
+	// uses the pinned labels from the reviewed commit, addon-foo lands.
+	//
+	// Important: the repair request carries the reviewed commit SHA, which
+	// must match the branch head for R3-4's revision guard to pass. So we set
+	// headSHA to repairHeadSHA (the commit being reviewed), and then track
+	// whether GetFileContent was called with a ref parameter matching the
+	// pinned SHA (repairHeadSHA) vs. an empty ref (which would mean reading at
+	// branch head).
+	gp := &v4GitProviderWithPinnedCommit{
+		managedYAML: []byte(managedYAML),
+		headSHA:     repairHeadSHA, // branch head = the reviewed commit (R3-4 guard)
+		pinnedSHA:   repairHeadSHA, // the commit the repair should read labels at
+		// Labels at the pinned (reviewed) commit:
+		pinnedClusterAddons: []byte(`apiVersion: sharko.dev/v1
+kind: ClusterAddons
+cluster: ` + comparisonCluster + `
+addons:
+  foo:
+    enabled: true
+`),
+		// Labels if the code incorrectly read without a ref (branch head):
+		headClusterAddons: []byte(`apiVersion: sharko.dev/v1
+kind: ClusterAddons
+cluster: ` + comparisonCluster + `
+addons:
+  bar:
+    enabled: true
+`),
+	}
+
+	// Live secret is a guest connection with no addon labels yet.
+	live := liveConnectionSecret(nil, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
+	}, nil)
+	live.Labels = map[string]string{
+		"app.kubernetes.io/managed-by": "sharko",
+		"argocd.argoproj.io/secret-type": "cluster",
+	}
+
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   argoClient,
+		Vault:        repairFakeVault{},
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Hour,
+		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, repairFakeVault{}, nil, nil)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+
+	// Assert: the repair succeeded.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// Assert: the Secret now has addons.sharko.dev/foo=enabled (from the reviewed
+	// commit), NOT addons.sharko.dev/bar=enabled (from the branch head). v4 uses
+	// qualified addon label keys.
+	updatedSecret, err := argoClient.CoreV1().Secrets("argocd").Get(context.Background(), comparisonCluster, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("could not read updated secret: %v", err)
+	}
+
+	fooLabel := "addons.sharko.dev/foo"
+	barLabel := "addons.sharko.dev/bar"
+
+	if updatedSecret.Labels[fooLabel] != "enabled" {
+		t.Errorf("%s = %q, want 'enabled' (from the reviewed commit). The repair did not use the pinned labels.", fooLabel, updatedSecret.Labels[fooLabel])
+	}
+	if _, exists := updatedSecret.Labels[barLabel]; exists {
+		t.Errorf("%s = %q, but it should NOT exist. The repair incorrectly used the branch-head labels instead of the pinned ones.", barLabel, updatedSecret.Labels[barLabel])
+	}
+
+	// Also verify that gp.pinnedSHAWasUsed was set to true, proving the git
+	// provider's pinned-commit path was exercised.
+	if !gp.pinnedSHAWasUsed {
+		t.Error("The git provider's pinned-commit path was not exercised. The repair may have gone through a different code path that re-reads git.")
+	}
+}
+
+// v4GitProviderNoClusterAddons is a fake git provider for v4 repos that
+// returns a managed-clusters.yaml but does NOT return a
+// cluster-addons/<cluster>.yaml file. This makes AddonLabelsKnown=false.
+type v4GitProviderNoClusterAddons struct {
+	managedYAML []byte
+	headSHA     string
+}
+
+func (g *v4GitProviderNoClusterAddons) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	// v4 repos use "managed-clusters.yaml" at root, not "configuration/managed-clusters.yaml"
+	if path == "managed-clusters.yaml" && g.managedYAML != nil {
+		return g.managedYAML, nil
+	}
+	// For cluster-addons files: the directory listing says the file EXISTS, but
+	// GetFileContent returns ErrFileNotFound. This simulates a race condition or a
+	// git provider glitch, and forces the reconciler to add this cluster to
+	// `unknown`, making AddonLabelsKnown=false.
+	if strings.Contains(path, "cluster-addons/") {
+		return nil, gitprovider.ErrFileNotFound
+	}
+	return nil, gitprovider.ErrFileNotFound
+}
+
+func (g *v4GitProviderNoClusterAddons) GetBranchHeadSHA(_ context.Context, _ string) (string, error) {
+	if g.headSHA == "" {
+		return "", fmt.Errorf("no head")
+	}
+	return g.headSHA, nil
+}
+
+func (g *v4GitProviderNoClusterAddons) ListDirectory(_ context.Context, path, _ string) ([]string, error) {
+	// The cluster-addons directory listing INCLUDES the cluster's file, but
+	// GetFileContent will fail when the reconciler tries to read it. This makes
+	// the reconciler add this cluster to `unknown`, causing AddonLabelsKnown=false.
+	if path == "cluster-addons" || path == "cluster-addons/" {
+		return []string{comparisonCluster + ".yaml"}, nil
+	}
+	return []string{}, nil
+}
+func (g *v4GitProviderNoClusterAddons) TestConnection(_ context.Context) error { return nil }
+func (g *v4GitProviderNoClusterAddons) CreateBranch(_ context.Context, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderNoClusterAddons) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderNoClusterAddons) DeleteFile(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderNoClusterAddons) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+	return nil, nil
+}
+func (g *v4GitProviderNoClusterAddons) MergePullRequest(_ context.Context, _ int) error {
+	return nil
+}
+func (g *v4GitProviderNoClusterAddons) DeleteBranch(_ context.Context, _ string) error { return nil }
+func (g *v4GitProviderNoClusterAddons) BatchCreateFiles(_ context.Context, _ map[string][]byte, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderNoClusterAddons) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
+	return "", nil
+}
+func (g *v4GitProviderNoClusterAddons) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
+	return nil, nil
+}
+
+// v4GitProviderWithPinnedCommit is a fake git provider that returns DIFFERENT
+// cluster-addons content depending on whether the caller passes the pinned
+// commit as the `ref` parameter. This lets the test prove that the repair reads
+// at the reviewed commit (safe), not at the branch head (unsafe).
+type v4GitProviderWithPinnedCommit struct {
+	managedYAML         []byte
+	headSHA             string
+	pinnedSHA           string
+	pinnedClusterAddons []byte // Content when GetFileContent is called with pinnedSHA as ref
+	headClusterAddons   []byte // Content when GetFileContent is called with empty ref or branch name
+	pinnedSHAWasUsed    bool   // Set to true when GetFileContent is called with pinnedSHA as ref
+}
+
+func (g *v4GitProviderWithPinnedCommit) GetFileContent(_ context.Context, path, ref string) ([]byte, error) {
+	// v4 repos use "managed-clusters.yaml" at root
+	if path == "managed-clusters.yaml" && g.managedYAML != nil {
+		return g.managedYAML, nil
+	}
+	if strings.Contains(path, "cluster-addons/") {
+		// If the caller passed the pinned SHA as the ref, return the pinned content.
+		// This is the CORRECT behavior (R3-9 wiring).
+		if ref == g.pinnedSHA && ref != "" {
+			g.pinnedSHAWasUsed = true
+			return g.pinnedClusterAddons, nil
+		}
+		// Otherwise (empty ref or branch name), return the head content. This is
+		// the INCORRECT behavior that the old code would have produced.
+		return g.headClusterAddons, nil
+	}
+	return nil, gitprovider.ErrFileNotFound
+}
+
+func (g *v4GitProviderWithPinnedCommit) GetBranchHeadSHA(_ context.Context, _ string) (string, error) {
+	if g.headSHA == "" {
+		return "", fmt.Errorf("no head")
+	}
+	return g.headSHA, nil
+}
+
+func (g *v4GitProviderWithPinnedCommit) ListDirectory(_ context.Context, path, _ string) ([]string, error) {
+	if path == "cluster-addons" || path == "cluster-addons/" {
+		return []string{comparisonCluster + ".yaml"}, nil
+	}
+	return []string{}, nil
+}
+
+func (g *v4GitProviderWithPinnedCommit) TestConnection(_ context.Context) error { return nil }
+func (g *v4GitProviderWithPinnedCommit) CreateBranch(_ context.Context, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderWithPinnedCommit) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderWithPinnedCommit) DeleteFile(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderWithPinnedCommit) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+	return nil, nil
+}
+func (g *v4GitProviderWithPinnedCommit) MergePullRequest(_ context.Context, _ int) error {
+	return nil
+}
+func (g *v4GitProviderWithPinnedCommit) DeleteBranch(_ context.Context, _ string) error { return nil }
+func (g *v4GitProviderWithPinnedCommit) BatchCreateFiles(_ context.Context, _ map[string][]byte, _, _ string) error {
+	return nil
+}
+func (g *v4GitProviderWithPinnedCommit) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
+	return "", nil
+}
+func (g *v4GitProviderWithPinnedCommit) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
+	return nil, nil
+}
