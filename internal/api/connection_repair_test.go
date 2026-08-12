@@ -1063,7 +1063,7 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_FullConnection(t *testing.T) {
 		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
 	}, nil)
 	live.Labels = map[string]string{
-		"app.kubernetes.io/managed-by": "sharko",
+		"app.kubernetes.io/managed-by":   "sharko",
 		"argocd.argoproj.io/secret-type": "cluster",
 	}
 
@@ -1125,7 +1125,7 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection(t *testing.T) {
 		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
 	}, nil)
 	live.Labels = map[string]string{
-		"app.kubernetes.io/managed-by": "sharko",
+		"app.kubernetes.io/managed-by":   "sharko",
 		"argocd.argoproj.io/secret-type": "cluster",
 	}
 
@@ -1215,7 +1215,7 @@ addons:
 		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
 	}, nil)
 	live.Labels = map[string]string{
-		"app.kubernetes.io/managed-by": "sharko",
+		"app.kubernetes.io/managed-by":   "sharko",
 		"argocd.argoproj.io/secret-type": "cluster",
 	}
 
