@@ -458,11 +458,17 @@ func compareConnectionData(req Request, expectedSecret *corev1.Secret, checked *
 
 	// data.config, the credential blob.
 	if req.Policy.Mode == ModeEKSToken {
-		// The stored details mint a brand-new short-lived token on every
-		// fetch, so the rebuilt blob differs from the live one every time
-		// with nothing having drifted. Comparing it would report drift that
-		// is not real; claiming it matched would be a lie. So it is not
-		// checked, and the reason says so in plain words.
+		// The configured credentials source stores EKS cluster metadata, not a
+		// credential — so there is no credential on the expected side and
+		// nothing to compare the live blob against. Calling it different would
+		// report drift that is not real; claiming it matched would be a lie
+		// about a check that never happened. So it is not checked, and the
+		// reason says so in plain words.
+		//
+		// Nothing here creates a credential to compare with, either: the
+		// expected side comes from providers.StoredConnectionFacts, which stops
+		// at the stored payload. A WRITE creates a token, once. A check creates
+		// none.
 		notChecked = append(notChecked, NotCheckedField{Path: FieldPathDataConfig, Reason: reasonFreshTokenEveryFetch})
 		return diffs, notChecked
 	}

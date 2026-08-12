@@ -33,7 +33,7 @@ func TestClassify_SevenModes(t *testing.T) {
 			wantRepair: RepairScopeFullConnection,
 		},
 		{
-			name: "EKS token -> limited (fresh token every fetch) but full repair",
+			name: "EKS token -> limited (the configured credentials source stores no credential) but full repair",
 			in: ClassifyInput{
 				CredsSource:                  models.CredsSourceEKSToken,
 				BackendCanProvideStoredFacts: true,
@@ -237,9 +237,10 @@ func TestClassify_UnknownSourceNeverFullNeverFullRepair(t *testing.T) {
 // identifier together.
 //
 // The mode used to be called eks_exec, and that was not true: the writer for
-// this source supplies a minted bearer token, so BuildClusterSecret emits the
-// bearerToken shape, not an execProviderConfig. The name now says what the code
-// actually produces, and the wire value and the Go name agree.
+// this source supplies a bearer token it creates at write time, so
+// BuildClusterSecret emits the bearerToken shape, not an execProviderConfig. The
+// name now says what the code actually produces, and the wire value and the Go
+// name agree.
 func TestClassify_EKSModeIsCalledTokenNotExec(t *testing.T) {
 	if got := string(ModeEKSToken); got != "eks_token" {
 		t.Errorf("the EKS mode's wire value = %q, want %q", got, "eks_token")

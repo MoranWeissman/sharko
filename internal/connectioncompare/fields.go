@@ -16,7 +16,7 @@ package connectioncompare
 // down, and where the plan and the code disagreed the code won. The three
 // places that happened are called out in the comments: the connectivity-check
 // label, the provenance annotations, and the credential blob for a cluster
-// that mints a fresh token on every fetch.
+// whose configured credentials source stores no credential at all.
 
 import (
 	"encoding/json"

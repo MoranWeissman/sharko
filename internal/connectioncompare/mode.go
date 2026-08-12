@@ -41,15 +41,21 @@ const (
 
 	// ModeEKSToken — structured EKS metadata in the secrets backend
 	// (credsSource eks-token), same conditions. The metadata is re-readable,
-	// but the sign-in token is minted fresh on every fetch, so the credential
-	// blob itself can never be compared. Scope is limited for that one
-	// reason; a repair is still offered, because rewriting the connection from
-	// the backend is exactly the fix.
+	// but it is metadata: the configured credentials source stores what is
+	// needed to CREATE a sign-in token, not a token. So there is no credential
+	// on the expected side and nothing to compare the live blob against, and
+	// the scope is limited for that one reason. A repair is still offered,
+	// because rewriting the connection from the backend is exactly the fix —
+	// and a WRITE does create a token, once, at the moment it writes.
+	//
+	// A check creates nothing. The read-only path goes through
+	// providers.StoredConnectionFacts, which stops at the stored payload and
+	// never reaches the token mint.
 	//
 	// The name says token and not exec on purpose. The writer for this source
-	// supplies a minted bearer token, so BuildClusterSecret emits the
-	// bearerToken shape — not an execProviderConfig. Calling this mode "exec"
-	// would describe a shape Sharko does not write here.
+	// supplies a bearer token it creates at write time, so BuildClusterSecret
+	// emits the bearerToken shape — not an execProviderConfig. Calling this
+	// mode "exec" would describe a shape Sharko does not write here.
 	ModeEKSToken Mode = "eks_token"
 
 	// ModeInlineKubeconfig — the cluster was registered with a pasted
@@ -355,13 +361,17 @@ func Classify(in ClassifyInput) Policy {
 	if in.CredsSource == models.CredsSourceEKSToken {
 		// The one place scope and repair deliberately disagree.
 		//
-		// The backend holds EKS metadata, not a fixed credential: every fetch
-		// mints a brand-new short-lived STS bearer token (see the token mint
-		// in internal/providers/aws_sm.go's buildFromStructured). So a rebuilt
-		// credential blob differs from the live one on every single check,
-		// with nothing having drifted — which means Sharko cannot honestly
-		// compare that blob, and cannot claim this connection is fully in
-		// sync.
+		// The configured credentials source holds EKS metadata, not a
+		// credential: it stores what is needed to CREATE a short-lived STS
+		// bearer token (the token creation lives in
+		// internal/providers/aws_sm.go's buildFromStructured, on the WRITE
+		// path). So there is no credential on the expected side at all —
+		// nothing to compare the live blob against, rather than two values
+		// that happen never to agree. Sharko cannot honestly compare that
+		// blob, and cannot claim this connection is fully in sync.
+		//
+		// The check itself creates nothing. It reads through
+		// providers.StoredConnectionFacts, which stops at the stored payload.
 		//
 		// A repair is still worth offering, and is still full: rewriting the
 		// connection from the backend produces a correct connection whatever

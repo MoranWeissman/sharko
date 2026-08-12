@@ -310,10 +310,12 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 // It runs the same two-step lookup GetCredentials does (prefix first, then the
 // exact name) so a cluster found by one is found by the other, and then it
 // STOPS at the payload. On the structured-EKS branch that means it reports the
-// server and the CA bundle and sets CredentialMintedPerFetch — it does NOT go
-// on to buildFromStructured, which is where the STS token mint lives. On the
-// raw-kubeconfig branch there is nothing to mint, so the stored credential is
-// reported as it stands.
+// server and the CA bundle and sets CredentialMintedPerFetch — the stored
+// payload holds no credential, only what would be needed to create one, and
+// this method does NOT go on to buildFromStructured, which is where the STS
+// token gets created. On the raw-kubeconfig branch the payload holds a fixed
+// credential already, so it is reported as it stands and nothing is created
+// there either.
 //
 // This is the method the read-only connection comparison uses. GetCredentials
 // stays exactly as it was for every caller that needs credentials that work.

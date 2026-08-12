@@ -180,7 +180,18 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 	// being silenced by this one (see connection_drift_notice.go).
 	r.clearConnectionDriftNotice(name)
 
-	r.recordReconcile(name, OutcomeSucceeded, "connection repaired — rewritten to match git and the stored sign-in details", nil)
+	// What this sentence may claim, for BOTH kinds of connection.
+	//
+	// It used to say the repair rewrote the "stored sign-in details". For a
+	// connection whose credentials sit in the backend as a stored kubeconfig
+	// that is true. For an EKS connection it is not: the backend stores cluster
+	// metadata, and the credential is created at the moment of the write. Saying
+	// the stored details were rewritten describes something that never happened
+	// there.
+	//
+	// "configured credentials source" is true either way — it names where the
+	// credentials come from without claiming what is kept there.
+	r.recordReconcile(name, OutcomeSucceeded, "connection repaired — rewritten to match git and this cluster's configured credentials source", nil)
 	return result, nil
 }
 
@@ -239,17 +250,25 @@ func (r *Reconciler) stampAppliedRevisionTo(name, revision string) {
 // changed — never a field's value.
 //
 // It is for the full path ONLY. The labels-only path has its own function below,
-// because this message says Sharko rewrote the stored sign-in details and a
-// labels-only repair never reads or writes them. An event that overstates what
+// because this message says Sharko rewrote the connection's sign-in details and
+// a labels-only repair never reads or writes them. An event that overstates what
 // happened is the same class of problem as a success event carrying a fault
 // reason: the text is what an operator acts on, so it has to be true.
+//
+// It says "configured credentials source" rather than "stored sign-in details"
+// (R4-2). The older wording was true only for a connection whose credentials
+// sit in the backend as a stored kubeconfig. For an EKS connection the backend
+// stores cluster metadata and the credential is created at write time, so
+// nothing "stored" was rewritten there. The phrase now used is true for both
+// kinds, and the sentence still names a whole-connection rewrite — which is
+// what keeps it tellable apart from the labels-only event below.
 func (r *Reconciler) EmitConnectionRepairEvent(cluster string, fieldsWritten int) {
 	if r == nil || r.eventRecorder == nil {
 		return
 	}
 	r.eventRecorder.Eventf(
 		events.ReasonConnectionRepaired,
-		"Cluster %s: Sharko repaired its ArgoCD connection to match git and the stored sign-in details (%d owned field(s) rewritten).",
+		"Cluster %s: Sharko rewrote this connection's sign-in details from its configured credentials source and re-applied the labels git declares (%d owned field(s) rewritten).",
 		events.EventTypeNormal,
 		cluster, fieldsWritten,
 	)

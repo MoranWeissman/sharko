@@ -692,10 +692,17 @@ func TestCompare_ForeignOwnershipComparesNothing(t *testing.T) {
 }
 
 // TestCompare_EKSTokenNeverSyncedAndBlobNotChecked pins the CC2-2/CC2-3
-// finding: the stored EKS details mint a fresh token on every fetch, so the
-// credential blob can never be honestly compared, so an EKS cluster can never
-// be reported fully in sync — but a full repair is still on offer, because
-// rewriting the connection from the backend does fix it.
+// finding: the configured credentials source stores EKS metadata and no
+// credential, so there is nothing on the expected side to compare the live
+// credential blob against, so an EKS cluster can never be reported fully in
+// sync — but a full repair is still on offer, because rewriting the connection
+// from the backend does fix it.
+//
+// The live side here carries a credential and the expected side is given one
+// too, so this case proves the blob is not checked even when both sides HAVE a
+// value. TestCompare_EKSStoredPayloadHasNoCredentialOnTheExpectedSide below is
+// the shape production actually produces: no credential on the expected side at
+// all.
 func TestCompare_EKSTokenNeverSyncedAndBlobNotChecked(t *testing.T) {
 	policy := Classify(ClassifyInput{
 		CredsSource:                  models.CredsSourceEKSToken,
