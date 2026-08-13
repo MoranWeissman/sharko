@@ -1323,24 +1323,98 @@ describe('Connection repair (S4-4 / S4-5)', () => {
   })
 
   // S4-4: Sends displayed commit
-  // This test verifies the handler would send 'abc123', the commit from the
-  // comparison data. The full click-through is covered by other tests; this
-  // pins the commit argument only.
+  // This is the critical rule: the browser sends the commit from the check it
+  // just showed, not a freshly fetched one. The endpoint demands reviewed_commit
+  // to prevent repairing against a commit the person never looked at.
+  //
+  // To catch a re-fetch bug, we make the mock return a DIFFERENT commit if
+  // called again during the repair flow.
   it('sends the commit from the check on screen, not a re-fetched one', async () => {
+    // First call (on panel open) returns 'abc123'
+    // Second call (if code re-fetches) would return 'def456'
+    mockGetConnectionComparison
+      .mockResolvedValueOnce({
+        cluster: 'prod-eu',
+        status: 'out_of_sync',
+        scope: 'full',
+        ownership_mode: 'owned',
+        checked_at: new Date().toISOString(),
+        branch: 'main',
+        compared_commit: 'abc123',
+        compared_path: 'clusters.yaml',
+        credential_source_type: 'secret-kubeconfig',
+        differences: [],
+        not_checked: [],
+        checked_field_count: 10,
+        repair_available: true,
+        repair_scope: 'full_connection',
+        values_never_returned: true,
+      })
+      .mockResolvedValueOnce({
+        cluster: 'prod-eu',
+        status: 'out_of_sync',
+        scope: 'full',
+        ownership_mode: 'owned',
+        checked_at: new Date().toISOString(),
+        branch: 'main',
+        compared_commit: 'def456',  // Different commit
+        compared_path: 'clusters.yaml',
+        credential_source_type: 'secret-kubeconfig',
+        differences: [],
+        not_checked: [],
+        checked_field_count: 10,
+        repair_available: true,
+        repair_scope: 'full_connection',
+        values_never_returned: true,
+      })
+
+    mockRepairConnection.mockResolvedValue({
+      cluster: 'prod-eu',
+      repaired: true,
+      scope_applied: 'full_connection',
+      fields_repaired: ['metadata.labels["sharko.dev/addon.cert-manager"]'],
+      preserved_foreign_labels: 0,
+      preserved_foreign_data_keys: 0,
+      branch: 'main',
+      repaired_at_commit: 'abc123',
+      repaired_at: new Date().toISOString(),
+      message: 'Repaired',
+      comparison: {
+        cluster: 'prod-eu',
+        status: 'synced',
+        scope: 'full',
+        ownership_mode: 'owned',
+        checked_at: new Date().toISOString(),
+        branch: 'main',
+        compared_commit: 'abc123',
+        compared_path: 'clusters.yaml',
+        credential_source_type: 'secret-kubeconfig',
+        differences: [],
+        not_checked: [],
+        checked_field_count: 10,
+        repair_available: false,
+        repair_scope: 'none',
+        values_never_returned: true,
+      },
+      self_heal_unchanged: true,
+      values_never_returned: true,
+    })
+
     renderPage('admin')
     const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    // The button is present and the comparison data has 'abc123' as the commit.
-    // When clicked and confirmed, handleRepairConfirm will call
-    // api.repairConnection(row.cluster, connectionComparisonData.compared_commit)
-    // which is api.repairConnection('prod-eu', 'abc123').
-    // We verify the comparison data is correct:
     const button = await within(panel).findByTestId('detail-repair-connection')
-    expect(button).toBeInTheDocument()
+    fireEvent.click(button)
 
-    // The comparison mock was called with prod-eu and returned compared_commit: 'abc123'
-    expect(mockGetConnectionComparison).toHaveBeenCalledWith('prod-eu')
+    // Wait for modal and confirm
+    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
+    const confirmButton = screen.getByRole('button', { name: 'Repair connection' })
+    fireEvent.click(confirmButton)
+
+    // The repair MUST have been called with 'abc123', the commit from the
+    // comparison mock returned above, not a re-fetched value.
+    await waitFor(() =>
+      expect(mockRepairConnection).toHaveBeenCalledWith('prod-eu', 'abc123'),
+    )
   })
 
   // S4-5: Recent activity
@@ -1401,6 +1475,36 @@ describe('Connection repair (S4-4 / S4-5)', () => {
   })
 
   // Banned wording tests
+  it('NEVER says "fully synced" for an EKS connection, even after successful repair', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'limited',
+      scope: 'partial',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'eks-token',
+      limit_reason: 'EKS connections are checked with no token minted.',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 5,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    // Must show "limited" status, never "synced" or "fully synced"
+    expect(within(panel).getByText('Sharko checked part of this connection.')).toBeInTheDocument()
+    expect(within(panel).queryByText(/fully synced/i)).not.toBeInTheDocument()
+    expect(within(panel).queryByText(/^synced$/i)).not.toBeInTheDocument()
+  })
+
   it('NEVER says "Kubernetes events" instead of "Recent activity"', async () => {
     mockFetchAuditLog.mockResolvedValue({
       entries: [
