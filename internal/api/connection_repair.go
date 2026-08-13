@@ -670,9 +670,9 @@ func (s *Server) repairAddonLabelsOnly(
 		view.Message = fmt.Sprintf("Sharko re-applied this cluster's addon labels to match git — %d label(s) changed. Sharko never read or changed this connection's sign-in details. The self-heal setting was not changed.",
 			len(outcome.FieldsWritten))
 		// The LABELS event, not the connection one. EmitConnectionRepairEvent's
-		// message says Sharko rewrote the stored sign-in details, and this path
-		// never reads them — the event text is what an operator acts on, so it
-		// has to be true.
+		// message says Sharko rewrote the connection's sign-in details from the
+		// configured credentials source, and this path never reads them — the
+		// event text is what an operator acts on, so it has to be true.
 		s.clusterRecon.EmitAddonLabelsRepairEvent(cluster, len(outcome.FieldsWritten))
 	} else {
 		view.Message = "This cluster's addon labels already matched git, so nothing was changed. Sharko never read or changed this connection's sign-in details. The self-heal setting was not changed."
