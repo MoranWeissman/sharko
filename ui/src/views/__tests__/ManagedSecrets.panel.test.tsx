@@ -1252,6 +1252,31 @@ describe('Connection repair (S4-4 / S4-5)', () => {
     expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
   })
 
+  // R1-1: the repair endpoint is admin-only (internal/authz/authz.go,
+  // "cluster.connection.repair": RoleAdmin). An operator who saw the button
+  // could only ever get a 403 back, painted as a generic failure — a
+  // permission wall dressed up as a fault. So the button must be ABSENT for
+  // an operator, not greyed out, with every other condition satisfied.
+  it('an operator does not see the repair button at all — the endpoint is admin-only (R1-1)', async () => {
+    renderPage('operator')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    // The other actions inside the same admin-or-operator RoleGuard are
+    // still there — only the repair button is admin-gated.
+    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
+  })
+
+  it('an admin does see the repair button, all other conditions being equal (R1-1)', async () => {
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    expect(button).toHaveTextContent(REPAIR_BUTTON_LABEL)
+  })
+
   // S4-4: EKS button label
   it('shows "Refresh EKS connection" for EKS clusters (wording agreed 2026-08-13)', async () => {
     mockGetConnectionComparison.mockResolvedValue({

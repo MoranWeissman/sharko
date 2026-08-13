@@ -1938,13 +1938,31 @@ export function SecretDetailContent({
     }
   }, [row?.key])
 
+  // R1-1: the repair endpoint is ADMIN-ONLY — see internal/authz/authz.go,
+  // "cluster.connection.repair": RoleAdmin. A repair can rewrite the whole
+  // credential material ArgoCD signs in with, which is a much bigger blast
+  // radius than cluster.resync (label-only, operator).
+  //
+  // The RoleGuard wrapping the action row below is admin-or-operator, which
+  // is correct for every OTHER action inside it, so the repair button
+  // carries its own admin check. Both the button AND the handlers check it:
+  // a rendering-only gate still lets a click reach the endpoint and paint a
+  // 403 as a generic failure — a permission wall dressed up as a fault,
+  // exactly the bug fixed once already for the live-secret read below.
+  const auth = useContext(AuthContext)
+  const canRepairConnection = auth?.isAdmin === true
+
   // S4-4: Repair button click handler
   const handleRepairClick = () => {
+    if (!canRepairConnection) return
     setShowRepairConfirm(true)
   }
 
   // S4-4: Repair confirmation
   const handleRepairConfirm = async () => {
+    // R1-1: the request itself is gated, not just the button — this is the
+    // call site that actually reaches the admin-only endpoint.
+    if (!canRepairConnection) return
     if (!row || row.kind !== 'connection' || !connectionComparisonData?.compared_commit) {
       return
     }
@@ -1983,8 +2001,8 @@ export function SecretDetailContent({
   // The same role predicate RoleGuard applies below, read here so the
   // REQUEST is gated too and not just the rendering. A viewer's panel used
   // to fire the read anyway and paint the 403 as an error — a permission
-  // dialog dressed up as a fault.
-  const auth = useContext(AuthContext)
+  // dialog dressed up as a fault. (`auth` is read once, further up, next to
+  // canRepairConnection.)
   const canReadLive = auth?.role === 'admin' || auth?.role === 'operator'
   const { live, retry } = useLiveSecret(row, canReadLive)
 
@@ -2143,8 +2161,12 @@ export function SecretDetailContent({
                 )}
                 {/* S4-4: Repair button — only for connection rows, only when
                     the server says repair_available is true AND repair_scope
-                    is not 'none' AND there's a commit on screen. */}
-                {row.kind === 'connection' &&
+                    is not 'none' AND there's a commit on screen.
+                    R1-1: and only for an ADMIN. The endpoint is admin-only,
+                    so an operator must not see a button that could only ever
+                    come back 403. Not greyed out — absent. */}
+                {canRepairConnection &&
+                  row.kind === 'connection' &&
                   connectionComparisonData?.repair_available &&
                   connectionComparisonData.repair_scope !== 'none' &&
                   connectionComparisonData.compared_commit && (
