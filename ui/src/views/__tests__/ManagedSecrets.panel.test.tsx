@@ -23,6 +23,7 @@ import { ManagedSecrets } from '@/views/ManagedSecrets'
 import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
+import { ApiError } from '@/services/api'
 
 // SSF-9: react-router-dom is used for real here — a row click now
 // navigates to its own full page (SecretDetailPage, at
@@ -46,23 +47,44 @@ const mockRefreshAddonValuesSecret = vi.fn()
 
 const mockFetchAuditLog = vi.fn()
 
-vi.mock('@/services/api', () => ({
-  api: {
-    getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
-    getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
-    repairConnection: (...args: unknown[]) => mockRepairConnection(...args),
-  },
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
-  getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
-  getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
-  triggerSecretsReconcile: vi.fn(),
-  checkAllAddonValuesSecrets: vi.fn(),
-  reconcileCluster: (...args: unknown[]) => mockReconcileCluster(...args),
-  resyncClusterLabels: vi.fn(),
-  refreshAddonValuesSecret: (...args: unknown[]) => mockRefreshAddonValuesSecret(...args),
-  syncAddonValuesSecret: vi.fn(),
-  fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
-}))
+vi.mock('@/services/api', () => {
+  // Mock ApiError class for 409 handling tests - defined inside factory to avoid hoisting issues
+  // Matches the real ApiError constructor from ui/src/services/api.ts:190
+  class MockApiError extends Error {
+    status: number
+    code?: string
+    cause?: string
+    hint?: string
+    problems?: unknown
+    body: { error?: string }
+
+    constructor(status: number, body: { error?: string }, fallbackMessage: string) {
+      super(body.error || fallbackMessage)
+      this.name = 'ApiError'
+      this.status = status
+      this.body = body
+    }
+  }
+
+  return {
+    api: {
+      getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+      getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
+      repairConnection: (...args: unknown[]) => mockRepairConnection(...args),
+    },
+    getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+    getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
+    getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
+    triggerSecretsReconcile: vi.fn(),
+    checkAllAddonValuesSecrets: vi.fn(),
+    reconcileCluster: (...args: unknown[]) => mockReconcileCluster(...args),
+    resyncClusterLabels: vi.fn(),
+    refreshAddonValuesSecret: (...args: unknown[]) => mockRefreshAddonValuesSecret(...args),
+    syncAddonValuesSecret: vi.fn(),
+    fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
+    ApiError: MockApiError,
+  }
+})
 
 function authFor(role: string) {
   return {
@@ -1115,6 +1137,9 @@ describe('Connection repair (S4-4 / S4-5)', () => {
   const CONFIRM_DESC_EKS = `This will refresh the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
   const CONFIRM_DESC_LABELS_ONLY = `This will re-apply this cluster's addon labels to match git. Sharko will not read or change this connection's sign-in details. The self-heal setting will not be changed.`
 
+  // 409 error sentences — the server's exact wording (internal/api/connection_repair.go:87-92)
+  const REPAIR_FAIL_REVISION_MOVED = `Your git branch moved while you were looking at this connection, so what you reviewed is not what Sharko would write now. Sharko changed nothing. Run the connection check again and repair from the fresh result.`
+
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetManagedSecrets.mockResolvedValue(response)
@@ -1526,5 +1551,52 @@ describe('Connection repair (S4-4 / S4-5)', () => {
     await waitFor(() => within(panel).getByText(RECENT_ACTIVITY_HEADING))
 
     expect(within(panel).queryByText(/Kubernetes events/i)).not.toBeInTheDocument()
+  })
+
+  // S4-4: 409 handling - exact sentence from server
+  it('shows the server\'s moved-branch sentence UNCHANGED on 409 (wording agreed 2026-08-13)', async () => {
+    // This test verifies the UI passes through the server's 409 sentence exactly,
+    // with no paraphrase, rewrite, or truncation, and shows it as a 'warning' (not 'error').
+    mockRepairConnection.mockRejectedValue(
+      new ApiError(409, { error: REPAIR_FAIL_REVISION_MOVED }, 'Conflict'),
+    )
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    fireEvent.click(button)
+
+    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
+    const confirmButton = screen.getByRole('button', { name: 'Repair connection' })
+    fireEvent.click(confirmButton)
+
+    // Wait for the repair to finish and assert the toast
+    await waitFor(() => {
+      expect(mockShowToast).toHaveBeenCalledWith(REPAIR_FAIL_REVISION_MOVED, 'warning')
+    })
+
+    // The page should remain usable after 409 - not stuck in error state
+    expect(within(panel).getByTestId('detail-repair-connection')).toBeInTheDocument()
+  })
+
+  it('does NOT auto-retry after 409', async () => {
+    mockRepairConnection.mockRejectedValue(
+      new ApiError(409, { error: REPAIR_FAIL_REVISION_MOVED }, 'Conflict'),
+    )
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    fireEvent.click(button)
+
+    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
+    const confirmButton = screen.getByRole('button', { name: 'Repair connection' })
+    fireEvent.click(confirmButton)
+
+    // Wait a moment for any potential retry
+    await new Promise((resolve) => setTimeout(resolve, 100))
+
+    // mockRepairConnection must have been called exactly ONCE
+    expect(mockRepairConnection).toHaveBeenCalledTimes(1)
   })
 })

@@ -372,6 +372,7 @@ import {
   resyncClusterLabels,
   syncAddonValuesSecret,
   checkAllAddonValuesSecrets,
+  ApiError,
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
@@ -1963,8 +1964,19 @@ export function SecretDetailContent({
       showToast(result.message, 'success')
       onChanged()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'The repair failed.'
-      showToast(message, 'error')
+      // S4-4: Handle 409 specifically — the branch moved or git cannot tell
+      // which commit it's on. The server sends one of three sentences, all
+      // deliberately worded. Show the server's sentence unchanged.
+      // Do NOT auto-retry — the person decides when to check again.
+      if (err instanceof ApiError && err.status === 409) {
+        // Server sent one of: repairFailRevisionUnknown, repairFailRevisionMoved,
+        // or repairFailRaced. All three say "nothing changed" and tell the person
+        // to run the check again. Show the message as-is.
+        showToast(err.message, 'warning')
+      } else {
+        const message = err instanceof Error ? err.message : 'The repair failed.'
+        showToast(message, 'error')
+      }
     } finally {
       setRepairInProgress(false)
     }
