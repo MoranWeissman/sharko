@@ -231,12 +231,11 @@ func credentialsResolvable(credsSource, connectionManagedBy string, backendConfi
 // TRUE here means "the non-credential parts of the expected Secret can be
 // rebuilt independently" — the server address, the CA bundle, the labels, the
 // annotations Sharko owns. It does NOT mean every byte of data.config can be
-// compared. For an eks-token cluster the backend mints a FRESH short-lived STS
-// bearer token on every single fetch (see the token mint in
-// internal/providers/aws_sm.go's buildFromStructured), so a rebuilt config
-// carries a different token than the live one every time, without anything
-// having drifted. The comparison treats that token as a field it cannot
-// honestly compare rather than as drift — see the connection-mode policy in
+// compared. For an eks-token cluster the write path calls GetCredentials, which
+// mints a fresh short-lived STS bearer token (see internal/providers/aws_sm.go's
+// buildFromStructured). The read-only comparison check never calls GetCredentials
+// and creates no tokens at all. A check reports the token as a field it did not
+// compare rather than as drift — see the connection-mode policy in
 // internal/connectioncompare.
 func (c Cluster) ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts bool) bool {
 	return expectedCredentialsRebuildableWithoutLiveSecret(c.CredsSource, c.ConnectionManagedBy, backendCanProvideStoredFacts)

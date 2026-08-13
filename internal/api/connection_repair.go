@@ -15,20 +15,25 @@ package api
 // was pointed at, which is exactly the kind of surprise a write endpoint must not
 // have.
 //
-// THE REQUEST IDENTIFIES A CLUSTER AND NOTHING ELSE.
-// The cluster name in the path is the only input. No body is read. No query
-// parameter is read. There is deliberately no way to pass a candidate value, an
-// expected manifest, a hash, a secrets-backend path, a destination override or a
-// namespace — the namespace comes from the running reconciler. A caller cannot
-// steer what gets written, only ask for the one thing this endpoint does.
+// THE REQUEST IDENTIFIES A CLUSTER AND THE COMMIT THE CALLER REVIEWED.
+// The cluster name in the path and the reviewed commit in the query are the only
+// inputs. No body is read. The commit is the one the caller reviewed from the
+// check's response, not a value to write — it guards against racing a git move.
+// There is deliberately no way to pass a candidate value, an expected manifest, a
+// hash, a secrets-backend path, a destination override or a namespace — the
+// namespace comes from the running reconciler. A caller cannot steer what gets
+// written, only ask for the one thing this endpoint does.
 //
 // WHERE THE EXPECTED STATE COMES FROM, AND WHERE IT NEVER COMES FROM.
 // Git for the desired labels and the cluster record; the secrets backend for the
-// credential material, through the read-only stored-facts path that cannot mint.
-// NEVER the live ArgoCD Secret. Building what you are about to write out of what
-// is already there is the self-comparison trap step 2 exists to prevent, and here
-// it would be written back to the cluster — a corrupted connection would be
-// "repaired" into staying corrupted, and reported as fixed.
+// credential material. The read-only comparison check uses the stored-facts path
+// that creates nothing; the repair uses the normal credentials route that creates
+// exactly one short-lived token for the write (see ConnectionCredentialSpecForWrite
+// in internal/clusterreconciler/repair_credentials.go). NEVER the live ArgoCD
+// Secret. Building what you are about to write out of what is already there is the
+// self-comparison trap step 2 exists to prevent, and here it would be written back
+// to the cluster — a corrupted connection would be "repaired" into staying
+// corrupted, and reported as fixed.
 //
 // THE POLICY IS READ, NOT RE-DECIDED.
 // connectioncompare.Policy.RepairScope already answers what a repair may touch
@@ -166,7 +171,7 @@ type connectionRepairView struct {
 // handleRepairConnection godoc
 //
 // @Summary Repair a cluster's ArgoCD connection to match what Sharko intends
-// @Description Rewrites the parts of this cluster's ArgoCD connection Secret that Sharko owns so they match the configured git branch plus, where one exists, an independently stored copy of the cluster's sign-in details. What it is allowed to touch depends on the kind of connection: a connection Sharko owns whose credentials it can read independently gets the whole connection rewritten; a connection Sharko is only a guest on gets its addon labels re-applied and nothing else; a connection another tool owns is refused. Sign-in details are re-fetched from the secrets backend and never read back out of the connection being repaired. The update happens in place — never a delete and recreate — and Sharko re-checks who owns the connection immediately before writing, refusing if anything else has taken it over. Foreign labels, foreign annotations, unrelated data keys and labels a takeover carried over all survive untouched. Git is never written. The self-heal setting is neither read nor changed. Requires the commit the caller reviewed; if the branch has moved since, the repair is refused so what was reviewed is what gets written. The response carries a fresh comparison so the caller can see what the repair achieved. No value is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true. The request identifies a cluster and the commit that was reviewed — no caller-supplied value, manifest or hash of one is ever accepted.
+// @Description Rewrites the parts of this cluster's ArgoCD connection Secret that Sharko owns so they match the configured git branch plus, where one exists, the cluster's configured credentials source held outside the connection. For an EKS cluster that source is the cluster's own details rather than a reusable sign-in credential, and the write creates exactly one short-lived sign-in token from it — the read-only check creates none. What it is allowed to touch depends on the kind of connection: a connection Sharko owns whose credentials it can read independently gets the whole connection rewritten; a connection Sharko is only a guest on gets its addon labels re-applied and nothing else; a connection another tool owns is refused. The configured credentials source is re-read from the secrets backend and never read back out of the connection being repaired. The update happens in place — never a delete and recreate — and Sharko re-checks who owns the connection immediately before writing, refusing if anything else has taken it over. Foreign labels, foreign annotations, unrelated data keys and labels a takeover carried over all survive untouched. Git is never written. The self-heal setting is neither read nor changed. Requires the commit the caller reviewed; if the branch has moved since, the repair is refused so what was reviewed is what gets written. The response carries a fresh comparison so the caller can see what the repair achieved. No value is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true. The request identifies a cluster and the commit that was reviewed — no caller-supplied value, manifest or hash of one is ever accepted.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -863,7 +868,7 @@ func (s *Server) finishRepairAudit(r *http.Request, cluster, detail string) {
 // empties Detail, and clears the flag before anything is stored or streamed.
 func (s *Server) auditRepairCredentialFailure(r *http.Request, cluster string, err error) {
 	// Keep the request-scoped entry honest too, with no error text in it.
-	s.finishRepairAudit(r, cluster, "failed: could not read the stored sign-in details")
+	s.finishRepairAudit(r, cluster, "failed: could not read the configured credentials source")
 
 	if s == nil || s.auditLog == nil {
 		return

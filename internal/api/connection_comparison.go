@@ -75,9 +75,9 @@ const (
 	failNoHubClient      = "Sharko is not connected to its own cluster on this server, so it cannot read this connection."
 	failGitRead          = "Sharko could not read this cluster's record from git, so it cannot tell what the connection should look like. Check the git connection and try again."
 	failLiveRead         = "Sharko could not read this cluster's connection from its own cluster, so the check did not finish. Try again in a moment."
-	failBackendRead      = "Sharko could not read this cluster's stored sign-in details from the secrets backend, so it could not work out what the connection should look like. Check the secrets backend connection and try again."
+	failBackendRead      = "Sharko could not read this cluster's configured credentials source from the secrets backend, so it could not work out what the connection should look like. Check the secrets backend connection and try again."
 	failNotManaged       = "This cluster has no entry in the git-managed cluster list, so Sharko has nothing to compare its connection against."
-	failCredsUnavailable = "Sharko could not read this cluster's stored sign-in details, so the check did not finish."
+	failCredsUnavailable = "Sharko could not read this cluster's configured credentials source, so the check did not finish."
 )
 
 // connectionComparisonDifference is one field that did not match.
@@ -191,7 +191,7 @@ type connectionComparisonView struct {
 // handleGetConnectionComparison godoc
 //
 // @Summary Compare a cluster's ArgoCD connection with what Sharko intends
-// @Description Read-only. Works out what the named cluster's ArgoCD connection Secret should look like — from git plus, where one exists, an independently stored copy of the cluster's sign-in details — and compares it with the connection that is actually there. Writes nothing. The answer says how much of the connection could honestly be checked: a cluster whose sign-in details only exist inside the connection itself, or whose record does not say where they are kept, is reported with a narrower scope rather than being compared against itself. Sign-in details are compared in memory and neither side is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true, with no expected value and no live value present at all. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.
+// @Description Read-only. Works out what the named cluster's ArgoCD connection Secret should look like — from git plus, where one exists, the cluster's configured credentials source held outside the connection — and compares it with the connection that is actually there. For an EKS cluster that source is the cluster's own details rather than a reusable sign-in credential, and the check creates no sign-in tokens. Writes nothing. The answer says how much of the connection could honestly be checked: a cluster whose sign-in details only exist inside the connection itself, or whose record does not say where they are kept, is reported with a narrower scope rather than being compared against itself. Sign-in details are compared in memory and neither side is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true, with no expected value and no live value present at all. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -429,7 +429,7 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 		}
 		// The backend error's own text is never passed through or logged — a
 		// provider error can carry credential material in its message.
-		slog.Warn("[connection-comparison] could not read this cluster's stored sign-in details",
+		slog.Warn("[connection-comparison] could not read this cluster's configured credentials source",
 			"cluster", entry.Name)
 		return nil, failBackendRead
 	}
