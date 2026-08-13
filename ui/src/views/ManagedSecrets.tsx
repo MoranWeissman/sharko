@@ -374,6 +374,7 @@ import {
 import type {
   AddonValuesSecretRow,
   ClusterComparisonResponse,
+  ConnectionComparisonView,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
@@ -392,6 +393,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SecretsSubnav } from '@/components/SecretsSubnav'
 import { SecretTiles } from './SecretTiles'
+import { ConnectionComparisonDisplay } from './ConnectionComparisonDisplay'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified row model — one shape for both secret kinds, hoisted at module
@@ -2012,9 +2014,53 @@ export function SecretDetailContent({
   // is never hidden behind a closed toggle. See the effect below.
   const [comparisonOpen, setComparisonOpen] = useState(false)
 
-  // Connection-secret Diff keeps its existing getClusterComparison fetch
-  // (labels only, never credentials) — fired once per row the panel opens
-  // for. Re-runs whenever a DIFFERENT row is shown.
+  // S4-1: Connection-comparison check — runs once when the page opens for a
+  // connection row, using the new GET /clusters/{name}/connection-comparison
+  // endpoint. Re-runs whenever a DIFFERENT row is shown.
+  const [connectionComparisonData, setConnectionComparisonData] = useState<ConnectionComparisonView | null>(null)
+  const [connectionComparisonLoading, setConnectionComparisonLoading] = useState(false)
+  const [connectionComparisonError, setConnectionComparisonError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setConnectionComparisonData(null)
+    setConnectionComparisonError(null)
+    if (!row || row.kind !== 'connection') {
+      setConnectionComparisonLoading(false)
+      return
+    }
+    let cancelled = false
+    setConnectionComparisonLoading(true)
+    api
+      .getConnectionComparison(row.cluster)
+      .then((result) => {
+        if (!cancelled) setConnectionComparisonData(result)
+      })
+      .catch((err) => {
+        if (!cancelled) setConnectionComparisonError(err instanceof Error ? err.message : 'The check failed.')
+      })
+      .finally(() => {
+        if (!cancelled) setConnectionComparisonLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [row?.key])
+
+  const handleConnectionComparisonRetry = () => {
+    if (!row || row.kind !== 'connection') return
+    setConnectionComparisonError(null)
+    setConnectionComparisonLoading(true)
+    api
+      .getConnectionComparison(row.cluster)
+      .then((result) => setConnectionComparisonData(result))
+      .catch((err) => setConnectionComparisonError(err instanceof Error ? err.message : 'The check failed.'))
+      .finally(() => setConnectionComparisonLoading(false))
+  }
+
+  // Legacy label-only comparison — kept for backwards compatibility, but NOT
+  // used for connection rows anymore (they use the new connection-comparison
+  // above). This stays because other parts of the code may still reference it.
   useEffect(() => {
     setDiffData(null)
     setDiffError(null)
@@ -2279,38 +2325,19 @@ export function SecretDetailContent({
           )}
 
           {/* ── Comparison, only when useful (SSF-12/SSF-14) ───────────────
+              S4-1/S4-2: For connection rows, the comparison is now the full
+              connection check (inline and already open, no toggle) using the
+              new GET /clusters/{name}/connection-comparison endpoint. For
+              addon-values rows, it remains the key-presence check.
+
               An orphaned row has nothing left to compare (its source in
               git is gone — the conclusion above already says so), so no
-              Comparison zone renders for it at all. Every other row: the
-              toggle button is always there (SSF-14 item 2 — it never
-              disappears, so it can always be pressed the other way), a
-              match starts closed behind it, and every other verdict starts
-              open — those are exactly the states where the comparison IS
-              the answer to "is it okay". Provenance (what file/commit/store
-              this was checked against) sits ABOVE the table, never as one
-              side of it (item 3). */}
+              Comparison zone renders for it at all. */}
           {row.state !== 'orphaned' && (
             <div>
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
-                <button
-                  type="button"
-                  onClick={() => setComparisonOpen((open) => !open)}
-                  aria-expanded={comparisonOpen}
-                  data-testid="view-comparison-toggle"
-                  className="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium text-teal-700 hover:bg-teal-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400 dark:hover:bg-teal-950/40"
-                >
-                  {comparisonOpen ? 'Hide comparison' : 'View comparison'}
-                </button>
-              </div>
-              {comparisonOpen && (
-                <div className="space-y-3 rounded-md border border-border bg-card p-3">
-                  <ComparisonProvenance row={row} />
-                  {/* The table sits INSIDE the role guard, so a viewer sees a
-                      sentence about access rather than a permission error
-                      where the safe fields should be — and the read is
-                      never fired for them either (useLiveSecret's
-                      `allowed`). */}
+              {row.kind === 'connection' ? (
+                <>
+                  <h2 className="mb-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Connection check</h2>
                   <RoleGuard
                     roles={['admin', 'operator']}
                     fallback={
@@ -2319,13 +2346,62 @@ export function SecretDetailContent({
                       </p>
                     }
                   >
-                    {row.kind === 'connection' ? (
-                      <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} live={live} />
-                    ) : (
-                      <ValuesKeyComparison live={live} onRetry={retry} />
-                    )}
+                    <ConnectionComparisonDisplay
+                      cluster={row.cluster}
+                      comparison={connectionComparisonData}
+                      loading={connectionComparisonLoading}
+                      error={connectionComparisonError}
+                      onRetry={handleConnectionComparisonRetry}
+                    />
                   </RoleGuard>
-                </div>
+
+                  {/* S4-2: RedactedYamlSection moves below the comparison for
+                      connection rows, so a reader sees check → differences →
+                      redacted YAML, all on one scrolling page. */}
+                  <div className="mt-4">
+                    <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Redacted YAML</h3>
+                    <RoleGuard
+                      roles={['admin', 'operator']}
+                      fallback={
+                        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+                          {LIVE_READ_NEEDS_OPERATOR}
+                        </p>
+                      }
+                    >
+                      <RedactedYamlSection row={row} live={live} onRetry={retry} />
+                    </RoleGuard>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
+                    <button
+                      type="button"
+                      onClick={() => setComparisonOpen((open) => !open)}
+                      aria-expanded={comparisonOpen}
+                      data-testid="view-comparison-toggle"
+                      className="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium text-teal-700 hover:bg-teal-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400 dark:hover:bg-teal-950/40"
+                    >
+                      {comparisonOpen ? 'Hide comparison' : 'View comparison'}
+                    </button>
+                  </div>
+                  {comparisonOpen && (
+                    <div className="space-y-3 rounded-md border border-border bg-card p-3">
+                      <ComparisonProvenance row={row} />
+                      <RoleGuard
+                        roles={['admin', 'operator']}
+                        fallback={
+                          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
+                            {LIVE_READ_NEEDS_OPERATOR}
+                          </p>
+                        }
+                      >
+                        <ValuesKeyComparison live={live} onRetry={retry} />
+                      </RoleGuard>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

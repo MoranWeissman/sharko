@@ -52,7 +52,10 @@ const mockGetAddonValuesSecretResource = vi.fn()
 const mockFetchAuditLog = vi.fn()
 
 vi.mock('@/services/api', () => ({
-  api: { getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args) },
+  api: {
+    getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+  },
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),

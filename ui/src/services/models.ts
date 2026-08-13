@@ -644,6 +644,45 @@ export interface ClusterComparisonResponse {
   argocd_connection_message?: string
 }
 
+// ConnectionComparisonView — the response from GET /clusters/{name}/connection-comparison.
+// Wire shape documented in internal/api/connection_comparison.go.
+export interface ConnectionComparisonView {
+  cluster: string
+  status: 'synced' | 'out_of_sync' | 'missing' | 'check_failed' | 'ownership_conflict' | 'limited'
+  scope: string
+  ownership_mode: string
+  limit_reason?: string
+  failure_reason?: string
+  checked_at: string // RFC3339
+  branch: string
+  compared_commit?: string
+  compared_path?: string
+  credential_source_type?: string
+  differences: ConnectionComparisonDifference[]
+  not_checked: ConnectionComparisonNotChecked[]
+  checked_field_count: number
+  repair_available: boolean
+  repair_scope: string
+  values_never_returned: boolean
+}
+
+// ConnectionComparisonDifference — one field that did not match.
+// For a sensitive field: path, status, sensitive:true, and NO expected/live properties.
+export interface ConnectionComparisonDifference {
+  path: string
+  status: 'same' | 'different' | 'missing' | 'unexpected'
+  sensitive?: boolean
+  expected?: string
+  live?: string
+}
+
+// ConnectionComparisonNotChecked — one field inside the nominal scope that
+// Sharko deliberately did not check, with the plain reason why.
+export interface ConnectionComparisonNotChecked {
+  path: string
+  reason: string
+}
+
 export interface AddonDeploymentInfo {
   cluster_name: string
   cluster_environment?: string
