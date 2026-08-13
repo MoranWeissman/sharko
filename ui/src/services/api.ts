@@ -1548,6 +1548,10 @@ export const api = {
   getCluster: (name: string) => fetchJSON<ClusterDetailResponse>(`/clusters/${name}`),
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
   getConnectionComparison: (name: string) => fetchJSON<ConnectionComparisonView>(`/clusters/${name}/connection-comparison`),
+  repairConnection: (name: string, reviewedCommit: string) =>
+    fetchJSON<ConnectionRepairView>(`/clusters/${name}/connection-repair?reviewed_commit=${encodeURIComponent(reviewedCommit)}`, {
+      method: 'POST',
+    }),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),
   getConfigDiff: (name: string) => fetchJSON<ConfigDiffResponse>(`/clusters/${name}/config-diff`),
   getClusterHistory: (name: string) => fetchJSON<{ cluster_name: string; history: SyncActivityEntry[] }>(`/clusters/${name}/history`),

@@ -683,6 +683,29 @@ export interface ConnectionComparisonNotChecked {
   reason: string
 }
 
+// ConnectionRepairView — the response from POST /clusters/{name}/connection-repair.
+// Wire shape documented in internal/api/connection_repair.go.
+export interface ConnectionRepairView {
+  cluster: string
+  repaired: boolean
+  scope_applied: string
+  fields_repaired: string[]
+  label_diff?: {
+    added?: Record<string, string>
+    removed?: string[]
+    changed?: Record<string, string>
+  }
+  preserved_foreign_labels: number
+  preserved_foreign_data_keys: number
+  branch: string
+  repaired_at_commit?: string
+  repaired_at: string
+  message: string
+  comparison: ConnectionComparisonView
+  self_heal_unchanged: boolean
+  values_never_returned: boolean
+}
+
 export interface AddonDeploymentInfo {
   cluster_name: string
   cluster_environment?: string

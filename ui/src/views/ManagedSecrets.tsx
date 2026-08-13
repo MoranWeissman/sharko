@@ -357,11 +357,13 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  Wrench,
   X,
 } from 'lucide-react'
 import {
   api,
   deleteOrphanedSecret,
+  fetchAuditLog,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
   getManagedSecrets,
@@ -373,7 +375,9 @@ import {
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
+  AuditEntry,
   ConnectionComparisonView,
+  ConnectionRepairView,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
@@ -1866,6 +1870,12 @@ export function SecretDetailContent({
   const [connectionComparisonLoading, setConnectionComparisonLoading] = useState(false)
   const [connectionComparisonError, setConnectionComparisonError] = useState<string | null>(null)
 
+  // S4-4 / S4-5: Connection repair state
+  const [repairInProgress, setRepairInProgress] = useState(false)
+  const [showRepairConfirm, setShowRepairConfirm] = useState(false)
+  const [repairResult, setRepairResult] = useState<ConnectionRepairView | null>(null)
+  const [recentAuditEntries, setRecentAuditEntries] = useState<AuditEntry[]>([])
+
   useEffect(() => {
     setConnectionComparisonData(null)
     setConnectionComparisonError(null)
@@ -1903,6 +1913,61 @@ export function SecretDetailContent({
       .finally(() => setConnectionComparisonLoading(false))
   }
 
+  // S4-5: Fetch recent audit entries for connection rows
+  useEffect(() => {
+    setRecentAuditEntries([])
+    if (!row || row.kind !== 'connection') {
+      return
+    }
+    let cancelled = false
+    fetchAuditLog({ cluster: row.cluster })
+      .then((result) => {
+        if (!cancelled && result.entries) {
+          // Take the newest 5 entries
+          setRecentAuditEntries(result.entries.slice(0, 5))
+        }
+      })
+      .catch((err) => {
+        // Audit fetch failure is logged but not shown as an error —
+        // Recent activity is supplemental, not critical
+        console.warn('Failed to fetch recent audit entries:', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [row?.key])
+
+  // S4-4: Repair button click handler
+  const handleRepairClick = () => {
+    setShowRepairConfirm(true)
+  }
+
+  // S4-4: Repair confirmation
+  const handleRepairConfirm = async () => {
+    if (!row || row.kind !== 'connection' || !connectionComparisonData?.compared_commit) {
+      return
+    }
+    setShowRepairConfirm(false)
+    setRepairInProgress(true)
+    try {
+      const result = await api.repairConnection(row.cluster, connectionComparisonData.compared_commit)
+      setRepairResult(result)
+      // Update the comparison data with the fresh check from the repair
+      setConnectionComparisonData(result.comparison)
+      // Refresh recent audit entries to show the repair action
+      const auditResult = await fetchAuditLog({ cluster: row.cluster })
+      if (auditResult.entries) {
+        setRecentAuditEntries(auditResult.entries.slice(0, 5))
+      }
+      showToast(result.message, 'success')
+      onChanged()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'The repair failed.'
+      showToast(message, 'error')
+    } finally {
+      setRepairInProgress(false)
+    }
+  }
 
   // The same role predicate RoleGuard applies below, read here so the
   // REQUEST is gated too and not just the rendering. A viewer's panel used
@@ -2065,6 +2130,26 @@ export function SecretDetailContent({
                     strong={!gate.disabled}
                   />
                 )}
+                {/* S4-4: Repair button — only for connection rows, only when
+                    the server says repair_available is true AND repair_scope
+                    is not 'none' AND there's a commit on screen. */}
+                {row.kind === 'connection' &&
+                  connectionComparisonData?.repair_available &&
+                  connectionComparisonData.repair_scope !== 'none' &&
+                  connectionComparisonData.compared_commit && (
+                    <PanelActionButton
+                      onClick={handleRepairClick}
+                      loading={repairInProgress}
+                      icon={Wrench}
+                      label={
+                        connectionComparisonData.credential_source_type === 'aws-eks'
+                          ? 'Refresh EKS connection'
+                          : 'Repair connection'
+                      }
+                      testId="detail-repair-connection"
+                      strong
+                    />
+                  )}
               </>
             )}
           </div>
@@ -2196,6 +2281,28 @@ export function SecretDetailContent({
                       <RedactedYamlSection row={row} live={live} onRetry={retry} />
                     </RoleGuard>
                   </div>
+
+                  {/* S4-5: Recent activity — the newest 5 audit entries for
+                      this cluster, then a link to the full log. */}
+                  {recentAuditEntries.length > 0 && (
+                    <div className="mt-4">
+                      <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Recent activity</h3>
+                      <div className="space-y-2">
+                        {recentAuditEntries.map((entry, idx) => (
+                          <div key={idx} className="rounded-md border border-border bg-card p-2 text-xs" data-testid={`recent-activity-entry-${idx}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-[#0a2a4a] dark:text-gray-200">{entry.event}</span>
+                              <span className="text-[#5a8aaa] dark:text-gray-500">{new Date(entry.timestamp).toLocaleString()}</span>
+                            </div>
+                            {entry.detail && <p className="mt-1 text-[#2a5a7a] dark:text-gray-400">{entry.detail}</p>}
+                          </div>
+                        ))}
+                        <a href={`/audit?cluster=${encodeURIComponent(row.cluster)}`} className="inline-block text-sm text-teal-700 hover:underline dark:text-teal-400" data-testid="view-full-audit-log">
+                          View full audit log
+                        </a>
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -2240,6 +2347,31 @@ export function SecretDetailContent({
               link never has to be opened to see an active failure. */}
           <RelatedEventsLink row={row} />
         </>
+      )}
+
+      {/* S4-4: Repair confirmation modal */}
+      {row.kind === 'connection' && (
+        <ConfirmationModal
+          open={showRepairConfirm}
+          onClose={() => setShowRepairConfirm(false)}
+          onConfirm={handleRepairConfirm}
+          title={
+            connectionComparisonData?.credential_source_type === 'aws-eks'
+              ? `Refresh EKS connection for "${row.cluster}"?`
+              : `Repair connection for "${row.cluster}"?`
+          }
+          description={
+            connectionComparisonData?.credential_source_type === 'aws-eks'
+              ? `This will refresh the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
+              : connectionComparisonData?.repair_scope === 'addon_labels_only'
+                ? `This will re-apply this cluster's addon labels to match git. Sharko will not read or change this connection's sign-in details. The self-heal setting will not be changed.`
+                : `This will rewrite this cluster's connection to match git and this cluster's configured credentials source. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
+          }
+          confirmText={
+            connectionComparisonData?.credential_source_type === 'aws-eks' ? 'Refresh connection' : 'Repair connection'
+          }
+          loading={repairInProgress}
+        />
       )}
     </div>
   )

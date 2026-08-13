@@ -1539,13 +1539,25 @@ describe('ManagedSecrets', () => {
     )
   })
 
-  // SSF-14 item 6: the old "Sharko's record"/"Recent activity" accordion (a
-  // short list of this row's own audit entries, fetched right here) is
-  // gone — replaced by one quiet link into the EXISTING audit log page,
-  // pre-filtered to this row's cluster via a URL param AuditViewer now
-  // reads on mount. No fetch happens on this panel at all anymore.
+  // SSF-14 item 6 + S4-5: For connection rows, "Recent activity" is back
+  // (the newest 5 audit entries, fetched on mount) with a "View full audit
+  // log" link. The "View related events" link is also present.
   it('offers a "View related events" link into the audit log, scoped to this row\'s cluster, instead of its own activity list', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        {
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'cluster_reconcile',
+          user: 'admin',
+          action: 'reconcile',
+          resource: 'cluster:staging-us',
+          detail: 'Reconciled cluster connection',
+          result: 'success',
+        },
+      ],
+    })
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
@@ -1556,10 +1568,13 @@ describe('ManagedSecrets', () => {
     expect(link).toHaveTextContent('View related events')
     expect(link).toHaveAttribute('href', '/audit?cluster=staging-us')
 
-    // The old accordion and its own fetch are gone.
-    expect(within(panel).queryByText('Recent activity')).not.toBeInTheDocument()
-    expect(within(panel).queryByText("Sharko's record")).not.toBeInTheDocument()
-    expect(mockFetchAuditLog).not.toHaveBeenCalled()
+    // S4-5: For connection rows, Recent activity IS shown and fetchAuditLog
+    // IS called to populate it.
+    await waitFor(() => expect(within(panel).getByText('Recent activity')).toBeInTheDocument())
+    expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us' })
+    const fullLogLink = within(panel).getByTestId('view-full-audit-log')
+    expect(fullLogLink).toHaveTextContent('View full audit log')
+    expect(fullLogLink).toHaveAttribute('href', '/audit?cluster=staging-us')
   })
 })
 
