@@ -15,6 +15,7 @@ import type {
   ClustersResponse,
   ConfigDiffResponse,
   ConnectionComparisonView,
+  ConnectionRepairView,
   CredsSource,
   ConnectionsListResponse,
   DashboardStats,
@@ -1549,9 +1550,7 @@ export const api = {
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
   getConnectionComparison: (name: string) => fetchJSON<ConnectionComparisonView>(`/clusters/${name}/connection-comparison`),
   repairConnection: (name: string, reviewedCommit: string) =>
-    fetchJSON<ConnectionRepairView>(`/clusters/${name}/connection-repair?reviewed_commit=${encodeURIComponent(reviewedCommit)}`, {
-      method: 'POST',
-    }),
+    postJSON<ConnectionRepairView>(`/clusters/${name}/connection-repair?reviewed_commit=${encodeURIComponent(reviewedCommit)}`),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),
   getConfigDiff: (name: string) => fetchJSON<ConfigDiffResponse>(`/clusters/${name}/config-diff`),
   getClusterHistory: (name: string) => fetchJSON<{ cluster_name: string; history: SyncActivityEntry[] }>(`/clusters/${name}/history`),

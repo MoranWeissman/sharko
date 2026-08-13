@@ -1556,7 +1556,7 @@ describe('Connection repair (S4-4 / S4-5)', () => {
   // S4-4: 409 handling - exact sentence from server
   it('shows the server\'s moved-branch sentence UNCHANGED on 409 (wording agreed 2026-08-13)', async () => {
     // This test verifies the UI passes through the server's 409 sentence exactly,
-    // with no paraphrase, rewrite, or truncation, and shows it as a 'warning' (not 'error').
+    // with no paraphrase, rewrite, or truncation, and shows it as 'info' (not 'error').
     mockRepairConnection.mockRejectedValue(
       new ApiError(409, { error: REPAIR_FAIL_REVISION_MOVED }, 'Conflict'),
     )
@@ -1572,7 +1572,7 @@ describe('Connection repair (S4-4 / S4-5)', () => {
 
     // Wait for the repair to finish and assert the toast
     await waitFor(() => {
-      expect(mockShowToast).toHaveBeenCalledWith(REPAIR_FAIL_REVISION_MOVED, 'warning')
+      expect(mockShowToast).toHaveBeenCalledWith(REPAIR_FAIL_REVISION_MOVED, 'info')
     })
 
     // The page should remain usable after 409 - not stuck in error state

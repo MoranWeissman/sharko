@@ -378,7 +378,6 @@ import type {
   AddonValuesSecretRow,
   AuditEntry,
   ConnectionComparisonView,
-  ConnectionRepairView,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
@@ -1509,6 +1508,7 @@ function ComparisonProvenance({ row }: { row: UnifiedRow }) {
  * both, since the frontend has no reliable signal for which repo layout is
  * active.
  */
+
 /**
  * SSF-12 honesty rule: an addon-values secret's ONLY genuinely comparable
  * field is key PRESENCE — the key names Sharko expects vs which of them the
@@ -1875,7 +1875,6 @@ export function SecretDetailContent({
   // S4-4 / S4-5: Connection repair state
   const [repairInProgress, setRepairInProgress] = useState(false)
   const [showRepairConfirm, setShowRepairConfirm] = useState(false)
-  const [repairResult, setRepairResult] = useState<ConnectionRepairView | null>(null)
   const [recentAuditEntries, setRecentAuditEntries] = useState<AuditEntry[]>([])
 
   useEffect(() => {
@@ -1953,7 +1952,6 @@ export function SecretDetailContent({
     setRepairInProgress(true)
     try {
       const result = await api.repairConnection(row.cluster, connectionComparisonData.compared_commit)
-      setRepairResult(result)
       // Update the comparison data with the fresh check from the repair
       setConnectionComparisonData(result.comparison)
       // Refresh recent audit entries to show the repair action
@@ -1972,7 +1970,7 @@ export function SecretDetailContent({
         // Server sent one of: repairFailRevisionUnknown, repairFailRevisionMoved,
         // or repairFailRaced. All three say "nothing changed" and tell the person
         // to run the check again. Show the message as-is.
-        showToast(err.message, 'warning')
+        showToast(err.message, 'info')
       } else {
         const message = err instanceof Error ? err.message : 'The repair failed.'
         showToast(message, 'error')
