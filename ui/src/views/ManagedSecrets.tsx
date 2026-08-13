@@ -373,7 +373,6 @@ import {
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
-  ClusterComparisonResponse,
   ConnectionComparisonView,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
@@ -1504,157 +1503,6 @@ function ComparisonProvenance({ row }: { row: UnifiedRow }) {
  * both, since the frontend has no reliable signal for which repo layout is
  * active.
  */
-const V4_ADDON_LABEL_PREFIX = 'addons.sharko.dev/'
-
-/**
- * SSF-14 walkthrough follow-up: opening "View comparison" on a healthy row
- * used to show only the same one-line claim the conclusion already made
- * ("Every addon label on the cluster matches what git expects.") — no new
- * evidence, which defeated the point of the control. This renders the
- * evidence: every addon git says is enabled for this cluster, and whether
- * its label is actually on the cluster right now (mirrors
- * internal/service.v4ClusterLabels, the source of diffData.cluster.labels
- * — a bare `<addon>: enabled|disabled` map, plus an unrelated
- * `<addon>-version` pseudo-key on a version override, both excluded here).
- * A disabled addon gets no row: it has no label on the cluster Secret
- * either way (that is the correct, expected state, not a comparable
- * field), so a row for it would invent a pairing that doesn't exist.
- *
- * Only reached once the backend's own label_drift already reports nothing
- * differs (see ConnectionLabelComparison below) — every row here should
- * read Match. The per-row Missing/differs fallback is a defensive read of
- * the SAME raw label data, in case the two ever momentarily disagree; it
- * never contradicts the backend's own verdict, only restates it evidence
- * by evidence.
- */
-function ConnectionLabelMatchTable({ diffData, live }: { diffData: ClusterComparisonResponse | null; live: LiveSecretState }) {
-  const gitLabels = diffData?.cluster?.labels ?? {}
-  const enabledAddons = Object.entries(gitLabels)
-    .filter(([key, value]) => value === 'enabled' && !key.endsWith('-version'))
-    .map(([key]) => key)
-
-  // Nothing to show evidence for (no enabled addons), or the cluster side
-  // can't be proven yet (live read still loading/failed/skipped) — an
-  // honest sentence, never a fabricated table.
-  if (enabledAddons.length === 0 || live.status !== 'ready') {
-    return (
-      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
-        Every addon label on the cluster matches what git expects.
-      </p>
-    )
-  }
-
-  const liveLabelMap = new Map(live.resource.labels.map((l) => [l.key, l.value]))
-
-  return (
-    <table className="w-full text-left text-sm" data-testid="comparison-label-match">
-      <thead>
-        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
-          <th className="py-1 pr-3 font-medium">Field</th>
-          <th className="py-1 pr-3 font-medium">Expected in Git</th>
-          <th className="py-1 pr-3 font-medium">On the cluster</th>
-          <th className="py-1 font-medium">Result</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border">
-        {enabledAddons.map((addon) => {
-          const prefixedKey = `${V4_ADDON_LABEL_PREFIX}${addon}`
-          const onClusterPrefixed = liveLabelMap.get(prefixedKey)
-          const onClusterBare = liveLabelMap.get(addon)
-          // Show whichever key convention actually turned up on the
-          // cluster; when neither did, fall back to the v4-canonical form
-          // as the honest "this is the key git's convention expects" label
-          // for a row that turned out missing.
-          const field = onClusterPrefixed !== undefined ? prefixedKey : onClusterBare !== undefined ? addon : prefixedKey
-          const onCluster = onClusterPrefixed ?? onClusterBare
-          const matches = onCluster === 'enabled'
-          return (
-            <tr key={addon}>
-              <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{field}</td>
-              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">enabled</td>
-              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{onCluster ?? 'missing'}</td>
-              <td
-                className={`py-1.5 font-medium ${matches ? 'text-[#3a6a8a] dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'}`}
-              >
-                {matches ? 'Match' : onCluster ? 'Value differs' : 'Missing on cluster'}
-              </td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
-  )
-}
-
-/**
- * SSF-12 honesty rule (verified against the live API responses), now a real
- * table (SSF-14 item 3: Field | Expected in Git | On the cluster | Result)
- * instead of a loose grid: a connection secret's ONLY genuinely comparable
- * field pair is the addon labels git expects vs the addon labels on the
- * cluster, at the commit Sharko last checked — the SAME label-drift facts
- * the row list's own getClusterComparison fetch already carries
- * (added/removed/changed label NAMES; the server never sends per-label
- * values, so "a different value" is as specific as this can honestly get).
- *
- * SSF-14 walkthrough follow-up: when the backend reports no drift at all
- * (a healthy row), this now renders the full evidence table
- * (ConnectionLabelMatchTable) instead of a bare summary sentence — opening
- * the comparison must show something new, not repeat the conclusion.
- */
-function ConnectionLabelComparison({
-  diffLoading,
-  diffError,
-  diffData,
-  live,
-}: {
-  diffLoading: boolean
-  diffError: string | null
-  diffData: ClusterComparisonResponse | null
-  live: LiveSecretState
-}) {
-  if (diffError) {
-    return (
-      <p className="text-sm text-red-600 dark:text-red-400" data-testid="comparison-error">
-        {diffError}
-      </p>
-    )
-  }
-  if (diffLoading) {
-    return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading…</p>
-  }
-  const drift = diffData?.cluster?.last_reconcile?.label_drift
-  const rows: { field: string; expected: string; onCluster: string; result: string }[] = [
-    ...(drift?.added ?? []).map((l) => ({ field: l, expected: 'Present', onCluster: 'Missing', result: 'Missing on cluster' })),
-    ...(drift?.removed ?? []).map((l) => ({ field: l, expected: 'Not present', onCluster: 'Present', result: 'Extra on cluster' })),
-    ...(drift?.changed ?? []).map((l) => ({ field: l, expected: 'A different value', onCluster: 'A different value', result: 'Value differs' })),
-  ]
-  if (rows.length === 0) {
-    return <ConnectionLabelMatchTable diffData={diffData} live={live} />
-  }
-  return (
-    <table className="w-full text-left text-sm" data-testid="comparison-label-drift">
-      <thead>
-        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
-          <th className="py-1 pr-3 font-medium">Field</th>
-          <th className="py-1 pr-3 font-medium">Expected in Git</th>
-          <th className="py-1 pr-3 font-medium">On the cluster</th>
-          <th className="py-1 font-medium">Result</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border">
-        {rows.map((r) => (
-          <tr key={r.field}>
-            <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{r.field}</td>
-            <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{r.expected}</td>
-            <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{r.onCluster}</td>
-            <td className="py-1.5 font-medium text-amber-700 dark:text-amber-400">{r.result}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
 /**
  * SSF-12 honesty rule: an addon-values secret's ONLY genuinely comparable
  * field is key PRESENCE — the key names Sharko expects vs which of them the
@@ -2000,9 +1848,6 @@ export function SecretDetailContent({
 }) {
   const navigate = useNavigate()
   const [refreshing, setRefreshing] = useState(false)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
-  const [diffData, setDiffData] = useState<ClusterComparisonResponse | null>(null)
   // SSF-5 (Secret Sync finish pass) — Overview vs Redacted YAML. Always
   // reopens on Overview for whichever row the panel is now showing; a tab
   // choice made on one row must not carry over to the next one it opens.
@@ -2058,34 +1903,6 @@ export function SecretDetailContent({
       .finally(() => setConnectionComparisonLoading(false))
   }
 
-  // Legacy label-only comparison — kept for backwards compatibility, but NOT
-  // used for connection rows anymore (they use the new connection-comparison
-  // above). This stays because other parts of the code may still reference it.
-  useEffect(() => {
-    setDiffData(null)
-    setDiffError(null)
-    if (!row || row.kind !== 'connection') {
-      setDiffLoading(false)
-      return
-    }
-    let cancelled = false
-    setDiffLoading(true)
-    api
-      .getClusterComparison(row.cluster)
-      .then((result) => {
-        if (!cancelled) setDiffData(result)
-      })
-      .catch((err) => {
-        if (!cancelled) setDiffError(err instanceof Error ? err.message : 'Failed to load the diff')
-      })
-      .finally(() => {
-        if (!cancelled) setDiffLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.key])
 
   // The same role predicate RoleGuard applies below, read here so the
   // REQUEST is gated too and not just the rendering. A viewer's panel used
@@ -2356,7 +2173,6 @@ export function SecretDetailContent({
                     }
                   >
                     <ConnectionComparisonDisplay
-                      cluster={row.cluster}
                       comparison={connectionComparisonData}
                       loading={connectionComparisonLoading}
                       error={connectionComparisonError}

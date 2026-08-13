@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc -b",
     "a11y": "vitest run src/__tests__/a11y.test.tsx",
     "docs:screenshots": "node ../scripts/docs-screenshots.mjs"
   },

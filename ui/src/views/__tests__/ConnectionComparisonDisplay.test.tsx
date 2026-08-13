@@ -57,7 +57,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'none',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const sentence = screen.getByTestId('connection-comparison-status-sentence')
     expect(sentence.textContent).toBe(STATUS_SYNCED_SENTENCE)
     assertNoBannedPhrases(sentence.textContent!)
@@ -80,7 +80,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'full_connection',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const sentence = screen.getByTestId('connection-comparison-status-sentence')
     expect(sentence.textContent).toBe(STATUS_OUT_OF_SYNC_SENTENCE)
     assertNoBannedPhrases(sentence.textContent!)
@@ -101,7 +101,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'none',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const sentence = screen.getByTestId('connection-comparison-status-sentence')
     expect(sentence.textContent).toBe(STATUS_MISSING_SENTENCE)
     assertNoBannedPhrases(sentence.textContent!)
@@ -123,7 +123,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'none',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const sentence = screen.getByTestId('connection-comparison-status-sentence')
     expect(sentence.textContent).toBe(STATUS_CHECK_FAILED_SENTENCE)
     assertNoBannedPhrases(sentence.textContent!)
@@ -148,7 +148,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'none',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const sentence = screen.getByTestId('connection-comparison-status-sentence')
     expect(sentence.textContent).toBe(STATUS_OWNERSHIP_CONFLICT_SENTENCE)
     assertNoBannedPhrases(sentence.textContent!)
@@ -172,7 +172,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'full_connection',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const sentence = screen.getByTestId('connection-comparison-status-sentence')
     expect(sentence.textContent).toBe(STATUS_LIMITED_SENTENCE)
 
@@ -210,7 +210,7 @@ describe('ConnectionComparisonDisplay', () => {
       values_never_returned: true,
     }
 
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
 
     const sensitiveDiff = comparison.differences[0]
     expect(sensitiveDiff.sensitive).toBe(true)
@@ -243,7 +243,7 @@ describe('ConnectionComparisonDisplay', () => {
       values_never_returned: true,
     }
 
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
 
     // The sensitive field's row exists
     const rows = screen.getAllByTestId(/connection-comparison-diff-row-/)
@@ -267,14 +267,14 @@ describe('ConnectionComparisonDisplay', () => {
   // ───────────────────────────────────────────────────────────────────────────
 
   it('shows a loading state while the check runs', () => {
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={null} loading={true} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={null} loading={true} error={null} onRetry={() => {}} />)
     expect(screen.getByTestId('connection-comparison-loading')).toBeInTheDocument()
     expect(screen.getByText('Checking the connection…')).toBeInTheDocument()
   })
 
   it('shows an error state and offers retry when the check fails', () => {
     const onRetry = vi.fn()
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={null} loading={false} error="Network error" onRetry={onRetry} />)
+    render(<ConnectionComparisonDisplay comparison={null} loading={false} error="Network error" onRetry={onRetry} />)
     expect(screen.getByTestId('connection-comparison-error')).toBeInTheDocument()
     expect(screen.getByText('Network error')).toBeInTheDocument()
 
@@ -305,7 +305,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'none',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const provenance = screen.getByTestId('connection-comparison-provenance')
     expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
     expect(provenance.textContent).toContain('abcdef1') // short commit hash (7 chars)
@@ -333,7 +333,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'full_connection',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     expect(screen.getByTestId('connection-comparison-differences')).toBeInTheDocument()
     expect(screen.getByText('data.server')).toBeInTheDocument()
     expect(screen.getByText('metadata.labels[addon.sharko.dev/test]')).toBeInTheDocument()
@@ -356,7 +356,7 @@ describe('ConnectionComparisonDisplay', () => {
       repair_scope: 'full_connection',
       values_never_returned: true,
     }
-    render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
+    render(<ConnectionComparisonDisplay comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     expect(screen.getByTestId('connection-comparison-not-checked')).toBeInTheDocument()
     expect(screen.getByText('data.config')).toBeInTheDocument()
     expect(screen.getByText(/EKS sign-in tokens/)).toBeInTheDocument()

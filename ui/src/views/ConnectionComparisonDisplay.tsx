@@ -64,7 +64,6 @@ const STATUS_LIMITED_SENTENCE = 'Sharko checked part of this connection.'
 const REDACTED_TEXT = '<redacted>'
 
 interface ConnectionComparisonDisplayProps {
-  cluster: string
   comparison: ConnectionComparisonView | null
   loading: boolean
   error: string | null
@@ -72,7 +71,6 @@ interface ConnectionComparisonDisplayProps {
 }
 
 export function ConnectionComparisonDisplay({
-  cluster,
   comparison,
   loading,
   error,
