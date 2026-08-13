@@ -37,6 +37,7 @@ vi.mock('@/components/ToastNotification', async () => {
 
 const mockGetManagedSecrets = vi.fn()
 const mockGetClusterComparison = vi.fn()
+const mockGetConnectionComparison = vi.fn()
 const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockReconcileCluster = vi.fn()
@@ -47,20 +48,7 @@ const mockFetchAuditLog = vi.fn()
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
-    getConnectionComparison: () => Promise.resolve({
-      cluster: 'test-cluster',
-      status: 'synced',
-      scope: 'full',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: false,
-      repair_scope: 'none',
-      values_never_returned: true,
-    }),
+    getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
   },
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
@@ -217,6 +205,22 @@ beforeEach(() => {
   mockGetClusterComparison.mockResolvedValue({
     cluster: { name: 'prod-eu', labels: {}, last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' } },
   })
+  mockGetConnectionComparison.mockResolvedValue({
+    cluster: 'prod-eu',
+    status: 'synced',
+    scope: 'full',
+    ownership_mode: 'sharko_managed',
+    checked_at: '2026-08-13T12:00:00Z',
+    branch: 'main',
+    compared_path: 'configuration/managed-clusters.yaml',
+    compared_commit: 'abcdef1234567890abcdef1234567890abcdef12',
+    differences: [],
+    not_checked: [],
+    checked_field_count: 10,
+    repair_available: false,
+    repair_scope: 'none',
+    values_never_returned: true,
+  })
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
 })
 
@@ -340,8 +344,10 @@ describe('the comparison: provenance above, a real field table inside', () => {
     const panel = await openRow('connection-prod-eu')
     // S4-1: NO toggle click - comparison is inline and always expanded.
 
-    const provenance = within(panel).getByTestId('connection-comparison-provenance')
-    expect(within(provenance).getByText('configuration/managed-clusters.yaml')).toBeInTheDocument()
+    // Wait for provenance to appear (async mock resolution)
+    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
+    // S4-1: Changed 2026-08-13: (b) text split across elements ("File: " + path), use textContent.
+    expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
     const shortCommit = within(provenance).getByText('abcdef1')
     expect(shortCommit).toBeInTheDocument()
     // (a) RESTORED: full commit on hover — regression caught in coordinator review.
@@ -351,8 +357,24 @@ describe('the comparison: provenance above, a real field table inside', () => {
   // S4-1: Changed 2026-08-13: (a) test ID updated but rule preserved (must show
   // something when commit is unknown, not hide provenance section entirely).
   it('a connection row with no compared commit says so instead of showing a blank table', async () => {
+    // S4-1: Mock connection-comparison for no-commit cluster with no compared_commit.
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'no-commit',
+      status: 'synced',
+      scope: 'full',
+      ownership_mode: 'sharko_managed',
+      checked_at: '2026-08-13T12:00:00Z',
+      branch: 'main',
+      compared_path: 'configuration/managed-clusters.yaml',
+      // NO compared_commit
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: false,
+      repair_scope: 'none',
+      values_never_returned: true,
+    })
     renderPage()
-    // S4-1: no-commit has no compared_commit in the mock response.
     const panel = await openRow('connection-no-commit')
     const provenance = within(panel).getByTestId('connection-comparison-provenance')
     // (a) Rule preserved: when commit is unknown, say so instead of hiding.
@@ -473,8 +495,9 @@ describe('the comparison: provenance above, a real field table inside', () => {
     const panel = await openRow('connection-prod-eu')
     // S4-1: NO toggle - always expanded.
 
-    // (a) EVIDENCE: Status sentence says "matches"
-    expect(within(panel).getByTestId('connection-comparison-status-sentence')).toHaveTextContent('This connection matches what Sharko intends.')
+    // (a) EVIDENCE: Status sentence says "matches" (wait for async mock)
+    const statusSentence = await within(panel).findByTestId('connection-comparison-status-sentence')
+    expect(statusSentence).toHaveTextContent('This connection matches what Sharko intends.')
     // (a) EVIDENCE: No differences section (because differences array is empty)
     expect(within(panel).queryByTestId('connection-comparison-differences')).not.toBeInTheDocument()
     // (a) EVIDENCE: Field count shown

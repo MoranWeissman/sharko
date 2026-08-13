@@ -72,6 +72,7 @@ const mockResyncClusterLabels = vi.fn()
 const mockRefreshAddonValuesSecret = vi.fn()
 const mockSyncAddonValuesSecret = vi.fn()
 const mockGetClusterComparison = vi.fn()
+const mockGetConnectionComparison = vi.fn()
 // G4 — the detail panel now also reads the LIVE Secret. These two are
 // mocked here so opening a panel in this suite makes exactly one such
 // call and never a real one; the blanking itself is the server's job and
@@ -86,7 +87,7 @@ const mockFetchAuditLog = vi.fn()
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
-    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
   },
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
@@ -209,6 +210,25 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
+  mockGetClusterComparison.mockResolvedValue({
+    cluster: { name: 'prod-eu', labels: {}, last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' } },
+  })
+  mockGetConnectionComparison.mockResolvedValue({
+    cluster: 'prod-eu',
+    status: 'synced',
+    scope: 'full',
+    ownership_mode: 'sharko_managed',
+    checked_at: '2026-08-13T12:00:00Z',
+    branch: 'main',
+    compared_path: 'configuration/managed-clusters.yaml',
+    compared_commit: 'abcdef1234567890abcdef1234567890abcdef12',
+    differences: [],
+    not_checked: [],
+    checked_field_count: 10,
+    repair_available: false,
+    repair_scope: 'none',
+    values_never_returned: true,
+  })
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
   // SSF-9's scroll/group-override restore rides in sessionStorage, which
   // jsdom does NOT reset between tests on its own — without this, a saved
@@ -960,7 +980,8 @@ describe('ManagedSecrets', () => {
 
     const provenance = within(panel).getByTestId('connection-comparison-provenance')
     // (a) File path visible
-    expect(within(provenance).getByText('configuration/managed-clusters.yaml')).toBeInTheDocument()
+    // S4-1: Changed 2026-08-13: (b) text split across elements ("File: " + path), use textContent.
+    expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
     // (a) Short commit (7 chars) visible
     expect(within(provenance).getByText('abcdef1')).toBeInTheDocument()
     // (a) REGRESSION CAUGHT: Full commit on hover restored
@@ -1007,7 +1028,8 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
     expect(screen.queryByTestId('detail-keys-disclosure')).not.toBeInTheDocument()
     expect(screen.queryByTestId('detail-activity-disclosure')).not.toBeInTheDocument()
-    const provenance = await within(panel).findByTestId('comparison-provenance')
+    // S4-1: Changed 2026-08-13: (b) testid changed to connection-comparison-provenance.
+    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
     expect(within(provenance).queryByText(/Waiting for Re-apply addon labels|Git moved/)).not.toBeInTheDocument()
   })
 
