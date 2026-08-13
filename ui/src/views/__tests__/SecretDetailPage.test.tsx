@@ -296,6 +296,9 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(screen.getByTestId('secret-detail-container')).toHaveClass('max-w-screen-2xl')
   })
 
+  // S4-2: Changed 2026-08-13: Connection rows' YAML tab now shows a redirect
+  // message instead of the redacted YAML (which moved to Overview below comparison).
+  // (a) Rule preserved: header buttons must be visible on both tabs.
   it('Check now and Sync sit in the header, next to the title — visible on the YAML tab too, not only on Overview', async () => {
     // staging-us is out_of_sync — SSF-12 hides Sync entirely once a row is
     // healthy, so a row that still needs repair is the one that proves
@@ -311,7 +314,8 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
 
     fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    await screen.findByTestId('detail-yaml-hidden')
+    // S4-2: For connection rows, YAML tab shows redirect message, not detail-yaml-hidden
+    await waitFor(() => expect(within(panel).getByText(/redacted YAML for this connection is on the Overview tab/)).toBeInTheDocument())
 
     // Still there on the YAML tab — the header doesn't belong to Overview.
     expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
@@ -325,13 +329,16 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
   })
 
+  // S4-2: Changed 2026-08-13: Same change as above - wait for redirect message.
+  // (a) Rule preserved: conclusion must be visible on both tabs.
   it('the status/compared-with/last-checked row is visible on both tabs, not hidden behind Overview', async () => {
     renderApp(['/secret-sync/connection-prod-eu'])
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
 
     fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    await screen.findByTestId('detail-yaml-hidden')
+    // S4-2: Wait for redirect message for connection rows
+    await waitFor(() => expect(within(panel).getByText(/redacted YAML for this connection is on the Overview tab/)).toBeInTheDocument())
     expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
   })
 

@@ -894,18 +894,24 @@ describe('ManagedSecrets', () => {
     expect(unknownDot).toHaveAttribute('data-hollow', 'true')
   })
 
-  it('clicking a connection-secret row opens the detail panel with identity, purpose, the ONE conclusion, and a comparison that fetches labels only', async () => {
+  // S4-1: Changed 2026-08-13: (b) Connection comparison now fetches the FULL
+  // connection via getConnectionComparison, not labels-only via getClusterComparison.
+  // (a) Rules preserved: identity, purpose, ONE conclusion still required.
+  it('clicking a connection-secret row opens the detail panel with identity, purpose, the ONE conclusion, and a full connection comparison', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockGetClusterComparison.mockResolvedValue({
-      cluster: {
-        name: 'staging-us',
-        labels: {},
-        last_reconcile: {
-          time: '2026-08-05T00:00:00Z',
-          outcome: 'succeeded',
-          label_drift: { added: ['datadog'], removed: [], changed: [] },
-        },
-      },
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'staging-us',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'sharko_managed',
+      checked_at: '2026-08-13T12:00:00Z',
+      branch: 'main',
+      differences: [{ path: 'metadata.labels[addons.sharko.dev/datadog]', status: 'missing' }],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
     })
     renderPage()
 
@@ -914,29 +920,36 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
-    // SSF-12: the ONE conclusion states the source once — out_of_sync ->
-    // "Needs attention" / "does not match Git.", comparison auto-open.
+    // (a) ONE conclusion preserved
     expect(within(panel).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
     expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match Git.')
 
-    await waitFor(() => expect(mockGetClusterComparison).toHaveBeenCalledWith('staging-us'))
-    const drift = await within(panel).findByTestId('comparison-label-drift')
-    expect(within(drift).getByText('datadog')).toBeInTheDocument()
-    expect(drift).toHaveTextContent('Missing')
+    // (b) Now checks getConnectionComparison, not getClusterComparison
+    await waitFor(() => expect(mockGetConnectionComparison).toHaveBeenCalled())
+    const diffs = await within(panel).findByTestId('connection-comparison-differences')
+    expect(within(diffs).getByText(/datadog/)).toBeInTheDocument()
   })
 
-  // P2-C1 (kept) / SSF-14 item 3: the out-of-sync connection row (staging-us
-  // in baseResponse) carries a known compared revision and compared path —
-  // PROVENANCE, now stated once above the comparison table, in plain
-  // sentence form (short SHA + full path; full SHA on hover via title).
+  // S4-1: Changed 2026-08-13: (b) testid changed to connection-comparison-provenance.
+  // (a) PROVENANCE RULES PRESERVED: file path visible, short commit (7 chars) visible,
+  // full commit on hover via title attribute. This is the test that caught the regression.
   it('the connection panel states which commit and file it was compared against, above the comparison table', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockGetClusterComparison.mockResolvedValue({
-      cluster: {
-        name: 'staging-us',
-        labels: {},
-        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded', label_drift: { added: [], removed: [], changed: [] } },
-      },
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'staging-us',
+      status: 'synced',
+      scope: 'full',
+      ownership_mode: 'sharko_managed',
+      checked_at: '2026-08-13T12:00:00Z',
+      branch: 'main',
+      compared_path: 'configuration/managed-clusters.yaml',
+      compared_commit: 'abcdef1234567890abcdef1234567890abcdef12',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: false,
+      repair_scope: 'none',
+      values_never_returned: true,
     })
     renderPage()
 
@@ -945,9 +958,12 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
 
-    const provenance = within(panel).getByTestId('comparison-provenance')
+    const provenance = within(panel).getByTestId('connection-comparison-provenance')
+    // (a) File path visible
     expect(within(provenance).getByText('configuration/managed-clusters.yaml')).toBeInTheDocument()
+    // (a) Short commit (7 chars) visible
     expect(within(provenance).getByText('abcdef1')).toBeInTheDocument()
+    // (a) REGRESSION CAUGHT: Full commit on hover restored
     expect(within(provenance).getByText('abcdef1').title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
   })
 

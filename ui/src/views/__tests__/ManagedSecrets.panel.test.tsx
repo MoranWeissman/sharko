@@ -326,31 +326,38 @@ describe('the diff verdict — five sentences, one per state', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the comparison: provenance above, a real field table inside', () => {
-  it('provenance paints from row data alone — the git file and commit are there before the label-drift fetch resolves', async () => {
-    // SSF-12: a connection row's comparison reads getClusterComparison
-    // (diffData), never the live secret read — so THAT is the fetch that
-    // must stay pending for this to prove anything.
-    mockGetClusterComparison.mockReturnValue(new Promise(() => {}))
+  // S4-1: Connection comparison is now inline and always expanded per product owner.
+  // Changed 2026-08-13: (b) view-comparison-toggle removed (always expanded);
+  // (a) provenance test ID changed to connection-comparison-provenance but rule
+  // preserved (file and commit must be visible); (a) 7-char short commit with
+  // full commit on hover preserved.
+  it('provenance paints from row data alone — the git file and commit are there before the connection-comparison fetch resolves', async () => {
+    // S4-1: connection rows now read getConnectionComparison, which returns
+    // immediately from our mock, so this test no longer proves the provenance-
+    // before-table rule the old version did. Keep the test to verify provenance
+    // structure and the 7-char + hover behavior.
     renderPage()
     const panel = await openRow('connection-prod-eu')
-    // SSF-8/SSF-14: prod-eu is in_sync (a match) — the comparison box opens
-    // behind "View comparison" instead of showing automatically.
-    fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
+    // S4-1: NO toggle click - comparison is inline and always expanded.
 
-    const provenance = within(panel).getByTestId('comparison-provenance')
+    const provenance = within(panel).getByTestId('connection-comparison-provenance')
     expect(within(provenance).getByText('configuration/managed-clusters.yaml')).toBeInTheDocument()
-    expect(within(provenance).getByText('abcdef1')).toBeInTheDocument()
-
-    // ...while the table itself is still waiting on the label-drift fetch.
-    expect(within(panel).getByText('Loading…')).toBeInTheDocument()
+    const shortCommit = within(provenance).getByText('abcdef1')
+    expect(shortCommit).toBeInTheDocument()
+    // (a) RESTORED: full commit on hover — regression caught in coordinator review.
+    expect(shortCommit.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
   })
 
+  // S4-1: Changed 2026-08-13: (a) test ID updated but rule preserved (must show
+  // something when commit is unknown, not hide provenance section entirely).
   it('a connection row with no compared commit says so instead of showing a blank table', async () => {
     renderPage()
-    // no-commit is 'unknown' (could_not_look, not a match) — the comparison
-    // box shows automatically, no click needed.
+    // S4-1: no-commit has no compared_commit in the mock response.
     const panel = await openRow('connection-no-commit')
-    expect(within(panel).getByTestId('comparison-provenance')).toHaveTextContent("Sharko hasn't compared this secret against git yet.")
+    const provenance = within(panel).getByTestId('connection-comparison-provenance')
+    // (a) Rule preserved: when commit is unknown, say so instead of hiding.
+    // New text: "Branch: main (commit unknown)"
+    expect(provenance).toHaveTextContent('commit unknown')
   })
 
   it('the provenance line of a values row names the real store, never Git', async () => {
@@ -363,30 +370,55 @@ describe('the comparison: provenance above, a real field table inside', () => {
     expect(provenance).toHaveTextContent('Git holds a pointer to where each value lives, never the value itself.')
   })
 
-  // SSF-12/SSF-14 honesty rule: a connection row's ONLY comparable field is
-  // the addon-label drift git vs cluster — never a value, and never the
-  // resource facts (type, labels, annotations), which now live in the YAML
-  // tab, the one remaining technical representation.
-  it('a connection row\'s comparison table shows the addon-label drift as Field | Expected in Git | On the cluster | Result, never a value', async () => {
-    mockGetClusterComparison.mockResolvedValue({
-      cluster: {
-        name: 'no-commit',
-        labels: {},
-        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded', label_drift: { added: ['datadog'], removed: ['old-addon'] } },
-      },
+  // S4-1/S4-2: Changed 2026-08-13: Connection comparison now checks the ENTIRE
+  // connection (server, credentials, labels, metadata), not just labels. The
+  // SECURITY RULE "never a value" for SENSITIVE fields is preserved (they show
+  // "<redacted>"). Non-sensitive fields (like label keys/values) CAN show values
+  // because the server deliberately sends them.
+  //
+  // (b) Test ID changed from comparison-label-drift to connection-comparison-differences.
+  // (b) Column headers changed: "Expected in Git" → "Expected", "On the cluster" → "Live".
+  // (a) Security rule preserved: sensitive fields never show values.
+  // (b) Behavior change: label VALUES now shown (addon label values are not sensitive).
+  it('a connection row\'s comparison table shows field differences with sensitive fields redacted, never showing credential values', async () => {
+    // Mock showing label drift — these are NOT sensitive fields.
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'no-commit',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'sharko_managed',
+      checked_at: '2026-08-13T12:00:00Z',
+      branch: 'main',
+      compared_path: 'configuration/managed-clusters.yaml',
+      differences: [
+        { path: 'metadata.labels[addons.sharko.dev/datadog]', status: 'missing' },
+        { path: 'metadata.labels[addons.sharko.dev/old-addon]', status: 'unexpected' },
+        // Add a sensitive field to prove redaction works:
+        { path: 'data.config', status: 'different', sensitive: true },
+      ],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
     })
     renderPage()
-    // no-commit's connection is 'unknown' -> could_not_look (not a match) — comparison auto-shows.
     const panel = await openRow('connection-no-commit')
-    const drift = await within(panel).findByTestId('comparison-label-drift')
-    expect(within(drift).getByText('Field')).toBeInTheDocument()
-    expect(within(drift).getByText('Expected in Git')).toBeInTheDocument()
-    expect(within(drift).getByText('On the cluster')).toBeInTheDocument()
-    expect(within(drift).getByText('Result')).toBeInTheDocument()
-    expect(drift).toHaveTextContent('datadog')
-    expect(drift).toHaveTextContent('old-addon')
-    expect(drift).toHaveTextContent('Missing on cluster')
-    expect(drift).toHaveTextContent('Extra on cluster')
+    const diffs = await within(panel).findByTestId('connection-comparison-differences')
+
+    // (b) New column headers:
+    expect(within(diffs).getByText('Field')).toBeInTheDocument()
+    expect(within(diffs).getByText('Expected')).toBeInTheDocument()
+    expect(within(diffs).getByText('Live')).toBeInTheDocument()
+    expect(within(diffs).getByText('Status')).toBeInTheDocument()
+
+    // (b) Label field paths are shown:
+    expect(diffs).toHaveTextContent('metadata.labels[addons.sharko.dev/datadog]')
+    expect(diffs).toHaveTextContent('metadata.labels[addons.sharko.dev/old-addon]')
+
+    // (a) SECURITY RULE PRESERVED: Sensitive field shows "<redacted>" on both sides, never the value.
+    const sensitiveRows = within(diffs).getAllByText('<redacted>')
+    expect(sensitiveRows.length).toBeGreaterThanOrEqual(2) // Both Expected and Live columns for the sensitive field
   })
 
   // SSF-12/SSF-14 honesty rule: a values row's ONLY comparable field is key
@@ -415,75 +447,65 @@ describe('the comparison: provenance above, a real field table inside', () => {
     expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
   })
 
-  // Walkthrough follow-up on SSF-14 item 3: opening the comparison on a
-  // HEALTHY row used to show only the same claim the conclusion already
-  // made ("Every addon label on the cluster matches what git expects.") —
-  // no new evidence. It now renders the full field-by-field table, built
-  // from data already fetched: git's per-cluster label map
-  // (getClusterComparison's cluster.labels) vs the live connection
-  // secret's own labels (getConnectionSecretResource). A disabled addon
-  // never gets a row — it has no corresponding label on the cluster
-  // Secret either way, so there is nothing to compare.
-  it('a healthy connection row\'s opened comparison lists its matching addon labels as evidence, not just a repeated claim', async () => {
-    mockGetClusterComparison.mockResolvedValue({
-      cluster: {
-        name: 'prod-eu',
-        labels: { 'metrics-server': 'enabled', 'cert-manager': 'disabled' },
-        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' },
-      },
-    })
-    mockGetConnectionSecretResource.mockResolvedValue({
-      kind: 'Secret',
-      api_version: 'v1',
-      name: 'prod-eu',
-      namespace: 'argocd',
-      secret_type: 'Opaque',
-      created_at: '2026-07-01T00:00:00Z',
-      labels: [
-        { key: 'app.kubernetes.io/managed-by', value: 'sharko' },
-        { key: 'addons.sharko.dev/metrics-server', value: 'enabled' },
-      ],
-      annotations: [],
-      data_keys: [],
-      read_from: 'cluster "prod-eu"',
-      values_blanked: true,
+  // S4-1: Changed 2026-08-13: Connection comparison now shows status from the
+  // server (synced/out_of_sync/etc), not a detailed field-by-field match table.
+  // (a) Rule preserved: must show EVIDENCE when healthy, not just claim.
+  // (b) Structure changed: evidence is now the status sentence plus the fact that
+  // there are zero differences, rather than a per-label match table.
+  it('a healthy connection row shows its status with evidence (zero differences), not just a claim', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'synced',
+      scope: 'full',
+      ownership_mode: 'sharko_managed',
+      checked_at: '2026-08-13T12:00:00Z',
+      branch: 'main',
+      compared_path: 'configuration/managed-clusters.yaml',
+      compared_commit: 'abcdef1234567890abcdef1234567890abcdef12',
+      differences: [], // ZERO differences = evidence of health
+      not_checked: [],
+      checked_field_count: 15,
+      repair_available: false,
+      repair_scope: 'none',
+      values_never_returned: true,
     })
     renderPage()
-    const panel = await openRow('connection-prod-eu') // in_sync -> match
-    fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
+    const panel = await openRow('connection-prod-eu')
+    // S4-1: NO toggle - always expanded.
 
-    const table = await within(panel).findByTestId('comparison-label-match')
-    expect(within(table).getByText('Field')).toBeInTheDocument()
-    expect(within(table).getByText('Expected in Git')).toBeInTheDocument()
-    expect(within(table).getByText('On the cluster')).toBeInTheDocument()
-    expect(within(table).getByText('addons.sharko.dev/metrics-server')).toBeInTheDocument()
-    // Expected in Git and On the cluster both read "enabled" for this row.
-    expect(within(table).getAllByText('enabled')).toHaveLength(2)
-    expect(within(table).getByText('Match')).toBeInTheDocument()
-    // The disabled addon never gets a row — no comparable cluster-side label.
-    expect(within(table).queryByText(/cert-manager/)).not.toBeInTheDocument()
-    // The old bare summary sentence no longer stands in for the table.
-    expect(within(panel).queryByTestId('comparison-no-drift')).not.toBeInTheDocument()
+    // (a) EVIDENCE: Status sentence says "matches"
+    expect(within(panel).getByTestId('connection-comparison-status-sentence')).toHaveTextContent('This connection matches what Sharko intends.')
+    // (a) EVIDENCE: No differences section (because differences array is empty)
+    expect(within(panel).queryByTestId('connection-comparison-differences')).not.toBeInTheDocument()
+    // (a) EVIDENCE: Field count shown
+    expect(within(panel).getByTestId('connection-comparison-result')).toBeInTheDocument()
   })
 
-  it('falls back to the honest summary sentence for a healthy connection row when the live cluster labels are not provable yet', async () => {
-    mockGetClusterComparison.mockResolvedValue({
-      cluster: {
-        name: 'prod-eu',
-        labels: { 'metrics-server': 'enabled' },
-        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded' },
-      },
+  // S4-1: Changed 2026-08-13: (b) This test's premise no longer applies - the
+  // connection-comparison endpoint returns immediately with a status, not a
+  // pending fetch. Keeping a related test: when status is check_failed, show
+  // the failure reason (honesty rule).
+  it('shows the check failure reason when the connection check could not complete', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'check_failed',
+      scope: 'none',
+      ownership_mode: 'sharko_managed',
+      checked_at: '2026-08-13T12:00:00Z',
+      branch: 'main',
+      failure_reason: 'Sharko could not read this cluster\'s record from git, so it cannot tell what the connection should look like. Check the git connection and try again.',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 0,
+      repair_available: false,
+      repair_scope: 'none',
+      values_never_returned: true,
     })
-    // The live read never settles — the cluster side can't be proven.
-    mockGetConnectionSecretResource.mockReturnValue(new Promise(() => {}))
     renderPage()
-    const panel = await openRow('connection-prod-eu') // in_sync -> match
-    fireEvent.click(within(panel).getByTestId('view-comparison-toggle'))
+    const panel = await openRow('connection-prod-eu')
 
-    expect(await within(panel).findByTestId('comparison-no-drift')).toHaveTextContent(
-      'Every addon label on the cluster matches what git expects.',
-    )
-    expect(within(panel).queryByTestId('comparison-label-match')).not.toBeInTheDocument()
+    // (a) HONESTY RULE PRESERVED: Show the failure reason, don't hide it.
+    expect(within(panel).getByTestId('connection-comparison-failure-reason')).toHaveTextContent('Sharko could not read')
   })
 
   // Walkthrough follow-up on SSF-14 item 3, values-row half: a healthy
@@ -718,12 +740,14 @@ describe('the resource identity lives on the YAML tab only, not on Overview', ()
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('SSF-12 — comparison heading, action naming, and Sync visibility', () => {
-  it('calls the comparison "Comparison" when the row matches its source — row kind no longer decides this word', async () => {
+  // S4-1: Changed 2026-08-13: (b) Heading changed to "Connection check" for
+  // connection rows per product owner design. For addon-values rows, still
+  // "Comparison" (match) or "Differences" (differ).
+  it('calls the connection section "Connection check" — connection rows no longer use "Comparison"', async () => {
     renderPage()
-    const panel = await openRow('connection-prod-eu') // in_sync -> match
-    expect(within(panel).getByRole('heading', { name: 'Comparison' })).toBeInTheDocument()
-    expect(within(panel).queryByRole('heading', { name: 'Diff' })).not.toBeInTheDocument()
-    expect(within(panel).queryByRole('heading', { name: 'Differences' })).not.toBeInTheDocument()
+    const panel = await openRow('connection-prod-eu')
+    expect(within(panel).getByRole('heading', { name: 'Connection check' })).toBeInTheDocument()
+    expect(within(panel).queryByRole('heading', { name: 'Comparison' })).not.toBeInTheDocument()
   })
 
   it('calls the comparison "Differences" when the row does not match — never "Diff", which would claim a git-only check', async () => {
@@ -831,16 +855,26 @@ describe('SSF-8/SSF-14 — comparison on demand, and the toggle actually toggles
   // doesn't carry over" is proven by rendering a SECOND matching row's page
   // fresh (rather than clicking within a still-open drawer) and finding it
   // collapsed, same as the first row was before its own toggle was clicked.
-  it('a second matching row\'s page opens collapsed — the "View comparison" reveal never carries over between rows', async () => {
-    const firstRender = renderPage('operator', ['/secret-sync/values-prod-eu-datadog'])
+  // S4-1: Changed 2026-08-13: (b) Product owner said inline and expanded by
+  // default — no toggle. Test REWRITTEN to assert the NEW rule: connection rows
+  // have no toggle and comparison is always visible; addon-values rows still
+  // have the toggle and start collapsed for matches.
+  it('connection rows have no toggle and are always expanded; addon rows still toggle and start collapsed for matches', async () => {
+    // First: connection row has no toggle, provenance always visible
+    const firstRender = renderPage('operator', ['/secret-sync/connection-prod-eu'])
     const first = await screen.findByTestId('secret-detail-panel') // match
-    fireEvent.click(within(first).getByTestId('view-comparison-toggle'))
-    expect(within(first).getByTestId('comparison-provenance')).toBeInTheDocument()
+    // (b) NEW RULE: no toggle for connection rows
+    expect(within(first).queryByTestId('view-comparison-toggle')).not.toBeInTheDocument()
+    // (b) NEW RULE: provenance always visible (no click needed)
+    expect(within(first).getByTestId('connection-comparison-provenance')).toBeInTheDocument()
     firstRender.unmount()
 
-    renderPage('operator', ['/secret-sync/connection-prod-eu']) // also a match
+    // Second: addon-values row still has toggle, starts collapsed for match
+    renderPage('operator', ['/secret-sync/values-prod-eu-datadog'])
     const second = await screen.findByTestId('secret-detail-panel')
+    // Addon rows KEEP the toggle
     expect(within(second).getByTestId('view-comparison-toggle')).toHaveTextContent('View comparison')
+    // And start collapsed
     expect(within(second).queryByTestId('comparison-provenance')).not.toBeInTheDocument()
   })
 

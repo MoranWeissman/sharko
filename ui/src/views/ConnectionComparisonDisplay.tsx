@@ -132,16 +132,18 @@ export function ConnectionComparisonDisplay({
         )}
       </div>
 
-      {/* Provenance: what this was checked against. ABOVE the differences, not below. */}
-      {(comparison.compared_path || comparison.compared_commit || !comparison.compared_commit) && (
+      {/* Provenance: what this was checked against. ABOVE the differences, not below.
+          The short commit (7 chars) is visible at a glance; hovering shows the full
+          commit in a title attribute so a person can get it without leaving the page. */}
+      {(comparison.compared_path || comparison.branch) && (
         <div className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="connection-comparison-provenance">
           {comparison.compared_path && <div>File: {comparison.compared_path}</div>}
           {comparison.compared_commit ? (
             <div>
-              Commit: <span className="font-mono">{comparison.compared_commit.substring(0, 8)}</span>
+              Commit: <span className="font-mono" title={`Full commit: ${comparison.compared_commit}`}>{comparison.compared_commit.substring(0, 7)}</span>
             </div>
           ) : (
-            <div>Commit: Sharko cannot tell which commit your git branch is on.</div>
+            <div>Branch: {comparison.branch} (commit unknown)</div>
           )}
         </div>
       )}
