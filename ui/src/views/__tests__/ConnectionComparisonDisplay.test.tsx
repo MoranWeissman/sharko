@@ -308,7 +308,7 @@ describe('ConnectionComparisonDisplay', () => {
     render(<ConnectionComparisonDisplay cluster="test-cluster" comparison={comparison} loading={false} error={null} onRetry={() => {}} />)
     const provenance = screen.getByTestId('connection-comparison-provenance')
     expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
-    expect(provenance.textContent).toContain('abcdef12') // short commit hash
+    expect(provenance.textContent).toContain('abcdef1') // short commit hash (7 chars)
   })
 
   // ───────────────────────────────────────────────────────────────────────────
