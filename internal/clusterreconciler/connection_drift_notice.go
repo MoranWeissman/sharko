@@ -55,8 +55,11 @@ import (
 // driftNoticeUncheckedNote says plainly what the background pass does NOT check,
 // so a quiet background pass is never mistaken for a clean full comparison.
 //
+// It names the configured credentials source — the phrase that is true whether the
+// backend stores a reusable credential or the details to create one.
+//
 // It is a fixed sentence and carries nothing derived from any value.
-const driftNoticeUncheckedNote = "Sharko's background pass checks that this connection is structurally intact and still Sharko's. It does not compare the stored sign-in details on a timer — open the cluster's connection check for that."
+const driftNoticeUncheckedNote = "Sharko's background pass checks that this connection is structurally intact and still Sharko's. It does not compare the configured credentials source on a timer — open the cluster's connection check for that."
 
 // ConnectionShapeProblem is one thing wrong with a connection Secret that was
 // visible without reading anything extra.

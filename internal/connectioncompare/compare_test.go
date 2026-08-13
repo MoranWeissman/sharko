@@ -23,6 +23,11 @@ const (
 	testCluster   = "test-cluster-one"
 	testNamespace = "argocd"
 	testServer    = "https://test-cluster-one.invalid"
+
+	// testCheckFailureBackendRead is the fixed wording for a backend read
+	// failure in test fixtures. Product owner signed off on this wording on
+	// 2026-08-13.
+	testCheckFailureBackendRead = "Sharko could not read this cluster's configured credentials source."
 )
 
 // fakeCA / fakeCert / fakeKey are stand-ins for base64 credential material.
@@ -425,7 +430,7 @@ func TestCompare_CheckFailureIsNeverSoftened(t *testing.T) {
 	// A backend read failure, with everything else about the connection
 	// perfect — the tempting case to report as synced.
 	req, _ := ownedRequest(t, spec, nil)
-	req.CheckFailure = "Sharko could not read this cluster's stored sign-in details."
+	req.CheckFailure = testCheckFailureBackendRead
 	res := Compare(req)
 	if res.Status != StatusCheckFailed {
 		t.Fatalf("perfect connection + backend read failure: status = %q, want %q", res.Status, StatusCheckFailed)
@@ -983,5 +988,37 @@ func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
 	}
 	if len(coveredStatuses) > len(allStatuses) {
 		t.Errorf("test covers %d statuses but allStatuses only lists %d — a new status was added, update allStatuses[]", len(coveredStatuses), len(allStatuses))
+	}
+}
+
+// TestCheckFailureFixtureWording pins the exact text used in test fixtures
+// that build a CheckFailure string, and bans phrases from earlier iterations.
+//
+// Product owner signed off on this wording on 2026-08-13.
+func TestCheckFailureFixtureWording(t *testing.T) {
+	// Pin the exact full text of testCheckFailureBackendRead. The whole
+	// sentence must be present — a break that drops part of it must fail.
+	const want = "Sharko could not read this cluster's configured credentials source."
+	if testCheckFailureBackendRead != want {
+		t.Errorf("testCheckFailureBackendRead text changed.\n\nGot:\n%s\n\nWant:\n%s\n\nThis wording was signed off by the product owner on 2026-08-13. Change it on purpose, not by paraphrasing.", testCheckFailureBackendRead, want)
+	}
+
+	// Assert the removed phrase is absent.
+	if strings.Contains(testCheckFailureBackendRead, "stored sign-in details") {
+		t.Errorf("testCheckFailureBackendRead = %q\n\nMust not say 'stored sign-in details' — for an EKS cluster the backend stores metadata, not a reusable credential. Say 'configured credentials source'.", testCheckFailureBackendRead)
+	}
+
+	// Assert other dead phrasings are absent too.
+	banned := []string{
+		"independently stored copy",
+		"cannot mint",
+		"mints a fresh token on every fetch",
+		"every fetch",
+		"no query parameter is read",
+	}
+	for _, phrase := range banned {
+		if strings.Contains(testCheckFailureBackendRead, phrase) {
+			t.Errorf("testCheckFailureBackendRead = %q\n\nMust not contain the phrase %q — it comes from an earlier iteration that told a story the code no longer matches.", testCheckFailureBackendRead, phrase)
+		}
 	}
 }
