@@ -644,6 +644,13 @@ export interface ClusterComparisonResponse {
   argocd_connection_message?: string
 }
 
+// Credential source type constants — must match internal/models/credlookup.go
+// These are the legal values for entry.CredsSource (see models.Cluster.CredsSource
+// jsonschema enum at internal/models/cluster.go:72).
+export const CREDS_SOURCE_EKS_TOKEN = 'eks-token' // models.CredsSourceEKSToken
+export const CREDS_SOURCE_INLINE_KUBECONFIG = 'inline-kubeconfig' // models.CredsSourceInlineKubeconfig
+export const CREDS_SOURCE_SECRET_KUBECONFIG = 'secret-kubeconfig' // models.CredsSourceSecretKubeconfig
+
 // ConnectionComparisonView — the response from GET /clusters/{name}/connection-comparison.
 // Wire shape documented in internal/api/connection_comparison.go.
 export interface ConnectionComparisonView {

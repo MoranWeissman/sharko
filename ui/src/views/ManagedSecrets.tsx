@@ -384,6 +384,7 @@ import type {
   OrphanedSecretRow,
   SecretResource,
 } from '@/services/models'
+import { CREDS_SOURCE_EKS_TOKEN } from '@/services/models'
 import { InfoHint } from '@/components/InfoHint'
 import { RoleGuard } from '@/components/RoleGuard'
 import { AuthContext } from '@/hooks/useAuth'
@@ -2142,7 +2143,7 @@ export function SecretDetailContent({
                       loading={repairInProgress}
                       icon={Wrench}
                       label={
-                        connectionComparisonData.credential_source_type === 'aws-eks'
+                        connectionComparisonData.credential_source_type === CREDS_SOURCE_EKS_TOKEN
                           ? 'Refresh EKS connection'
                           : 'Repair connection'
                       }
@@ -2356,19 +2357,19 @@ export function SecretDetailContent({
           onClose={() => setShowRepairConfirm(false)}
           onConfirm={handleRepairConfirm}
           title={
-            connectionComparisonData?.credential_source_type === 'aws-eks'
+            connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN
               ? `Refresh EKS connection for "${row.cluster}"?`
               : `Repair connection for "${row.cluster}"?`
           }
           description={
-            connectionComparisonData?.credential_source_type === 'aws-eks'
+            connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN
               ? `This will refresh the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
               : connectionComparisonData?.repair_scope === 'addon_labels_only'
                 ? `This will re-apply this cluster's addon labels to match git. Sharko will not read or change this connection's sign-in details. The self-heal setting will not be changed.`
                 : `This will rewrite this cluster's connection to match git and this cluster's configured credentials source. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
           }
           confirmText={
-            connectionComparisonData?.credential_source_type === 'aws-eks' ? 'Refresh connection' : 'Repair connection'
+            connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN ? 'Refresh connection' : 'Repair connection'
           }
           loading={repairInProgress}
         />

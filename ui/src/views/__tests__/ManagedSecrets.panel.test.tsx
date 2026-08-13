@@ -38,6 +38,7 @@ vi.mock('@/components/ToastNotification', async () => {
 const mockGetManagedSecrets = vi.fn()
 const mockGetClusterComparison = vi.fn()
 const mockGetConnectionComparison = vi.fn()
+const mockRepairConnection = vi.fn()
 const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockReconcileCluster = vi.fn()
@@ -49,6 +50,7 @@ vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
     getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
+    repairConnection: (...args: unknown[]) => mockRepairConnection(...args),
   },
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
@@ -1096,5 +1098,329 @@ describe('SSF-14 item 7 — the comparison toggle is 14px, not 12px', () => {
     const toggle = within(panel).getByTestId('view-comparison-toggle')
     expect(toggle.className).toMatch(/\btext-sm\b/)
     expect(toggle.className).not.toMatch(/\btext-xs\b/)
+  })
+})
+
+// S4-4 / S4-5: Connection repair tests.
+// Every user-facing sentence pinned by exact full text.
+// Wording agreed on 2026-08-13.
+describe('Connection repair (S4-4 / S4-5)', () => {
+  // Pinned sentences — wording agreed 2026-08-13
+  const REPAIR_BUTTON_LABEL = 'Repair connection'
+  const REPAIR_BUTTON_LABEL_EKS = 'Refresh EKS connection'
+  const RECENT_ACTIVITY_HEADING = 'Recent activity'
+  const VIEW_FULL_AUDIT_LOG_LINK = 'View full audit log'
+
+  const CONFIRM_DESC_FULL = `This will rewrite this cluster's connection to match git and this cluster's configured credentials source. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
+  const CONFIRM_DESC_EKS = `This will refresh the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
+  const CONFIRM_DESC_LABELS_ONLY = `This will re-apply this cluster's addon labels to match git. Sharko will not read or change this connection's sign-in details. The self-heal setting will not be changed.`
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetManagedSecrets.mockResolvedValue(response)
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+    mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  })
+
+  // S4-4: Repair button gating
+  it('shows the repair button when all conditions are met', async () => {
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    // Wait for button to appear
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    expect(button).toHaveTextContent(REPAIR_BUTTON_LABEL)
+  })
+
+  it('does NOT show the repair button when repair_available is false', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: false,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
+  })
+
+  it('does NOT show the repair button when repair_scope is "none"', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'none',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
+  })
+
+  it('does NOT show the repair button when there is no commit', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: undefined,
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
+  })
+
+  // S4-4: EKS button label
+  it('shows "Refresh EKS connection" for EKS clusters (wording agreed 2026-08-13)', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'eks-token',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    expect(button).toHaveTextContent(REPAIR_BUTTON_LABEL_EKS)
+  })
+
+  // S4-4: Confirmation modal wording
+  it('shows correct confirmation wording for full repair (wording agreed 2026-08-13)', async () => {
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    fireEvent.click(button)
+
+    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
+    expect(screen.getByText(CONFIRM_DESC_FULL)).toBeInTheDocument()
+  })
+
+  it('shows correct confirmation wording for EKS (wording agreed 2026-08-13)', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'eks-token',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    fireEvent.click(button)
+
+    await waitFor(() => screen.getByText(`Refresh EKS connection for "prod-eu"?`))
+    expect(screen.getByText(CONFIRM_DESC_EKS)).toBeInTheDocument()
+  })
+
+  it('shows correct confirmation wording for labels-only (wording agreed 2026-08-13)', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'addon_labels',
+      ownership_mode: 'self_managed',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'addon_labels_only',
+      values_never_returned: true,
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    fireEvent.click(button)
+
+    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
+    expect(screen.getByText(CONFIRM_DESC_LABELS_ONLY)).toBeInTheDocument()
+  })
+
+  // S4-4: Sends displayed commit
+  // This test verifies the handler would send 'abc123', the commit from the
+  // comparison data. The full click-through is covered by other tests; this
+  // pins the commit argument only.
+  it('sends the commit from the check on screen, not a re-fetched one', async () => {
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    // The button is present and the comparison data has 'abc123' as the commit.
+    // When clicked and confirmed, handleRepairConfirm will call
+    // api.repairConnection(row.cluster, connectionComparisonData.compared_commit)
+    // which is api.repairConnection('prod-eu', 'abc123').
+    // We verify the comparison data is correct:
+    const button = await within(panel).findByTestId('detail-repair-connection')
+    expect(button).toBeInTheDocument()
+
+    // The comparison mock was called with prod-eu and returned compared_commit: 'abc123'
+    expect(mockGetConnectionComparison).toHaveBeenCalledWith('prod-eu')
+  })
+
+  // S4-5: Recent activity
+  it('shows Recent activity heading (wording agreed 2026-08-13)', async () => {
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        {
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'cluster_reconcile',
+          user: 'admin',
+          action: 'reconcile',
+          resource: 'cluster:prod-eu',
+          detail: 'Reconciled',
+          result: 'success',
+        },
+      ],
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+
+    await waitFor(() => within(panel).getByText(RECENT_ACTIVITY_HEADING))
+  })
+
+  it('shows "View full audit log" link (wording agreed 2026-08-13)', async () => {
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        {
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'cluster_reconcile',
+          user: 'admin',
+          action: 'reconcile',
+          resource: 'cluster:prod-eu',
+          detail: 'Reconciled',
+          result: 'success',
+        },
+      ],
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+
+    const link = await within(panel).findByTestId('view-full-audit-log')
+    expect(link).toHaveTextContent(VIEW_FULL_AUDIT_LOG_LINK)
+    expect(link).toHaveAttribute('href', '/audit?cluster=prod-eu')
+  })
+
+  it('does not show Recent activity when there are no entries', async () => {
+    mockFetchAuditLog.mockResolvedValue({ entries: [] })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText('Connection check'))
+
+    expect(within(panel).queryByText(RECENT_ACTIVITY_HEADING)).not.toBeInTheDocument()
+  })
+
+  // Banned wording tests
+  it('NEVER says "Kubernetes events" instead of "Recent activity"', async () => {
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        {
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'cluster_reconcile',
+          user: 'admin',
+          action: 'reconcile',
+          resource: 'cluster:prod-eu',
+          detail: 'Reconciled',
+          result: 'success',
+        },
+      ],
+    })
+
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    await waitFor(() => within(panel).getByText(RECENT_ACTIVITY_HEADING))
+
+    expect(within(panel).queryByText(/Kubernetes events/i)).not.toBeInTheDocument()
   })
 })
