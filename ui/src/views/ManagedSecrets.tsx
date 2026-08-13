@@ -2302,7 +2302,16 @@ export function SecretDetailContent({
             </p>
           }
         >
-          <RedactedYamlSection row={row} live={live} onRetry={retry} />
+          {/* S4-2: For connection rows, the redacted YAML moved to Overview
+              (below the comparison). The YAML tab now points there. For
+              addon-values rows, it stays here as before. */}
+          {row.kind === 'connection' ? (
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+              The redacted YAML for this connection is on the Overview tab, below the connection check.
+            </p>
+          ) : (
+            <RedactedYamlSection row={row} live={live} onRetry={retry} />
+          )}
         </RoleGuard>
       ) : (
         <>

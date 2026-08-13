@@ -132,6 +132,20 @@ export function ConnectionComparisonDisplay({
         )}
       </div>
 
+      {/* Provenance: what this was checked against. ABOVE the differences, not below. */}
+      {(comparison.compared_path || comparison.compared_commit || !comparison.compared_commit) && (
+        <div className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="connection-comparison-provenance">
+          {comparison.compared_path && <div>File: {comparison.compared_path}</div>}
+          {comparison.compared_commit ? (
+            <div>
+              Commit: <span className="font-mono">{comparison.compared_commit.substring(0, 8)}</span>
+            </div>
+          ) : (
+            <div>Commit: Sharko cannot tell which commit your git branch is on.</div>
+          )}
+        </div>
+      )}
+
       {/* S4-2: The differences, inline and expanded. */}
       {comparison.differences.length > 0 && (
         <div className="rounded-md border border-border bg-card p-3" data-testid="connection-comparison-differences">
@@ -188,18 +202,6 @@ export function ConnectionComparisonDisplay({
               ))}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {/* Provenance: what this was checked against. */}
-      {(comparison.compared_path || comparison.compared_commit) && (
-        <div className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="connection-comparison-provenance">
-          {comparison.compared_path && <div>File: {comparison.compared_path}</div>}
-          {comparison.compared_commit && (
-            <div>
-              Commit: <span className="font-mono">{comparison.compared_commit.substring(0, 8)}</span>
-            </div>
-          )}
         </div>
       )}
     </div>
