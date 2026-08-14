@@ -1,6 +1,6 @@
 module github.com/MoranWeissman/sharko
 
-go 1.25.12
+go 1.25.13
 
 require (
 	code.gitea.io/sdk/gitea v0.23.2
