@@ -1729,7 +1729,7 @@ func TestComparison_RefusesRepairWhenCommitUnknown(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        comparisonFakeVault{},
+		Vault:        staticVault(comparisonFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1834,7 +1834,7 @@ func TestConnectionComparison_WireSaysRepairScopeNoneWhenAddonLabelsAreUnknown(t
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        comparisonFakeVault{},
+		Vault:        staticVault(comparisonFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1956,7 +1956,7 @@ func TestConnectionComparison_WireNeverSaysRepairScopeEmptyOnAnyReachableExit(t 
 			recon := clusterreconciler.New(clusterreconciler.Deps{
 				GitProvider:  func() gitprovider.GitProvider { return gp },
 				ArgoClient:   argoClient,
-				Vault:        comparisonFakeVault{},
+				Vault:        staticVault(comparisonFakeVault{}),
 				AuditFn:      func(audit.Entry) {},
 				Namespace:    "argocd",
 				TickInterval: time.Hour,

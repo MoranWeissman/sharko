@@ -218,7 +218,7 @@ func repairFixture(t *testing.T, managedYAML string, live *corev1.Secret, vault 
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour, // never auto-fires: these tests drive the endpoint
@@ -623,7 +623,7 @@ func TestRepair_409WhenTheRevisionIsUnknown(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        repairFakeVault{},
+		Vault:        staticVault(repairFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1059,7 +1059,7 @@ func TestRepair_DoesNotReadOrWriteTheSelfHealSetting(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider: func() gitprovider.GitProvider { return gp },
 		ArgoClient:  argoClient,
-		Vault:       repairFakeVault{},
+		Vault:       staticVault(repairFakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 		// SelfHealFn deliberately nil: the repair must not consult it at all.
@@ -1110,7 +1110,7 @@ func TestRepair_NeverWritesToGit(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        repairFakeVault{},
+		Vault:        staticVault(repairFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1188,7 +1188,7 @@ func TestResyncIsUnchangedByTheRepairEndpoint(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        repairFakeVault{},
+		Vault:        staticVault(repairFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1317,7 +1317,7 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_FullConnection(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        repairFakeVault{},
+		Vault:        staticVault(repairFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1383,7 +1383,7 @@ func TestRepair_RefusesWhenAddonLabelsUnknown_GuestConnection(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        repairFakeVault{},
+		Vault:        staticVault(repairFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1487,7 +1487,7 @@ addons:
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        repairFakeVault{},
+		Vault:        staticVault(repairFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1746,7 +1746,7 @@ func guestLabelsOnlyFixture(
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:   func() gitprovider.GitProvider { return gp },
 		ArgoClient:    argoClient,
-		Vault:         repairFakeVault{},
+		Vault:         staticVault(repairFakeVault{}),
 		AuditFn:       func(audit.Entry) {},
 		Namespace:     "argocd",
 		TickInterval:  time.Hour,
