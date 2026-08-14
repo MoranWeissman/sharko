@@ -848,13 +848,18 @@ func connectionSecretState(rec *models.ClusterLastReconcile) (state, lastChecked
 	}
 	lastChecked = rec.Time
 	switch {
-	// M8 (code review): matched against RawMessage, not Message — Message
-	// is now the FailureSentence-mapped, safe-for-a-browser text
-	// (applyLastReconcile in clusters_reconcile.go), which no longer
-	// carries this exact sentinel string verbatim. RawMessage still does;
-	// SelfManagedSecretNotCreatedMessage is a fixed sentence this package
-	// itself writes, never wrapped error text, so comparing against it
-	// directly is safe.
+	// M8 (code review), workaround reason closed by R2-2: this used to
+	// match against RawMessage instead of Message because Message was
+	// unconditionally FailureSentence-mapped by applyLastReconcile
+	// (clusters_reconcile.go) and so no longer carried this exact sentinel
+	// string verbatim for a Skipped record. R2-2 made applyLastReconcile
+	// outcome-gated — a Skipped record's Message is untouched now, same as
+	// RawMessage — so this could match on Message today. Left matching on
+	// RawMessage anyway: it is still correct (RawMessage is unchanged by
+	// R2-2), still the exact record recordReconcile wrote, and switching it
+	// back to Message buys nothing but churn. SelfManagedSecretNotCreatedMessage
+	// is a fixed sentence this package itself writes, never wrapped error
+	// text, so comparing against it directly is safe either way.
 	case rec.Outcome == string(clusterreconciler.OutcomeSkipped) && rec.RawMessage == clusterreconciler.SelfManagedSecretNotCreatedMessage:
 		return "missing", lastChecked
 	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded) && rec.LabelDrift == nil:

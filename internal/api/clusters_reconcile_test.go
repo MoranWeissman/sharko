@@ -357,6 +357,116 @@ func TestHandleGetCluster_LastReconcile_ProjectedOntoReadModel(t *testing.T) {
 	}
 }
 
+// R2-2 — applyLastReconcile / lastReconcileMessage tests. Product owner's
+// rule, verbatim (2026-08-14): "Failed → safe mapped failure sentence.
+// Skipped → its fixed explanatory sentence. Succeeded → empty or the
+// genuine success/fight message, never a failure sentence."
+//
+// Each test below pins the WHOLE sentence against a `want` constant, never
+// a substring and never a non-empty check — the exact gap that let a wrong
+// wording survive four review rounds earlier in this epic (see S4-3).
+
+// TestLastReconcileMessage_Failed_MapsThroughFailureSentence pins the
+// failed→mapped projection. Wording rule set by the product owner
+// 2026-08-14.
+func TestLastReconcileMessage_Failed_MapsThroughFailureSentence(t *testing.T) {
+	rec := clusterreconciler.ClusterReconcileRecord{
+		Outcome: clusterreconciler.OutcomeFailed,
+		Message: "Sharko couldn't converge git-desired addon labels on this drifted managed-cluster Secret: Update \"...\": conflict",
+	}
+	want := "Sharko tried to fix this cluster's connection secret and the write failed. Click Refresh to try again."
+	got := lastReconcileMessage(rec)
+	if got != want {
+		t.Errorf("lastReconcileMessage(failed) = %q, want %q", got, want)
+	}
+}
+
+// TestLastReconcileMessage_Skipped_UntouchedFixedSentence pins the
+// skipped→untouched projection using a real sentinel:
+// ManagedSecretNotCreatedMessage. Wording rule set by the product owner
+// 2026-08-14.
+func TestLastReconcileMessage_Skipped_UntouchedFixedSentence(t *testing.T) {
+	rec := clusterreconciler.ClusterReconcileRecord{
+		Outcome: clusterreconciler.OutcomeSkipped,
+		Message: clusterreconciler.ManagedSecretNotCreatedMessage,
+	}
+	want := "This cluster's ArgoCD secret has not been created yet, so there is nothing to sync onto."
+	got := lastReconcileMessage(rec)
+	if got != want {
+		t.Errorf("lastReconcileMessage(skipped) = %q, want %q", got, want)
+	}
+	if got != clusterreconciler.ManagedSecretNotCreatedMessage {
+		t.Errorf("lastReconcileMessage(skipped) = %q, want it to equal ManagedSecretNotCreatedMessage exactly (%q) — a skipped record's fixed sentence must arrive untouched", got, clusterreconciler.ManagedSecretNotCreatedMessage)
+	}
+}
+
+// TestLastReconcileMessage_Succeeded_UntouchedGenuineSentence pins the
+// succeeded→untouched projection using reconciler.go:1694's real drift-
+// corrected sentence. Wording rule set by the product owner 2026-08-14.
+func TestLastReconcileMessage_Succeeded_UntouchedGenuineSentence(t *testing.T) {
+	const wantSentence = "drift corrected — git-desired addon labels converged"
+	rec := clusterreconciler.ClusterReconcileRecord{
+		Outcome: clusterreconciler.OutcomeSucceeded,
+		Message: wantSentence,
+	}
+	got := lastReconcileMessage(rec)
+	if got != wantSentence {
+		t.Errorf("lastReconcileMessage(succeeded) = %q, want %q", got, wantSentence)
+	}
+}
+
+// TestLastReconcileMessage_SucceededEmpty_StaysEmpty pins the fourth
+// pinned projection: a succeeded record with an empty message (e.g.
+// reconciler.go:2315's bare secret-create success) stays empty — it must
+// NOT be upgraded to any sentence, mapped or otherwise. Wording rule set by
+// the product owner 2026-08-14.
+func TestLastReconcileMessage_SucceededEmpty_StaysEmpty(t *testing.T) {
+	rec := clusterreconciler.ClusterReconcileRecord{
+		Outcome: clusterreconciler.OutcomeSucceeded,
+		Message: "",
+	}
+	got := lastReconcileMessage(rec)
+	if got != "" {
+		t.Errorf("lastReconcileMessage(succeeded, empty) = %q, want empty", got)
+	}
+}
+
+// TestLastReconcileMessage_NeverPairsSucceededWithFailureDefault bans the
+// contradiction by name (acceptance criterion 2): no projection may ever
+// pair outcome succeeded with clusterreconciler.DefaultFailureSentence —
+// asserted against the named constant, not a copied string. Before R2-2
+// this exact pairing was the bug: applyLastReconcile mapped every outcome
+// through FailureSentence unconditionally, so ANY succeeded record with a
+// non-empty message that FailureSentence's switch didn't recognize (which
+// is every genuine product sentence — none of them contain FailureSentence's
+// fixed-prefix keywords) fell through to the generic default and got
+// printed on a healthy cluster's page.
+func TestLastReconcileMessage_NeverPairsSucceededWithFailureDefault(t *testing.T) {
+	// A representative sample of genuine succeeded messages this package
+	// actually records (see the R2-2 call-site audit) plus the drift-fight
+	// warning, which carries interpolated content but is still a genuine
+	// product sentence, never error text.
+	succeededMessages := []string{
+		"",
+		"cluster Secret present; labels verified",
+		"cluster Secret present",
+		"drift corrected — git-desired addon labels converged",
+		"orphaned Secret already removed",
+		"orphaned Secret removed",
+		"something else keeps overwriting Sharko's addon labels on this cluster's self-managed ArgoCD secret (reverted 3 checks in a row) — likely the ArgoCD application that renders this secret from Git fighting with Sharko over it. Sharko will keep re-applying its labels every tick; see https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/.",
+	}
+	for _, msg := range succeededMessages {
+		rec := clusterreconciler.ClusterReconcileRecord{
+			Outcome: clusterreconciler.OutcomeSucceeded,
+			Message: msg,
+		}
+		got := lastReconcileMessage(rec)
+		if got == clusterreconciler.DefaultFailureSentence {
+			t.Errorf("lastReconcileMessage(succeeded, message=%q) = the failure-default sentence %q — a succeeded record must never say the last check didn't finish", msg, clusterreconciler.DefaultFailureSentence)
+		}
+	}
+}
+
 // TestHandleGetCluster_ManagedSecretFields_ProjectedOntoReadModel — walk day
 // 4 locks, S1 + S2. Same real-reconciler wiring as the LastReconcile test
 // above: after a tick that creates prod-eu's ArgoCD cluster Secret,

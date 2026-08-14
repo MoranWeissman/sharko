@@ -27,6 +27,22 @@ import (
 //     "sync now" the UI can call instead of waiting for the reconciler's
 //     30s safety-net tick.
 
+// lastReconcileMessage is applyLastReconcile's outcome gate (R2-2). Copies
+// the shape connectionSecretCheckError (system_managed_secrets.go) and
+// Reconciler.LastError (reconcile_status.go) already use: only a Failed
+// record's message is safe to run through clusterreconciler.FailureSentence,
+// because only a Failed record's message can carry wrapped error text.
+// Succeeded and skipped records are recorded from a fixed, closed set of
+// product sentences (verified call site by call site for R2-2 — see the
+// story report) — including the empty string a bare "created" success
+// leaves — so their message is returned exactly as recorded.
+func lastReconcileMessage(rec clusterreconciler.ClusterReconcileRecord) string {
+	if rec.Outcome == clusterreconciler.OutcomeFailed {
+		return clusterreconciler.FailureSentence(rec.Message)
+	}
+	return rec.Message
+}
+
 // applyLastReconcile sets c.LastReconcile from the reconciler's in-memory
 // per-cluster record, if one exists. A no-op when recon is nil (reconciler
 // not wired in this deployment mode) or when the reconciler has never
@@ -45,19 +61,26 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 	lastRec := &models.ClusterLastReconcile{
 		Time:    rec.Time.Format(time.RFC3339),
 		Outcome: string(rec.Outcome),
-		// M8 (code review): rec.Message can carry a wrapped git/K8s error
-		// verbatim (several call sites in clusterreconciler build it by
-		// appending err.Error() onto a fixed English prefix — see
-		// clusterreconciler.FailureSentence's own doc comment). This used to
-		// be copied straight into the GET /clusters response. Mapped through
-		// the SAME choke point system_managed_secrets.go's
-		// connectionSecretCheckError already uses for the Managed Secrets
-		// page's per-row error — the two surfaces now agree on what a
-		// cluster's last-reconcile failure is allowed to say. The raw text
-		// is not lost: it stays in rec.Message server-side (clusterreconciler
-		// still logs it in full), and RawMessage below carries it forward
-		// internally too — never returned here as Message.
-		Message:          clusterreconciler.FailureSentence(rec.Message),
+		// R2-2: outcome-gated, matching the two callers that already got
+		// this right — connectionSecretCheckError
+		// (system_managed_secrets.go) and Reconciler.LastError
+		// (reconcile_status.go). Only a Failed record's message can carry a
+		// wrapped git/K8s error verbatim (several call sites in
+		// clusterreconciler build it by appending err.Error() onto a fixed
+		// English prefix — see clusterreconciler.FailureSentence's own doc
+		// comment), so only Failed is mapped through FailureSentence.
+		// Succeeded and skipped records already carry a fixed, safe product
+		// sentence (or an empty string) — see the R2-2 call-site audit — so
+		// their Message passes through untouched. Before this gate, EVERY
+		// outcome was mapped, which replaced a succeeded/skipped record's
+		// genuine sentence with FailureSentence's generic default (the
+		// product owner's finding, 2026-08-14): a healthy cluster could show
+		// "The last check didn't finish. Click Refresh to try again." The
+		// raw text is not lost either way: it stays in rec.Message
+		// server-side (clusterreconciler still logs it in full), and
+		// RawMessage below carries it forward internally too — never
+		// returned here as Message.
+		Message:          lastReconcileMessage(rec),
 		RawMessage:       rec.Message,
 		ComparedRevision: rec.ComparedRevision,
 		ComparedPath:     rec.ComparedPath,
