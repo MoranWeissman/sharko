@@ -591,7 +591,7 @@ jobs:
         # emulation; only the final alpine stage's `apk add` still runs
         # per-arch, which is cheap even under emulation — so we register
         # all standard binfmt handlers up front.
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
 
