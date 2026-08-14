@@ -277,7 +277,7 @@ func comparisonFixture(t *testing.T, managedYAML string, live *corev1.Secret, va
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour, // never auto-fires: this endpoint reads only
@@ -478,7 +478,7 @@ func TestConnectionComparison_LogsAndErrorsCarryNoSentinel(t *testing.T) {
 			recon := clusterreconciler.New(clusterreconciler.Deps{
 				GitProvider:  func() gitprovider.GitProvider { return gp },
 				ArgoClient:   fake.NewSimpleClientset(live),
-				Vault:        tc.vault,
+				Vault:        staticVault(tc.vault),
 				AuditFn:      func(audit.Entry) {},
 				Namespace:    "argocd",
 				TickInterval: time.Hour,
@@ -1035,7 +1035,7 @@ func TestConnectionComparison_GitReadFailureIsCheckFailed(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        comparisonFakeVault{},
+		Vault:        staticVault(comparisonFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1223,7 +1223,7 @@ func TestResyncStillBehavesTheSameAfterTheComparisonLanded(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        comparisonFakeVault{},
+		Vault:        staticVault(comparisonFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,

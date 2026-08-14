@@ -62,7 +62,7 @@ func TestFullRepairSurfacesSayWhatHappenedAndCarryNoCredential(t *testing.T) {
 	r := New(Deps{
 		GitProvider:   func() gitprovider.GitProvider { return fg },
 		ArgoClient:    client,
-		Vault:         &fakeVault{},
+		Vault:         staticVault(&fakeVault{}),
 		AuditFn:       audits.Add,
 		EventRecorder: events.NewRecorderForTest(fakeRecorder, "sharko"),
 		TickInterval:  0,

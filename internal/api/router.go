@@ -148,6 +148,20 @@ func (s *Server) GitopsBaseBranch() string {
 	return s.gitopsConfig().BaseBranch
 }
 
+// ClusterCredentialsProvider is the exported form of credProvider() — the
+// single seam packages outside internal/api use to read the
+// CURRENTLY-published cluster-credentials provider. Live (reads the current
+// published snapshot, not a value captured at wiring time), so a caller that
+// resolves through it on every use sees the same provider generation the
+// check path reads, across ReinitializeFromConnection hot-reloads (R2-1:
+// cmd/sharko/serve.go wires the cluster reconciler's Deps.Vault as this
+// method, so the background write and the repair stop holding the boot
+// generation). Returns nil when no backend is configured right now — callers
+// must fail closed, never fall back to an earlier value.
+func (s *Server) ClusterCredentialsProvider() providers.ClusterCredentialsProvider {
+	return s.credProvider()
+}
+
 // publishGitopsCfg atomically publishes a new GitOps config snapshot. The
 // ONLY writer path for gitops config (SetWriteAPIDeps at boot,
 // ReinitializeFromConnection on hot-reload, tests via their seams). GF2.

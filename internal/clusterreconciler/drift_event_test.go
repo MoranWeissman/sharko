@@ -38,7 +38,7 @@ func newReconcilerForTestWithEventRecorder(t *testing.T, k8sClient *k8sfake.Clie
 	return New(Deps{
 		GitProvider:   gitFn,
 		ArgoClient:    k8sClient,
-		Vault:         &fakeVault{},
+		Vault:         staticVault(&fakeVault{}),
 		AuditFn:       audits.Add,
 		TickInterval:  0, // default; we never Start the loop in these tests
 		EventRecorder: recorder,

@@ -56,7 +56,7 @@ func TestConnectivityCheckTick_ZeroAddonsMissingLabel_GetsStamped(t *testing.T) 
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return fg },
 		ArgoClient:   client,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      audits.Add,
 		Namespace:    "argocd",
 		TickInterval: 0,
@@ -136,7 +136,7 @@ spec:
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return fg },
 		ArgoClient:   client,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      audits.Add,
 		Namespace:    "argocd",
 		TickInterval: 0,
@@ -207,7 +207,7 @@ spec:
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return fg },
 		ArgoClient:   client,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: 0,
@@ -261,7 +261,7 @@ func TestConnectivityCheckTick_FeatureOff_LabelStripped(t *testing.T) {
 	r := New(Deps{
 		GitProvider:              func() gitprovider.GitProvider { return fg },
 		ArgoClient:               client,
-		Vault:                    vault,
+		Vault:                    staticVault(vault),
 		AuditFn:                  func(audit.Entry) {},
 		Namespace:                "argocd",
 		TickInterval:             0,
@@ -326,7 +326,7 @@ spec:
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return fg },
 		ArgoClient:   client,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: 0,

@@ -46,11 +46,20 @@ package clusterreconciler
 
 import (
 	"encoding/base64"
+	"errors"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
+
+// ErrNoCredentialsBackend means the Deps.Vault resolver answered nil: no
+// cluster-credentials backend is configured at this moment. The write path
+// fails CLOSED on it — the caller writes nothing and reports its existing
+// credentials-failure sentence, exactly as it does for any other credential
+// error. It must never panic and never fall back to a provider captured
+// earlier (R2-1 criterion 3: no stale generation may satisfy a write).
+var ErrNoCredentialsBackend = errors.New("no cluster-credentials backend is configured")
 
 // ConnectionCredentialSpecForWrite fetches the named cluster's credentials the
 // normal way and returns the CREDENTIAL HALF of the connection spec a write
@@ -91,7 +100,15 @@ func (r *Reconciler) ConnectionCredentialSpecForWrite(entry models.ManagedCluste
 	// SecretPath overrides Name for the backend lookup (shared resolver).
 	credKey := entry.CredentialLookupKey()
 
-	creds, err := providers.GetCredentialsWithOptionalRole(r.deps.Vault, credKey, entry.RoleARN)
+	// Resolve the backend NOW, at use time — the same generation the check
+	// path's snapshot read sees, never a value captured at construction
+	// (R2-1). No backend right now → refuse; the caller writes nothing.
+	vault := r.vault()
+	if vault == nil {
+		return argosecrets.ClusterSecretSpec{}, ErrNoCredentialsBackend
+	}
+
+	creds, err := providers.GetCredentialsWithOptionalRole(vault, credKey, entry.RoleARN)
 	if err != nil {
 		return argosecrets.ClusterSecretSpec{}, err
 	}

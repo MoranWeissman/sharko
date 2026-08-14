@@ -1181,15 +1181,22 @@ var serveCmd = &cobra.Command{
 			// immediately. The reconciler requires the same preconditions
 			// as the prtracker (in-cluster K8s clientset for argocd Secret
 			// API access; an active git provider eventually becomes
-			// available via connSvc lazy getter) PLUS credProvider for
-			// vault credential resolution at create time. When any
-			// precondition is missing we log + skip.
+			// available via connSvc lazy getter). When any precondition is
+			// missing we log + skip.
+			//
+			// The credentials backend is deliberately NOT a start
+			// precondition (R2-1): Deps.Vault below is a resolver over the
+			// Server's live provider snapshot — the SAME snapshot the check
+			// path reads — so a backend configured through the connections
+			// API after boot is seen by the very next check, repair, and
+			// background write with no restart. Until one is configured the
+			// reconciler runs and skips each pass (fail closed).
 			//
 			// This reconciler is the SOLE writer of ArgoCD cluster Secrets
 			// driven by managed-clusters.yaml. The legacy argosecrets.Reconciler
 			// loop (dual-writer until V2-cleanup-28) has been retired.
 			var clusterRecon *clusterreconciler.Reconciler
-			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
+			if prCMStore != nil && inClusterK8sClient != nil {
 				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
 				if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
 					clusterReconNamespace = clusterTestCfgPtr.ArgoCDNamespace
@@ -1212,8 +1219,14 @@ var serveCmd = &cobra.Command{
 						}
 						return gp
 					},
-					ArgoClient:               inClusterK8sClient,
-					Vault:                    credProvider,
+					ArgoClient: inClusterK8sClient,
+					// The live resolver, not the boot value: every write
+					// resolves the currently-published provider at use time,
+					// the same generation the check path reads. Wiring
+					// credProvider here directly is the R2-1 bug — a backend
+					// configured after boot would stay invisible to writes
+					// until a restart.
+					Vault:                    srv.ClusterCredentialsProvider,
 					AuditFn:                  auditLog.Add,
 					TickInterval:             clusterreconciler.DefaultTickInterval,
 					ManagedClustersPath:      repoPaths.ManagedClusters,
@@ -1256,8 +1269,6 @@ var serveCmd = &cobra.Command{
 					slog.Info("cluster reconciler skipped: no ConfigMap store (out-of-cluster or k8s client failure)")
 				} else if inClusterK8sClient == nil {
 					slog.Info("cluster reconciler skipped: no in-cluster k8s client")
-				} else if credProvider == nil {
-					slog.Info("cluster reconciler skipped: no credentials provider configured")
 				}
 			}
 

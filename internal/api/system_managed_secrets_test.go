@@ -91,7 +91,7 @@ func TestHandleGetManagedSecrets_ConnectionSecretRow_InSync(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        reconcileFakeVault{},
+		Vault:        staticVault(reconcileFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: 45 * time.Second,
@@ -318,7 +318,7 @@ func TestHandleGetManagedSecrets_ConnectionSecretRow_FailedCheckIsUnknownWithSen
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider: func() gitprovider.GitProvider { return gp },
 		ArgoClient:  fake.NewSimpleClientset(),
-		Vault:       erroringVault{},
+		Vault:       staticVault(erroringVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})
@@ -896,7 +896,7 @@ func TestHandleGetManagedSecrets_ClusterConnectionEngine_LastErrorNamesClusterAn
 		ArgoClient:  fake.NewSimpleClientset(),
 		// A vault that always errors makes the reconciler record a Failed
 		// outcome for the one managed cluster in managed-clusters.yaml.
-		Vault:        erroringVault{},
+		Vault:        staticVault(erroringVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: 45 * time.Second,
@@ -1358,8 +1358,8 @@ func TestManagedSecretStateSortRank_MatchesTheUITable(t *testing.T) {
 		{"out_of_sync", false, 1},
 		{"orphaned", false, 2},
 		{"foreign", false, 3},
-		{"unknown", true, 4},                                   // a FAILED check outranks a never-checked row
-		{"unknown", false, 5},                                  // genuinely never checked
+		{"unknown", true, 4},  // a FAILED check outranks a never-checked row
+		{"unknown", false, 5}, // genuinely never checked
 		{"in_sync", false, 6},
 		{"some-state-the-server-has-never-heard-of", false, 5}, // falls through to "unknown"'s (not-checked) rank
 		{"some-state-the-server-has-never-heard-of", true, 4},  // ...but a check error still promotes it
@@ -1505,7 +1505,7 @@ func managedSecretsFilterFixture(t *testing.T) (*Server, http.Handler) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        reconcileFakeVault{},
+		Vault:        staticVault(reconcileFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Minute,

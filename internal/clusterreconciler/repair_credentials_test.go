@@ -64,7 +64,7 @@ func TestConnectionCredentialSpecForWrite_CarriesEveryPieceOfCredentialMaterial(
 		Token:  "made-up-not-a-real-token",
 		CAData: []byte("not-a-real-ca"),
 	}}
-	r := &Reconciler{deps: Deps{Vault: vault}}
+	r := &Reconciler{deps: Deps{Vault: staticVault(vault)}}
 
 	spec, err := r.ConnectionCredentialSpecForWrite(models.ManagedClusterEntry{
 		Name:   "written",
@@ -154,7 +154,7 @@ func TestConnectionCredentialSpecForWrite_RoleARNPrecedence(t *testing.T) {
 				Server: "https://roles.test.invalid",
 				Token:  "made-up-not-a-real-token",
 			}}
-			r := &Reconciler{deps: Deps{Vault: vault, DefaultRoleARN: tt.defaultRole}}
+			r := &Reconciler{deps: Deps{Vault: staticVault(vault), DefaultRoleARN: tt.defaultRole}}
 
 			spec, err := r.ConnectionCredentialSpecForWrite(models.ManagedClusterEntry{
 				Name:    "roles",
@@ -185,7 +185,7 @@ func TestConnectionCredentialSpecForWrite_UsesTheSecretPathOverride(t *testing.T
 	// The backend lookup key is the cluster's secretPath when one is stored, not
 	// its name — the same shared resolver every other fetch uses.
 	vault := &roleRecordingVault{creds: &providers.Kubeconfig{Server: "https://x.test.invalid", Token: "t"}}
-	r := &Reconciler{deps: Deps{Vault: vault}}
+	r := &Reconciler{deps: Deps{Vault: staticVault(vault)}}
 
 	if _, err := r.ConnectionCredentialSpecForWrite(models.ManagedClusterEntry{
 		Name:       "friendly-name",
@@ -206,7 +206,7 @@ func TestConnectionCredentialSpecForWrite_RefusesInsteadOfReturningAnEmptySpec(t
 	// instead of a refusal.
 	backendFailure := errors.New("the backend did not answer")
 	vault := &roleRecordingVault{err: backendFailure}
-	r := &Reconciler{deps: Deps{Vault: vault}}
+	r := &Reconciler{deps: Deps{Vault: staticVault(vault)}}
 
 	spec, err := r.ConnectionCredentialSpecForWrite(models.ManagedClusterEntry{Name: "unreachable"})
 	if err == nil {

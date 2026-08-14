@@ -174,6 +174,20 @@ type ArgoClient = kubernetes.Interface
 // existing internal/demo.MockClusterCredentialsProvider (or a one-off mock).
 type Vault = providers.ClusterCredentialsProvider
 
+// vault resolves the currently-active cluster-credentials provider at USE
+// time — nil when no resolver is wired, or when the resolver says no backend
+// is configured right now. Every credential read in this package goes through
+// here; nothing may capture a provider value at construction time. That boot
+// snapshot is exactly how a backend configured through the connections API
+// stayed invisible to the background write and the repair until a restart,
+// while the check path already read the live snapshot (R2-1).
+func (r *Reconciler) vault() Vault {
+	if r.deps.Vault == nil {
+		return nil
+	}
+	return r.deps.Vault()
+}
+
 // Deps holds the reconciler's external dependencies. Constructor-injected so
 // tests can substitute fakes (k8s.io/client-go/kubernetes/fake, gitprovider
 // mocks, audit no-ops). Using a struct (rather than positional args) means
@@ -191,9 +205,17 @@ type Deps struct {
 	// nil-checked by pollOnce in Story 8.1. See ArgoClient interface above.
 	ArgoClient ArgoClient
 
-	// Vault provides per-cluster credentials at reconcile time. Required at
-	// Start time; nil-checked by pollOnce in Story 8.1. See Vault interface.
-	Vault Vault
+	// Vault is a lazy accessor returning the currently-active
+	// cluster-credentials provider, or nil when no backend is configured
+	// right now. Matches the GitProvider idiom above — the provider is
+	// resolved at USE time, never captured at construction, so a secrets
+	// backend configured or swapped through the connections API is seen by
+	// the very next background write and repair with no restart (R2-1; the
+	// old value field froze the boot generation while the check path read
+	// the live snapshot). A nil accessor and an accessor returning nil both
+	// mean "no backend": pollOnce skips the pass, and
+	// ConnectionCredentialSpecForWrite refuses instead of writing.
+	Vault func() Vault
 
 	// AuditFn is called to emit audit events for each reconcile action
 	// (create / update / delete of an ArgoCD cluster Secret). Must be
@@ -571,7 +593,12 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		log.Warn("[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile")
 		return
 	}
-	if r.deps.Vault == nil {
+	// Resolved at pass time, not boot time: a backend configured through the
+	// connections API after startup is seen by the very next pass. This gate
+	// only decides whether the pass runs at all — every per-cluster write
+	// re-resolves inside ConnectionCredentialSpecForWrite, which refuses
+	// (fail closed) if the backend disappears mid-pass.
+	if r.vault() == nil {
 		log.Warn("[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile")
 		return
 	}

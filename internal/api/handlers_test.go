@@ -891,6 +891,15 @@ func newIsolatedTestServer(t *testing.T) *Server {
 	return withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient))
 }
 
+// staticVault wraps a fixed provider value as a clusterreconciler.Deps.Vault
+// resolver. Test wiring only — for reconcilers whose backend genuinely never
+// changes mid-test. Production wiring resolves the live provider on every
+// call (serve.go wires Server.ClusterCredentialsProvider); freezing a boot
+// value there is the R2-1 bug.
+func staticVault(v providers.ClusterCredentialsProvider) func() providers.ClusterCredentialsProvider {
+	return func() providers.ClusterCredentialsProvider { return v }
+}
+
 // installCredProvider publishes cp as the server's cluster-credentials
 // provider (with optional typed configs) through the same race-safe
 // publication point production uses — with the ArgoCD-read route DISABLED

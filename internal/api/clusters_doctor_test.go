@@ -840,7 +840,7 @@ func newConnectivityDoctorServer(t *testing.T, f doctorConnectivityFixture) *Ser
 	srv.SetClusterReconciler(clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider: func() gitprovider.GitProvider { return nil },
 		ArgoClient:  k8sClient,
-		Vault:       nil,
+		Vault:       staticVault(nil),
 		AuditFn:     func(_ audit.Entry) {},
 	}))
 	srv.SetArgoSecretManager(argosecrets.NewManager(k8sClient, "argocd"))

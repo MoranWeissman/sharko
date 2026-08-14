@@ -78,7 +78,7 @@ func TestHandleResyncCluster_200_CorrectsDriftRegardlessOfSelfHeal(t *testing.T)
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        reconcileFakeVault{},
+		Vault:        staticVault(reconcileFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour, // never auto-fires
@@ -139,7 +139,7 @@ func TestHandleResyncCluster_404_UnknownCluster(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider: func() gitprovider.GitProvider { return gp },
 		ArgoClient:  fake.NewSimpleClientset(),
-		Vault:       reconcileFakeVault{},
+		Vault:       staticVault(reconcileFakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 	})
 	srv.SetClusterReconciler(recon)
@@ -162,7 +162,7 @@ func TestHandleResyncCluster_403_ViewerRole(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider: func() gitprovider.GitProvider { return gp },
 		ArgoClient:  fake.NewSimpleClientset(),
-		Vault:       reconcileFakeVault{},
+		Vault:       staticVault(reconcileFakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 	})
 	srv.SetClusterReconciler(recon)

@@ -178,7 +178,7 @@ func TestTriggerCheck_RunsTheCheckAndNotTheWritePass(t *testing.T) {
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return &fakeGit{files: map[string][]byte{}} },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        checkVault(),
+		Vault:        staticVault(checkVault()),
 		AuditFn:      func(audit.Entry) {},
 		TickInterval: time.Hour, // the ticker must not fire during this test
 	})
@@ -229,7 +229,7 @@ func TestScheduledTick_StillRunsTheWritePass(t *testing.T) {
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return &fakeGit{files: map[string][]byte{}} },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        checkVault(),
+		Vault:        staticVault(checkVault()),
 		AuditFn:      func(audit.Entry) {},
 		TickInterval: 20 * time.Millisecond,
 	})

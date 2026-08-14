@@ -283,8 +283,11 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 			CMStore:     cmstore.NewStore(demoK8s, "sharko", "sharko-demo-cluster-reconciler"),
 			GitProvider: func() gitprovider.GitProvider { return mockGit },
 			ArgoClient:  demoK8s,
-			Vault:       credProvider,
-			AuditFn:     func(audit.Entry) {},
+			// Deps.Vault is a use-time resolver (R2-1). The demo estate's
+			// provider never changes for the process lifetime, so a fixed
+			// closure is the honest wiring here.
+			Vault:   func() providers.ClusterCredentialsProvider { return credProvider },
+			AuditFn: func(audit.Entry) {},
 		})
 		srv.SetClusterReconciler(clusterRecon)
 

@@ -207,6 +207,13 @@ func envelopedManagedClusters(clusters ...string) []byte {
 	return []byte(b.String())
 }
 
+// staticVault wraps a fixed provider value as a Deps.Vault resolver. Test
+// wiring only — for reconcilers whose backend genuinely never changes
+// mid-test. Production wiring resolves the live provider on every call
+// (serve.go wires api.Server.ClusterCredentialsProvider); freezing a boot
+// value there is the R2-1 bug.
+func staticVault(v Vault) func() Vault { return func() Vault { return v } }
+
 // newReconcilerForTest builds a Reconciler wired against the supplied
 // fakes. TickInterval is set high (1h) so the goroutine never auto-fires
 // during a synchronous pollOnce assertion — tests drive pollOnce
@@ -230,7 +237,7 @@ func newReconcilerForTest(t *testing.T, gp gitprovider.GitProvider, k8sClient *f
 	return New(Deps{
 		GitProvider:  gitFn,
 		ArgoClient:   k8sClient,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      audits.Add,
 		TickInterval: 0, // default; we never Start the loop in these tests
 	})
@@ -767,7 +774,7 @@ func TestPollOnce_EKSClusterKeepsExecShape(t *testing.T) {
 			return &fakeGit{files: map[string][]byte{DefaultManagedClustersPath: body}}
 		},
 		ArgoClient:     k8sClient,
-		Vault:          vault,
+		Vault:          staticVault(vault),
 		AuditFn:        audits.Add,
 		DefaultRoleARN: "arn:aws:iam::123456789012:role/EKSReadRole",
 	})

@@ -308,7 +308,7 @@ func TestHandleGetCluster_LastReconcile_ProjectedOntoReadModel(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        reconcileFakeVault{},
+		Vault:        staticVault(reconcileFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		TickInterval: time.Hour, // never auto-fires; the test drives it via Trigger
 	})
@@ -373,7 +373,7 @@ func TestHandleGetCluster_ManagedSecretFields_ProjectedOntoReadModel(t *testing.
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        reconcileFakeVault{},
+		Vault:        staticVault(reconcileFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		TickInterval: time.Hour, // never auto-fires; the test drives it via Trigger
 	})
