@@ -9,7 +9,7 @@
 # which mirrors the Sharko image-cache probe pattern.
 
 # Stage 1: build the binary against the pinned Go toolchain.
-FROM golang:1.25.13-alpine AS builder
+FROM golang:1.26.6-alpine AS builder
 WORKDIR /src
 
 # Cache go.mod/go.sum download layer separately from source so source-only
