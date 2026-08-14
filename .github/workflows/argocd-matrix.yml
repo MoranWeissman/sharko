@@ -127,7 +127,7 @@ jobs:
       matrix:
         argocd_version: ${{ fromJSON(needs.resolve-versions.outputs.versions) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -195,7 +195,7 @@ jobs:
       pull-requests: write   # open the PR
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # fetch-depth: 0 so the bot branch pushes cleanly — same
           # rationale as catalog-scan.yml.

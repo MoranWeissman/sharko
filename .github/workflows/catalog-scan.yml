@@ -68,7 +68,7 @@ jobs:
       has_changeset: ${{ steps.check.outputs.has_changeset }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -121,7 +121,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # fetch-depth: 0 so `git ls-remote` sees remote branches and
           # the new branch can be pushed cleanly. Shallow clones miss
