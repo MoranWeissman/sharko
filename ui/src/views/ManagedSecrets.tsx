@@ -1156,9 +1156,13 @@ function EngineStat({
         </div>
       ) : info?.wired ? (
         <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
-          <span>
-            Sharko last ran a check <TimeChip iso={info.last_run} />.
-          </span>
+          {info.last_run ? (
+            <span>
+              Sharko last ran a check <TimeChip iso={info.last_run} />.
+            </span>
+          ) : (
+            <span>Not run yet</span>
+          )}
           {cadence && <InfoHint text={cadence} label={`How often does Sharko check ${label.toLowerCase()}?`} />}
         </div>
       ) : (

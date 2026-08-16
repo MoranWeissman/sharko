@@ -1428,6 +1428,44 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getAllByText('Not running on this server.')).toHaveLength(2))
   })
 
+  // W3-6b (product owner's exact contract): a wired engine that has never
+  // completed a run says "Not run yet" — never the old em-dash sentence
+  // ("Sharko last ran a check —."), never a fabricated time.
+  it('says "Not run yet" for a wired engine with no completed run', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [],
+      addon_values_secrets: [],
+      engines: {
+        cluster_connection: { wired: true, enabled: true, interval_seconds: 30 },
+        addon_values: { wired: true, enabled: true, interval_seconds: 300 },
+      },
+      addon_values_secret_source: 'secrets store',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getAllByText('Not run yet')).toHaveLength(2))
+    expect(screen.queryByText(/Sharko last ran a check/)).not.toBeInTheDocument()
+  })
+
+  // W3-6b — the flip side of the same contract: once a run has completed,
+  // the strip shows the real sentence with the real time, never "Not run
+  // yet".
+  it('shows "Sharko last ran a check" once a run has completed, not "Not run yet"', async () => {
+    mockGetManagedSecrets.mockResolvedValue({
+      cluster_connection_secrets: [],
+      addon_values_secrets: [],
+      engines: {
+        cluster_connection: { wired: true, enabled: true, interval_seconds: 30, last_run: '2026-08-05T00:00:00Z' },
+        addon_values: { wired: true, enabled: true, interval_seconds: 300, last_run: '2026-08-04T23:55:00Z' },
+      },
+      addon_values_secret_source: 'secrets store',
+    })
+    renderPage()
+
+    await waitFor(() => expect(screen.getAllByText(/Sharko last ran a check/)).toHaveLength(2))
+    expect(screen.queryByText('Not run yet')).not.toBeInTheDocument()
+  })
+
   // I3 (gitops-proud P4-I, D2) — the values engine's off switch. `enabled`
   // false is a DIFFERENT state from `wired` false ("not running on this
   // server at all") — an admin turned a real, running engine off, and the
