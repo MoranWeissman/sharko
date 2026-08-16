@@ -74,6 +74,10 @@ Both of those are deliberate, existing GitOps behavior — not something bolted 
 
 ## Related pages
 
+- [The Engine and Secret Sync](../architecture/engine-and-secret-sync.md) — the complete data flow behind these pages, boundary by boundary, for platform and security engineers.
+- [Permissions and Blast Radius](../architecture/permissions-and-blast-radius.md) — what Sharko's identities can reach, and how to grant least privilege.
+- [Threat Model](../architecture/threat-model.md) — what an attacker gets at each foothold, stated plainly.
+- [Secret Sync Debugging](../operator/secret-sync-debugging.md) — every failure path, diagnosed without ever seeing a value.
 - [Secrets Provider](secrets-provider.md) — configuring where cluster credentials and addon secret values come from.
 - [GitOps Drift Detection and Self-Heal](drift-and-sync.md) — the cluster-connection engine's own drift and self-heal story (the addon values engine follows the same reconcile-only-what-it-owns rule, described above).
 - [Status Vocabulary](status-vocabulary.md) — what each status color and name means across the rest of Sharko's UI.

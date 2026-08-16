@@ -82,3 +82,9 @@ Addon secret values (if any) are fetched from the addon-secret-values provider
 
 The first two jobs are the cluster-credentials provider's. The last job — deploying addon secret values — is the separate addon-secret backend's, which is why "argocd" can't do it.
 
+## Related pages
+
+- [The Engine and Secret Sync](../architecture/engine-and-secret-sync.md) — the complete path an addon-secret value takes from backend to cluster, boundary by boundary.
+- [Permissions and Blast Radius](../architecture/permissions-and-blast-radius.md) — least-privilege examples for the AWS Secrets Manager and Kubernetes backends.
+- [Secret Sync Debugging](../operator/secret-sync-debugging.md) — diagnosing backend and boundary refusals safely.
+

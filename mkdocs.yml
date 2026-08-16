@@ -105,6 +105,7 @@ nav:
     - 'P0 Runbook — Reconciler Crash Loop': operator/reconciler-crash-loop.md
     - 'P0 Runbook — Secret Push Silently Failed': operator/secret-push-silently-failed.md
     - 'P0 Runbook — Secrets Provider Unreachable': operator/secrets-provider-unreachable.md
+    - 'Secret Sync Debugging — Safe Runbook': operator/secret-sync-debugging.md
     - 'P1 Runbook — Addon Application Stuck Degraded': operator/addon-application-stuck-degraded.md
     - 'P1 Runbook — Adopt: Cluster Entry Write Failed': operator/adopt-cluster-entry-write-failed.md
     - 'P1 Runbook — Adopt: Managed-By Label Read Failed': operator/adopt-managed-by-label-read-failed.md
@@ -139,6 +140,9 @@ nav:
     - 'Full API Reference (OpenAPI)': api/reference.md
   - Architecture:
     - Overview: architecture/overview.md
+    - 'The Engine and Secret Sync': architecture/engine-and-secret-sync.md
+    - 'Permissions and Blast Radius': architecture/permissions-and-blast-radius.md
+    - 'Threat Model': architecture/threat-model.md
     - Repository Structure: architecture/repo-structure.md
   - Developer Guide:
     - Overview: developer-guide.md
@@ -163,7 +167,11 @@ nav:
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight:

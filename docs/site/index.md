@@ -71,6 +71,15 @@ And if you ever want to stop using Sharko, you can. Remove it and every addon ke
 - **API keys** — long-lived tokens for non-interactive consumers
 - **No lock-in** — remove Sharko and every addon keeps running and syncing from Git
 
+## Security — how it works, stated plainly
+
+For platform and security engineers assessing Sharko before running it:
+
+- [The Engine and Secret Sync](architecture/engine-and-secret-sync.md) — the full architecture and the complete path a secret value takes, boundary by boundary
+- [Permissions and Blast Radius](architecture/permissions-and-blast-radius.md) — every permission Sharko holds, with least-privilege examples
+- [Threat Model](architecture/threat-model.md) — what an attacker gets at each foothold, and the residual risks
+- [Secret Sync Debugging](operator/secret-sync-debugging.md) — diagnosing every failure without ever printing a value
+
 ## Try the Demo
 
 No cluster required — mock backends simulate ArgoCD, Git, and secrets providers:

@@ -277,6 +277,8 @@ The full documentation site is at **https://sharko.readthedocs.io/**:
 | [Operator Manual](docs/site/operator/installation.md) | Install, configure, and run Sharko in production |
 | [API Reference](docs/site/api/overview.md) | Full API reference: endpoints, request/response shapes, and the OpenAPI spec |
 | [Architecture](docs/site/architecture/overview.md) | Server-first architecture, orchestrator pattern, provider interfaces |
+| [The Engine and Secret Sync](docs/site/architecture/engine-and-secret-sync.md) | How the engine chart and addon-secret delivery work — the complete data flow, boundary by boundary |
+| [Permissions and Blast Radius](docs/site/architecture/permissions-and-blast-radius.md) | Every permission Sharko holds, with least-privilege examples |
 | [Developer Guide](docs/site/developer-guide.md) | Project structure, coding patterns, testing, adding new features |
 
 The legacy `docs/api-contract.md`, `docs/architecture.md`, `docs/user-guide.md`, and `docs/developer-guide.md` files remain in the repo as raw reference only — the docs site above is the maintained version.
@@ -292,7 +294,7 @@ Sharko is an open project that follows CNCF-style governance and community conve
 | [GOVERNANCE.md](GOVERNANCE.md) | Project governance, decision-making, and the BDFL → steering-committee transition plan |
 | [MAINTAINERS.md](MAINTAINERS.md) | Current maintainers and how to become one |
 | [SECURITY.md](SECURITY.md) | Responsible security disclosure process |
-| [Threat Model](docs/design/2026-08-08-threat-model-v4.md) | The v4 threat model: how a secret value moves through Sharko, the checks that guard it, what permissions Sharko holds, and what's honestly not built yet |
+| [Threat Model](docs/site/architecture/threat-model.md) | The threat model as shipped: trust boundaries, what an attacker gets at each foothold, and the residual risks stated plainly |
 | [ADOPTERS.md](ADOPTERS.md) | Organizations using Sharko — add yours! |
 
 GitHub Discussions is not turned on for this repo yet, so for now, project Q&A, design discussion, bug reports, and feature requests all go through the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose). For security issues, follow [SECURITY.md](SECURITY.md) — please do not file security reports as public issues.
