@@ -62,9 +62,15 @@ Now the failure paths, one by one.
 
 *(Signals verified live 2026-08-16 — the playground's own log shows this path — and against the captured closure proofs, 2026-08-14, which additionally prove a backend fix is picked up immediately with no restart.)*
 
-**What you see:** the row shows an error with a fixed sentence — *"Sharko couldn't fetch a secret's value from the secrets store. Click Refresh to try again."* — or, for cluster credentials, *"Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed."* The log carries provider `WARN/ERROR` lines naming only the path/cluster and the failing step.
+**What you see:** for an addon secret's value, the row shows an error with a fixed sentence — *"Sharko couldn't fetch a secret's value from the secrets store. Click Refresh to try again."* For a cluster's own sign-in details, read during a **repair attempt** (a write), the fixed sentence is *"Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed."*
 
-**What metadata you may inspect:** the connection's configured backend type and namespace/prefix/region on the Settings page; the log's `step=` field.
+On the **connection page**, a plain check (not a repair) that can't read the credentials source shows a different fixed sentence — *"Sharko could not read this cluster's configured credentials source from the secrets backend, so it could not work out what the connection should look like. Check the secrets backend connection and try again."* — and the Repair button is withdrawn until a check succeeds. This is what the connection page shows immediately: it runs this check the moment you open the connection panel, and again every time you click **Check again**.
+
+That same check also updates this cluster's row on the fleet list right away — the connection page and the fleet list share one record, so a check you just ran is never stale there. For a cluster nobody has opened a connection page for, a background pass re-checks every managed cluster on its own schedule instead: `SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL` (default 15 minutes). That background pass is what keeps the fleet list's credential-drift badge current for clusters you haven't looked at yourself.
+
+**What the log carries:** the check itself only logs a `WARN` line naming the cluster — `[connection-comparison] could not read this cluster's configured credentials source`. It does not carry a `step=` field. `step=` only shows up in the log line from a **repair attempt** (a write — e.g. `step=sts`, `step=mint-eks-token`), never from a plain check.
+
+**What metadata you may inspect:** the connection's configured backend type and namespace/prefix/region on the Settings page. If you're chasing a failed *repair* rather than a check, the log's `step=` field on that attempt narrows it further — but that field is repair-only.
 
 **Likely boundary:** the backend identity — the IRSA role's IAM policy, the Kubernetes RBAC Role for the backend namespace, or a backend connection pointed at the wrong namespace/prefix/region.
 
@@ -96,9 +102,9 @@ Now the failure paths, one by one.
 
 ## 7. Destination ownership conflict (foreign Secret)
 
-*(Refusal sentences and never-write behavior pinned by code and tests — `internal/remoteclient/secrets.go`, `internal/secrets/ownership_gate_test.go`; the live break-and-diagnose exercise is scheduled separately in the closure phase. The state gauge and foreign-status plumbing verified live against the captured closure proofs, 2026-08-14.)*
+*(Refusal sentences and never-write behavior pinned by code and tests — `internal/remoteclient/secrets.go`, `internal/secrets/ownership_gate_test.go`. The live break-and-diagnose exercise ran 2026-08-16, in the closure round: a second reviewer diagnosed a real foreign Secret live, and the refusal sentence was verified through the real Sync door. The state gauge and foreign-status plumbing were also verified live against the captured closure proofs, 2026-08-14.)*
 
-**What you see:** the row shows status `foreign` with **no error** — a boundary, not a failure. A Sync attempt through the API answers with the fixed sentence *"Someone else created this one — Sharko will not touch it."* Nothing was written, on any trigger.
+**What you see:** the row's own **Refresh** answers right away with outcome `foreign` — **no error**, because this is a boundary, not a failure. That answer updates this row's state immediately, everywhere it's shown, including the fleet-wide Addon secrets table. A row nobody has clicked Refresh on only picks up `foreign` once the addon-values engine's own scheduled pass reaches it — its configured interval, `SHARKO_SECRET_RECONCILE_INTERVAL`, default five minutes. Either way, a Sync attempt through the API answers with the fixed sentence *"Someone else created this one — Sharko will not touch it."* Nothing was written, on any trigger, and no later pass "fixes" this by itself — an ownership refusal always needs a human decision (see Safe fix below).
 
 **What metadata you may inspect** (metadata only — never the data):
 
