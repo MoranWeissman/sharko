@@ -8,6 +8,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 )
 
 // handleTriggerReconcile godoc
@@ -109,16 +110,37 @@ func (s *Server) handleCheckSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking every addon-values secret — nothing is written"})
 }
 
+// ReconcileStatusResponse is the public shape of GET /secrets/status. It maps
+// internal/secrets.ReconcileStats field-for-field, except LastRun: the
+// internal struct always carries a time.Time (Go's zero value —
+// "0001-01-01T00:00:00Z" — before any run has completed), but that zero time
+// must never reach a caller. LastRun here is a plain RFC3339 string, omitted
+// entirely when no reconcile run has completed yet.
+type ReconcileStatusResponse struct {
+	Checked  int    `json:"checked"`
+	Created  int    `json:"created"`
+	Updated  int    `json:"updated"`
+	Deleted  int    `json:"deleted"`
+	Skipped  int    `json:"skipped"`
+	Errors   int    `json:"errors"`
+	Duration string `json:"duration"`
+	// LastRun is RFC3339, omitted (not null, not the Go zero time) when no
+	// reconcile run has completed yet.
+	LastRun string `json:"last_run,omitempty"`
+}
+
 // handleReconcileStatus godoc
 //
 // @Summary Get secret reconciliation status
 // @Description Returns statistics from the most recent secret reconciliation run,
 // @Description including counts of checked, created, updated, deleted, and skipped secrets,
 // @Description error count, duration, and the timestamp of the last run.
+// @Description last_run is omitted entirely when no reconcile run has completed yet — never
+// @Description Go's zero time, never a fabricated timestamp.
 // @Tags secrets
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{} "Reconciliation stats"
+// @Success 200 {object} ReconcileStatusResponse "Reconciliation stats"
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Failure 503 {object} map[string]string "Secrets reconciler not configured"
 // @Router /secrets/status [get]
@@ -127,6 +149,22 @@ func (s *Server) handleReconcileStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
 		return
 	}
-	stats := s.secretReconciler.GetStats()
-	writeJSON(w, http.StatusOK, stats)
+	stats, ok := s.secretReconciler.GetStats().(secrets.ReconcileStats)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "secrets reconciler returned an unexpected stats type")
+		return
+	}
+	resp := ReconcileStatusResponse{
+		Checked:  stats.Checked,
+		Created:  stats.Created,
+		Updated:  stats.Updated,
+		Deleted:  stats.Deleted,
+		Skipped:  stats.Skipped,
+		Errors:   stats.Errors,
+		Duration: stats.Duration,
+	}
+	if !stats.LastRun.IsZero() {
+		resp.LastRun = stats.LastRun.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
 
@@ -713,13 +715,22 @@ func TestHandleReconcileStatus_NotConfigured(t *testing.T) {
 }
 
 func TestHandleReconcileStatus_ReturnsStats(t *testing.T) {
-	type stats struct {
-		Checked int `json:"checked"`
-		Updated int `json:"updated"`
-	}
-
+	// W3-6b: real production shape is secrets.ReconcileStats (see the
+	// SecretReconciler.GetStats doc comment) — a completed run with a real
+	// LastRun timestamp. last_run must survive as an RFC3339 string, and
+	// every outcome count must survive byte-compatible.
+	lastRun := time.Date(2026, 8, 16, 10, 30, 0, 0, time.UTC)
 	srv := newTestServer()
-	rec := &fakeReconciler{stats: stats{Checked: 5, Updated: 2}}
+	rec := &fakeReconciler{stats: secrets.ReconcileStats{
+		Checked:  5,
+		Created:  1,
+		Updated:  2,
+		Deleted:  0,
+		Skipped:  1,
+		Errors:   0,
+		Duration: "1.2s",
+		LastRun:  lastRun,
+	}}
 	srv.SetSecretReconciler(rec)
 	router := NewRouter(srv, nil)
 
@@ -739,8 +750,54 @@ func TestHandleReconcileStatus_ReturnsStats(t *testing.T) {
 	if body["checked"] != float64(5) {
 		t.Errorf("expected checked=5, got %v", body["checked"])
 	}
+	if body["created"] != float64(1) {
+		t.Errorf("expected created=1, got %v", body["created"])
+	}
 	if body["updated"] != float64(2) {
 		t.Errorf("expected updated=2, got %v", body["updated"])
+	}
+	if body["skipped"] != float64(1) {
+		t.Errorf("expected skipped=1, got %v", body["skipped"])
+	}
+	if body["duration"] != "1.2s" {
+		t.Errorf("expected duration=1.2s, got %v", body["duration"])
+	}
+	wantLastRun := lastRun.UTC().Format(time.RFC3339)
+	if body["last_run"] != wantLastRun {
+		t.Errorf("expected last_run=%s, got %v", wantLastRun, body["last_run"])
+	}
+}
+
+// TestHandleReconcileStatus_NeverRun is the contract the product owner ruled
+// on (W3-6b): before any reconcile run has completed, the public boundary
+// must NEVER show Go's zero time ("0001-01-01T00:00:00Z") — last_run must be
+// absent (or null) instead. secrets.ReconcileStats{} is the zero value the
+// real Reconciler starts with before its first pass completes.
+func TestHandleReconcileStatus_NeverRun(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{stats: secrets.ReconcileStats{}}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	raw := w.Body.String()
+	if strings.Contains(raw, "0001-01-01") {
+		t.Fatalf("response body contains Go's zero time, must never reach the public boundary: %s", raw)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if v, present := body["last_run"]; present && v != nil {
+		t.Errorf("expected last_run to be absent or null before any run has completed, got %v", v)
 	}
 }
 

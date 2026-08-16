@@ -7919,7 +7919,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns statistics from the most recent secret reconciliation run,\nincluding counts of checked, created, updated, deleted, and skipped secrets,\nerror count, duration, and the timestamp of the last run.",
+                "description": "Returns statistics from the most recent secret reconciliation run,\nincluding counts of checked, created, updated, deleted, and skipped secrets,\nerror count, duration, and the timestamp of the last run.\nlast_run is omitted entirely when no reconcile run has completed yet — never\nGo's zero time, never a fabricated timestamp.",
                 "produces": [
                     "application/json"
                 ],
@@ -7931,8 +7931,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Reconciliation stats",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.ReconcileStatusResponse"
                         }
                     },
                     "401": {
@@ -12224,6 +12223,36 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.PRItem"
                     }
+                }
+            }
+        },
+        "internal_api.ReconcileStatusResponse": {
+            "type": "object",
+            "properties": {
+                "checked": {
+                    "type": "integer"
+                },
+                "created": {
+                    "type": "integer"
+                },
+                "deleted": {
+                    "type": "integer"
+                },
+                "duration": {
+                    "type": "string"
+                },
+                "errors": {
+                    "type": "integer"
+                },
+                "last_run": {
+                    "description": "LastRun is RFC3339, omitted (not null, not the Go zero time) when no\nreconcile run has completed yet.",
+                    "type": "string"
+                },
+                "skipped": {
+                    "type": "integer"
+                },
+                "updated": {
+                    "type": "integer"
                 }
             }
         },
