@@ -2267,37 +2267,49 @@ export function SecretDetailContent({
       {/* SSF-5 (Secret Sync finish pass) — Overview vs the read-only YAML
           view, same segmented-pill pattern the page's own Group by /
           List-Tiles controls already use. Resets to Overview whenever a
-          different row opens (the effect above). */}
-      <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
-        <button
-          type="button"
-          onClick={() => setDetailTabState('overview')}
-          aria-pressed={detailTab === 'overview'}
-          data-testid="detail-tab-overview"
-          className={`px-3 py-1.5 text-sm font-medium ${
-            detailTab === 'overview'
-              ? 'bg-[#1a3d5c] text-white'
-              : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-          }`}
-        >
-          Overview
-        </button>
-        <button
-          type="button"
-          onClick={() => setDetailTabState('yaml')}
-          aria-pressed={detailTab === 'yaml'}
-          data-testid="detail-tab-yaml"
-          className={`px-3 py-1.5 text-sm font-medium ${
-            detailTab === 'yaml'
-              ? 'bg-[#1a3d5c] text-white'
-              : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-          }`}
-        >
-          YAML
-        </button>
-      </div>
+          different row opens (the effect above).
+          Round 3 ruling (2026-08-16), Ruling 2: the pill is gone entirely
+          for a CONNECTION row — the redacted YAML already renders
+          unconditionally on Overview (below the connection check), so a
+          separate YAML tab that only pointed back there was redundant. A
+          VALUES row keeps the pill and its YAML tab exactly as before. */}
+      {row.kind !== 'connection' && (
+        <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
+          <button
+            type="button"
+            onClick={() => setDetailTabState('overview')}
+            aria-pressed={detailTab === 'overview'}
+            data-testid="detail-tab-overview"
+            className={`px-3 py-1.5 text-sm font-medium ${
+              detailTab === 'overview'
+                ? 'bg-[#1a3d5c] text-white'
+                : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+            }`}
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            onClick={() => setDetailTabState('yaml')}
+            aria-pressed={detailTab === 'yaml'}
+            data-testid="detail-tab-yaml"
+            className={`px-3 py-1.5 text-sm font-medium ${
+              detailTab === 'yaml'
+                ? 'bg-[#1a3d5c] text-white'
+                : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+            }`}
+          >
+            YAML
+          </button>
+        </div>
+      )}
 
-      {detailTab === 'yaml' ? (
+      {/* row.kind !== 'connection' guards the yaml branch too — a
+          connection row has no pill to set detailTab to 'yaml' with, but a
+          stale 'yaml' value can still be sitting in state from whichever
+          values row was open just before this one; this keeps a connection
+          row on its Overview content regardless. */}
+      {row.kind !== 'connection' && detailTab === 'yaml' ? (
         <RoleGuard
           roles={['admin', 'operator']}
           fallback={
@@ -2306,16 +2318,7 @@ export function SecretDetailContent({
             </p>
           }
         >
-          {/* S4-2: For connection rows, the redacted YAML moved to Overview
-              (below the comparison). The YAML tab now points there. For
-              addon-values rows, it stays here as before. */}
-          {row.kind === 'connection' ? (
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-              The redacted YAML for this connection is on the Overview tab, below the connection check.
-            </p>
-          ) : (
-            <RedactedYamlSection row={row} live={live} onRetry={retry} />
-          )}
+          <RedactedYamlSection row={row} live={live} onRetry={retry} />
         </RoleGuard>
       ) : (
         <>

@@ -1055,16 +1055,17 @@ describe('SSF-12 — the one health conclusion', () => {
     )
   })
 
-  // S4-2: Changed 2026-08-13: Connection rows' YAML tab shows redirect message.
-  // (a) Rule preserved: conclusion must be visible on both tabs.
-  it('shows freshness ("Checked …") in the conclusion on both tabs', async () => {
+  // Round 3 ruling (2026-08-16), Ruling 2: the Overview|YAML pill is gone
+  // entirely for a connection row — there's no tab to switch to anymore, so
+  // this just confirms the conclusion (and the redacted YAML, which now
+  // renders unconditionally) are both there on the one page a connection
+  // row has.
+  it('shows freshness ("Checked …") in the conclusion, with no YAML tab to switch to', async () => {
     renderPage()
     const panel = await openRow('connection-prod-eu')
     expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
-    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    // (b) For connection rows, wait for redirect message instead of detail-yaml-hidden
-    await waitFor(() => expect(within(panel).getByText(/redacted YAML for this connection is on the Overview tab/)).toBeInTheDocument())
-    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
   it('explains why Sync is unavailable for a foreign row instead of leaving an unexplained disabled button', async () => {
@@ -1090,25 +1091,32 @@ describe('SSF-12 — the one health conclusion', () => {
 
 describe('SSF-14 item 1 — Overview is the default tab', () => {
   // S4-2: Changed 2026-08-13: For connection rows, redacted YAML now appears
-  // on Overview (below comparison), not on YAML tab. (a) Rule preserved: must
-  // open on Overview by default, not YAML.
-  it('opens on Overview, not YAML, for a healthy row', async () => {
+  // on Overview (below comparison), not on YAML tab.
+  // Round 3 ruling (2026-08-16), Ruling 2: went further — a connection row
+  // has no Overview|YAML pill at all anymore, so "opens on Overview" is now
+  // just "there is only ever the one page", proven by the pill's absence
+  // plus the YAML content rendering unconditionally.
+  it('has no Overview|YAML pill for a healthy connection row — the YAML content is just there', async () => {
     renderPage()
     const panel = await openRow('connection-prod-eu') // in_sync -> match
-    // (a) PRESERVED: opens on Overview by default
-    expect(within(panel).getByTestId('detail-tab-overview')).toHaveAttribute('aria-pressed', 'true')
-    expect(within(panel).getByTestId('detail-tab-yaml')).toHaveAttribute('aria-pressed', 'false')
-    // (b) CHANGED: For connection rows, YAML IS on Overview now
-    expect(within(panel).getByTestId('detail-yaml-content')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
-  it('opens on Overview, not YAML, for a broken row too', async () => {
+  it('has no Overview|YAML pill for a broken connection row either', async () => {
     renderPage()
     const panel = await openRow('connection-drifted-eu') // out_of_sync -> differ
-    // (a) PRESERVED: opens on Overview by default
+    expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
+  })
+
+  it('a values row keeps the Overview|YAML pill exactly as before, opening on Overview', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog') // in_sync -> match
     expect(within(panel).getByTestId('detail-tab-overview')).toHaveAttribute('aria-pressed', 'true')
-    // (b) CHANGED: For connection rows, YAML IS on Overview now
-    expect(within(panel).getByTestId('detail-yaml-content')).toBeInTheDocument()
+    expect(within(panel).getByTestId('detail-tab-yaml')).toHaveAttribute('aria-pressed', 'false')
   })
 })
 

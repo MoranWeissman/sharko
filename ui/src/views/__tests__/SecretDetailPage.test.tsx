@@ -296,30 +296,24 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(screen.getByTestId('secret-detail-container')).toHaveClass('max-w-screen-2xl')
   })
 
-  // S4-2: Changed 2026-08-13: Connection rows' YAML tab now shows a redirect
-  // message instead of the redacted YAML (which moved to Overview below comparison).
-  // (a) Rule preserved: header buttons must be visible on both tabs.
-  it('Check now and Sync sit in the header, next to the title — visible on the YAML tab too, not only on Overview', async () => {
+  // Round 3 ruling (2026-08-16), Ruling 2: a connection row has no
+  // Overview|YAML pill anymore — the redacted YAML that used to sit behind
+  // the YAML tab's redirect message now just renders unconditionally, so
+  // this proves the header actions are reachable on the one page a
+  // connection row has, and that there's no pill to find.
+  it('Check now and Sync sit in the header, next to the title, with no Overview|YAML pill to switch', async () => {
     // staging-us is out_of_sync — SSF-12 hides Sync entirely once a row is
     // healthy, so a row that still needs repair is the one that proves
-    // both actions render in the header and survive a tab switch.
+    // both actions render in the header.
     renderApp(['/secret-sync/connection-staging-us'])
     const panel = await screen.findByTestId('secret-detail-panel')
 
-    // The title and the actions are both reachable before ever touching a
-    // tab — proving they render in the always-visible header, not inside
-    // the Overview-only body below the tab strip.
     expect(within(panel).getByRole('heading', { name: 'staging-us connection' })).toBeInTheDocument()
     expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
     expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
-
-    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    // S4-2: For connection rows, YAML tab shows redirect message, not detail-yaml-hidden
-    await waitFor(() => expect(within(panel).getByText(/redacted YAML for this connection is on the Overview tab/)).toBeInTheDocument())
-
-    // Still there on the YAML tab — the header doesn't belong to Overview.
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
   it('SSF-12: Sync is hidden entirely (not disabled) for a healthy row — only Check now stays', async () => {
@@ -329,17 +323,14 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
   })
 
-  // S4-2: Changed 2026-08-13: Same change as above - wait for redirect message.
-  // (a) Rule preserved: conclusion must be visible on both tabs.
-  it('the status/compared-with/last-checked row is visible on both tabs, not hidden behind Overview', async () => {
+  // Round 3 ruling (2026-08-16), Ruling 2: no pill, no tab switch needed —
+  // the conclusion and the redacted YAML are both just there.
+  it('the status/compared-with/last-checked row is visible, with the redacted YAML right below it — no tab to hide it behind', async () => {
     renderApp(['/secret-sync/connection-prod-eu'])
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
-
-    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    // S4-2: Wait for redirect message for connection rows
-    await waitFor(() => expect(within(panel).getByText(/redacted YAML for this connection is on the Overview tab/)).toBeInTheDocument())
-    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
   it('an orphaned row still shows only Delete in the header, no Check now / Sync', async () => {
