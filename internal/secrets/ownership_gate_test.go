@@ -114,7 +114,7 @@ func TestPeriodicPass_NeverWritesAForeignSecret(t *testing.T) {
 	if msg, hasErr := r.LastItemError("prod-cluster", "datadog"); hasErr {
 		t.Errorf("a foreign secret recorded an error: %q", msg)
 	}
-	if stats := r.GetStats().(ReconcileStats); stats.Errors != 0 || stats.Updated != 0 || stats.Created != 0 {
+	if stats := r.GetStats(); stats.Errors != 0 || stats.Updated != 0 || stats.Created != 0 {
 		t.Errorf("stats = %+v, want no writes and no errors", stats)
 	}
 }
@@ -320,7 +320,7 @@ func TestCheckAll_IsolatesOneUnreachableCluster(t *testing.T) {
 		t.Errorf("LastItemConsecutiveFailures = (%d, %v), want (1, true) — L10's carry-forward must count this failure", count, ok)
 	}
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Errors == 0 {
 		t.Error("GetStats().Errors = 0 after CheckAll failed on every item — CheckAll must publish a real run record, same as the periodic pass")
 	}

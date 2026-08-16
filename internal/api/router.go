@@ -52,6 +52,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/readcache"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/internal/settings"
 	"github.com/MoranWeissman/sharko/internal/verify"
@@ -173,7 +174,11 @@ func (s *Server) publishGitopsCfg(cfg orchestrator.GitOpsConfig) {
 // It is implemented by internal/secrets.Reconciler but defined here to avoid an import cycle.
 type SecretReconciler interface {
 	Trigger()
-	GetStats() interface{} // returns secrets.ReconcileStats but we keep the import-free boundary
+	// GetStats returns secrets.ReconcileStats directly — the compiler enforces
+	// this boundary now, so every SecretReconciler (the real one and the demo
+	// stand-in alike) must hand back the concrete type; there is no longer a
+	// type-assertion step on the caller's side that could silently fail.
+	GetStats() secrets.ReconcileStats
 	// LastRunTime, LastError, and Interval (System-page managed-secrets
 	// summary) are primitive-typed on purpose — same import-free-boundary
 	// reasoning as GetStats, but callers that only need these facts don't

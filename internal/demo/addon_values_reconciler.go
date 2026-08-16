@@ -24,6 +24,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 )
 
 // demoAddonValueKey identifies one addon-values secret row — mirrors
@@ -301,29 +302,22 @@ func newDemoAddonValuesReconciler(estate *GeneratedEstate, defs map[string]orche
 // one.
 func (r *demoAddonValuesReconciler) Trigger() {}
 
-// demoReconcileStats mirrors secrets.ReconcileStats' JSON shape closely
-// enough for GET /api/v1/secrets/status to render something sane in demo —
-// counted straight from the seeded items, never invented.
-type demoReconcileStats struct {
-	Checked  int       `json:"checked"`
-	Created  int       `json:"created"`
-	Updated  int       `json:"updated"`
-	Deleted  int       `json:"deleted"`
-	Skipped  int       `json:"skipped"`
-	Errors   int       `json:"errors"`
-	Duration string    `json:"duration"`
-	LastRun  time.Time `json:"last_run"`
-}
-
 // GetStats returns a snapshot built from the seeded items — an honest count
 // of what this demo reconciler currently knows, not a real reconcile
-// pass's counters (there has never been one in demo mode).
-func (r *demoAddonValuesReconciler) GetStats() interface{} {
+// pass's counters (there has never been one in demo mode). Returns the same
+// concrete secrets.ReconcileStats type the real reconciler returns (the
+// api.SecretReconciler boundary is compile-time enforced — W3-6b review):
+// LastRun flows through exactly as r.lastRun is set at construction, so a
+// zero r.lastRun (never set) reaches the API as a zero time.Time and the
+// response omits last_run, same as the real engine before its first run.
+func (r *demoAddonValuesReconciler) GetStats() secrets.ReconcileStats {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	stats := demoReconcileStats{Duration: "0s", LastRun: r.lastRun}
-	stats.Checked = len(r.items)
-	return stats
+	return secrets.ReconcileStats{
+		Checked:  len(r.items),
+		Duration: "0s",
+		LastRun:  r.lastRun,
+	}
 }
 
 // GetErrors is always empty in demo mode — nothing here has ever failed a

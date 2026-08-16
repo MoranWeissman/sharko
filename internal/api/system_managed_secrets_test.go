@@ -18,6 +18,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 )
 
 // erroringVault is a providers.ClusterCredentialsProvider whose
@@ -984,7 +985,7 @@ func TestHandleGetManagedSecrets_AddonValuesEngine_WiredReportsStats(t *testing.
 	srv := newTestServer()
 	router := NewRouter(srv, nil)
 
-	rec := &fakeReconciler{stats: map[string]int{}}
+	rec := &fakeReconciler{stats: secrets.ReconcileStats{}}
 	srv.SetSecretReconciler(rec)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
@@ -1020,7 +1021,7 @@ func TestHandleGetManagedSecrets_AddonValuesEngine_LastErrorNamesClusterAndTime(
 
 	at := time.Date(2026, 8, 5, 9, 30, 0, 0, time.UTC)
 	rec := &fakeReconciler{
-		stats:            map[string]int{},
+		stats:            secrets.ReconcileStats{},
 		lastError:        "Sharko couldn't connect to one of the clusters. Check that Sharko can reach that cluster, then click Refresh.",
 		lastErrorCluster: "prod-eu",
 		lastErrorAt:      at,
@@ -1055,7 +1056,7 @@ func TestHandleGetManagedSecrets_AddonValuesEngine_LastErrorNamesClusterAndTime(
 func TestHandleGetManagedSecrets_AddonValuesEngine_NoErrorLeavesClusterAndTimeEmpty(t *testing.T) {
 	srv := newTestServer()
 	router := NewRouter(srv, nil)
-	srv.SetSecretReconciler(&fakeReconciler{stats: map[string]int{}})
+	srv.SetSecretReconciler(&fakeReconciler{stats: secrets.ReconcileStats{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/managed-secrets", nil)
 	w := httptest.NewRecorder()

@@ -8,7 +8,6 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
-	"github.com/MoranWeissman/sharko/internal/secrets"
 )
 
 // handleTriggerReconcile godoc
@@ -149,11 +148,7 @@ func (s *Server) handleReconcileStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
 		return
 	}
-	stats, ok := s.secretReconciler.GetStats().(secrets.ReconcileStats)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "secrets reconciler returned an unexpected stats type")
-		return
-	}
+	stats := s.secretReconciler.GetStats()
 	resp := ReconcileStatusResponse{
 		Checked:  stats.Checked,
 		Created:  stats.Created,

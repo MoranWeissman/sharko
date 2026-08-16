@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/settings"
 )
 
@@ -340,7 +341,7 @@ func TestAddonValuesEngineInfo_ReflectsAddonValuesEngineEnabled(t *testing.T) {
 	// anything beyond the zero value (Wired gates every other field) — the
 	// fake's own stats/errors are irrelevant here, only Enabled is under
 	// test.
-	srv.SetSecretReconciler(&fakeReconciler{stats: map[string]int{}})
+	srv.SetSecretReconciler(&fakeReconciler{stats: secrets.ReconcileStats{}})
 	client := fake.NewSimpleClientset()
 	store := settings.NewStore(client, "sharko")
 	srv.SetSettingsStore(store)

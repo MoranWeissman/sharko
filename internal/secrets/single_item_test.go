@@ -65,7 +65,7 @@ func TestCheckOne_UnchangedAndOutOfSync(t *testing.T) {
 
 	// Seed the live secret via a real periodic pass first.
 	r.reconcile()
-	if stats := r.GetStats().(ReconcileStats); stats.Created != 1 {
+	if stats := r.GetStats(); stats.Created != 1 {
 		t.Fatalf("setup: expected Created=1, got %d", stats.Created)
 	}
 
@@ -177,7 +177,7 @@ func TestSyncOne_CreatesAndAudits(t *testing.T) {
 
 	// A periodic pass never ran — SyncOne must never touch the periodic
 	// pass's own aggregate stats.
-	if stats := r.GetStats().(ReconcileStats); stats.Created != 0 {
+	if stats := r.GetStats(); stats.Created != 0 {
 		t.Errorf("r.lastStats.Created = %d, want 0 — SyncOne must not mutate the periodic pass's stats", stats.Created)
 	}
 }

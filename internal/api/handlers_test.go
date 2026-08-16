@@ -96,7 +96,7 @@ func (f *handlerFakeGitProvider) DeleteBranch(_ context.Context, _ string) error
 
 type fakeReconciler struct {
 	triggered bool
-	stats     interface{}
+	stats     secrets.ReconcileStats
 	// itemChecked lets tests seed a per cluster+addon last-checked
 	// timestamp for LastItemChecked, keyed by [cluster, addon]. Nil/empty
 	// means "nothing known" — LastItemChecked returns ok=false, matching
@@ -171,7 +171,7 @@ func (r *fakeReconciler) Trigger() { r.triggered = true }
 
 func (r *fakeReconciler) IsEnabled(_ context.Context) bool { return !r.disabled }
 
-func (r *fakeReconciler) GetStats() interface{} { return r.stats }
+func (r *fakeReconciler) GetStats() secrets.ReconcileStats { return r.stats }
 
 func (r *fakeReconciler) LastRunTime() time.Time   { return time.Time{} }
 func (r *fakeReconciler) LastError() string        { return r.lastError }
