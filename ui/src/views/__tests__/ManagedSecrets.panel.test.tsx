@@ -1016,7 +1016,12 @@ describe('SSF-12 — the one health conclusion', () => {
     const panel = await openRow('connection-prod-eu') // in_sync -> match
     const conclusion = within(panel).getByTestId('detail-health-conclusion')
     expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('In sync')
-    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy matches Git. No action is needed.')
+    // Round 3 ruling (2026-08-16), Ruling 4: names both authorities — git
+    // for addon labels, the configured credentials source for connection
+    // details — instead of the old absolute "matches Git" claim.
+    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent(
+      'This connection matches what Sharko intends — git for addon labels, the configured credentials source for connection details. No action is needed.',
+    )
     expect(within(conclusion).queryByTestId('detail-repair-note')).not.toBeInTheDocument()
   })
 
@@ -1035,12 +1040,14 @@ describe('SSF-12 — the one health conclusion', () => {
     const panel = await openRow('connection-drifted-eu') // out_of_sync -> differ
     const conclusion = within(panel).getByTestId('detail-health-conclusion')
     expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
-    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match Git.')
+    // Round 3 ruling (2026-08-16), Ruling 4: names both authorities.
+    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('This connection does not match what Sharko intends.')
     // HL-1: the old sentence here ("Sync will update the cluster copy to
     // match Git.") was untrue — the action re-applies only Sharko's own
-    // addon label keys. The note now promises exactly that.
+    // addon label keys. The note now promises exactly that. Round 3
+    // (2026-08-16) renamed the action to "Sync addon labels".
     expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent(
-      "Re-apply addon labels puts git's addon labels back on this secret. Nothing else on it changes.",
+      "Sync addon labels puts git's addon labels back on this secret. Nothing else on it changes.",
     )
   })
 

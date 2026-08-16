@@ -1389,12 +1389,18 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
       // SSF-8 binding honesty rule, still true here: a values row's source
       // is NEVER called "Git" — git only ever holds a pointer for a values
       // row, the real source is row.sourceLabel (e.g. an AWS Secrets
-      // Manager path). A connection row's source really is git.
+      // Manager path). Round 3 ruling (2026-08-16), Ruling 4: a connection
+      // row's source is NOT "really git" either — git owns the addon
+      // labels, and the configured credentials source owns the connection
+      // details, so the sentence names both authorities instead of
+      // collapsing them into one.
       return row.kind === 'connection'
-        ? 'The cluster copy matches Git. No action is needed.'
+        ? 'This connection matches what Sharko intends — git for addon labels, the configured credentials source for connection details. No action is needed.'
         : `The cluster copy matches ${row.sourceLabel}. No action is needed.`
     case 'differ':
-      return row.kind === 'connection' ? 'The cluster copy does not match Git.' : `The cluster copy does not match ${row.sourceLabel}.`
+      return row.kind === 'connection'
+        ? 'This connection does not match what Sharko intends.'
+        : `The cluster copy does not match ${row.sourceLabel}.`
     case 'never_created':
       return row.kind === 'values'
         ? 'This secret was never created on the cluster — Sync creates it.'

@@ -942,7 +942,8 @@ describe('ManagedSecrets', () => {
     expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
     // (a) ONE conclusion preserved
     expect(within(panel).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
-    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match Git.')
+    // Round 3 ruling (2026-08-16), Ruling 4: names both authorities.
+    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('This connection does not match what Sharko intends.')
 
     // (b) Now checks getConnectionComparison, not getClusterComparison
     await waitFor(() => expect(mockGetConnectionComparison).toHaveBeenCalled())
