@@ -30,6 +30,20 @@ Tools like [Kargo](https://kargo.io/) manage **promotion** — moving a validate
 
 Sharko's own secret sync overlaps with this category, but narrower: it delivers **addon credentials specifically** — the values an addon in Sharko's catalog needs to run — by reading from your secrets store and pushing the value into the cluster itself, on a schedule. It does not manage arbitrary application secrets, and it was built as an option for teams that don't already run ESO, not as a replacement for it. If you already run ESO, you can leave Sharko's addon-secret delivery switched off and keep using ESO for that job — see [Secrets](secret-sync.md) for the on/off switch and exactly what Sharko's version does and doesn't do.
 
+The structural difference, stated plainly: ESO is a general-purpose **pull** controller that usually runs *inside each cluster* and syncs whatever `ExternalSecret` resources you give it. Sharko Secret Sync is a narrower, **hub-driven** delivery mechanism: the Sharko server pushes only the addon-secret definitions approved in your Git catalog, on its own schedule or when a person triggers it, through the boundary checks and the ownership gate described in [The Engine and Secret Sync](../architecture/engine-and-secret-sync.md). Nothing runs in the destination cluster.
+
+One rule if you run both: **Sharko and ESO must not co-manage the same destination Secret.** Sharko refuses to write any Secret it did not create (an ESO-owned Secret shows up as *foreign* and is left alone), so a name collision doesn't corrupt anything — but it does mean that delivery silently belongs to the other tool. Give each tool its own secret names.
+
+**Use Sharko / Use ESO — the short version:**
+
+| Your situation | Use |
+|---|---|
+| You already run ESO (or a vault agent, Sealed Secrets, …) and it works | **ESO** — keep it; switch Sharko Secret Sync off and use the rest of Sharko as normal |
+| You don't run a secret-delivery tool and only need addon credentials delivered | **Sharko Secret Sync** — no extra controller to install or operate |
+| You need arbitrary application secrets synced, templated, or transformed | **ESO** — that's its job; Sharko deliberately only delivers catalog-defined addon credentials |
+| You want no in-cluster secret controller on the spokes at all | **Sharko Secret Sync** — delivery is hub-driven; spokes hold only the resulting Secrets |
+| You need secrets even while the hub is down | **ESO** — Sharko's delivery pauses with the hub (existing Secrets stay in place; see [Threat Model](../architecture/threat-model.md)) |
+
 ### Cluster-fleet managers (for example, Sveltos, Rancher Fleet)
 
 Tools like [Sveltos](https://github.com/projectsveltos/sveltos) and [Rancher Fleet](https://fleet.rancher.io/) manage the fleet layer itself — registering clusters, distributing arbitrary manifests or Helm charts to groups of them, sometimes without requiring ArgoCD at all. They solve a broader problem than Sharko does: "get any workload onto any cluster," not "manage a curated addon catalog on top of ArgoCD." Sharko assumes ArgoCD is already your deployment engine and adds an addon-specific layer on top of it — a catalog, an upgrade advisor, a UI and API safe for people who didn't write the GitOps repo, and an audit trail. If you need general-purpose multi-cluster manifest distribution without ArgoCD in the picture, that's a different category of tool.
