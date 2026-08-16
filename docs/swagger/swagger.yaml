@@ -2909,6 +2909,27 @@ definitions:
           shows the first 7 characters on the row/panel and the full value on
           hover.
         type: string
+      credential_check:
+        description: |-
+          CredentialCheck (W3-3) is this connection's last read-only
+          credential-check outcome: "drifted", "clear", "not_compared" or
+          "check_failed". The check compares the connection against its
+          configured credentials source and never writes anything — drift here
+          never self-heals; repair is an admin's deliberate click on the
+          connection page. Empty when no check (background or manual) has run
+          for this cluster on this server instance.
+        type: string
+      credential_check_detail:
+        description: |-
+          CredentialCheckDetail is the fixed sentence for that outcome — the
+          drift notice, the comparison's own limited-scope sentence, or its
+          safe classified failure sentence. Never a value, a length, a hash, a
+          fragment or a field path; the field-level detail stays on the
+          connection page. Empty for "clear".
+        type: string
+      credential_checked_at:
+        description: CredentialCheckedAt is when that check ran, RFC3339.
+        type: string
       drift_source:
         description: |-
           DriftSource (P2-C6) names which side moved for an out_of_sync row:

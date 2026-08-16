@@ -1264,6 +1264,24 @@ var serveCmd = &cobra.Command{
 					"tick_interval", clusterreconciler.DefaultTickInterval,
 					"managed_clusters_path", repoPaths.ManagedClusters,
 				)
+
+				// W3-3: the slow background credential check. Runs the SAME
+				// read-only comparison the connection page's Check-again
+				// button drives, per managed cluster, on its own slow
+				// interval — deliberately NOT on the reconciler's 30-second
+				// tick, which must never read the credentials backend (see
+				// internal/clusterreconciler/connection_drift_notice.go).
+				// It detects only; repair stays an admin's click.
+				credCheckIntervalStr := getEnvDefault("SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL", "15m")
+				credCheckInterval, credCheckParseErr := time.ParseDuration(credCheckIntervalStr)
+				if credCheckParseErr != nil {
+					slog.Warn("invalid connection credential check interval, using 15m", "interval", credCheckIntervalStr)
+					credCheckInterval = api.DefaultConnectionCredentialCheckInterval
+				}
+				credCheckLoop := api.NewConnectionCredentialCheckLoop(srv, credCheckInterval)
+				credCheckLoop.Start(context.Background())
+				defer credCheckLoop.Stop()
+				slog.Info("connection credential check loop started", "interval", credCheckInterval)
 			} else {
 				if prCMStore == nil {
 					slog.Info("cluster reconciler skipped: no ConfigMap store (out-of-cluster or k8s client failure)")

@@ -158,6 +158,22 @@ type connectionSecretRow struct {
 	// (including every Sharko-managed, non-self-managed cluster, which has
 	// no fight concept). The UI shows a quiet row warning at 3 or more.
 	FightCount int `json:"fight_count,omitempty"`
+	// CredentialCheck (W3-3) is this connection's last read-only
+	// credential-check outcome: "drifted", "clear", "not_compared" or
+	// "check_failed". The check compares the connection against its
+	// configured credentials source and never writes anything — drift here
+	// never self-heals; repair is an admin's deliberate click on the
+	// connection page. Empty when no check (background or manual) has run
+	// for this cluster on this server instance.
+	CredentialCheck string `json:"credential_check,omitempty"`
+	// CredentialCheckDetail is the fixed sentence for that outcome — the
+	// drift notice, the comparison's own limited-scope sentence, or its
+	// safe classified failure sentence. Never a value, a length, a hash, a
+	// fragment or a field path; the field-level detail stays on the
+	// connection page. Empty for "clear".
+	CredentialCheckDetail string `json:"credential_check_detail,omitempty"`
+	// CredentialCheckedAt is when that check ran, RFC3339.
+	CredentialCheckedAt string `json:"credential_checked_at,omitempty"`
 }
 
 // addonValuesSecretRow is one row of addon_values_secrets — one row per
@@ -716,6 +732,15 @@ func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []model
 		}
 		row.SelfHeals = connectionSelfHeals(c, row.ComparedPath, v3SelfHealOn)
 		row.DriftSource = connectionDriftSource(row.State, row.ComparedRevision, row.AppliedRevision)
+
+		// W3-3: the last credential-check outcome, from the shared store
+		// the background loop and the manual check both write. An in-memory
+		// read; a cluster never checked simply has no fields.
+		if rec, ok := s.connCredChecks.get(c.Name); ok {
+			row.CredentialCheck = rec.Status
+			row.CredentialCheckDetail = rec.Detail
+			row.CredentialCheckedAt = rec.CheckedAt
+		}
 
 		if rep, ok := repairs.lastConnectionSecretRepair(c.Name); ok {
 			row.LastRepaired = rep.At.UTC().Format(time.RFC3339)

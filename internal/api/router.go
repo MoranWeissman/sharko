@@ -364,6 +364,13 @@ type Server struct {
 	// Audit log for external-change events (always available — initialised in NewServer).
 	auditLog *audit.Log
 
+	// connCredChecks holds each managed cluster's last read-only
+	// credential-check outcome (W3-3 — see connection_credential_check.go).
+	// Written by the background check loop AND by the manual
+	// connection-comparison endpoint, read by the fleet rows. Always
+	// available — initialised in NewServer; its getter is nil-safe anyway.
+	connCredChecks *connectionCredentialCheckStore
+
 	// readCache is the shared TTL cache backing the six hot fleet-wide
 	// reads (perf M1 — see internal/readcache's package doc): dashboard
 	// stats, clusters list, fleet status, catalog list, version matrix,
@@ -609,6 +616,10 @@ func NewServer(
 	dashboardSvc.SetCache(readCache)
 	observabilitySvc.SetCache(readCache)
 
+	// One audit log, shared by the request middleware and the
+	// credential-check store's transition-only entries (W3-3).
+	auditLog := audit.NewLog(1000)
+
 	return &Server{
 		connSvc:           connSvc,
 		clusterSvc:        clusterSvc,
@@ -621,7 +632,8 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
-		auditLog:          audit.NewLog(1000),
+		auditLog:          auditLog,
+		connCredChecks:    newConnectionCredentialCheckStore(auditLog.Add),
 		notificationStore: notifications.NewStore(100, nil),
 		changeLogStore:    changelog.NewStore(changelog.DefaultMaxPerCluster, nil),
 		opsStore:          operations.NewStore(),

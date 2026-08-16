@@ -13002,6 +13002,18 @@
                     "description": "ComparedRevision (P2-C1) is the full branch head commit SHA the pass\nthat produced this row's state read git at. Empty when the active\ngit provider cannot say — never a guessed or stale value. The UI\nshows the first 7 characters on the row/panel and the full value on\nhover.",
                     "type": "string"
                 },
+                "credential_check": {
+                    "description": "CredentialCheck (W3-3) is this connection's last read-only\ncredential-check outcome: \"drifted\", \"clear\", \"not_compared\" or\n\"check_failed\". The check compares the connection against its\nconfigured credentials source and never writes anything — drift here\nnever self-heals; repair is an admin's deliberate click on the\nconnection page. Empty when no check (background or manual) has run\nfor this cluster on this server instance.",
+                    "type": "string"
+                },
+                "credential_check_detail": {
+                    "description": "CredentialCheckDetail is the fixed sentence for that outcome — the\ndrift notice, the comparison's own limited-scope sentence, or its\nsafe classified failure sentence. Never a value, a length, a hash, a\nfragment or a field path; the field-level detail stays on the\nconnection page. Empty for \"clear\".",
+                    "type": "string"
+                },
+                "credential_checked_at": {
+                    "description": "CredentialCheckedAt is when that check ran, RFC3339.",
+                    "type": "string"
+                },
                 "drift_source": {
                     "description": "DriftSource (P2-C6) names which side moved for an out_of_sync row:\n\"git\" (the intent commit changed since the last successful write —\nComparedRevision != AppliedRevision) or \"cluster\" (the revisions\nagree but the live secret still differs — something changed it\noutside git). Empty when the row isn't out_of_sync, or when either\nrevision is unknown — never a guess.",
                     "type": "string"

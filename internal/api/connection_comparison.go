@@ -214,21 +214,64 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if s.clusterRecon == nil {
-		writeError(w, http.StatusServiceUnavailable, failNoReconciler)
-		return
-	}
-	if s.clusterRecon.GitProviderForRead() == nil {
-		writeError(w, http.StatusServiceUnavailable, failNoGitConnection)
-		return
-	}
-	client, ns, ok := s.k8sClientAndNamespace()
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, failNoHubClient)
+	view, refusal := s.compareClusterConnection(r.Context(), cluster)
+	if refusal != nil {
+		writeError(w, refusal.httpStatus, refusal.sentence)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), connectionComparisonTimeout)
+	// The human check and the background loop (connection_credential_check.go)
+	// feed the SAME per-cluster store, so the fleet page never lags a check a
+	// person just ran. This is a store update, not a write to any cluster.
+	s.connCredChecks.record(cluster, view)
+
+	s.auditSecretResourceRead(r, fmt.Sprintf("cluster:%s", cluster),
+		"compared the cluster connection with what Sharko intends", auditResultFor(connectioncompare.Status(view.Status)))
+	writeJSON(w, http.StatusOK, view)
+}
+
+// connectionComparisonRefusal is a whole-check refusal: the comparison could
+// not even start (a missing server-side dependency) or the cluster is not in
+// the git-managed list. The sentence is always one of the fixed literals at
+// the top of this file — never provider or Kubernetes error text.
+type connectionComparisonRefusal struct {
+	httpStatus int
+	sentence   string
+	// notManaged marks the "no entry in git" refusal (a 404 for the
+	// endpoint; a silent skip for the background loop — a cluster that
+	// left the list has no row to annotate).
+	notManaged bool
+}
+
+// compareClusterConnection is the read-only comparison core for ONE cluster.
+//
+// TWO CALLERS, ONE ANSWER. The GET /clusters/{name}/connection-comparison
+// handler above and the background credential-check loop
+// (connection_credential_check.go) both call this exact method, so a button
+// check and a background check can never disagree about a cluster. Everything
+// HTTP-specific (the authz gate, status codes, the per-request audit entry)
+// stays in the handler; everything cadence-specific stays in the loop.
+//
+// READ-ONLY, INHERITED BY BOTH CALLERS. Every call this makes is a read (one
+// git file read at a pinned commit, one Secret Get, at most one read-only
+// secrets-backend fetch). It never calls the write path's
+// clusterreconciler.ConnectionCredentialSpecForWrite — that builder can mint
+// an EKS sign-in token; the read here goes through
+// StoredFactsIndependentOfArgoCDSecret, which cannot (see
+// expectedConnectionSpec below).
+func (s *Server) compareClusterConnection(parent context.Context, cluster string) (connectionComparisonView, *connectionComparisonRefusal) {
+	if s.clusterRecon == nil {
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusServiceUnavailable, sentence: failNoReconciler}
+	}
+	if s.clusterRecon.GitProviderForRead() == nil {
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusServiceUnavailable, sentence: failNoGitConnection}
+	}
+	client, ns, ok := s.k8sClientAndNamespace()
+	if !ok {
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusServiceUnavailable, sentence: failNoHubClient}
+	}
+
+	ctx, cancel := context.WithTimeout(parent, connectionComparisonTimeout)
 	defer cancel()
 
 	branch := s.clusterRecon.Branch()
@@ -264,16 +307,14 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		// which is enough to find the matching provider log entry.
 		slog.Warn("[connection-comparison] could not read the desired state from git",
 			"cluster", cluster, "branch", branch, "path", desired.ComparedPath)
-		writeJSON(w, http.StatusOK, finishView(view, connectioncompare.Compare(connectioncompare.Request{
+		return finishView(view, connectioncompare.Compare(connectioncompare.Request{
 			ClusterName:  cluster,
 			Namespace:    ns,
 			CheckFailure: failGitRead,
-		})))
-		return
+		})), nil
 	}
 	if !desired.Found {
-		writeError(w, http.StatusNotFound, failNotManaged)
-		return
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusNotFound, sentence: failNotManaged, notManaged: true}
 	}
 	view.CredentialSourceType = desired.Entry.CredsSource
 
@@ -287,12 +328,11 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	case getErr != nil:
 		slog.Warn("[connection-comparison] could not read the live connection secret",
 			"cluster", cluster, "namespace", ns)
-		writeJSON(w, http.StatusOK, finishView(view, connectioncompare.Compare(connectioncompare.Request{
+		return finishView(view, connectioncompare.Compare(connectioncompare.Request{
 			ClusterName:  cluster,
 			Namespace:    ns,
 			CheckFailure: failLiveRead,
-		})))
-		return
+		})), nil
 	}
 
 	// ONE ANSWER, ASKED ONCE, USED TWICE.
@@ -369,9 +409,7 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		result.LimitReason = "Sharko cannot tell which commit your git branch is on, so it will not offer to rewrite this connection. Sharko only makes this change when it can name the exact commit it is matching."
 	}
 
-	s.auditSecretResourceRead(r, fmt.Sprintf("cluster:%s", cluster),
-		"compared the cluster connection with what Sharko intends", auditResultFor(result.Status))
-	writeJSON(w, http.StatusOK, finishView(view, result))
+	return finishView(view, result), nil
 }
 
 // liveManagedBy reads the ownership label off the live Secret, nil-safe.
