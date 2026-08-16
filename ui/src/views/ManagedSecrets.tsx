@@ -516,6 +516,17 @@ export interface UnifiedRow {
   selfHeals: boolean
   /** (P2-C6) Which side moved for an out-of-sync connection row: 'git' or 'cluster'. Connection rows only. */
   driftSource?: 'git' | 'cluster'
+  /**
+   * (W3-3) The background credential-drift loop's own read-only verdict for
+   * this connection — separate from `state` (the git-labels comparison).
+   * Connection rows only; absent on a server that predates the loop or
+   * before its first pass over this cluster.
+   */
+  credentialCheck?: 'drifted' | 'clear' | 'not_compared' | 'check_failed'
+  /** (W3-3) The fixed server sentence explaining credentialCheck. Connection rows only. */
+  credentialCheckDetail?: string
+  /** (W3-3) RFC3339 — when credentialCheck was last set. Connection rows only. */
+  credentialCheckedAt?: string
 }
 
 export function buildUnifiedRows(
@@ -545,6 +556,9 @@ export function buildUnifiedRows(
     appliedRevision: r.applied_revision,
     selfHeals: r.self_heals,
     driftSource: r.drift_source,
+    credentialCheck: r.credential_check,
+    credentialCheckDetail: r.credential_check_detail,
+    credentialCheckedAt: r.credential_checked_at,
   }))
   const values: UnifiedRow[] = addonRows.map((r) => ({
     kind: 'values',
@@ -1107,16 +1121,24 @@ function cadenceSentence(kind: 'connection' | 'values', intervalSeconds?: number
   return kind === 'connection' ? `Sharko re-checks it every ${human}, and right after each merge.` : `Sharko checks it every ${human} and repairs it automatically.`
 }
 
+/** W3-3 (AC9): the "Cluster connections" tile's secondary line — only rendered when count > 0, a zero-drift estate sees no change. */
+function credentialDriftCountSentence(count: number): string {
+  return `${count} with credential drift`
+}
+
 function EngineStat({
   label,
   kind,
   info,
   onErrorClick,
+  driftedCount,
 }: {
   label: string
   kind: 'connection' | 'values'
   info?: ManagedSecretsEngineInfo
   onErrorClick?: (cluster: string) => void
+  /** W3-3 (AC9): connection rows only — how many are credential_check === 'drifted'. */
+  driftedCount?: number
 }) {
   const cadence = cadenceSentence(kind, info?.interval_seconds)
   // gitops-proud P4-I (D2) — the values engine's off switch. `enabled` is
@@ -1164,6 +1186,14 @@ function EngineStat({
             <span className="text-red-700 dark:text-red-400">A check failed.</span>
           )}
           <InfoHint text={info.last_error} label="What was the error?" />
+        </div>
+      )}
+      {/* W3-3 (AC9): the background credential-drift loop's own count —
+          connection engine only, and only when there's something to say. A
+          zero-drift estate sees this exact tile unchanged. */}
+      {kind === 'connection' && (driftedCount ?? 0) > 0 && (
+        <div className="mt-1 text-sm text-amber-700 dark:text-amber-400" data-testid="engine-credential-drift-count">
+          {credentialDriftCountSentence(driftedCount!)}
         </div>
       )}
     </div>
@@ -2489,6 +2519,55 @@ export function SecretDetailContent({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// W3-3 (AC9): the row-level credential-check badge. Separate from
+// <StatusMark> on purpose — `state` is the git-labels comparison,
+// `credentialCheck` is the background loop's own read-only verdict on this
+// connection's stored details. Connection rows only; a healthy ('clear') or
+// server-that-predates-the-loop (absent) row stays quiet, matching the rest
+// of the page's "no news is good news" style.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CREDENTIAL_DRIFT_BADGE_LABEL = 'Credential drift'
+const CREDENTIAL_NOT_COMPARED_BADGE_LABEL = 'Not compared'
+const CREDENTIAL_CHECK_FAILED_BADGE_LABEL = 'Check failed'
+
+function CredentialCheckBadge({ row }: { row: UnifiedRow }) {
+  if (row.kind !== 'connection') return null
+  const check = row.credentialCheck
+  if (!check || check === 'clear') return null
+
+  if (check === 'drifted') {
+    return (
+      <span
+        data-testid="credential-check-badge"
+        data-credential-check="drifted"
+        title={row.credentialCheckDetail}
+        className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+      >
+        {CREDENTIAL_DRIFT_BADGE_LABEL}
+      </span>
+    )
+  }
+
+  // not_compared / check_failed: both muted (nothing is confirmed broken),
+  // check_failed keeps a quiet amber tint on the text — a hint something
+  // didn't finish — while not_compared stays fully neutral (an honest
+  // scope limit, not a problem).
+  const label = check === 'not_compared' ? CREDENTIAL_NOT_COMPARED_BADGE_LABEL : CREDENTIAL_CHECK_FAILED_BADGE_LABEL
+  const textClassName = check === 'check_failed' ? 'text-amber-700 dark:text-amber-500' : 'text-[#5a8aaa] dark:text-gray-500'
+  return (
+    <span
+      data-testid="credential-check-badge"
+      data-credential-check={check}
+      title={row.credentialCheckDetail}
+      className={`inline-flex items-center rounded-full bg-[#e8f4ff] px-2 py-0.5 text-xs font-medium ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:ring-gray-700 ${textClassName}`}
+    >
+      {label}
+    </span>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // One secret row. Hoisted out of the page so the flat list and the grouped
 // list render the exact same markup — a second copy would drift, and the
 // two views would quietly start disagreeing about what a row says.
@@ -2596,7 +2675,10 @@ function SecretTableRow({
           putting a resource's health right at the start of its row instead
           of buried at the end. */}
       <TableCell className="py-2 px-1.5">
-        <StatusMark status={row.state} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusMark status={row.state} />
+          <CredentialCheckBadge row={row} />
+        </div>
       </TableCell>
       {/*
         Addon (G1): values rows show the addon they carry values for.
@@ -2817,6 +2899,13 @@ const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> =
     description: 'Secrets Sharko delivers from configured backends to addons on remote clusters.',
   },
 }
+
+// W3-5 discoverability: the published engine + Secret Sync architecture
+// page, linked once from the Secrets area's own header — the same
+// readthedocs pattern AuditViewer's retention banner and
+// ClusterIdentityPanel's own doc link already use.
+const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/architecture/engine-and-secret-sync/'
+const SECRETS_ARCHITECTURE_DOC_LINK_TEXT = 'How Sharko manages secrets'
 
 export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   const navigate = useNavigate()
@@ -3100,6 +3189,14 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
         valuesSourceLabel,
       ),
     [data, valuesSourceLabel],
+  )
+
+  // W3-3 (AC9): the "Cluster connections" tile's own count — read off the
+  // same unifiedRows every row badge reads off, so the tile and the row
+  // badges can never disagree about how many connections have drifted.
+  const driftedConnectionCount = useMemo(
+    () => unifiedRows.filter((r) => r.kind === 'connection' && r.credentialCheck === 'drifted').length,
+    [unifiedRows],
   )
 
   // SN-3: the subpage's own rows. Cluster connections shows kind
@@ -3400,6 +3497,20 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
             ? AREA_HEADER[area].description
             : 'Sharko keeps these secrets in sync automatically. Git defines what should exist. Values come from your secret store.'}
         </p>
+        {/* W3-5 discoverability: one quiet pointer to the published
+            architecture page, never an inline essay on this page itself
+            (UI Voice rule 3). */}
+        <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+          <a
+            href={SECRETS_ARCHITECTURE_DOC_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="secrets-architecture-doc-link"
+            className="underline decoration-dotted underline-offset-2 hover:text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 dark:hover:text-teal-300"
+          >
+            {SECRETS_ARCHITECTURE_DOC_LINK_TEXT}
+          </a>
+        </p>
       </div>
 
       {/* SN-3: the navigation between the two subpages — real links that
@@ -3414,7 +3525,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
               engine's stats belong to the other subpage now. Legacy
               unified mode shows both, as before. */}
           {(!area || area === 'connections') && (
-            <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} />
+            <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} driftedCount={driftedConnectionCount} />
           )}
           {(!area || area === 'addons') && (
             <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} onErrorClick={filterToCluster} />

@@ -184,6 +184,19 @@ export interface ConnectionSecretRow {
   // secret. Absent/0 for every cluster with no fight in progress. The panel
   // shows a quiet warning at 3 or more.
   fight_count?: number
+  // credential_check (W3-3) is the background loop's own read-only verdict
+  // on whether this connection's stored details still match its configured
+  // credentials source — separate from `state`, which is the git-labels
+  // comparison. One of 'drifted' | 'clear' | 'not_compared' | 'check_failed'.
+  // Absent on a server that predates the loop, or before its first pass.
+  credential_check?: 'drifted' | 'clear' | 'not_compared' | 'check_failed'
+  // credential_check_detail is a fixed, server-written sentence explaining
+  // credential_check — never a value, length, hash, or fragment.
+  credential_check_detail?: string
+  // credential_checked_at (RFC3339) is when the background loop (or the
+  // last manual Check-again click, which updates the same store) last ran
+  // this comparison. Absent before the first pass.
+  credential_checked_at?: string
 }
 
 export interface AddonValuesSecretRow {
