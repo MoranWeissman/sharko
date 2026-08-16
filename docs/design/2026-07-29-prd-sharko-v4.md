@@ -48,7 +48,7 @@ documentCounts:
 
 **The problem it solves.** Teams that run addons across many ArgoCD clusters manage them through a git repo full of templates only experts can touch. There is no self-service for the rest of the team, no fleet view without grep, and no API — so a team building an internal platform (IDP) ends up writing scripts that edit YAML files, badly, from scratch. The knowledge of "what runs where, what's outdated, what needs which values" lives in one expert's head.
 
-**How Sharko works.** Three doors, one truth. Humans use a web UI; machines (an IDP, a pipeline) call a REST API; a CLI wraps that same API — every door does the same thing: validate the request, show a preview, and open a pull request to the user's git repo. Git stays the only source of truth. ArgoCD deploys what git says. Sharko's engine — the ApplicationSet logic that turns small data files into deployments — ships as a versioned, signed, public OCI Helm chart that Sharko maintains, so the user's repo holds only readable data files and one version pin. Behind the scenes, three reconcile loops keep reality matching git: cluster connection secrets, addon assignment labels, and addon secrets synced from a vault. Sharko is an operator whose desired state lives in git instead of in custom resources.
+**How Sharko works.** Three doors, one truth. Humans use a web UI; machines (an IDP, a pipeline) call a REST API; a CLI wraps that same API — every door does the same thing: validate the request, show a preview, and open a pull request to the user's git repo. Git stays the only source of truth. *(amended 2026-08-16 — the connection-credential exception: the configured credentials source is authoritative for connection details; git stays authoritative for addon assignments and deployment configuration. Ruled by the product owner in the connection-repair round 3.)* ArgoCD deploys what git says. Sharko's engine — the ApplicationSet logic that turns small data files into deployments — ships as a versioned, signed, public OCI Helm chart that Sharko maintains, so the user's repo holds only readable data files and one version pin. Behind the scenes, three reconcile loops keep reality matching git: cluster connection secrets, addon assignment labels, and addon secrets synced from a vault. Sharko is an operator whose desired state lives in git instead of in custom resources.
 
 **Who it's for.** Platform and DevOps engineers running roughly 10–50+ ArgoCD-managed clusters, where the fleet is bigger than one expert — and platform teams wiring addon management into a portal. It is honestly not for: shops with deeply custom template logic (the raw ApplicationSet pattern serves them better, and the docs say so), or single-cluster hobbyists.
 
@@ -224,7 +224,7 @@ These journeys reveal the capability areas the requirements must cover: install 
 - Sharko integrates with ArgoCD only through its stable public contracts (cluster Secret format, ApplicationSets, Application status). Docs state supported ArgoCD versions. No private API usage, ever.
 
 **Domain patterns followed / anti-patterns avoided:**
-- Followed: git is the only truth; every change passes a PR gate; one file fanning out to many resources is normal GitOps (ApplicationSet precedent).
+- Followed: git is the only truth; every change passes a PR gate; one file fanning out to many resources is normal GitOps (ApplicationSet precedent). *(amended 2026-08-16 — connection-credential details are the exception: the configured credentials source is authoritative for them, git for addon assignments and deployment configuration. Ruled by the product owner in the connection-repair round 3.)*
 - Avoided: two front doors to the same state (the shelved CRD); half-alive features shipping (operator, scanner — parked); adopting resources Sharko didn't create.
 
 ## Innovation & Novel Patterns
@@ -474,7 +474,7 @@ What v4 actually changes, on one page.
 - Naming *(amended 2026-08-08)*: "Catalog" = the org's approved list. "Marketplace" survives only as the name of the read-only curated discovery window.
 
 **Unchanged and re-affirmed:**
-- The three reconcile loops (cluster secrets, assignment labels, addon secrets), drift detection with opt-in self-heal, the validate → preview → PR pipeline on every door, the version matrix with upgrade intelligence, git as the only source of truth, and the kill-Sharko guarantee.
+- The three reconcile loops (cluster secrets, assignment labels, addon secrets), drift detection with opt-in self-heal, the validate → preview → PR pipeline on every door, the version matrix with upgrade intelligence, git as the only source of truth, and the kill-Sharko guarantee. *(amended 2026-08-16 — connection-credential details are the exception: the configured credentials source is authoritative for them, git for addon assignments and deployment configuration. Ruled by the product owner in the connection-repair round 3.)*
 
 ---
 
