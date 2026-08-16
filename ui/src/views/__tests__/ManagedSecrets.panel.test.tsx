@@ -400,7 +400,11 @@ describe('the comparison: provenance above, a real field table inside', () => {
     })
     renderPage()
     const panel = await openRow('connection-no-commit')
-    const provenance = within(panel).getByTestId('connection-comparison-provenance')
+    // Pre-existing flake fix (found while running this story's gates,
+    // 2026-08-16): the connection comparison resolves asynchronously —
+    // this used a synchronous getByTestId, which occasionally raced the
+    // mocked fetch and failed to find the provenance element at all.
+    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
     // (a) Rule preserved: when commit is unknown, say so instead of hiding.
     // New text: "Branch: main (commit unknown)"
     expect(provenance).toHaveTextContent('commit unknown')
@@ -912,8 +916,11 @@ describe('SSF-8/SSF-14 — comparison on demand, and the toggle actually toggles
     const first = await screen.findByTestId('secret-detail-panel') // match
     // (b) NEW RULE: no toggle for connection rows
     expect(within(first).queryByTestId('view-comparison-toggle')).not.toBeInTheDocument()
-    // (b) NEW RULE: provenance always visible (no click needed)
-    expect(within(first).getByTestId('connection-comparison-provenance')).toBeInTheDocument()
+    // (b) NEW RULE: provenance always visible (no click needed).
+    // Pre-existing flake fix (found while running this story's gates,
+    // 2026-08-16): the connection comparison resolves asynchronously, so
+    // this awaits it instead of asserting synchronously.
+    expect(await within(first).findByTestId('connection-comparison-provenance')).toBeInTheDocument()
     firstRender.unmount()
 
     // Second: addon-values row still has toggle, starts collapsed for match
@@ -1624,4 +1631,121 @@ describe('Connection repair (S4-4 / S4-5)', () => {
     // mockRepairConnection must have been called exactly ONCE
     expect(mockRepairConnection).toHaveBeenCalledTimes(1)
   })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Round 3 walkthrough ruling (2026-08-16), Ruling 1 (W3-1) — the teaching
+// block plus the three action InfoHints. Every sentence pinned as a const,
+// exact text, with a banned-phrases sweep — the pattern this story asked
+// for is ConnectionComparisonDisplay.test.tsx:1-64.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('Round 3 (2026-08-16) — the connection page teaches the split model', () => {
+  const CONNECTION_MODEL_HEADING = 'How Sharko manages this connection'
+  const CONNECTION_MODEL_BODY =
+    "ArgoCD keeps addon labels and connection details in the same Secret, but Sharko manages them differently. Git controls the addon labels. Your configured credentials source controls how ArgoCD connects. Sharko can self-heal addon labels when enabled; it never changes connection credentials automatically."
+  const CHECK_HINT = 'Looks at this connection and reports what it finds. Nothing is changed.'
+  const SYNC_HINT = "Puts git's addon labels back on this secret. Only Sharko's addon label keys — nothing else."
+  const REPAIR_HINT =
+    "Rewrites the connection details from this cluster's configured credentials source, against the commit shown. Addon labels are re-applied too."
+
+  // Banned by exact text — the name this action used to carry, superseded
+  // by the Round 3 ruling.
+  const BANNED_PHRASES = ['Re-apply addon labels', 'Re-apply labels']
+
+  function assertNoBannedPhrases(container: HTMLElement) {
+    for (const banned of BANNED_PHRASES) {
+      expect(container.textContent ?? '').not.toContain(banned)
+    }
+  }
+
+  it('shows the teaching block by default (not behind a click), exact heading and body', async () => {
+    renderPage()
+    const panel = await openRow('connection-prod-eu')
+    const block = within(panel).getByTestId('detail-connection-model')
+    expect(within(block).getByText(CONNECTION_MODEL_HEADING)).toBeInTheDocument()
+    expect(block).toHaveTextContent(CONNECTION_MODEL_BODY)
+  })
+
+  it('never renders the teaching block on a values row', async () => {
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog')
+    expect(within(panel).queryByTestId('detail-connection-model')).not.toBeInTheDocument()
+  })
+
+  it('Check now/again carries an InfoHint stating it only looks, never changes anything', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const panel = await openRow('connection-drifted-eu')
+    const checkButton = within(panel).getByTestId('detail-refresh')
+    // This fixture has no last_checked yet, so the button reads "Check now".
+    expect(checkButton).toHaveTextContent('Check now')
+    await user.click(within(panel).getByLabelText('What does Check now do?'))
+    expect(await screen.findByText(CHECK_HINT)).toBeInTheDocument()
+  })
+
+  it('Sync addon labels carries an InfoHint naming its exact scope', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const panel = await openRow('connection-drifted-eu') // out_of_sync -> Sync visible
+    expect(within(panel).getByTestId('detail-sync')).toHaveTextContent('Sync addon labels')
+    await user.click(within(panel).getByLabelText('What does Sync addon labels do?'))
+    expect(await screen.findByText(SYNC_HINT)).toBeInTheDocument()
+  })
+
+  it('a values row\'s Sync carries no scope InfoHint — the connection-only text would be wrong for it', async () => {
+    renderPage()
+    const panel = await openRow('values-staging-us-datadog') // out_of_sync -> Sync visible
+    expect(within(panel).getByTestId('detail-sync')).toHaveTextContent(/^Sync$/)
+    expect(within(panel).queryByLabelText('What does Sync addon labels do?')).not.toBeInTheDocument()
+  })
+
+  it('Repair connection carries an InfoHint naming its exact scope', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'prod-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+    const user = userEvent.setup()
+    renderPage('admin')
+    const panel = await openRow('connection-prod-eu')
+    const repairButton = await within(panel).findByTestId('detail-repair-connection')
+    expect(repairButton).toHaveTextContent('Repair connection')
+    await user.click(within(panel).getByLabelText('What does Repair connection do?'))
+    expect(await screen.findByText(REPAIR_HINT)).toBeInTheDocument()
+  })
+
+  it('never renders the old "Re-apply addon labels" / "Re-apply labels" wording anywhere on a connection row', async () => {
+    renderPage()
+    const panel = await openRow('connection-drifted-eu')
+    assertNoBannedPhrases(panel)
+  })
+
+  it('the check and sync buttons never render a label containing "Refresh", and no button reads exactly bare "Sync" on a connection row', async () => {
+    renderPage()
+    const panel = await openRow('connection-drifted-eu')
+    const checkButton = within(panel).getByTestId('detail-refresh')
+    const syncButton = within(panel).getByTestId('detail-sync')
+    expect(checkButton.textContent).not.toMatch(/Refresh/)
+    expect(syncButton.textContent).not.toMatch(/Refresh/)
+    expect(syncButton.textContent?.trim()).not.toBe('Sync')
+  })
+
+  // Break-test performed by hand during development (removed the
+  // data-testid="detail-connection-model" block and separately renamed
+  // syncActionLabel's connection case) — both breaks failed the matching
+  // test above, then were restored. Not left in the suite; recorded here
+  // for the record.
 })

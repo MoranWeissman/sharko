@@ -836,17 +836,23 @@ export function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: stri
  * resyncClusterLabels, which re-applies ONLY Sharko's own addon label keys —
  * it does not rebuild config, server or name — so calling it "Sync" promised
  * more than it does. An addon Secret's value really is delivered from its
- * backend, so that one keeps "Sync". The word "Repair" is reserved for a
- * later action that would genuinely rebuild the connection Secret; nothing
- * here may use it.
+ * backend, so that one keeps "Sync". The word "Repair" is reserved for the
+ * action that genuinely rewrites the connection Secret (see below).
+ *
+ * Round 3 ruling (2026-08-16): the product owner weighed the qualified form
+ * Moran raised during the walkthrough and ruled for it, superseding HL-1's
+ * "Re-apply addon labels" — the action is now called "Sync addon labels"
+ * everywhere it appears. Never bare "Sync" for this action (that name is
+ * reserved for the addon-values side, whose value really does come from a
+ * backend), and never "Refresh" for it either.
  */
 export function syncActionLabel(kind: 'connection' | 'values'): string {
-  return kind === 'connection' ? 'Re-apply addon labels' : 'Sync'
+  return kind === 'connection' ? 'Sync addon labels' : 'Sync'
 }
 
-/** HL-1: the confirm button's shorter form of the same name — "Re-apply labels" fits a button; the addon side stays "Sync". */
+/** Round 3 (2026-08-16): the confirm button's text now matches the action's full name — "Sync labels" was considered and rejected as too bare; the addon side stays "Sync". */
 export function syncConfirmButtonText(kind: 'connection' | 'values' | undefined): string {
-  return kind === 'connection' ? 'Re-apply labels' : 'Sync'
+  return kind === 'connection' ? 'Sync addon labels' : 'Sync'
 }
 
 /**
@@ -999,8 +1005,11 @@ function SortableTh({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Panel action button — Refresh / Sync inside the detail panel. The info
-// hint renders ONLY when the button is genuinely disabled.
+// Panel action button — Check / Sync / Repair inside the detail panel. Two
+// separate InfoHints can render next to it: `hint` is an always-visible
+// scope explanation (Round 3 ruling, 2026-08-16 — "what does this button
+// do"), and the disabled-reason hint below still renders ONLY when the
+// button is genuinely disabled ("why is this unavailable").
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PanelActionButton({
@@ -1010,6 +1019,8 @@ function PanelActionButton({
   icon: Icon,
   label,
   reason,
+  hint,
+  hintLabel,
   testId,
   destructive,
   strong,
@@ -1020,6 +1031,10 @@ function PanelActionButton({
   icon: typeof RefreshCw
   label: string
   reason?: string
+  /** Round 3 (2026-08-16): always-visible scope text — "what does this button do", in the user's words. Independent of `disabled`. */
+  hint?: string
+  /** Accessible label for the `hint` trigger, e.g. "What does Sync addon labels do?" */
+  hintLabel?: string
   testId?: string
   /** leftover-secrets S1.2 — the panel's Delete button reads red, matching ConfirmationModal's own destructive styling, never the neutral Check now/Sync look. */
   destructive?: boolean
@@ -1052,6 +1067,7 @@ function PanelActionButton({
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
         {label}
       </button>
+      {hint && <InfoHint text={hint} label={hintLabel ?? `What does ${label} do?`} />}
       {disabled && reason && <InfoHint text={reason} label={`Why is ${label} unavailable?`} />}
     </span>
   )
@@ -1398,10 +1414,11 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
  * HL-1: the connection sentence used to say "Sync will update the cluster
  * copy to match Git", which was untrue — the action re-applies only
  * Sharko's own addon label keys. It now promises exactly that and no more.
+ * Round 3 (2026-08-16): reworded to name the renamed action.
  */
 function repairNoteFor(row: UnifiedRow): string {
   return row.kind === 'connection'
-    ? "Re-apply addon labels puts git's addon labels back on this secret. Nothing else on it changes."
+    ? "Sync addon labels puts git's addon labels back on this secret. Nothing else on it changes."
     : `Sync will update the cluster copy to match ${row.sourceLabel}.`
 }
 
@@ -1840,6 +1857,24 @@ export function secretTitleFor(row: UnifiedRow): string {
   return row.kind === 'connection' ? `${row.cluster} connection` : row.addon ? `${row.addon} values on ${row.cluster}` : `Secret on ${row.cluster}`
 }
 
+/**
+ * Round 3 ruling (2026-08-16) — "the page must make these understandable
+ * without documentation": the connection detail page's teaching block
+ * (heading + body, exact words from the ruling) and the always-visible
+ * scope InfoHint carried by each of the three connection-row action
+ * buttons (the enabled-button InfoHint precedent at :3357's "Check all
+ * now"). Connection rows only — a values row's Check/Sync pair keeps its
+ * existing, unhinted behaviour.
+ */
+const CONNECTION_MODEL_HEADING = 'How Sharko manages this connection'
+const CONNECTION_MODEL_BODY =
+  "ArgoCD keeps addon labels and connection details in the same Secret, but Sharko manages them differently. Git controls the addon labels. Your configured credentials source controls how ArgoCD connects. Sharko can self-heal addon labels when enabled; it never changes connection credentials automatically."
+const CHECK_CONNECTION_SCOPE_HINT = 'Looks at this connection and reports what it finds. Nothing is changed.'
+const SYNC_ADDON_LABELS_SCOPE_HINT =
+  "Puts git's addon labels back on this secret. Only Sharko's addon label keys — nothing else."
+const REPAIR_CONNECTION_SCOPE_HINT =
+  "Rewrites the connection details from this cluster's configured credentials source, against the commit shown. Addon labels are re-applied too."
+
 export function SecretDetailContent({
   row,
   onRequestSync,
@@ -2136,8 +2171,18 @@ export function SecretDetailContent({
               <>
                 {/* SSF-12: "Check now" only before the first result ever
                     lands; "Check again" every time after — testid
-                    unchanged. */}
-                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label={checkLabel} testId="detail-refresh" />
+                    unchanged. Round 3 (2026-08-16): a connection row's
+                    Check button carries an always-visible scope InfoHint —
+                    a values row's Check is unchanged. */}
+                <PanelActionButton
+                  onClick={handleRefresh}
+                  loading={refreshing}
+                  icon={RefreshCw}
+                  label={checkLabel}
+                  hint={row.kind === 'connection' ? CHECK_CONNECTION_SCOPE_HINT : undefined}
+                  hintLabel={row.kind === 'connection' ? `What does ${checkLabel} do?` : undefined}
+                  testId="detail-refresh"
+                />
                 {/* SSF-12: Sync is HIDDEN entirely — not just disabled —
                     once the conclusion is "In sync". There is nothing to
                     apply, so there is no button to grey out. Every other
@@ -2145,7 +2190,8 @@ export function SecretDetailContent({
                     push (!gate.disabled); when it's genuinely unavailable
                     (foreign, not checked yet, …) PanelActionButton's own
                     InfoHint says why — never an unexplained disabled
-                    button. */}
+                    button. Round 3 (2026-08-16): a connection row's Sync
+                    also carries an always-visible scope InfoHint. */}
                 {verdict !== 'match' && (
                   <PanelActionButton
                     onClick={() => onRequestSync(row)}
@@ -2155,6 +2201,8 @@ export function SecretDetailContent({
                     // stays detail-sync on purpose; only the words change.
                     label={syncActionLabel(row.kind)}
                     reason={gate.reason}
+                    hint={row.kind === 'connection' ? SYNC_ADDON_LABELS_SCOPE_HINT : undefined}
+                    hintLabel={row.kind === 'connection' ? 'What does Sync addon labels do?' : undefined}
                     testId="detail-sync"
                     strong={!gate.disabled}
                   />
@@ -2164,7 +2212,12 @@ export function SecretDetailContent({
                     is not 'none' AND there's a commit on screen.
                     R1-1: and only for an ADMIN. The endpoint is admin-only,
                     so an operator must not see a button that could only ever
-                    come back 403. Not greyed out — absent. */}
+                    come back 403. Not greyed out — absent. Round 3
+                    (2026-08-16): carries an always-visible scope InfoHint —
+                    "Repair connection" is the ruled name; "Refresh EKS
+                    connection" is kept out of scope for this round, but the
+                    same InfoHint applies to both since it's the same
+                    underlying action. */}
                 {canRepairConnection &&
                   row.kind === 'connection' &&
                   connectionComparisonData?.repair_available &&
@@ -2179,6 +2232,8 @@ export function SecretDetailContent({
                           ? 'Refresh EKS connection'
                           : 'Repair connection'
                       }
+                      hint={REPAIR_CONNECTION_SCOPE_HINT}
+                      hintLabel="What does Repair connection do?"
                       testId="detail-repair-connection"
                       strong
                     />
@@ -2188,6 +2243,20 @@ export function SecretDetailContent({
           </div>
         </RoleGuard>
       </div>
+
+      {/* Round 3 ruling (2026-08-16), Ruling 1 — the teaching block: a
+          connection row beside its status and actions, visible by default
+          (not behind a click), explaining the split model so the page is
+          understandable without documentation. Connection rows only. */}
+      {row.kind === 'connection' && (
+        <div
+          data-testid="detail-connection-model"
+          className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800"
+        >
+          <h2 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{CONNECTION_MODEL_HEADING}</h2>
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{CONNECTION_MODEL_BODY}</p>
+        </div>
+      )}
 
       {/* ── ONE health conclusion (SSF-12) — replaces the old three-line
           Synced / Matches Git / Compared with git trio. Visible on both
@@ -3716,9 +3785,10 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
         onClose={() => setSyncTarget(null)}
         onConfirm={handleConfirmSync}
         title={
-          // HL-1: the connection confirm carries the action's real name.
+          // HL-1, renamed by the Round 3 ruling (2026-08-16): the connection
+          // confirm carries the action's real name.
           syncTarget?.kind === 'connection'
-            ? `Re-apply addon labels on "${syncTarget.cluster}"?`
+            ? `Sync addon labels on "${syncTarget.cluster}"?`
             : syncTarget?.kind === 'values'
               ? `Sync secret for cluster "${syncTarget.cluster}", addon "${syncTarget.addon}"?`
               : 'Sync?'

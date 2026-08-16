@@ -257,7 +257,7 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
     expect(screen.getByText(/sharko\.addon\.version-bump/)).toBeInTheDocument();
   });
 
-  it('names the Re-apply addon labels action as the way to apply the difference, for admin/operator (HL-1)', async () => {
+  it('names the Sync addon labels action as the way to apply the difference, for admin/operator (HL-1)', async () => {
     mockGetClusterComparison.mockResolvedValue(
       baseComparisonResponse({
         label_drift: {
@@ -272,8 +272,9 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
     });
 
     openDiff();
-    // HL-1: names the renamed button and only promises the labels — the
-    // old "apply git's version" sentence read wider than the action.
-    expect(screen.getByText(/Click Re-apply addon labels above to put git's addon labels back on this secret/)).toBeInTheDocument();
+    // HL-1, renamed again by the Round 3 ruling (2026-08-16): names the
+    // renamed button and only promises the labels — the old "apply git's
+    // version" sentence read wider than the action.
+    expect(screen.getByText(/Click Sync addon labels above to put git's addon labels back on this secret/)).toBeInTheDocument();
   });
 });

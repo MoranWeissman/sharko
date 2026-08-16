@@ -978,7 +978,10 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
 
-    const provenance = within(panel).getByTestId('connection-comparison-provenance')
+    // Pre-existing flake fix (found while running this story's gates,
+    // 2026-08-16): the connection comparison resolves asynchronously, so
+    // this awaits it instead of asserting synchronously.
+    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
     // (a) File path visible
     // S4-1: Changed 2026-08-13: (b) text split across elements ("File: " + path), use textContent.
     expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
@@ -1019,8 +1022,9 @@ describe('ManagedSecrets', () => {
       'Git moved — a newer commit changed what this secret should be.',
     )
     // C3: self_heals: false on an out_of_sync row -> waiting for the
-    // action. HL-1: a connection row points at the action's real name.
-    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Re-apply addon labels.')
+    // action. HL-1: a connection row points at the action's real name,
+    // renamed to "Sync addon labels" by the Round 3 ruling (2026-08-16).
+    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync addon labels.')
 
     // Never back inside a Resource details accordion or any other
     // disclosure — that section stays deleted, and neither sentence lives
@@ -1030,7 +1034,7 @@ describe('ManagedSecrets', () => {
     expect(screen.queryByTestId('detail-activity-disclosure')).not.toBeInTheDocument()
     // S4-1: Changed 2026-08-13: (b) testid changed to connection-comparison-provenance.
     const provenance = await within(panel).findByTestId('connection-comparison-provenance')
-    expect(within(provenance).queryByText(/Waiting for Re-apply addon labels|Git moved/)).not.toBeInTheDocument()
+    expect(within(provenance).queryByText(/Waiting for Sync addon labels|Git moved/)).not.toBeInTheDocument()
   })
 
   // P2-C3: the in-sync row (prod-eu) must show neither the drift sentence
@@ -1136,10 +1140,11 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
 
     // prod-eu is in_sync — the action is disabled and carries a hint.
-    // HL-1: on a connection row the action reads "Re-apply addon labels".
+    // HL-1: on a connection row the action reads "Sync addon labels"
+    // (renamed by the Round 3 ruling, 2026-08-16).
     await user.click(screen.getByRole('button', { name: 'Actions for prod-eu' }))
-    const syncItemDisabled = await screen.findByRole('menuitem', { name: /Re-apply addon labels/ })
-    expect(within(syncItemDisabled).getByLabelText('Why is Re-apply addon labels unavailable?')).toBeInTheDocument()
+    const syncItemDisabled = await screen.findByRole('menuitem', { name: /Sync addon labels/ })
+    expect(within(syncItemDisabled).getByLabelText('Why is Sync addon labels unavailable?')).toBeInTheDocument()
     // Check now is always enabled here — it must carry NO hint at all.
     const refreshItem = screen.getByRole('menuitem', { name: /Check now/ })
     expect(within(refreshItem).queryByLabelText(/Why is Check now unavailable\?/)).not.toBeInTheDocument()
@@ -1147,8 +1152,8 @@ describe('ManagedSecrets', () => {
 
     // staging-us is out_of_sync — the action is enabled and must carry NO hint.
     await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
-    const syncItemEnabled = await screen.findByRole('menuitem', { name: /Re-apply addon labels/ })
-    expect(within(syncItemEnabled).queryByLabelText(/Why is Re-apply addon labels unavailable\?/)).not.toBeInTheDocument()
+    const syncItemEnabled = await screen.findByRole('menuitem', { name: /Sync addon labels/ })
+    expect(within(syncItemEnabled).queryByLabelText(/Why is Sync addon labels unavailable\?/)).not.toBeInTheDocument()
   })
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1527,8 +1532,9 @@ describe('ManagedSecrets', () => {
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: 'Actions for staging-us' }))
-    // HL-1: on a connection row the action reads "Re-apply addon labels".
-    await user.click(await screen.findByRole('menuitem', { name: /Re-apply addon labels/ }))
+    // HL-1: on a connection row the action reads "Sync addon labels"
+    // (renamed by the Round 3 ruling, 2026-08-16).
+    await user.click(await screen.findByRole('menuitem', { name: /Sync addon labels/ }))
 
     await waitFor(() =>
       expect(
