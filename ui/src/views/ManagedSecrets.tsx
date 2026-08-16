@@ -1910,6 +1910,24 @@ const SYNC_ADDON_LABELS_SCOPE_HINT =
   "Puts git's addon labels back on this secret. Only Sharko's addon label keys — nothing else."
 const REPAIR_CONNECTION_SCOPE_HINT =
   "Rewrites the connection details from this cluster's configured credentials source, against the commit shown. Addon labels are re-applied too."
+// Round W3 review fix — the hint used to say "rewrites the connection
+// details" even when the button only re-applies addon labels
+// (repair_scope === 'addon_labels_only'), which directly contradicted the
+// confirm dialog's own "Sharko will not read or change this connection's
+// sign-in details" sentence for that same click. These two scope-specific
+// variants, plus repairConnectionScopeHint() below, are derived from the
+// SAME condition ladder the confirm dialog's description uses (:~2504) so
+// the hint and the confirm text can never disagree again.
+const REPAIR_CONNECTION_SCOPE_HINT_ADDON_LABELS_ONLY =
+  "Puts git's addon labels back on this secret. Sharko will not read or change this connection's sign-in details."
+const REPAIR_CONNECTION_SCOPE_HINT_EKS =
+  'Refreshes the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels are re-applied too.'
+
+function repairConnectionScopeHint(comparison: ConnectionComparisonView | null): string {
+  if (comparison?.credential_source_type === CREDS_SOURCE_EKS_TOKEN) return REPAIR_CONNECTION_SCOPE_HINT_EKS
+  if (comparison?.repair_scope === 'addon_labels_only') return REPAIR_CONNECTION_SCOPE_HINT_ADDON_LABELS_ONLY
+  return REPAIR_CONNECTION_SCOPE_HINT
+}
 
 export function SecretDetailContent({
   row,
@@ -2163,6 +2181,12 @@ export function SecretDetailContent({
   // "Check now" only before the very first one.
   const checkLabel = hasCheckedBefore(row) ? 'Check again' : 'Check now'
 
+  // W3 review fix (FIX 4): the repair button's own label, computed once so
+  // its InfoHint's aria-label can follow it instead of a hardcoded "Repair
+  // connection" that was wrong on the EKS button ("Refresh EKS connection").
+  const repairLabel =
+    connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN ? 'Refresh EKS connection' : 'Repair connection'
+
   const viewPageLabel = row.kind === 'connection' || !row.addon ? 'View cluster page' : 'View addon page'
   const viewPageHref =
     row.kind === 'connection' || !row.addon ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon)}`
@@ -2263,13 +2287,9 @@ export function SecretDetailContent({
                       onClick={handleRepairClick}
                       loading={repairInProgress}
                       icon={Wrench}
-                      label={
-                        connectionComparisonData.credential_source_type === CREDS_SOURCE_EKS_TOKEN
-                          ? 'Refresh EKS connection'
-                          : 'Repair connection'
-                      }
-                      hint={REPAIR_CONNECTION_SCOPE_HINT}
-                      hintLabel="What does Repair connection do?"
+                      label={repairLabel}
+                      hint={repairConnectionScopeHint(connectionComparisonData)}
+                      hintLabel={`What does ${repairLabel} do?`}
                       testId="detail-repair-connection"
                       strong
                     />

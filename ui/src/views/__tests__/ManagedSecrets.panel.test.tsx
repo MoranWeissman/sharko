@@ -816,6 +816,27 @@ describe('SSF-12 — comparison heading, action naming, and Sync visibility', ()
     expect(within(panel).queryByText('Refresh')).not.toBeInTheDocument()
   })
 
+  // W3 review fix (FIX 1): nothing pinned "Check again" by exact text — a
+  // rename of that literal would have passed the whole suite. This fixture
+  // gives the row a last_checked timestamp so hasCheckedBefore(row) is
+  // true, which is the only thing that flips the label.
+  it('labels the check button "Check again" (strict exact text) once a check has already produced a result', async () => {
+    // mockResolvedValue (not -Once): the list page and the detail page each
+    // call getManagedSecrets independently (SecretDetailPage fetches its
+    // own copy via useManagedSecretsData), so a single queued response
+    // would only cover the first of the two calls.
+    mockGetManagedSecrets.mockResolvedValue({
+      ...response,
+      addon_values_secrets: response.addon_values_secrets.map((row) =>
+        row.cluster === 'prod-eu' && row.addon === 'datadog' ? { ...row, last_checked: '2026-08-16T00:00:00Z' } : row,
+      ),
+    })
+    renderPage()
+    const panel = await openRow('values-prod-eu-datadog')
+    const checkButton = within(panel).getByTestId('detail-refresh')
+    expect(checkButton.textContent?.trim()).toBe('Check again')
+  })
+
   it('renders Sync as the strong teal action when there is real drift to push', async () => {
     renderPage()
     const panel = await openRow('values-staging-us-datadog') // out_of_sync
@@ -1060,6 +1081,27 @@ describe('SSF-12 — the one health conclusion', () => {
     expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent(
       'Sync will update the cluster copy to match AWS Secrets Manager.',
     )
+  })
+
+  // W3 review fix (FIX 3): the two old absolute verdict sentences, banned
+  // by exact text — a connection row's health conclusion must never claim
+  // git alone owns the connection (Round 3 ruling 4 replaced these with the
+  // "names both authorities" sentences pinned above).
+  const BANNED_OLD_VERDICT_SENTENCES = ['The cluster copy matches Git.', 'The cluster copy does not match Git.']
+
+  it('never renders the old absolute "matches Git" / "does not match Git" verdict sentences, on a healthy or a broken connection row', async () => {
+    const healthyRender = renderPage()
+    const healthyPanel = await openRow('connection-prod-eu') // in_sync -> match
+    for (const banned of BANNED_OLD_VERDICT_SENTENCES) {
+      expect(healthyPanel.textContent ?? '').not.toContain(banned)
+    }
+    healthyRender.unmount()
+
+    renderPage()
+    const brokenPanel = await openRow('connection-drifted-eu') // out_of_sync -> differ
+    for (const banned of BANNED_OLD_VERDICT_SENTENCES) {
+      expect(brokenPanel.textContent ?? '').not.toContain(banned)
+    }
   })
 
   // Round 3 ruling (2026-08-16), Ruling 2: the Overview|YAML pill is gone
@@ -1740,6 +1782,81 @@ describe('Round 3 (2026-08-16) — the connection page teaches the split model',
     expect(repairButton).toHaveTextContent('Repair connection')
     await user.click(within(panel).getByLabelText('What does Repair connection do?'))
     expect(await screen.findByText(REPAIR_HINT)).toBeInTheDocument()
+  })
+
+  // W3 review fix (FIX 2): the repair hint must match the repair scope. The
+  // old hint always said "rewrites the connection details", even when the
+  // button only re-applies addon labels (repair_scope === 'addon_labels_only')
+  // — directly contradicting the confirm dialog's own "Sharko will not read
+  // or change this connection's sign-in details" for that exact click. Each
+  // variant below is pinned by exact text, derived from the same condition
+  // ladder as the confirm dialog description at :~2504.
+  it('Repair connection\'s InfoHint matches the addon_labels_only scope, and never claims to touch sign-in details', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'drifted-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'secret-kubeconfig',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'addon_labels_only',
+      values_never_returned: true,
+    })
+    const user = userEvent.setup()
+    renderPage('admin')
+    const panel = await openRow('connection-drifted-eu')
+    const repairButton = await within(panel).findByTestId('detail-repair-connection')
+    // Button label is still "Repair connection" for a non-EKS source —
+    // only the scope of what it does has changed, not its name.
+    expect(repairButton).toHaveTextContent('Repair connection')
+    await user.click(within(panel).getByLabelText('What does Repair connection do?'))
+    const hint = await screen.findByText(
+      "Puts git's addon labels back on this secret. Sharko will not read or change this connection's sign-in details.",
+    )
+    expect(hint).toBeInTheDocument()
+    expect(hint.textContent ?? '').not.toContain('configured credentials source')
+  })
+
+  it('Repair connection\'s InfoHint matches the EKS scope, and its aria-label follows the EKS button name (FIX 4)', async () => {
+    mockGetConnectionComparison.mockResolvedValue({
+      cluster: 'drifted-eu',
+      status: 'out_of_sync',
+      scope: 'full',
+      ownership_mode: 'owned',
+      checked_at: new Date().toISOString(),
+      branch: 'main',
+      compared_commit: 'abc123',
+      compared_path: 'clusters.yaml',
+      credential_source_type: 'eks-token',
+      differences: [],
+      not_checked: [],
+      checked_field_count: 10,
+      repair_available: true,
+      repair_scope: 'full_connection',
+      values_never_returned: true,
+    })
+    const user = userEvent.setup()
+    renderPage('admin')
+    const panel = await openRow('connection-drifted-eu')
+    const repairButton = await within(panel).findByTestId('detail-repair-connection')
+    expect(repairButton).toHaveTextContent('Refresh EKS connection')
+    // FIX 4: the hint's aria-label used to be hardcoded to "What does
+    // Repair connection do?" even on this EKS button — wrong name for the
+    // button actually on screen. It must now follow the button's own label.
+    expect(within(panel).queryByLabelText('What does Repair connection do?')).not.toBeInTheDocument()
+    await user.click(within(panel).getByLabelText('What does Refresh EKS connection do?'))
+    expect(
+      await screen.findByText(
+        'Refreshes the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels are re-applied too.',
+      ),
+    ).toBeInTheDocument()
   })
 
   it('never renders the old "Re-apply addon labels" / "Re-apply labels" wording anywhere on a connection row', async () => {

@@ -276,20 +276,30 @@ describe('credential-check row badge (W3-3 AC9)', () => {
     expect(within(row).queryByTestId('credential-check-badge')).not.toBeInTheDocument()
   })
 
-  it('never renders the badge on a VALUES row, even if the row somehow carried a credential_check-shaped field', async () => {
+  // W3 review fix (FIX 5): the old version of this test put
+  // credential_check on the CONNECTION row's fixture and then checked a
+  // DIFFERENT (values) row — trivially true, since that values row's own
+  // object never carried the field at all. It never actually proved the
+  // kind guard. This version puts the credential_check-shaped fields on the
+  // VALUES row's own fixture object (AddonValuesSecretRow has no such
+  // field, hence the cast) so the assertion is only true if the rendering
+  // code really does gate on row.kind === 'connection', not merely on
+  // whether the field happens to be present.
+  it('never renders the badge on a VALUES row, even when that row\'s own fixture carries a credential_check-shaped field', async () => {
     mockGetManagedSecrets.mockResolvedValue(
       baseResponse({
-        cluster_connection_secrets: [
+        addon_values_secrets: [
           {
             cluster: 'prod-eu',
-            secret_namespace: 'argocd',
-            secret_name: 'prod-eu',
+            addon: 'datadog',
+            secret_name: 'datadog-secrets',
+            secret_namespace: 'datadog',
             state: 'in_sync',
-            source: 'git',
+            source: 'AWS Secrets Manager',
             self_heals: true,
             credential_check: 'drifted',
             credential_check_detail: DRIFTED_SENTENCE,
-          },
+          } as ManagedSecretsResponse['addon_values_secrets'][number],
         ],
       }),
     )
