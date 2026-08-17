@@ -989,6 +989,16 @@ func registerSpokes(numSpokes int, spokeNames []string, gitBackend, giteaURL, gi
 		return fmt.Errorf("login to Sharko: %w", err)
 	}
 
+	// The spokes are registered by pasting their in-cluster kubeconfigs —
+	// the legacy inline path, which is OFF by default (product correction
+	// 5). Opt in through the real settings door BEFORE any registration,
+	// on both backends (the Gitea real-doors flow below registers by
+	// pasting too). The server-side default stays off.
+	fmt.Println("    Enabling legacy inline credentials for this sandbox (default is off)")
+	if err := client.enableLegacyInlineCredentials(); err != nil {
+		return fmt.Errorf("enable legacy inline credentials: %w", err)
+	}
+
 	// Gitea backend: drive EVERY piece of Sharko state (connection is
 	// infra wiring, but the seed-bootstrap, cluster registrations, and
 	// addon assignment all go through Sharko's real REST API doors — see

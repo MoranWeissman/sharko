@@ -441,6 +441,26 @@ func makeKubeconfigRegisterBody(t *testing.T, target harness.KindCluster, name s
 	}
 }
 
+// enableLegacyInlinePaste opts this test's Sharko into legacy inline
+// credentials through the real settings door — the same
+// PUT /api/v1/settings/allow-inline-credentials an admin uses. The
+// server-wide default is OFF (connection-reconciliation epic, product
+// correction 5), and every makeKubeconfigRegisterBody registration pastes a
+// kubeconfig — the inline path the default now refuses. Each test that
+// registers this way opts in explicitly; the default itself and the refusal
+// are never weakened.
+func enableLegacyInlinePaste(t *testing.T, admin *harness.Client) {
+	t.Helper()
+	var resp struct {
+		AllowInlineCredentials bool `json:"allow_inline_credentials"`
+	}
+	admin.PutJSON(t, "/api/v1/settings/allow-inline-credentials",
+		map[string]any{"allow_inline_credentials": true}, &resp)
+	if !resp.AllowInlineCredentials {
+		t.Fatalf("enable legacy inline credentials: the server did not confirm the setting")
+	}
+}
+
 // fileExists is a tiny helper for the prereq-skip guards in
 // cluster_test.go. exec.LookPath returns an error AND nil binary when
 // the lookup fails; we want a single-bool answer.

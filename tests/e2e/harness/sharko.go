@@ -13,12 +13,15 @@ import (
 	"testing"
 	"time"
 
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/service"
+	"github.com/MoranWeissman/sharko/internal/settings"
 )
 
 // SharkoMode selects the boot strategy. The default (zero value) is the fast
@@ -299,6 +302,14 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 	if cfg.GitProvider != nil {
 		srv.SetDemoGitProvider(cfg.GitProvider)
 	}
+
+	// A real settings store over an in-memory fake clientset — the same
+	// wiring demo mode uses. Production always has one (in-cluster
+	// ConfigMap); without it the settings doors answer 503 and the tests
+	// below could never opt into admin-gated settings (e.g. the
+	// default-off legacy inline-credentials switch) the way a real admin
+	// would.
+	srv.SetSettingsStore(settings.NewStore(k8sfake.NewSimpleClientset(), "sharko"))
 
 	// Seed a bootstrap admin so login flows in 7-1.3 have a known credential.
 	// In local mode auth.Store accepts plaintext passwords, so this is enough

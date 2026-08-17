@@ -158,6 +158,10 @@ func perfClusterRegistration(t *testing.T) {
 		sharko.WaitHealthy(t, 30*time.Second)
 		harness.SeedUsers(t, sharko, harness.DefaultTestUsers())
 		admin := harness.NewClient(t, sharko)
+		// Kubeconfig-paste registration — opt into the default-off legacy
+		// inline path through the real settings door (fresh server per
+		// iteration, so per-iteration opt-in).
+		enableLegacyInlinePaste(t, admin)
 		seedActiveConnection(t, admin, argoAccess.URL, argoAccess.Token)
 
 		name := fmt.Sprintf("perf-register-%03d", i)

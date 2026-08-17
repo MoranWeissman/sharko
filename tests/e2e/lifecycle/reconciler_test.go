@@ -119,6 +119,10 @@ func TestClusterReconcilerE2E(t *testing.T) {
 	harness.SeedUsers(t, sharko, harness.DefaultTestUsers())
 	admin := harness.NewClient(t, sharko)
 
+	// This suite registers clusters by pasting kubeconfigs — opt into the
+	// default-off legacy inline path through the real settings door.
+	enableLegacyInlinePaste(t, admin)
+
 	seedActiveConnection(t, admin, argoAccess.URL, argoAccess.Token)
 
 	// ---- build a kubernetes.Interface bound to the mgmt cluster for
@@ -336,10 +340,14 @@ func startReconciler(t *testing.T, cfg reconcilerConfig) *clusterreconciler.Reco
 	gpGetter := func() gitprovider.GitProvider { return cfg.gitProvider }
 
 	recon := clusterreconciler.New(clusterreconciler.Deps{
-		CMStore:             cmStore,
-		GitProvider:         gpGetter,
-		ArgoClient:          cfg.k8sClient,
-		Vault:               vault,
+		CMStore:     cmStore,
+		GitProvider: gpGetter,
+		ArgoClient:  cfg.k8sClient,
+		// Deps.Vault is a use-time resolver since R2-1 — the e2e mock never
+		// changes mid-test, so a fixed closure is the honest wiring (this
+		// literal had drifted and broke the e2e-tagged compile; pre-existing,
+		// fixed in passing).
+		Vault:               func() clusterreconciler.Vault { return vault },
 		AuditFn:             cfg.auditFn,
 		TickInterval:        cfg.tickInterval,
 		ManagedClustersPath: "configuration/managed-clusters.yaml",
