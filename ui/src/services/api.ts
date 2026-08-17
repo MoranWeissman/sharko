@@ -2141,9 +2141,11 @@ export const api = {
   // ─── Server-wide settings (V2-cleanup-89.6) ────────────────────────────
 
   /**
-   * Whether the "Paste a kubeconfig" registration path is enabled
-   * server-wide (default true). Powers the Settings → Inline Credentials
-   * toggle and the Register dialog's Connection source select.
+   * Whether legacy inline credentials (a kubeconfig pasted at registration)
+   * are allowed server-wide (default false — a pasted credential exists
+   * only in the live connection and cannot be restored from Git). Powers
+   * the Settings → Legacy Inline Credentials toggle and the Register
+   * dialog's Connection source select.
    */
   getAllowInlineCredentials: () =>
     fetchJSON<import('./models').AllowInlineCredentialsResponse>('/settings/allow-inline-credentials'),

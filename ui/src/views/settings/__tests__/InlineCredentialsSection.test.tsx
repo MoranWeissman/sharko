@@ -41,24 +41,24 @@ describe('InlineCredentialsSection', () => {
     expect(screen.getByText(/Loading inline credentials setting/i)).toBeInTheDocument()
 
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toBeInTheDocument(),
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toBeInTheDocument(),
     )
-    const toggle = screen.getByRole('switch', { name: /Allow pasting credentials/i })
+    const toggle = screen.getByRole('switch', { name: /Allow legacy inline credentials/i })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText('Allowed')).toBeInTheDocument()
     expect(screen.getByText(/Operators can paste a kubeconfig/i)).toBeInTheDocument()
   })
 
-  it('renders the toggle "off" (Forbidden) when the setting is false', async () => {
+  it('renders the toggle "off" (Off) when the setting is false', async () => {
     getMock.mockResolvedValue({ allow_inline_credentials: false })
     render(<InlineCredentialsSection />)
 
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toBeInTheDocument(),
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toBeInTheDocument(),
     )
-    const toggle = screen.getByRole('switch', { name: /Allow pasting credentials/i })
+    const toggle = screen.getByRole('switch', { name: /Allow legacy inline credentials/i })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
-    expect(screen.getByText('Forbidden')).toBeInTheDocument()
+    expect(screen.getByText('Off')).toBeInTheDocument()
     expect(screen.getByText(/option is hidden/i)).toBeInTheDocument()
   })
 
@@ -69,14 +69,14 @@ describe('InlineCredentialsSection', () => {
     render(<InlineCredentialsSection />)
 
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toBeInTheDocument(),
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toBeInTheDocument(),
     )
 
-    await user.click(screen.getByRole('switch', { name: /Allow pasting credentials/i }))
+    await user.click(screen.getByRole('switch', { name: /Allow legacy inline credentials/i }))
 
     await waitFor(() => expect(setMock).toHaveBeenCalledWith(false))
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toHaveAttribute(
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toHaveAttribute(
         'aria-checked',
         'false',
       ),
@@ -91,14 +91,14 @@ describe('InlineCredentialsSection', () => {
     render(<InlineCredentialsSection />)
 
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toBeInTheDocument(),
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toBeInTheDocument(),
     )
 
-    await user.click(screen.getByRole('switch', { name: /Allow pasting credentials/i }))
+    await user.click(screen.getByRole('switch', { name: /Allow legacy inline credentials/i }))
 
     await waitFor(() => expect(setMock).toHaveBeenCalledWith(false))
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toHaveAttribute(
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toHaveAttribute(
         'aria-checked',
         'true',
       ),
@@ -122,7 +122,7 @@ describe('InlineCredentialsSection', () => {
     await user.click(screen.getByRole('button', { name: /Retry/i }))
 
     await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /Allow pasting credentials/i })).toBeInTheDocument(),
+      expect(screen.getByRole('switch', { name: /Allow legacy inline credentials/i })).toBeInTheDocument(),
     )
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })

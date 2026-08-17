@@ -111,9 +111,11 @@ func TestIsAPITest_NilStoreIsSafe(t *testing.T) {
 	}
 }
 
-// V2-cleanup-89.6 — allow_inline_credentials kill switch.
+// V2-cleanup-89.6 — allow_inline_credentials, the legacy escape hatch.
+// Default flipped to FALSE by the connection-reconciliation epic (product
+// correction 5): legacy inline credentials are opt-in now.
 
-func TestGetAllowInlineCredentials_DefaultsToTrue(t *testing.T) {
+func TestGetAllowInlineCredentials_DefaultsToFalse(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	store := NewStore(client, "sharko")
 	ctx := context.Background()
@@ -122,8 +124,8 @@ func TestGetAllowInlineCredentials_DefaultsToTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAllowInlineCredentials: %v", err)
 	}
-	if !allow {
-		t.Error("GetAllowInlineCredentials = false, want default true (today's behavior unchanged)")
+	if allow {
+		t.Error("GetAllowInlineCredentials = true, want default false (legacy inline credentials are opt-in, product correction 5)")
 	}
 }
 
@@ -161,8 +163,15 @@ func TestIsInlineCredentialsAllowed(t *testing.T) {
 	store := NewStore(client, "sharko")
 	ctx := context.Background()
 
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("IsInlineCredentialsAllowed should be false by default (legacy inline credentials are opt-in)")
+	}
+
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
+		t.Fatalf("SetAllowInlineCredentials: %v", err)
+	}
 	if !store.IsInlineCredentialsAllowed(ctx) {
-		t.Error("IsInlineCredentialsAllowed should be true by default")
+		t.Error("IsInlineCredentialsAllowed should be true after an explicit SetAllowInlineCredentials(true)")
 	}
 
 	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
@@ -175,8 +184,8 @@ func TestIsInlineCredentialsAllowed(t *testing.T) {
 
 func TestIsInlineCredentialsAllowed_NilStoreIsSafe(t *testing.T) {
 	var store *Store
-	if !store.IsInlineCredentialsAllowed(context.Background()) {
-		t.Error("IsInlineCredentialsAllowed on a nil *Store must default to true, never panic or report false")
+	if store.IsInlineCredentialsAllowed(context.Background()) {
+		t.Error("IsInlineCredentialsAllowed on a nil *Store must default to false (fail-closed), never panic or report true")
 	}
 }
 
@@ -184,43 +193,45 @@ func TestIsInlineCredentialsAllowed_NilStoreIsSafe(t *testing.T) {
 // fail open on a read error. These three tests pin the cache-fallback
 // contract end to end.
 
-func TestIsInlineCredentialsAllowed_ErrorAfterFalseWasRead_StaysFalse(t *testing.T) {
+func TestIsInlineCredentialsAllowed_ErrorAfterTrueWasRead_StaysTrue(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	store := NewStore(client, "sharko")
 	ctx := context.Background()
 
-	// An admin turns the switch off, and it is successfully read back once
-	// — this seeds the cache with false.
-	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
+	// An admin explicitly enables the legacy option, and it is successfully
+	// read back once — this seeds the cache with true. (With the default now
+	// false, true is the discriminating direction: a fallback to the static
+	// default would silently flip an admin's explicit enable back off.)
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
 		t.Fatalf("SetAllowInlineCredentials: %v", err)
 	}
-	if store.IsInlineCredentialsAllowed(ctx) {
-		t.Fatal("expected IsInlineCredentialsAllowed to be false before injecting any read error")
+	if !store.IsInlineCredentialsAllowed(ctx) {
+		t.Fatal("expected IsInlineCredentialsAllowed to be true before injecting any read error")
 	}
 
-	// Now every subsequent ConfigMap read fails. The kill switch must keep
-	// reporting false (serve from cache), never fail open to the static
-	// default (true).
+	// Now every subsequent ConfigMap read fails. The wrapper must keep
+	// serving the last successfully-read value (true), never the static
+	// default (false).
 	failGetConfigMaps(client, errors.New("simulated API server outage"))
 
 	for i := 0; i < 3; i++ {
-		if store.IsInlineCredentialsAllowed(ctx) {
-			t.Fatalf("iteration %d: IsInlineCredentialsAllowed must stay false (cached) on a read error after false was successfully read, got true", i)
+		if !store.IsInlineCredentialsAllowed(ctx) {
+			t.Fatalf("iteration %d: IsInlineCredentialsAllowed must stay true (cached) on a read error after true was successfully read, got false", i)
 		}
 	}
 }
 
-func TestIsInlineCredentialsAllowed_ErrorBeforeAnyRead_DefaultsTrue(t *testing.T) {
+func TestIsInlineCredentialsAllowed_ErrorBeforeAnyRead_DefaultsFalse(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	failGetConfigMaps(client, errors.New("simulated API server outage"))
 	store := NewStore(client, "sharko")
 	ctx := context.Background()
 
 	// No successful read has ever happened on this Store — the cache is
-	// empty, so the static default (true, allowed) applies, exactly like
-	// today's behavior.
-	if !store.IsInlineCredentialsAllowed(ctx) {
-		t.Error("expected the static default (true) when no successful read has ever happened, got false")
+	// empty, so the static default (false, refused) applies. Fail-closed:
+	// an unreadable settings store never opens the legacy paste path.
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("expected the static default (false) when no successful read has ever happened, got true")
 	}
 }
 

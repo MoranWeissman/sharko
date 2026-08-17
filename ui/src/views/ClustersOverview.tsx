@@ -381,11 +381,13 @@ export function ClustersOverview() {
   const TEST_BUTTON_DISABLED_TOOLTIP =
     'Cluster connectivity test is unavailable: no secrets backend (Vault / AWS Secrets Manager / file-store) is configured on the active connection. Configure one in Settings → Connections to enable.';
 
-  // Admin kill switch for the "Paste a kubeconfig" registration path
-  // (V2-cleanup-89.6). Defaults to true (today's behavior) so the option
-  // stays visible until the setting is confirmed off — matches the
-  // safe-default polarity used server-side.
-  const [allowInlineCredentials, setAllowInlineCredentials] = useState(true);
+  // Legacy escape hatch for the "Paste a kubeconfig" registration path
+  // (V2-cleanup-89.6; default flipped off by the connection-reconciliation
+  // epic, product correction 5). Starts hidden and only appears once the
+  // server confirms the setting is on — matches the fail-closed polarity
+  // used server-side, and the server refuses pasted credentials with a 403
+  // when the setting is off regardless.
+  const [allowInlineCredentials, setAllowInlineCredentials] = useState(false);
 
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
@@ -632,7 +634,8 @@ export function ClustersOverview() {
         }
       })
       .catch(() => {
-        /* keep optimistic default (allowed) */
+        /* keep the fail-closed default (hidden) — the server refuses
+         * pasted credentials anyway when the setting is off */
       });
     return () => {
       cancelled = true;

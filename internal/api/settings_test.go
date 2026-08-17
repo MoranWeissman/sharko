@@ -38,7 +38,10 @@ func TestHandleGetAllowInlineCredentials_HappyPath(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	client := fake.NewSimpleClientset()
 	store := settings.NewStore(client, "sharko")
-	if err := store.SetAllowInlineCredentials(t.Context(), false); err != nil {
+	// TRUE is the discriminating value now that the default is false: the
+	// GET must surface the explicitly-enabled legacy option, not the
+	// default.
+	if err := store.SetAllowInlineCredentials(t.Context(), true); err != nil {
 		t.Fatalf("SetAllowInlineCredentials: %v", err)
 	}
 	srv.SetSettingsStore(store)
@@ -55,15 +58,15 @@ func TestHandleGetAllowInlineCredentials_HappyPath(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if body.AllowInlineCredentials {
-		t.Errorf("allow_inline_credentials = true, want false (the value persisted before the GET)")
+	if !body.AllowInlineCredentials {
+		t.Errorf("allow_inline_credentials = false, want true (the value persisted before the GET)")
 	}
 }
 
-func TestHandleGetAllowInlineCredentials_NilStore_ReturnsDefaultTrue(t *testing.T) {
+func TestHandleGetAllowInlineCredentials_NilStore_ReturnsDefaultFalse(t *testing.T) {
 	// A Server with no SetSettingsStore call at all — matches an
 	// out-of-cluster / local dev deployment. Pinned status: 200 with the
-	// static default (true, allowed), NOT an error.
+	// static default (false, refused — product correction 5), NOT an error.
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -78,8 +81,8 @@ func TestHandleGetAllowInlineCredentials_NilStore_ReturnsDefaultTrue(t *testing.
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !body.AllowInlineCredentials {
-		t.Errorf("allow_inline_credentials = false, want default true when no settings store is wired")
+	if body.AllowInlineCredentials {
+		t.Errorf("allow_inline_credentials = true, want default false when no settings store is wired")
 	}
 }
 
@@ -122,7 +125,9 @@ func TestHandleSetAllowInlineCredentials_NonAdmin_403(t *testing.T) {
 	srv.SetSettingsStore(store)
 	router := NewRouter(srv, nil)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/allow-inline-credentials", bytes.NewBufferString(`{"allow_inline_credentials": false}`))
+	// A non-admin tries to ENABLE the legacy option — the discriminating
+	// direction now that the default is false.
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/settings/allow-inline-credentials", bytes.NewBufferString(`{"allow_inline_credentials": true}`))
 	req.Header.Set("X-Sharko-User", "bob")
 	req.Header.Set("X-Sharko-Role", "operator")
 	req.Header.Set("Content-Type", "application/json")
@@ -133,12 +138,12 @@ func TestHandleSetAllowInlineCredentials_NonAdmin_403(t *testing.T) {
 		t.Fatalf("expected 403 for a non-admin role, got %d (body=%s)", w.Code, w.Body.String())
 	}
 
-	// The setting must be untouched — still the default.
+	// The setting must be untouched — still the default (false).
 	allow, err := store.GetAllowInlineCredentials(t.Context())
 	if err != nil {
 		t.Fatalf("GetAllowInlineCredentials: %v", err)
 	}
-	if !allow {
+	if allow {
 		t.Error("a rejected PUT must not have changed the setting")
 	}
 }

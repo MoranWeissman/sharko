@@ -67,7 +67,7 @@ export function Settings() {
             label: 'System',
             items: [
               { key: 'probe-mode', label: 'Connectivity Probe', icon: Radar },
-              { key: 'inline-credentials', label: 'Inline Credentials', icon: Lock },
+              { key: 'inline-credentials', label: 'Legacy Inline Credentials', icon: Lock },
               { key: 'addon-values-engine', label: 'Addon Values Engine', icon: Power },
             ],
           },

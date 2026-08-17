@@ -4,10 +4,15 @@ import { api } from '@/services/api'
 import { showToast } from '@/components/ToastNotification'
 
 /**
- * Settings → Inline Credentials (V2-cleanup-89.6).
+ * Settings → Legacy Inline Credentials (V2-cleanup-89.6; renamed and
+ * flipped to default-off by the connection-reconciliation epic, product
+ * correction 5).
  *
- * Server-wide, admin-only kill switch for the "Paste a kubeconfig" cluster
- * registration path. Sharko has no user RBAC today — there is a single
+ * Server-wide, admin-only legacy escape hatch for pasting a kubeconfig at
+ * cluster registration. Off by default: a pasted credential exists only in
+ * the live connection Secret and cannot be recovered from Git. Existing
+ * inline clusters keep working regardless of this setting — it gates NEW
+ * registrations only. Sharko has no user RBAC today — there is a single
  * admin login, so this is necessarily an install-wide switch. When V2.x
  * scoped RBAC lands this is expected to become a per-role permission
  * instead.
@@ -61,7 +66,7 @@ export function InlineCredentialsSection() {
 
   return (
     <section
-      aria-label="Inline Credentials"
+      aria-label="Legacy Inline Credentials"
       className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 dark:ring-gray-700 space-y-5"
     >
       <header className="flex items-center gap-3">
@@ -70,11 +75,12 @@ export function InlineCredentialsSection() {
         </div>
         <div>
           <h4 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-            Inline Credentials
+            Legacy Inline Credentials
           </h4>
           <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-400 max-w-prose">
-            Allow pasting credentials directly in the UI/API. Turn off to enforce GitOps-clean
-            secret-store pointers.
+            A pasted credential exists only in the live connection and cannot be restored from
+            Git, so this is off by default. New clusters should point at a supported credentials
+            provider instead. Clusters already registered this way keep working.
           </p>
         </div>
       </header>
@@ -105,23 +111,23 @@ export function InlineCredentialsSection() {
         <div className="flex items-center justify-between gap-4 rounded-lg px-3 py-2.5 ring-1 ring-[#b4dcf5] dark:ring-gray-700">
           <div>
             <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-              Allow pasting credentials
+              Allow legacy inline credentials
             </p>
             <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">
               {allow
-                ? 'Operators can paste a kubeconfig at registration time.'
-                : 'The "Paste a kubeconfig" option is hidden — every registration must point at a secret store.'}
+                ? 'Operators can paste a kubeconfig at registration time (legacy).'
+                : 'The "Paste a kubeconfig" option is hidden — new registrations point at a supported credentials provider.'}
             </p>
           </div>
           <label className="flex shrink-0 cursor-pointer items-center gap-2">
             <span className="text-xs text-[#2a5a7a] dark:text-gray-400">
-              {allow ? 'Allowed' : 'Forbidden'}
+              {allow ? 'Allowed' : 'Off'}
             </span>
             <button
               type="button"
               role="switch"
               aria-checked={allow ?? false}
-              aria-label="Allow pasting credentials"
+              aria-label="Allow legacy inline credentials"
               onClick={handleToggle}
               disabled={saving}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${

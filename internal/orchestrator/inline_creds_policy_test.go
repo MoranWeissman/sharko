@@ -39,7 +39,10 @@ func TestRegisterCluster_InlineCredentialsDisabled_RejectsPastedKubeconfig(t *te
 	if !IsInlineCredentialsDisabled(err) {
 		t.Errorf("expected *InlineCredentialsDisabledError, got %T: %v", err, err)
 	}
-	wantMsg := "inline credential paste is disabled on this server — point at your secret store instead, or ask your admin to enable allow_inline_credentials"
+	// The refusal is a fixed, plain-English sentence naming the supported
+	// credential providers (product correction 5) — pinned by exact
+	// equality so a paraphrase fails here.
+	wantMsg := "This server does not accept pasted credentials. A pasted credential would exist only inside the live connection and could never be restored from Git. Store the cluster's kubeconfig in a supported credentials provider instead — a Kubernetes Secret or AWS Secrets Manager — and register the cluster pointing at it. An admin can allow legacy inline credentials in Settings."
 	if err.Error() != wantMsg {
 		t.Errorf("error message = %q, want %q", err.Error(), wantMsg)
 	}

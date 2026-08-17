@@ -126,6 +126,10 @@ func TestRegisterCluster_SecretKubeconfig_NoSecretPath_LooksUpClusterName(t *tes
 func TestRegisterCluster_InlineKubeconfig_NeverTouchesBackendProvider(t *testing.T) {
 	fake := &recordingCredProvider{kc: &providers.Kubeconfig{Server: "https://should-not-be-used"}}
 	srv := newRegisterBackendTestServer(t, fake)
+	// The legacy option is explicitly enabled: this test pins the INLINE
+	// PATH's behavior, and the default-off gate would otherwise refuse the
+	// request before the path under test ever ran.
+	enableLegacyInlineForTest(t, srv)
 	router := NewRouter(srv, nil)
 
 	// Valid kubeconfig YAML pointing at a dead local port: the inline path
