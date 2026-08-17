@@ -1199,6 +1199,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// nothing type-checking them. See connection_comparison.go's header for
 	// why the request carries a cluster name and nothing else.
 	mux.HandleFunc("GET /api/v1/clusters/{name}/connection-comparison", srv.handleGetConnectionComparison)
+	// The reconciliation contract for a connection: desired vs applied
+	// revision, honest sync + verification scope, ArgoCD health, conditions,
+	// grouped drift and the plan. Same read-only core as /connection-comparison
+	// (which stays byte-for-byte unchanged for its current clients); see
+	// connection_reconciliation.go's header.
+	mux.HandleFunc("GET /api/v1/clusters/{name}/connection-reconciliation", srv.handleGetConnectionReconciliation)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/history", srv.handleGetClusterHistory)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/changes", srv.handleGetClusterChanges)
 	mux.HandleFunc("GET /api/v1/clusters/{name}", srv.handleGetCluster)

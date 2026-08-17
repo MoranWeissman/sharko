@@ -56,6 +56,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/connectioncompare"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -186,6 +187,17 @@ type connectionComparisonView struct {
 	// ValuesNeverReturned is always true. It is in the body so the promise is
 	// visible to anyone reading the API, not only to anyone reading this file.
 	ValuesNeverReturned bool `json:"values_never_returned"`
+
+	// liveAppliedRevision and liveWrittenAt are joins for the reconciliation
+	// endpoint (connection_reconciliation.go): the live Secret's
+	// sharko.dev/revision and sharko.dev/written-at provenance annotations,
+	// read during the one Secret Get this check already performs. They are
+	// UNEXPORTED on purpose — encoding/json never serialises them, so the
+	// comparison endpoint's wire shape stays byte-for-byte what it was.
+	// Empty when the Secret is missing or was never stamped; an empty value
+	// means "Sharko does not know", never a guessed one.
+	liveAppliedRevision string
+	liveWrittenAt       string
 }
 
 // handleGetConnectionComparison godoc
@@ -333,6 +345,12 @@ func (s *Server) compareClusterConnection(parent context.Context, cluster string
 			Namespace:    ns,
 			CheckFailure: failLiveRead,
 		})), nil
+	}
+	if liveFound && live != nil {
+		// Provenance joins for the reconciliation endpoint — same Get, no
+		// extra read, never serialised on this endpoint (unexported fields).
+		view.liveAppliedRevision = live.Annotations[clusterreconciler.AnnotationRevision]
+		view.liveWrittenAt = live.Annotations[clusterreconciler.AnnotationWrittenAt]
 	}
 
 	// ONE ANSWER, ASKED ONCE, USED TWICE.
