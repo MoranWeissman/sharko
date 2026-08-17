@@ -2495,13 +2495,16 @@ definitions:
     properties:
       allow_inline_credentials:
         description: |-
-          AllowInlineCredentials is true (the default) when the "Paste a
-          kubeconfig" registration path is available. An admin sets this to
-          false to forbid inline credential paste install-wide — registration
-          requests that actually supply inline kubeconfig bytes are then
-          rejected with a 403; connection-only registrations are unaffected.
-          Sharko has no user RBAC today (single admin login); when V2.x scoped
-          RBAC lands this is expected to become a per-role permission.
+          AllowInlineCredentials is false by default: legacy inline credentials
+          (a kubeconfig pasted at registration) exist only in the live ArgoCD
+          Secret and cannot be restored from Git, so new registrations should
+          point at a supported credentials provider instead. An admin may set
+          this to true to allow legacy inline registrations install-wide.
+          Registration requests that actually supply inline kubeconfig bytes
+          while it is off are rejected with a 403; connection-only registrations
+          and EXISTING inline clusters are unaffected. Sharko has no user RBAC
+          today (single admin login); when V2.x scoped RBAC lands this is
+          expected to become a per-role permission.
         type: boolean
       managed_by_git:
         description: |-
@@ -2830,6 +2833,192 @@ definitions:
         description: |-
           ValuesNeverReturned is always true. It is in the body so the promise is
           visible to anyone reading the API, not only to anyone reading this file.
+        type: boolean
+    type: object
+  internal_api.connectionReconciliationCondition:
+    properties:
+      detail:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.connectionReconciliationDefinition:
+    properties:
+      applied_revision:
+        description: |-
+          AppliedRevision is the commit the last successful write of this Secret
+          was built from — the live Secret's sharko.dev/revision provenance
+          annotation, the durable copy. Empty when the Secret is missing or was
+          never stamped.
+        type: string
+      branch:
+        description: Branch is the configured git branch.
+        type: string
+      credential_source_type:
+        description: |-
+          CredentialSourceType is a KIND (secret-kubeconfig, eks-token,
+          inline-kubeconfig), never a path into a store and never a value.
+        type: string
+      desired_revision:
+        description: |-
+          DesiredRevision is the branch head commit every file in this check was
+          read at. Empty when the git provider cannot name one — an empty value
+          says "Sharko does not know", never a guessed or stale commit.
+        type: string
+      file:
+        description: File is the git file the definition was read from.
+        type: string
+    type: object
+  internal_api.connectionReconciliationDrift:
+    properties:
+      addon_labels:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationDriftEntry'
+        type: array
+      connection_configuration:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationDriftEntry'
+        type: array
+      credential_material:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationSensitiveDriftEntry'
+        type: array
+      not_checked:
+        items:
+          $ref: '#/definitions/internal_api.connectionComparisonNotChecked'
+        type: array
+    type: object
+  internal_api.connectionReconciliationDriftEntry:
+    properties:
+      expected:
+        type: string
+      live:
+        type: string
+      path:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.connectionReconciliationHealth:
+    properties:
+      message:
+        description: |-
+          Message is ArgoCD's own failure text — the same text the cluster pages
+          already show today. Never a Go error and never provider SDK text from
+          Sharko's side.
+        type: string
+      state:
+        description: State is connected, unavailable or not_checked.
+        type: string
+    type: object
+  internal_api.connectionReconciliationPlan:
+    properties:
+      action:
+        description: |-
+          Action is the one explicit action this state permits: none,
+          repair_connection, sync_addon_labels, take_over or migrate_credentials.
+        type: string
+      action_scopes:
+        description: |-
+          ActionScopes is exactly the non-sensitive field scopes the action would
+          change. Empty when the action changes nothing.
+        items:
+          type: string
+        type: array
+      automatic:
+        description: |-
+          Automatic is a fixed sentence for something that genuinely happens by
+          itself on the reconciler's next pass. Absent when nothing will.
+        type: string
+      requires_approval:
+        description: |-
+          RequiresApproval is a fixed sentence naming the approval-gated half.
+          Absent when nothing needs approval.
+        type: string
+      reviewed_commit:
+        description: |-
+          ReviewedCommit is the commit a repair must echo back (the existing
+          R3-4 rule) — set only when Action is repair_connection.
+        type: string
+    type: object
+  internal_api.connectionReconciliationSensitiveDriftEntry:
+    properties:
+      path:
+        type: string
+      sensitive:
+        type: boolean
+      status:
+        type: string
+    type: object
+  internal_api.connectionReconciliationSync:
+    properties:
+      approval_required:
+        description: |-
+          ApprovalRequired is true exactly when the drift touches connection
+          configuration or credential material — the halves Sharko never changes
+          by itself.
+        type: boolean
+      checked_at:
+        description: |-
+          CheckedAt is when this check ran, RFC3339. ABSENT when no check has
+          run — never Go's zero time (the W3-6 rule).
+        type: string
+      last_successful_application:
+        description: |-
+          LastSuccessfulApplication is the live Secret's sharko.dev/written-at
+          provenance annotation. ABSENT when unknown.
+        type: string
+      reason:
+        description: Reason is a fixed sentence explaining a state that is not clean.
+        type: string
+      state:
+        description: |-
+          State is synced, out_of_sync, blocked or unknown. synced is produced
+          ONLY when VerificationScope is full — enforced in the builder.
+        type: string
+      verification_scope:
+        description: |-
+          VerificationScope is how much of what Sharko OWNS was successfully
+          compared: full, partial, labels_only or none.
+        type: string
+    type: object
+  internal_api.connectionReconciliationView:
+    properties:
+      cluster:
+        type: string
+      conditions:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationCondition'
+        type: array
+      definition:
+        $ref: '#/definitions/internal_api.connectionReconciliationDefinition'
+      drift:
+        $ref: '#/definitions/internal_api.connectionReconciliationDrift'
+      health:
+        $ref: '#/definitions/internal_api.connectionReconciliationHealth'
+      managed_scope:
+        description: |-
+          ManagedScope is what Sharko OWNS on this connection: full_connection,
+          addon_labels, or none. For legacy_inline it is addon_labels — the exact
+          limited scope the code can actually rebuild without the live Secret.
+        type: string
+      management_mode:
+        description: |-
+          ManagementMode is sharko_managed, self_managed, legacy_inline or
+          foreign_owned.
+        type: string
+      mode_statement:
+        description: ModeStatement is the product-approved sentence for the mode.
+        type: string
+      plan:
+        $ref: '#/definitions/internal_api.connectionReconciliationPlan'
+      sync:
+        $ref: '#/definitions/internal_api.connectionReconciliationSync'
+      values_never_returned:
+        description: ValuesNeverReturned is always true — the promise, visible on
+          the wire.
         type: boolean
     type: object
   internal_api.connectionRepairView:
@@ -6503,6 +6692,64 @@ paths:
       summary: Compare a cluster's ArgoCD connection with what Sharko intends
       tags:
       - clusters
+  /clusters/{name}/connection-reconciliation:
+    get:
+      description: 'Read-only. Answers, for one cluster connection: which git definition
+        is desired and which is applied, whether the live connection matches it and
+        how much of that Sharko could honestly verify, whether ArgoCD can use the
+        connection, why convergence is blocked, what happens automatically, and which
+        single explicit action is permitted. Runs the same shared read-only comparison
+        the connection-comparison endpoint runs — writes nothing, creates no sign-in
+        tokens on any path — and joins facts Sharko already holds: ArgoCD''s own connection
+        health, the live Secret''s provenance annotations, and the server''s self-heal
+        policy. sync.state is "synced" only when verification_scope is "full" — a
+        connection whose credential content could not be compared is never reported
+        as synced. Sensitive drift entries carry the field path, a status word and
+        sensitive true, and nothing else: no value, no length, no hash, no fragment,
+        on either side.'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The reconciliation view
+          schema:
+            $ref: '#/definitions/internal_api.connectionReconciliationView'
+        "400":
+          description: Cluster name is required
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: This cluster is not in the git-managed cluster list
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko is missing something it needs to run the check
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: The reconciliation view of a cluster's ArgoCD connection
+      tags:
+      - clusters
   /clusters/{name}/connection-repair:
     post:
       consumes:
@@ -9613,8 +9860,12 @@ paths:
       - system
   /settings/allow-inline-credentials:
     get:
-      description: Returns whether the "Paste a kubeconfig" registration path is enabled
-        server-wide (V2-cleanup-89.6, default true)
+      description: 'Returns whether legacy inline credentials (a kubeconfig pasted
+        at registration) are allowed server-wide. Default false: an inline credential
+        exists only in the live ArgoCD Secret and cannot be restored from Git, so
+        new registrations should point at a supported credentials provider (a Kubernetes
+        Secret or AWS Secrets Manager). Existing inline clusters keep working regardless
+        of this setting.'
       produces:
       - application/json
       responses:
@@ -9629,14 +9880,15 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Get allow-inline-credentials setting
+      summary: Get the allow-legacy-inline-credentials setting
       tags:
       - system
     put:
       consumes:
       - application/json
-      description: Sets whether the "Paste a kubeconfig" registration path is enabled
-        server-wide (V2-cleanup-89.6). Admin only.
+      description: Sets whether legacy inline credentials (a kubeconfig pasted at
+        registration) are allowed server-wide. Off by default; enabling it is the
+        explicit legacy escape hatch. Admin only.
       parameters:
       - description: Desired setting
         in: body
@@ -9673,7 +9925,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Set allow-inline-credentials setting
+      summary: Set the allow-legacy-inline-credentials setting
       tags:
       - system
   /settings/managed-cluster-self-heal:
