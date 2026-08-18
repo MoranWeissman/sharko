@@ -67,20 +67,26 @@ changing that cluster's `credsSource` to `secret-kubeconfig` and setting
 `secretPath` to where you stored the kubeconfig in step 1:
 
 ```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: my-cluster
-      credsSource: secret-kubeconfig   # was: inline-kubeconfig
-      secretPath: my-cluster-kubeconfig
+clusters:
+  - name: my-cluster
+    credsSource: secret-kubeconfig   # was: inline-kubeconfig
+    secretPath: my-cluster-kubeconfig
 ```
 
-The file is schema-validated on write, and the change goes through your
-ordinary review process — this PR is the moment the connection's definition
-becomes fully durable in Git.
+This is the flat shape Sharko itself writes (`apiVersion`, `kind`, and
+`clusters` at the top level — no `spec:` wrapper). Keep it that way in your
+edit: Sharko validates the file against its JSON Schema whenever Sharko
+writes it and whenever it reads this flat shape, while a legacy
+`spec:`-wrapped body is read for compatibility but skips that validation.
+Your hand-edited PR is not validated at PR time by Sharko itself — the check
+happens when Sharko next reads the file. If you want validation before
+merging, run `sharko validate-config` on the changed file locally or in CI.
+
+The change goes through your ordinary review process — this PR is the moment
+the connection's definition becomes fully durable in Git.
 
 ## Step 3 — check, then apply through the guarded repair
 
