@@ -741,6 +741,71 @@ func decodeRecon(t *testing.T, w *httptest.ResponseRecorder) connectionReconcili
 // TestConnectionReconciliation_SyncedThroughTheEndpoint: the full join — the
 // same core as the comparison, plus provenance annotations off the live
 // Secret.
+// TestConnectionReconciliation_ArgoNotCheckedSentencesSplit pins the F8 fix:
+// "Sharko could not ask ArgoCD" and "ArgoCD has never probed this cluster"
+// are two different facts and carry two different fixed sentences. Before
+// this, an unreachable ArgoCD borrowed the no-application explanation — a
+// guess dressed up as a fact.
+func TestConnectionReconciliation_ArgoNotCheckedSentencesSplit(t *testing.T) {
+	// Both sentences pinned character-for-character.
+	if condArgoCDUnreachable != "Sharko could not ask ArgoCD about this connection right now." {
+		t.Errorf("the unreachable sentence drifted: %q", condArgoCDUnreachable)
+	}
+	if condArgoCDNotChecked != "ArgoCD has not checked this connection. ArgoCD only probes a cluster once an application is scheduled on it." {
+		t.Errorf("the never-probed sentence drifted: %q", condArgoCDNotChecked)
+	}
+
+	argoDetail := func(out connectionReconciliationView) string {
+		for _, c := range out.Conditions {
+			if c.ID == conditionArgoCDConnection {
+				return c.Detail
+			}
+		}
+		t.Fatal("no argocd_connection condition in the response")
+		return ""
+	}
+
+	// ArgoCD could not be asked at all → the unreachable sentence, never
+	// the no-application one.
+	out := buildConnectionReconciliationView(connectionReconciliationFacts{
+		view:            reconView(nil),
+		healthState:     healthStateNotChecked,
+		argoUnreachable: true,
+	})
+	if got := argoDetail(out); got != condArgoCDUnreachable {
+		t.Errorf("unreachable ArgoCD: got %q, want the unreachable sentence", got)
+	}
+
+	// ArgoCD answered and has simply never probed this cluster → the
+	// no-application sentence, unchanged.
+	out = buildConnectionReconciliationView(connectionReconciliationFacts{
+		view:        reconView(nil),
+		healthState: healthStateNotChecked,
+	})
+	if got := argoDetail(out); got != condArgoCDNotChecked {
+		t.Errorf("never-probed cluster: got %q, want the no-application sentence", got)
+	}
+
+	// The health state on the wire stays not_checked for both — the split
+	// lives in the condition detail only, never in a new enum value.
+	if out.Health.State != healthStateNotChecked {
+		t.Errorf("health state changed: %q", out.Health.State)
+	}
+
+	// Break test: an unreachable ArgoCD must never render the
+	// no-application sentence anywhere in the conditions.
+	out = buildConnectionReconciliationView(connectionReconciliationFacts{
+		view:            reconView(nil),
+		healthState:     healthStateNotChecked,
+		argoUnreachable: true,
+	})
+	for _, c := range out.Conditions {
+		if c.Detail == condArgoCDNotChecked {
+			t.Errorf("unreachable ArgoCD carries the no-application sentence on condition %q", c.ID)
+		}
+	}
+}
+
 func TestConnectionReconciliation_SyncedThroughTheEndpoint(t *testing.T) {
 	live := expectedLiveSecretForFixture(t)
 	live.Annotations = map[string]string{

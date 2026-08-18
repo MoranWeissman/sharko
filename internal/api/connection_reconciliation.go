@@ -194,6 +194,11 @@ const (
 	condArgoCDConnected   = "ArgoCD reports this connection as working."
 	condArgoCDUnavailable = "ArgoCD cannot currently use this connection."
 	condArgoCDNotChecked  = "ArgoCD has not checked this connection. ArgoCD only probes a cluster once an application is scheduled on it."
+	// condArgoCDUnreachable is the F8 split: when Sharko could not ask
+	// ArgoCD at all, the honest sentence says so plainly — it never borrows
+	// the no-application explanation above, which is only true when ArgoCD
+	// itself answered and simply had no probe to report.
+	condArgoCDUnreachable = "Sharko could not ask ArgoCD about this connection right now."
 	condApprovalRequired  = "Applying this change needs an admin's approval through the repair action."
 )
 
@@ -395,14 +400,15 @@ func (s *Server) handleGetConnectionReconciliation(w http.ResponseWriter, r *htt
 	// the fleet page never lags a check a person just ran here either.
 	s.connCredChecks.record(cluster, view)
 
-	healthState, healthMessage := s.argoConnectionHealth(r.Context(), cluster)
+	healthState, healthMessage, argoUnreachable := s.argoConnectionHealth(r.Context(), cluster)
 	selfHealOn := s.settingsStore.GetManagedSecretsSettings(r.Context()).SelfHealEnabled
 
 	out := buildConnectionReconciliationView(connectionReconciliationFacts{
-		view:          view,
-		healthState:   healthState,
-		healthMessage: healthMessage,
-		selfHealOn:    selfHealOn,
+		view:            view,
+		healthState:     healthState,
+		healthMessage:   healthMessage,
+		argoUnreachable: argoUnreachable,
+		selfHealOn:      selfHealOn,
 	})
 
 	s.auditSecretResourceRead(r, "cluster:"+cluster,
@@ -416,26 +422,37 @@ func (s *Server) handleGetConnectionReconciliation(w http.ResponseWriter, r *htt
 // never a Go error's text (only ArgoCD's own connection message, which the
 // cluster pages already show today, is passed through — and only for a
 // failed connection).
-func (s *Server) argoConnectionHealth(parent context.Context, cluster string) (state, message string) {
+//
+// The third return (F8) separates the two very different reasons for
+// not_checked: unreachable=true means Sharko could not ask ArgoCD at all;
+// unreachable=false with not_checked means ArgoCD answered and has simply
+// never probed this cluster (it never probes a cluster with no application
+// scheduled on it). The two get different condition sentences — the no-app
+// explanation would be a guess dressed up as a fact when ArgoCD was down.
+func (s *Server) argoConnectionHealth(parent context.Context, cluster string) (state, message string, unreachable bool) {
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		return healthStateNotChecked, ""
+		return healthStateNotChecked, "", true
 	}
 	ctx, cancel := context.WithTimeout(parent, connectionHealthTimeout)
 	defer cancel()
 	status, msg, err := argocd.NewService(ac).GetClusterConnectionInfo(ctx, cluster)
 	if err != nil {
-		return healthStateNotChecked, ""
+		return healthStateNotChecked, "", true
 	}
 	// argoHealthWordFor is the SHARED mapping (connection_canonical.go) — the
 	// fleet row maps ArgoCD's same connection-state string through the same
 	// function, so the two surfaces cannot disagree about one cluster's
 	// health. Only a failed connection carries ArgoCD's own message.
+	//
+	// Reaching this line means ArgoCD answered, so unreachable is false even
+	// when the word is not_checked (F8: ArgoCD answered and simply has never
+	// probed this cluster).
 	state = argoHealthWordFor(status)
 	if state == healthStateUnavailable {
-		return state, msg
+		return state, msg, false
 	}
-	return state, ""
+	return state, "", false
 }
 
 // connectionReconciliationFacts is everything the builder is allowed to look
@@ -445,6 +462,10 @@ type connectionReconciliationFacts struct {
 	view          connectionComparisonView
 	healthState   string
 	healthMessage string
+	// argoUnreachable is true when Sharko could not ask ArgoCD at all (F8).
+	// Only meaningful next to healthState not_checked; it picks the honest
+	// condition sentence — "could not ask" vs "never probed".
+	argoUnreachable bool
 	// selfHealOn is the live managed_cluster_self_heal setting — whether
 	// slash-free label drift on a v3 Sharko-managed cluster converges by
 	// itself.
@@ -500,7 +521,7 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 		Headline:                  canon.Headline,
 		Qualifier:                 canon.Qualifier,
 	}
-	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, f.healthState)
+	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, f.healthState, f.argoUnreachable)
 	return out
 }
 
@@ -914,7 +935,7 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 // 5). Routine success renders compactly on the page; the API always names
 // the facts it has. The plan is an input so the approval condition can only
 // name the repair door when the plan actually offers it.
-func buildReconciliationConditions(v connectionComparisonView, mode string, sync connectionReconciliationSync, plan connectionReconciliationPlan, healthState string) []connectionReconciliationCondition {
+func buildReconciliationConditions(v connectionComparisonView, mode string, sync connectionReconciliationSync, plan connectionReconciliationPlan, healthState string, argoUnreachable bool) []connectionReconciliationCondition {
 	argoCond := connectionReconciliationCondition{ID: conditionArgoCDConnection}
 	switch healthState {
 	case healthStateConnected:
@@ -925,7 +946,15 @@ func buildReconciliationConditions(v connectionComparisonView, mode string, sync
 		argoCond.Detail = condArgoCDUnavailable
 	default:
 		argoCond.Status = conditionStatusAttention
-		argoCond.Detail = condArgoCDNotChecked
+		// F8: two different facts hide behind not_checked. When Sharko
+		// could not ask ArgoCD, say that — the no-application explanation
+		// is reserved for the case where ArgoCD answered and genuinely has
+		// never probed this cluster.
+		if argoUnreachable {
+			argoCond.Detail = condArgoCDUnreachable
+		} else {
+			argoCond.Detail = condArgoCDNotChecked
+		}
 	}
 
 	// Self-managed and foreign pages answer ownership and ArgoCD health only
