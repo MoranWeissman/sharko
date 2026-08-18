@@ -110,7 +110,7 @@ Worth stating once, explicitly, because it is the heart of the security model: *
 
 ## Cluster-connection credentials (the other Secrets)
 
-For completeness — these are the Secrets on the *hub*, in the ArgoCD namespace, that ArgoCD uses to reach each cluster. Sharko's cluster-connection engine writes them from Git-approved cluster records and repairs them when they drift, on its own 30-second cadence, and only ever touches Secrets carrying its ownership label. They never leave the hub, and Secret Sync (this page's subject) is not involved in them. See [Drift Detection and Sync](../user-guide/drift-and-sync.md) and [Managing Cluster Connections Yourself](../operator/self-managed-connections.md).
+For completeness — these are the Secrets on the *hub*, in the ArgoCD namespace, that ArgoCD uses to reach each cluster. Git is the source of truth for each connection definition; credential values are resolved from the referenced provider during reconciliation and are never stored in Git. Sharko owns and maintains the rendered ArgoCD cluster Secret — it creates a missing one and converges its addon labels on its own 30-second cadence, while a drifted connection detail is only ever applied through the explicit admin repair — and it only ever touches Secrets carrying its ownership label. They never leave the hub, and Secret Sync (this page's subject) is not involved in them. See [Drift Detection and Sync](../user-guide/drift-and-sync.md) and [Managing Cluster Connections Yourself](../operator/self-managed-connections.md).
 
 ## Where to go next
 

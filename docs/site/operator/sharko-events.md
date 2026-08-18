@@ -61,7 +61,7 @@ These event Reasons are defined in the codebase and reserved for future wiring. 
 | `GitCloneFailed` | Warning | Git clone/fetch failed | Initial clone or fetch of configuration repository (network, not-found, corrupted) |
 | **Reconciler** | | | |
 | `ReconcileFailed` | Warning | Cluster reconciler failed | Reconciler tick encountered an unrecoverable error |
-| `DriftDetected` | Warning | Drift detected between the cluster Secret and what Sharko intends | Reconciler detected that the ArgoCD cluster Secret differs from what Sharko intends — addon labels from Git, connection details from the cluster's configured credentials source |
+| `DriftDetected` | Warning | Drift detected between the cluster Secret and what Sharko intends | Reconciler detected that the ArgoCD cluster Secret differs from the connection git defines (credential values resolved from the referenced provider, never stored in Git) |
 | **Success Events** | | | |
 | `ClusterRegistered` | Normal | Cluster successfully registered | Cluster registration completed (Secret created in ArgoCD, PR opened or committed) |
 | `ClusterReconciled` | Normal | Cluster reconciled successfully | Reconciler self-healed drift or verified no drift exists |
