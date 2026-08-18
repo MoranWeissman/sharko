@@ -324,7 +324,7 @@ func (l *Log) ListFiltered(filter AuditFilter) []Entry {
 		if !filter.Since.IsZero() && e.Timestamp.Before(filter.Since) {
 			continue
 		}
-		if filter.Cluster != "" && !strings.Contains(e.Resource, "cluster:"+filter.Cluster) {
+		if filter.Cluster != "" && !resourceMatchesCluster(e.Resource, filter.Cluster) {
 			continue
 		}
 		out = append(out, e)
@@ -333,6 +333,37 @@ func (l *Log) ListFiltered(filter AuditFilter) []Entry {
 		}
 	}
 	return out
+}
+
+// resourceMatchesCluster reports whether an audit entry's Resource names
+// exactly the given cluster. Resources name a cluster as "cluster:<name>" —
+// as the whole resource ("cluster:prod-eu"), with a sub-resource suffix
+// ("cluster:prod-eu/addon:datadog"), or as a space-separated segment
+// ("pr:12 cluster:prod-eu"). The name must match EXACTLY: filtering for
+// "prod" must never also return "prod-eu" (the old substring match did —
+// gap G5 in the connection-reconciliation epic).
+func resourceMatchesCluster(resource, cluster string) bool {
+	const marker = "cluster:"
+	for i := 0; i+len(marker) <= len(resource); {
+		j := strings.Index(resource[i:], marker)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		// The marker must open the resource or follow a separator — a
+		// segment boundary (space) or a sub-resource boundary (slash).
+		if start == 0 || resource[start-1] == ' ' || resource[start-1] == '/' {
+			name := resource[start+len(marker):]
+			if k := strings.IndexAny(name, " /"); k >= 0 {
+				name = name[:k]
+			}
+			if name == cluster {
+				return true
+			}
+		}
+		i = start + len(marker)
+	}
+	return false
 }
 
 // Subscribe returns a read-only channel that receives every new audit entry,

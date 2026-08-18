@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -90,6 +91,67 @@ func TestListFiltered_ByCluster(t *testing.T) {
 	}
 	if got[0].Resource != "cluster:prod-eu" {
 		t.Errorf("expected cluster:prod-eu, got %q", got[0].Resource)
+	}
+}
+
+// TestListFiltered_ByCluster_ExactMatch pins the G5 fix: the per-cluster
+// filter matches the cluster NAME exactly, never as a substring. Before this,
+// filtering for "prod" also returned "prod-eu" — on a fleet with prefix-named
+// clusters the connection page's activity feed would show a neighbour's
+// events.
+func TestListFiltered_ByCluster_ExactMatch(t *testing.T) {
+	l := NewLog(100)
+	l.Add(Entry{Resource: "cluster:prod", Action: "register"})
+	l.Add(Entry{Resource: "cluster:prod-eu", Action: "register"})
+	l.Add(Entry{Resource: "cluster:prod/addon:datadog", Action: "install"})
+	l.Add(Entry{Resource: "cluster:prod-eu/addon:grafana", Action: "install"})
+	l.Add(Entry{Resource: "pr:12 cluster:prod", Action: "update"})
+	l.Add(Entry{Resource: "pr:13 cluster:prod-eu", Action: "update"})
+
+	got := l.ListFiltered(AuditFilter{Cluster: "prod"})
+	if len(got) != 3 {
+		t.Fatalf("expected exactly 3 entries for cluster \"prod\", got %d: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if strings.Contains(e.Resource, "prod-eu") {
+			t.Errorf("filter for \"prod\" leaked a prod-eu entry: %q", e.Resource)
+		}
+	}
+
+	// The longer name still matches all of ITS OWN shapes.
+	got = l.ListFiltered(AuditFilter{Cluster: "prod-eu"})
+	if len(got) != 3 {
+		t.Fatalf("expected exactly 3 entries for cluster \"prod-eu\", got %d: %+v", len(got), got)
+	}
+
+	// A partial name that is not any cluster's exact name matches nothing.
+	if got := l.ListFiltered(AuditFilter{Cluster: "pro"}); len(got) != 0 {
+		t.Fatalf("expected 0 entries for the non-name \"pro\", got %d", len(got))
+	}
+}
+
+func TestResourceMatchesCluster(t *testing.T) {
+	cases := []struct {
+		resource, cluster string
+		want              bool
+	}{
+		{"cluster:prod", "prod", true},
+		{"cluster:prod-eu", "prod", false},
+		{"cluster:prod", "prod-eu", false},
+		{"cluster:prod/addon:datadog", "prod", true},
+		{"cluster:prod-eu/addon:datadog", "prod", false},
+		{"pr:12 cluster:prod", "prod", true},
+		{"pr:12 cluster:prod-eu", "prod", false},
+		{"addon:cert-manager", "prod", false},
+		{"", "prod", false},
+		{"notcluster:prod", "prod", false},
+		{"cluster:", "", true},
+		{"cluster:prod", "", false},
+	}
+	for _, c := range cases {
+		if got := resourceMatchesCluster(c.resource, c.cluster); got != c.want {
+			t.Errorf("resourceMatchesCluster(%q, %q) = %v, want %v", c.resource, c.cluster, got, c.want)
+		}
 	}
 }
 
