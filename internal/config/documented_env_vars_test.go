@@ -71,10 +71,6 @@ var envTokenRe = regexp.MustCompile(`(^|[^A-Z0-9_])(SHARKO_[A-Z0-9_]*[A-Z0-9])`)
 // covers `os.Getenv("SHARKO_X")` and `const envX = "SHARKO_X"` alike.
 var goLiteralEnvRe = regexp.MustCompile(`"(SHARKO_[A-Z0-9_]*[A-Z0-9])"`)
 
-// selfPath is this file, relative to the repository root. It must never
-// count as a read site — see the note in collectReadEnvVars.
-var selfPath = filepath.Join("internal", "config", "documented_env_vars_test.go")
-
 // docRoots are the trees and files whose SHARKO_* mentions are treated as
 // claims. README.md is in the list because docs/site/operator/configuration.md
 // sends the reader there for "the full list of supported env vars" — a page
@@ -103,19 +99,27 @@ const (
 	// Scoped to named files so the same name cannot quietly come back as a
 	// live claim on a different page.
 	declaredAbsent
+
+	// testHarnessOnly — the variable IS read, but only from test code, so
+	// the developer guide documents it honestly and no production file
+	// mentions it. Every entry must name the test file that reads it, and
+	// the test verifies that file really does — so the entry cannot rot
+	// into a lie if the harness is deleted or renamed.
+	testHarnessOnly
 )
 
 type allowedVar struct {
-	kind  allowedKind
-	why   string   // one line, mandatory — an allowlist without reasons is how this rots
-	files []string // declaredAbsent only: the exact files the name may appear in
+	kind    allowedKind
+	why     string   // one line, mandatory — an allowlist without reasons is how this rots
+	files   []string // declaredAbsent only: the exact files the name may appear in
+	readers []string // testHarnessOnly only: the test files that really read it
 }
 
 // allowedDocumentedEnvVars is the complete list of SHARKO_* names that may
 // appear in docs/ or charts/ without a read site.
 //
 // Adding an entry here to make the test green is the same dishonesty this
-// test exists to remove. The only two honest reasons are the two kinds above.
+// test exists to remove. The only honest reasons are the three kinds above.
 var allowedDocumentedEnvVars = map[string]allowedVar{
 	// --- shell-local: the runbook assigns it, Sharko never reads it ---
 	"SHARKO_POD":         {kind: shellLocal, why: "runbook shell var: SHARKO_POD=$(kubectl get pod ...) before the next command uses it"},
@@ -127,6 +131,39 @@ var allowedDocumentedEnvVars = map[string]allowedVar{
 	"SHARKO_SECRETS_NS":  {kind: shellLocal, why: "runbook shell var with a ${VAR:-default} fallback for the secrets namespace"},
 	"SHARKO_VERSION":     {kind: shellLocal, why: "runbook shell var holding the image tag parsed off the deployment"},
 	"SHARKO_POLICY":      {kind: shellLocal, why: "shell var inside the argocd-rbac-patch Helm hook script, holding policy.csv lines"},
+
+	// --- testHarnessOnly: read only from test code, documented for contributors ---
+	//
+	// These five are the reason the read scan cannot simply ignore every
+	// _test.go file and stop there. They are genuinely implemented — a
+	// contributor exports them to point the live Gitea suite at a real
+	// server — but the only reader is a build-tagged test. Naming the
+	// reader here is what keeps that claim checkable.
+	"SHARKO_E2E_GITEA_URL": {
+		kind:    testHarnessOnly,
+		why:     "live Gitea e2e suite: the server URL a contributor exports before running it",
+		readers: []string{filepath.Join("tests", "e2e", "lifecycle", "gitea_live_test.go")},
+	},
+	"SHARKO_E2E_GITEA_TOKEN": {
+		kind:    testHarnessOnly,
+		why:     "live Gitea e2e suite: the API token for that server",
+		readers: []string{filepath.Join("tests", "e2e", "lifecycle", "gitea_live_test.go")},
+	},
+	"SHARKO_E2E_GITEA_OWNER": {
+		kind:    testHarnessOnly,
+		why:     "live Gitea e2e suite: the repo owner to run against",
+		readers: []string{filepath.Join("tests", "e2e", "lifecycle", "gitea_live_test.go")},
+	},
+	"SHARKO_E2E_GITEA_REPO": {
+		kind:    testHarnessOnly,
+		why:     "live Gitea e2e suite: the repo name to run against",
+		readers: []string{filepath.Join("tests", "e2e", "lifecycle", "gitea_live_test.go")},
+	},
+	"SHARKO_E2E_GITEA_BASE": {
+		kind:    testHarnessOnly,
+		why:     "live Gitea e2e suite: the API base path when it is not the default",
+		readers: []string{filepath.Join("tests", "e2e", "lifecycle", "gitea_live_test.go")},
+	},
 
 	// --- declaredAbsent: the page says this is not implemented ---
 	"SHARKO_AUDIT_BUFFER_SIZE": {
@@ -287,12 +324,24 @@ func collectReadEnvVars(t *testing.T, root string) map[string]bool {
 		if relErr != nil {
 			return nil
 		}
-		// THIS FILE IS NOT A READ SITE. The allowlist below names every
-		// variable as a quoted Go string, so scanning it would make every
-		// allowlisted name look implemented and turn the whole allowlist
-		// into decoration. Found by a break test that should have failed
-		// and did not.
-		if rel == selfPath {
+		// NO TEST FILE IS A READ SITE.
+		//
+		// A _test.go file can name any string it likes, and several do —
+		// ban lists, fixtures, and this file's own allowlist. Counting them
+		// meant a documented setting could be "proved implemented" by a
+		// single `var _ = "SHARKO_WHATEVER"` in any test in the tree, which
+		// is no proof at all.
+		//
+		// This started as a one-file exclusion for THIS file, after a break
+		// test showed the allowlist was counting itself and was therefore
+		// decoration. The reviewer then found the same hole one step out:
+		// the rule has to be about test files as a class, not about one
+		// file that happened to be caught.
+		//
+		// A variable that really is read only from test code is still
+		// honest to document — but it has to say so, in the allowlist,
+		// naming the test that reads it. See testHarnessOnly.
+		if strings.HasSuffix(rel, "_test.go") {
 			return nil
 		}
 		inScripts := rel == "scripts" || strings.HasPrefix(rel, "scripts"+string(filepath.Separator))
@@ -373,9 +422,11 @@ func TestDocumentedEnvVars_AllHaveReadSites(t *testing.T) {
 		t.Errorf("documentation claims configuration Sharko does not implement:\n\n  %s\n\n"+
 			"Fix the documentation — name the variable the code really reads, or say plainly "+
 			"that the setting does not exist. Adding an allowlist entry to silence this is the "+
-			"same dishonesty the test exists to remove; the only two honest reasons are "+
-			"shellLocal (the doc assigns the variable itself) and declaredAbsent (the prose says "+
-			"Sharko does not implement it).", strings.Join(offenders, "\n  "))
+			"same dishonesty the test exists to remove; the only three honest reasons are "+
+			"shellLocal (the doc assigns the variable itself), declaredAbsent (the prose says "+
+			"Sharko does not implement it) and testHarnessOnly (a named test file really reads "+
+			"it). A string literal sitting in some test file is NOT a read site.",
+			strings.Join(offenders, "\n  "))
 	}
 }
 
@@ -402,6 +453,49 @@ func TestDocumentedEnvVars_AllowlistEntriesAreJustified(t *testing.T) {
 					"either remove the mention or record the file",
 					name, documented[name][0].relPath, documented[name][0].line)
 			}
+		}
+	}
+}
+
+// TestDocumentedEnvVars_TestHarnessReadersReallyReadThem is the guard on the
+// testHarnessOnly kind. The entry claims "this IS read, just only from a
+// test" — so the named test file must exist and must really contain the
+// quoted name. Without this, testHarnessOnly would be a free pass: anyone
+// could park a name there with a plausible sentence and no reader at all,
+// which is exactly the shape of the hole this kind was created to close.
+func TestDocumentedEnvVars_TestHarnessReadersReallyReadThem(t *testing.T) {
+	root := repoRootForEnvSweep(t)
+
+	for name, entry := range allowedDocumentedEnvVars {
+		if entry.kind != testHarnessOnly {
+			continue
+		}
+		if len(entry.readers) == 0 {
+			t.Errorf("allowlist entry %s is testHarnessOnly but names no reader — "+
+				"name the test file that reads it, or it is not test-harness-only, it is unread",
+				name)
+			continue
+		}
+		found := false
+		for _, reader := range entry.readers {
+			body, err := os.ReadFile(filepath.Join(root, reader))
+			if err != nil {
+				t.Errorf("allowlist entry %s names reader %s, which cannot be read: %v", name, reader, err)
+				continue
+			}
+			if !strings.HasSuffix(reader, "_test.go") {
+				t.Errorf("allowlist entry %s names reader %s, which is not a test file — "+
+					"if a production file reads it, the name belongs in neither this kind nor this list",
+					name, reader)
+			}
+			if strings.Contains(string(body), `"`+name+`"`) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("allowlist entry %s says %s reads it, but that file does not contain %q — "+
+				"the harness was renamed or deleted and the entry is now a lie",
+				name, strings.Join(entry.readers, ", "), name)
 		}
 	}
 }
