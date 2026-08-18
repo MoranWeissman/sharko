@@ -386,15 +386,37 @@ convergence without waiting for the safety-net tick).
 
 ### Common audit-log actions to grep for
 
-| Action                            | Meaning                                                  |
-| --------------------------------- | -------------------------------------------------------- |
-| `cluster_secret_create`           | Reconciler created a Secret in argocd ns                  |
-| `cluster_secret_create_failed`    | Create attempt failed (per-cluster error isolated)      |
-| `cluster_secret_delete`           | Reconciler deleted a labeled Secret                      |
-| `cluster_secret_delete_failed`    | Delete attempt failed                                    |
-| `vault_get_failed`                | Vault returned an error fetching cluster creds          |
-| `git_fetch_failed`                | Git Contents API returned an error                       |
-| `schema_validation_failed`        | `managed-clusters.yaml` failed envelope/schema check    |
+Every name below is either a success or a failure, never both. A past-tense
+name (`cluster_secret_create`) is only written when the thing named really
+happened; anything that failed gets its own `_failed` name. So you can grep
+for trouble by name alone, without also reading `result`.
+
+| Action                                    | Meaning                                                 |
+| ----------------------------------------- | ------------------------------------------------------- |
+| `cluster_secret_create`                   | Reconciler created a Secret in argocd ns                 |
+| `cluster_secret_create_failed`            | Create attempt failed (per-cluster error isolated)       |
+| `cluster_secret_delete`                   | Reconciler deleted a labeled Secret                      |
+| `cluster_secret_delete_failed`            | Delete attempt failed                                    |
+| `cluster_secret_user_label_sync`          | Addon labels synced onto a self-managed connection       |
+| `cluster_secret_user_label_sync_failed`   | That label sync failed                                   |
+| `cluster_secret_managed_self_heal`        | Sharko re-applied labels on a connection it owns         |
+| `cluster_secret_managed_self_heal_failed` | That self-heal write failed or did not converge          |
+| `cluster_secret_user_pending`             | Self-managed connection, Secret not created by hand yet  |
+| `connection_credential_drift_detected`    | A check ran to completion and found a difference         |
+| `connection_credential_drift_cleared`     | A later check found the difference gone                  |
+| `connection_credential_check_failed`      | The check itself could not run                           |
+| `connection_credential_check_recovered`   | A check that had been failing ran successfully again     |
+| `cluster_connection_repair_requested`     | A repair was asked for                                   |
+| `cluster_connection_repair`               | A repair ran and wrote                                   |
+| `cluster_connection_repair_refused`       | A repair was refused before touching anything            |
+| `cluster_connection_repair_failed`        | A repair started and failed                              |
+| `vault_get_failed`                        | Vault returned an error fetching cluster creds           |
+| `git_fetch_failed`                        | Git Contents API returned an error                       |
+| `schema_validation_failed`                | `managed-clusters.yaml` failed envelope/schema check     |
+
+Each entry also carries a `changes` field — `applied`, `none`,
+`not_applicable`, or absent. See
+[Audit log — retention model](audit-log.md#the-changes-field).
 
 ---
 

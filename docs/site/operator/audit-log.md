@@ -14,10 +14,28 @@ Sharko emits an audit record for every mutating API call (cluster registration, 
 
 | Stream | Where | Lifetime | Use it for |
 |--------|-------|----------|------------|
-| In-memory ring buffer | UI, `GET /api/v1/audit`, SSE `/api/v1/audit/stream` | Last **1000 entries**, wiped on pod restart | Live debugging, "what just happened?" |
+| In-memory ring buffer | UI, `GET /api/v1/audit`, SSE `/api/v1/audit/stream` | Last **1000 entries** (fixed — not configurable), wiped on pod restart | Live debugging, "what just happened?" |
 | Structured stdout | Pod logs (`kubectl logs deployment/sharko`) | Whatever your cluster log pipeline retains (days to years) | Forensics, compliance, long-term reporting |
 
-Both streams emit **the same fields** — `id`, `timestamp`, `event`, `user`, `action`, `resource`, `source`, `result`, `duration_ms`, `attribution_mode`, `tier`. The stdout records are JSON, one event per line, suitable for ingestion by any standard log shipper.
+Both streams emit **the same fields** — `id`, `timestamp`, `event`, `user`, `action`, `resource`, `source`, `result`, `duration_ms`, `changes`, `attribution_mode`, `tier`. The stdout records are JSON, one event per line, suitable for ingestion by any standard log shipper.
+
+### The `changes` field
+
+`changes` says whether the operation behind the entry really changed
+anything. It is separate from `result`, which says whether the operation
+finished:
+
+| `changes` | Meaning |
+|-----------|---------|
+| `not_applicable` | A read-only check. Nothing was ever going to change. |
+| `none` | An action ran and deliberately wrote nothing. |
+| `applied` | Something really changed. |
+| absent | The writer did not say. Readers render nothing — never "no changes made". |
+
+`GET /api/v1/audit` has no typed response schema in the OpenAPI document
+(the endpoint is declared as a free-form object), so `changes` does not
+appear there. It is present on every entry the API and the stdout stream
+emit.
 
 ![Audit Log tab showing the in-memory ring buffer with filter controls.](../assets/screenshots/audit-log.png){ loading=lazy }
 <figcaption>Audit Log tab showing the in-memory ring buffer with filter controls.</figcaption>
@@ -86,4 +104,12 @@ For deeper investigation pipe through `jq` to filter by `user`, `cluster`, `acti
 
 - [Troubleshooting](troubleshooting.md) — broader log-and-debug guidance
 - [Security](security.md) — audit fields used for compliance
-- [Configuration](configuration.md) — `SHARKO_AUDIT_BUFFER_SIZE` env var to change the in-memory ring buffer cap
+- [Configuration](configuration.md) — the settings Sharko really reads
+
+## The ring buffer size is not configurable
+
+The 1000-entry cap is a compile-time constant. Sharko reads no environment
+variable and exposes no setting for it, so nothing you put in `extraEnv`
+will change it. If you need more history than the buffer holds, wire the
+structured stdout stream into your log aggregator as described above —
+that stream keeps everything for as long as your pipeline retains it.
