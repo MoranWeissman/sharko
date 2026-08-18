@@ -276,8 +276,13 @@ func perfAddonCycle(t *testing.T) {
 
 		// Re-seed the mock so the upgrade path always starts from the
 		// fixture catalog (the previous iteration's upgrade landed a
-		// new version which would skew the parse cost).
-		seedMockGit(t, ghmock)
+		// new version which would skew the parse cost). seedMockGit
+		// gained per-cluster name parameters (the values files are
+		// seeded under the caller's real cluster names); this suite
+		// uses the literal names, so it passes them — the perf-tagged
+		// build had silently stopped compiling on the old 2-arg call
+		// (pre-existing, verified against the tree without this change).
+		seedMockGit(t, ghmock, target1, "target-2")
 
 		ptEnable := harness.StartPhaseN(harness.PathAddonCycle, harness.PhaseEnableDryRun, i)
 		_ = admin.EnableAddonOnCluster(t, target1, addon, orchestrator.EnableAddonRequest{
