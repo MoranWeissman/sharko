@@ -319,6 +319,11 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 		// buildDemoReconcileSeeds' doc comment for why).
 		reconcileSeeds := buildDemoReconcileSeeds(estate)
 		applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, now)
+		// B5: the fleet row's state is the CANONICAL connection answer now,
+		// so the demo has to seed that too — demo clusters do not exist, so
+		// a real comparison can never run against them. Without this every
+		// row would honestly read "Not checked yet", which shows nothing.
+		applyDemoConnectionChecks(srv, reconcileSeeds, now)
 		seedDemoConnectionRepairHistory(auditLog, reconcileSeeds, now)
 		// A Refresh click (POST /clusters/{name}/reconcile) is a
 		// fleet-wide nudge in production too (see handleReconcileCluster's
@@ -329,6 +334,7 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 		// deterministic seed away from itself between server starts.
 		srv.SetReconcilerTrigger(func() {
 			applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, time.Now())
+			applyDemoConnectionChecks(srv, reconcileSeeds, time.Now())
 		})
 		// The Refresh path (P1-A A2) is the READ-ONLY check pass. Re-stamping
 		// the same seeds with a fresh time is exactly what a check does in
@@ -338,6 +344,7 @@ func SetupDemoServer(srv *api.Server, cfg ScaleConfig) (cleanup func(), err erro
 		// Sync, which is the whole point of the two words being different.
 		srv.SetReconcilerCheckTrigger(func() {
 			applyDemoReconcileSeeds(clusterRecon, reconcileSeeds, time.Now())
+			applyDemoConnectionChecks(srv, reconcileSeeds, time.Now())
 		})
 
 		// Addon values secrets — real rows across the generated estate

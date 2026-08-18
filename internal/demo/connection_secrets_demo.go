@@ -14,6 +14,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
@@ -71,6 +72,18 @@ type demoClusterReconcileSeed struct {
 	// one of the two fixed demo SHAs for everything else — see
 	// buildDemoReconcileSeeds for which row gets which.
 	appliedRevision string
+
+	// ── The canonical connection answer (B5) ──────────────────────────────
+	// Since the fleet row's state IS the canonical reconciliation answer,
+	// the demo has to seed that too — demo clusters do not exist, so no
+	// real comparison can ever run against them. These fields carry the
+	// FACTS; the display words are derived by the server from them, through
+	// the same functions the real path uses.
+	managementMode    string
+	syncState         string
+	verificationScope string
+	approvalRequired  bool
+	liveSecretMissing bool
 }
 
 // buildDemoReconcileSeeds works out, once and deterministically, which
@@ -113,6 +126,10 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 			message:      clusterreconciler.SelfManagedSecretNotCreatedMessage,
 			comparedPath: demoComparedPath(0),
 			// Never successfully written — the secret doesn't exist yet.
+			managementMode:    api.DemoManagementModeSelfManaged,
+			syncState:         api.DemoSyncStateOutOfSync,
+			verificationScope: api.DemoVerificationScopeNone,
+			liveSecretMissing: true,
 		})
 	}
 	if len(estate.ForeignSecretClusterNames) > 0 {
@@ -124,6 +141,9 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 			message:      "an unlabeled secret with this name already exists on this cluster — this looks like an existing installation, not something Sharko created. Register it as an adopted cluster instead of overwriting it.",
 			comparedPath: demoComparedPath(1),
 			// Never successfully written — it isn't Sharko's secret.
+			managementMode:    api.DemoManagementModeForeignOwned,
+			syncState:         api.DemoSyncStateBlocked,
+			verificationScope: api.DemoVerificationScopeNone,
 		})
 	}
 
@@ -147,6 +167,9 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 				// The pass's git read still succeeded (only the write
 				// failed) but this cluster has never had a successful
 				// write on this server instance yet.
+				managementMode:    api.DemoManagementModeSharkoManaged,
+				syncState:         api.DemoSyncStateUnknown,
+				verificationScope: api.DemoVerificationScopeNone,
 			})
 		case 1:
 			// Drift blame "git" (P2-C6): the last successful write was
@@ -159,6 +182,13 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 				drift:           &clusterreconciler.LabelDrift{Changed: []string{"an addon label"}},
 				comparedPath:    path,
 				appliedRevision: demoOlderBranchHeadSHA,
+				// A newer commit changed connection details, so this one is
+				// approval-gated: Sharko never rewrites connection details
+				// or credential material by itself.
+				managementMode:    api.DemoManagementModeSharkoManaged,
+				syncState:         api.DemoSyncStateOutOfSync,
+				verificationScope: api.DemoVerificationScopeFull,
+				approvalRequired:  true,
 			})
 		case 2:
 			// Drift blame "cluster" (P2-C6): the last successful write was
@@ -171,6 +201,10 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 				drift:           &clusterreconciler.LabelDrift{Changed: []string{"an addon label"}},
 				comparedPath:    path,
 				appliedRevision: demoBranchHeadSHA,
+				// Addon labels only — nothing here needs an admin.
+				managementMode:    api.DemoManagementModeSharkoManaged,
+				syncState:         api.DemoSyncStateOutOfSync,
+				verificationScope: api.DemoVerificationScopeFull,
 			})
 		default:
 			seeds = append(seeds, demoClusterReconcileSeed{
@@ -178,6 +212,11 @@ func buildDemoReconcileSeeds(estate *GeneratedEstate) []demoClusterReconcileSeed
 				outcome:         clusterreconciler.OutcomeSucceeded,
 				comparedPath:    path,
 				appliedRevision: demoBranchHeadSHA,
+				// Every field Sharko owns was compared and matched — the one
+				// combination that may honestly read "Connection synced".
+				managementMode:    api.DemoManagementModeSharkoManaged,
+				syncState:         api.DemoSyncStateSynced,
+				verificationScope: api.DemoVerificationScopeFull,
 			})
 		}
 		i++
@@ -203,6 +242,35 @@ func applyDemoReconcileSeeds(recon *clusterreconciler.Reconciler, seeds []demoCl
 		// buildDemoReconcileSeeds's doc comment).
 		recon.SeedReconcileRevisionForDemo(seed.cluster, demoBranchHeadSHA, seed.comparedPath, seed.appliedRevision)
 	}
+}
+
+// applyDemoConnectionChecks seeds each cluster's CANONICAL connection answer
+// — the fact the fleet row's state, headline and verification indicator are
+// now derived from (B5). Called wherever applyDemoReconcileSeeds is, with the
+// same "at", so a Refresh click re-stamps when Sharko "looked" without moving
+// any row's state, exactly as a real read-only check does.
+//
+// The demo supplies facts only. The server derives the display words from
+// them through the same functions the real path uses, and applies the same
+// fail-closed invariant — so no seed can produce a green row that the facts
+// do not support.
+func applyDemoConnectionChecks(srv *api.Server, seeds []demoClusterReconcileSeed, at time.Time) {
+	checks := make([]api.DemoConnectionCheck, 0, len(seeds))
+	for i, seed := range seeds {
+		if seed.managementMode == "" {
+			continue
+		}
+		checks = append(checks, api.DemoConnectionCheck{
+			Cluster:           seed.cluster,
+			ManagementMode:    seed.managementMode,
+			SyncState:         seed.syncState,
+			VerificationScope: seed.verificationScope,
+			ApprovalRequired:  seed.approvalRequired,
+			LiveSecretMissing: seed.liveSecretMissing,
+			CheckedAt:         at.Add(-connectionAgeOffsets[i%len(connectionAgeOffsets)]),
+		})
+	}
+	srv.SeedConnectionChecksForDemo(checks)
 }
 
 // demoComparedPath (P2-C1/C3) alternates the demo's managed-clusters file

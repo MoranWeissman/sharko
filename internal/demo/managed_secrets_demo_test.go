@@ -24,16 +24,29 @@ import (
 // managedSecretsBody mirrors the JSON shape of
 // internal/api/system_managed_secrets.go's response — a minimal local
 // re-declaration (test-only) rather than importing the unexported types.
+// connectionSecretRowBody mirrors internal/api's connectionSecretRow on the
+// wire. Named (rather than anonymous inline) so a test can hold a pointer to
+// one — see the failed-check lookup below.
+type connectionSecretRowBody struct {
+	Cluster            string `json:"cluster"`
+	State              string `json:"state"`
+	LastChecked        string `json:"last_checked"`
+	LastRepaired       string `json:"last_repaired"`
+	LastRepairedDetail string `json:"last_repaired_detail"`
+	LastCheckError     string `json:"last_check_error"`
+	// B5 — the canonical answer the row's state is a projection of.
+	ManagementMode    string `json:"management_mode"`
+	ManagedScope      string `json:"managed_scope"`
+	SyncState         string `json:"sync_state"`
+	VerificationScope string `json:"verification_scope"`
+	Headline          string `json:"headline"`
+	Qualifier         string `json:"qualifier"`
+	Health            string `json:"health"`
+}
+
 type managedSecretsBody struct {
-	ClusterConnectionSecrets []struct {
-		Cluster            string `json:"cluster"`
-		State              string `json:"state"`
-		LastChecked        string `json:"last_checked"`
-		LastRepaired       string `json:"last_repaired"`
-		LastRepairedDetail string `json:"last_repaired_detail"`
-		LastCheckError     string `json:"last_check_error"`
-	} `json:"cluster_connection_secrets"`
-	AddonValuesSecrets []struct {
+	ClusterConnectionSecrets []connectionSecretRowBody `json:"cluster_connection_secrets"`
+	AddonValuesSecrets       []struct {
 		Cluster            string `json:"cluster"`
 		Addon              string `json:"addon"`
 		State              string `json:"state"`
@@ -209,14 +222,7 @@ func TestBigEstate_ManagedSecrets_FailedChecksAreHonest(t *testing.T) {
 
 	// --- Connection side: a failed check reads as unknown, with a reason,
 	// never out_of_sync. ---
-	var failedConnRow *struct {
-		Cluster            string `json:"cluster"`
-		State              string `json:"state"`
-		LastChecked        string `json:"last_checked"`
-		LastRepaired       string `json:"last_repaired"`
-		LastRepairedDetail string `json:"last_repaired_detail"`
-		LastCheckError     string `json:"last_check_error"`
-	}
+	var failedConnRow *connectionSecretRowBody
 	for i := range body.ClusterConnectionSecrets {
 		if body.ClusterConnectionSecrets[i].LastCheckError != "" {
 			failedConnRow = &body.ClusterConnectionSecrets[i]
@@ -614,5 +620,79 @@ func TestBigEstate_CheckAll_HonorsAddonValuesEngineOffSwitch(t *testing.T) {
 	setEngine(true)
 	if rw := checkAll(); rw.Code != http.StatusAccepted {
 		t.Fatalf("engine back on: POST /secrets/check status = %d, want 202; body = %s", rw.Code, rw.Body.String())
+	}
+}
+
+// TestBigEstate_ManagedSecrets_ConnectionRowsCarryTheCanonicalAnswer is B5 on
+// the demo estate: every connection row answers the two independent questions
+// the fleet must now answer — does the live resource match the git-defined
+// state Sharko manages, and does ArgoCD report that the connection works —
+// and the invariant holds on every row.
+//
+// It also pins the ban: no row anywhere may render the bare word "Synced",
+// and no row may render "Connection synced" for a connection whose data
+// Sharko does not manage.
+func TestBigEstate_ManagedSecrets_ConnectionRowsCarryTheCanonicalAnswer(t *testing.T) {
+	srv := newTestServer(t)
+	cleanup, err := SetupDemoServer(srv, BigScaleConfig)
+	if err != nil {
+		t.Fatalf("SetupDemoServer: %v", err)
+	}
+	defer cleanup()
+
+	router := api.NewRouter(srv, nil)
+	body := getManagedSecrets(t, router, demoLoginToken(t, router))
+	if len(body.ClusterConnectionSecrets) == 0 {
+		t.Fatal("no connection rows on the big estate")
+	}
+
+	validSync := map[string]bool{"synced": true, "out_of_sync": true, "blocked": true, "unknown": true}
+	validScope := map[string]bool{"full": true, "partial": true, "none": true}
+	validHealth := map[string]bool{"connected": true, "unavailable": true, "not_checked": true}
+	modes := map[string]int{}
+	headlines := map[string]int{}
+
+	for _, row := range body.ClusterConnectionSecrets {
+		modes[row.ManagementMode]++
+		headlines[row.Headline]++
+
+		if !validSync[row.SyncState] {
+			t.Errorf("%s: sync_state = %q, not one of the four durable words", row.Cluster, row.SyncState)
+		}
+		if !validScope[row.VerificationScope] {
+			t.Errorf("%s: verification_scope = %q, not one of full/partial/none", row.Cluster, row.VerificationScope)
+		}
+		if !validHealth[row.Health] {
+			t.Errorf("%s: health = %q, not one of the three health words", row.Cluster, row.Health)
+		}
+		if row.Headline == "" {
+			t.Errorf("%s: no headline — the browser would have to invent one", row.Cluster)
+		}
+		if row.Headline == "Synced" {
+			t.Errorf(`%s: rendered the banned bare word "Synced"`, row.Cluster)
+		}
+		if row.ManagementMode != "sharko_managed" && row.Headline == "Connection synced" {
+			t.Errorf("%s: %q claimed \"Connection synced\"", row.Cluster, row.ManagementMode)
+		}
+		// THE INVARIANT, on every demo row, in both vocabularies.
+		if row.SyncState == "synced" && (row.VerificationScope != "full" || row.ManagedScope == "none") {
+			t.Errorf("%s: synced at verification_scope=%q managed_scope=%q", row.Cluster, row.VerificationScope, row.ManagedScope)
+		}
+		if row.State == "in_sync" && row.SyncState != "synced" {
+			t.Errorf("%s: state=in_sync but sync_state=%q — the two vocabularies disagree", row.Cluster, row.SyncState)
+		}
+	}
+
+	t.Logf("connection rows: modes=%v headlines=%v", modes, headlines)
+	// The demo estate is meant to SHOW the feature, so it must contain at
+	// least one connection Sharko does not own, phrased as such.
+	if modes["foreign_owned"] == 0 {
+		t.Error("no foreign_owned row on the big estate — the blocked state is invisible in the demo")
+	}
+	if headlines["Blocked"] == 0 {
+		t.Error(`no row renders "Blocked" — the foreign-owned exemplar is not phrased`)
+	}
+	if headlines["Connection synced"] == 0 {
+		t.Error(`no row renders "Connection synced" — the majority should be cleanly in sync`)
 	}
 }
