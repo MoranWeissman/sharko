@@ -898,7 +898,7 @@ func (s *Server) refusedRepairAudit(r *http.Request, cluster, detail string) {
 // failedRepairAudit records a repair that tried and did not finish. Nothing
 // landed.
 func (s *Server) failedRepairAudit(r *http.Request, cluster, detail string) {
-	s.repairAudit(r, cluster, "cluster_connection_repair_failed", detail, "failure", audit.ChangesNone)
+	s.repairAudit(r, cluster, clusterreconciler.EventClusterConnectionRepairFailed, detail, "failure", audit.ChangesNone)
 }
 
 // completedRepairAudit records a repair that ran to completion, saying
@@ -910,7 +910,7 @@ func (s *Server) completedRepairAudit(r *http.Request, cluster, detail string, c
 	if !changed {
 		changes = audit.ChangesNone
 	}
-	s.repairAudit(r, cluster, "cluster_connection_repair", detail, "success", changes)
+	s.repairAudit(r, cluster, clusterreconciler.EventClusterConnectionRepair, detail, "success", changes)
 }
 
 func (s *Server) repairAudit(r *http.Request, cluster, event, detail, result string, changes audit.ChangeResult) {
@@ -930,6 +930,26 @@ func (s *Server) repairAudit(r *http.Request, cluster, event, detail, result str
 // typed error is still alive. credsafe.Is is a type check — it never reads the
 // error's words — and Log.Add then replaces Error with the fixed safe sentence,
 // empties Detail, and clears the flag before anything is stored or streamed.
+//
+// WHY THIS SECOND ENTRY STILL EXISTS (reviewed 2026-08-19). It does duplicate
+// the middleware's request-scoped entry, and a duplicate in the activity feed
+// is a real cost. It is kept anyway because it is the ONLY entry that carries
+// CredentialFailure, and that flag is what makes the stored record say "this
+// was a credentials-backend failure" with a fixed safe sentence instead of a
+// live backend error. The middleware's entry has no Error field at all.
+//
+// Folding it in would mean putting the live error's text and the flag onto
+// audit.Fields — request-scoped state that is reflected over, logged and
+// stored. That is precisely what the design note above refuses, and weakening
+// it to remove a duplicate would trade a cosmetic problem for a credential
+// one.
+//
+// What WAS wrong is that the two entries contradicted each other: this one
+// said "cluster_connection_repair" — the past-tense "Connection repaired"
+// title — with Result "failure" and no Changes, on a repair that never
+// happened. Now both entries agree on event, result and changes, and this one
+// simply adds the classified-error fact. A duplicate that says the same thing
+// twice is noise; a duplicate that says two different things is the defect.
 func (s *Server) auditRepairCredentialFailure(r *http.Request, cluster string, err error) {
 	// Keep the request-scoped entry honest too, with no error text in it.
 	s.failedRepairAudit(r, cluster, "failed: could not read the configured credentials source")
@@ -942,15 +962,41 @@ func (s *Server) auditRepairCredentialFailure(r *http.Request, cluster string, e
 		user = "anonymous"
 	}
 	s.auditLog.Add(audit.Entry{
-		Timestamp:         time.Now().UTC(),
-		Level:             "warn",
-		Event:             "cluster_connection_repair",
-		User:              user,
-		Action:            "repair_connection",
-		Resource:          fmt.Sprintf("cluster:%s", cluster),
-		Source:            detectSource(r),
-		Result:            "failure",
-		Error:             err.Error(),
-		CredentialFailure: credsafe.Is(err),
+		Timestamp: time.Now().UTC(),
+		Level:     "error",
+		// Ruling (f): the failure-shaped event. This used to be
+		// "cluster_connection_repair" — the past-tense "Connection repaired"
+		// title — on a repair that never happened because the credentials
+		// source could not be read.
+		Event:    clusterreconciler.EventClusterConnectionRepairFailed,
+		User:     user,
+		Action:   "repair_connection",
+		Resource: fmt.Sprintf("cluster:%s", cluster),
+		Source:   detectSource(r),
+		Result:   "failure",
+		// Nothing was written: the read that feeds the write never returned.
+		Changes: audit.ChangesNone,
+		Error:   err.Error(),
+		// POSITIONAL, NOT TYPE-BASED, AND DELIBERATELY SO.
+		//
+		// This function has exactly one call site: the failure of
+		// ConnectionCredentialSpecForWrite, which IS the credentials-source
+		// read. Anything arriving here is a credentials-backend failure by
+		// construction, so the flag is set from WHERE we are rather than
+		// from what the error turned out to be — and Log.Add then swaps the
+		// text for the fixed safe sentence.
+		//
+		// It used to be credsafe.Is(err), and that leaked. The reconciler
+		// returns the provider's error unmarked (repair_credentials.go
+		// passes GetCredentialsWithOptionalRole's error straight through),
+		// so any provider that does not mark its own errors — a stub, an
+		// unimplemented backend, anything returning a bare error — put its
+		// raw text straight into the audit log. Type-based classification is
+		// the right rule where the type is the only evidence available;
+		// here the call site is stronger evidence and cannot be wrong.
+		//
+		// Still never a substring match on the error's words, which is the
+		// rule that actually matters.
+		CredentialFailure: true,
 	})
 }

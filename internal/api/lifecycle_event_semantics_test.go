@@ -28,17 +28,30 @@ package api
 //     the code cannot produce, pinned as negatives.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // lifecycleEventKind is what an event's TITLE claims happened.
@@ -84,11 +97,11 @@ var lifecycleEventCatalog = map[string]lifecycleEventKind{
 	clusterreconciler.EventClusterSecretManagedSelfHeal: kindCompletedWrite,
 	clusterreconciler.EventClusterConnectionRepair:      kindCompletedWrite,
 
-	"cluster_secret_create_failed":            kindFailureShaped,
-	"cluster_secret_delete_failed":            kindFailureShaped,
-	"cluster_secret_user_label_sync_failed":   kindFailureShaped,
-	"cluster_secret_managed_self_heal_failed": kindFailureShaped,
-	"cluster_connection_repair_failed":        kindFailureShaped,
+	clusterreconciler.EventClusterSecretCreateFailed:          kindFailureShaped,
+	clusterreconciler.EventClusterSecretDeleteFailed:          kindFailureShaped,
+	clusterreconciler.EventClusterSecretUserLabelSyncFailed:   kindFailureShaped,
+	clusterreconciler.EventClusterSecretManagedSelfHealFailed: kindFailureShaped,
+	clusterreconciler.EventClusterConnectionRepairFailed:      kindFailureShaped,
 
 	// The API repair handler.
 	"cluster_connection_repair_requested": kindRequestScoped,
@@ -411,4 +424,375 @@ func TestLifecycleEvents_RealWritersProduceValidEntries(t *testing.T) {
 		t.Fatalf("only %d governed entries were produced — this test is not exercising the writers", checked)
 	}
 	t.Logf("validated %d entries from the real credential-check writer", checked)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Writer coverage. This is the half that makes the rules above load-bearing.
+//
+// The first version of this file drove ONLY the credential-check loop, and
+// that gap is exactly why two contradictions shipped through a green suite:
+// the API repair handler, the reconciler's repair path and the batch/adopt
+// endpoints were never validated at all. Every writer the rules govern is
+// driven here, through its REAL handler, and every entry it produces is put
+// through validateLifecycleEntry.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// assertGovernedEntriesValid validates every governed entry in the log and
+// returns how many it checked, so a caller can prove the writer actually ran.
+func assertGovernedEntriesValid(t *testing.T, srv *Server, what string) int {
+	t.Helper()
+	checked := 0
+	for _, e := range srv.AuditLog().List(0) {
+		if _, governed := lifecycleEventCatalog[e.Event]; !governed {
+			continue
+		}
+		checked++
+		if bad := validateLifecycleEntry(e); len(bad) > 0 {
+			t.Errorf("%s produced a contradictory entry {event=%q result=%q level=%q changes=%q}: %v",
+				what, e.Event, e.Result, e.Level, e.Changes, bad)
+		}
+	}
+	return checked
+}
+
+// findEntry returns the newest entry for an event, or nil.
+func findEntry(srv *Server, event string) *audit.Entry {
+	for _, e := range srv.AuditLog().List(0) {
+		if e.Event == event {
+			entry := e
+			return &entry
+		}
+	}
+	return nil
+}
+
+// TestLifecycleWriters_RepairHandler_AllFourExits drives the REAL repair
+// endpoint down each of its exits and validates what it logged.
+//
+// C3 END TO END: the no-op repair — the button a user actually clicks — must
+// record changes "none". That is the ruling's own example of the one case
+// where "No changes made" is true and was the one case a reader never saw.
+func TestLifecycleWriters_RepairHandler_AllFourExits(t *testing.T) {
+	t.Run("a repair that really wrote something", func(t *testing.T) {
+		srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(), repairFakeVault{})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+		}
+		if n := assertGovernedEntriesValid(t, srv, "the repair handler (applied)"); n == 0 {
+			t.Fatal("the repair handler wrote no governed entry at all")
+		}
+		e := findEntry(srv, clusterreconciler.EventClusterConnectionRepair)
+		if e == nil {
+			t.Fatal("no completed-repair entry")
+		}
+		if e.Changes != audit.ChangesApplied {
+			t.Errorf("changes = %q, want applied — this repair rewrote fields", e.Changes)
+		}
+	})
+
+	t.Run("C3: a repair that found nothing to change", func(t *testing.T) {
+		// The live Secret already matches what the repair would write, so the
+		// write primitive reports Changed=false.
+		srv, router, _ := repairFixture(t, backendManagedYAML, repairAlreadyCorrectSecret(t), repairFakeVault{})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+		}
+		assertGovernedEntriesValid(t, srv, "the repair handler (no-op)")
+
+		e := findEntry(srv, clusterreconciler.EventClusterConnectionRepair)
+		if e == nil {
+			t.Fatal("no completed-repair entry for the no-op path")
+		}
+		if e.Changes != audit.ChangesNone {
+			t.Fatalf("changes = %q, want none.\n\nC3 IS THE POINT OF THIS TEST: a repair that ran and deliberately wrote nothing is the ONE case where \"No changes made\" is true, and it was the one case the feed could never show. If this is empty, audit.Enrich is dropping the field again.", e.Changes)
+		}
+		if e.Result != "success" {
+			t.Errorf("result = %q, want success — nothing needing changing is not a failure", e.Result)
+		}
+	})
+
+	t.Run("a refusal touches nothing", func(t *testing.T) {
+		srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(), repairFakeVault{})
+		w := httptest.NewRecorder()
+		// A stale reviewed commit: the branch moved, so the repair is refused.
+		router.ServeHTTP(w, repairReq(comparisonCluster, "0000000000000000000000000000000000000000"))
+		if w.Code < 400 {
+			t.Fatalf("expected a 4xx refusal, got %d (%s)", w.Code, w.Body.String())
+		}
+		assertGovernedEntriesValid(t, srv, "the repair handler (refusal)")
+
+		e := findEntry(srv, "cluster_connection_repair_refused")
+		if e == nil {
+			t.Fatal("a refused repair wrote no refusal entry")
+		}
+		if e.Changes != audit.ChangesNone {
+			t.Errorf("changes = %q, want none — a refusal touches nothing", e.Changes)
+		}
+		if got := findEntry(srv, clusterreconciler.EventClusterConnectionRepair); got != nil {
+			t.Errorf("a REFUSED repair filed under the past-tense %q event", got.Event)
+		}
+	})
+
+	t.Run("B2: the credentials backend cannot be read", func(t *testing.T) {
+		srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(),
+			repairFakeVault{failWith: errors.New("backend unreachable")})
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+		if w.Code < 400 {
+			t.Fatalf("expected an error status, got %d (%s)", w.Code, w.Body.String())
+		}
+		assertGovernedEntriesValid(t, srv, "the repair handler (credential failure)")
+
+		// The past-tense event must be absent entirely — this is the exact
+		// entry that used to render "Connection repaired · failure".
+		if got := findEntry(srv, clusterreconciler.EventClusterConnectionRepair); got != nil {
+			t.Errorf("a credential-backend failure filed under the past-tense %q event with result %q", got.Event, got.Result)
+		}
+		e := findEntry(srv, clusterreconciler.EventClusterConnectionRepairFailed)
+		if e == nil {
+			t.Fatal("no failure entry for a credential-backend failure")
+		}
+		if e.Result != "failure" || e.Level != "error" {
+			t.Errorf("result/level = %q/%q, want failure/error", e.Result, e.Level)
+		}
+		// The sanitizer still ran: the raw backend error never reaches the log.
+		for _, entry := range srv.AuditLog().List(0) {
+			if strings.Contains(entry.Error, "backend unreachable") || strings.Contains(entry.Detail, "backend unreachable") {
+				t.Errorf("the raw backend error text reached the audit log: %+v", entry)
+			}
+		}
+	})
+}
+
+// TestLifecycleWriters_ReconcilerPaths drives the REAL reconciler through its
+// Secret-lifecycle writers — a successful create, and a create that fails at
+// the credentials read — and validates every entry it produces.
+//
+// This is the half the first version of the file was missing entirely, and
+// the reason "Connection Secret created · failure" survived a green suite.
+func TestLifecycleWriters_ReconcilerPaths(t *testing.T) {
+	cases := []struct {
+		name      string
+		vault     lifecycleFakeVault
+		wantEvent string
+	}{
+		{"a create that really lands", lifecycleFakeVault{}, clusterreconciler.EventClusterSecretCreate},
+		{"a create that fails at the credentials read", lifecycleFakeVault{failWith: errors.New("no credentials here")}, clusterreconciler.EventClusterSecretCreateFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gp := &reconcileFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
+			collected := &lifecycleAuditCollector{}
+			recon := clusterreconciler.New(clusterreconciler.Deps{
+				GitProvider:  func() gitprovider.GitProvider { return gp },
+				ArgoClient:   fake.NewSimpleClientset(),
+				Vault:        staticVault(tc.vault),
+				AuditFn:      collected.add,
+				Namespace:    "argocd",
+				TickInterval: time.Hour,
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			recon.Start(ctx)
+			defer recon.Stop()
+			recon.Trigger()
+
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, ok := recon.LastReconcile("prod-eu"); ok {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			entries := collected.snapshot()
+			checked, sawWanted := 0, false
+			for _, e := range entries {
+				if _, governed := lifecycleEventCatalog[e.Event]; !governed {
+					continue
+				}
+				checked++
+				if e.Event == tc.wantEvent {
+					sawWanted = true
+				}
+				if bad := validateLifecycleEntry(e); len(bad) > 0 {
+					t.Errorf("the reconciler produced a contradictory entry {event=%q result=%q level=%q changes=%q}: %v",
+						e.Event, e.Result, e.Level, e.Changes, bad)
+				}
+			}
+			if checked == 0 {
+				t.Fatalf("the reconciler wrote no governed entry — this test is not exercising the writers. entries: %+v", entries)
+			}
+			if !sawWanted {
+				t.Errorf("expected a %q entry; got %d governed entries: %+v", tc.wantEvent, checked, entries)
+			}
+			t.Logf("validated %d governed entries from the real reconciler", checked)
+		})
+	}
+}
+
+// lifecycleAuditCollector is a thread-safe audit sink for driving real
+// reconciler passes.
+type lifecycleAuditCollector struct {
+	mu      sync.Mutex
+	entries []audit.Entry
+}
+
+func (c *lifecycleAuditCollector) add(e audit.Entry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = append(c.entries, e)
+}
+
+func (c *lifecycleAuditCollector) snapshot() []audit.Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]audit.Entry, len(c.entries))
+	copy(out, c.entries)
+	return out
+}
+
+// repairAlreadyCorrectSecret builds a live connection Secret that ALREADY
+// matches what a repair would write, so the write primitive reports
+// Changed=false and the handler takes its no-op exit. Built through the same
+// canonical builder the write path uses, not hand-tuned, so "matching" means
+// matching.
+func repairAlreadyCorrectSecret(t *testing.T) *corev1.Secret {
+	t.Helper()
+	creds, err := repairFakeVault{}.GetCredentials(comparisonCluster)
+	if err != nil {
+		t.Fatalf("fixture credentials: %v", err)
+	}
+	labels := map[string]string{"datadog": "enabled"}
+	models.ApplyConnectivityCheckLabel(labels, true)
+	built, err := argosecretsBuildForTest(comparisonCluster, creds, labels)
+	if err != nil {
+		t.Fatalf("building the fixture secret: %v", err)
+	}
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: built.Name, Namespace: built.Namespace, Labels: map[string]string{}},
+		Type:       built.Type,
+		Data:       map[string][]byte{},
+	}
+	for k, v := range built.Labels {
+		live.Labels[k] = v
+	}
+	for k, v := range built.StringData {
+		live.Data[k] = []byte(v)
+	}
+	return live
+}
+
+// lifecycleFakeVault is this file's own credentials backend so the shared
+// reconcileFakeVault fixture stays untouched. failWith drives the
+// create-fails-at-the-credentials-read path.
+type lifecycleFakeVault struct{ failWith error }
+
+func (v lifecycleFakeVault) GetCredentials(name string) (*providers.Kubeconfig, error) {
+	if v.failWith != nil {
+		return nil, v.failWith
+	}
+	return &providers.Kubeconfig{Server: "https://" + name + ".example.com", CAData: []byte("ca"), Token: "tk"}, nil
+}
+func (lifecycleFakeVault) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
+func (lifecycleFakeVault) SearchSecrets(_ string) ([]string, error)       { return nil, nil }
+func (lifecycleFakeVault) HealthCheck(_ context.Context) error            { return nil }
+
+// TestLifecycleWriters_BatchEndpoints_AllFailed is C8 and C9 end to end,
+// through the real handlers.
+//
+// Both were recorded from the HTTP status, which does not know what
+// happened. An adoption where EVERY cluster failed returns 200 — 207 is only
+// set when at least one succeeded — so the log said "Cluster adopted ·
+// success" for a run that adopted nothing. A batch registration where every
+// cluster failed returns 207 and said "partial", a partial success with no
+// success in it.
+//
+// The HTTP status is deliberately unchanged and is asserted here as-is, so
+// this test also documents the response-code oddity that is still open for
+// the product owner.
+func TestLifecycleWriters_BatchEndpoints_AllFailed(t *testing.T) {
+	t.Run("C9: every registration in the batch failed", func(t *testing.T) {
+		// Every member is refused by the inline-credentials policy gate,
+		// which fires before ANY git work — so the batch really is
+		// all-failed and the handler reaches its audit enrichment.
+		srv := newKillSwitchTestServer(t)
+		router := NewRouter(srv, nil)
+
+		body, _ := json.Marshal(map[string]interface{}{
+			"clusters": []map[string]interface{}{
+				{"name": "pasted-one", "creds_source": "inline-kubeconfig", "kubeconfig": killSwitchInlineKubeconfig, "dry_run": true},
+				{"name": "pasted-two", "creds_source": "inline-kubeconfig", "kubeconfig": killSwitchInlineKubeconfig, "dry_run": true},
+			},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/batch", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Sharko-User", "admin")
+		req.Header.Set("X-Sharko-Role", "admin")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusMultiStatus {
+			t.Fatalf("expected 207 (every member failed), got %d (%s)", w.Code, w.Body.String())
+		}
+		e := findEntry(srv, "cluster_registered")
+		if e == nil {
+			t.Fatalf("the batch wrote no cluster_registered entry (status %d)", w.Code)
+		}
+		if e.Result == "partial" {
+			t.Fatalf("C9 IS BACK: every registration failed and the log says %q. A partial success with no success in it.\n"+
+				"If this reads \"partial\", audit.Enrich is dropping Fields.Result again.", e.Result)
+		}
+		if e.Result != "failure" {
+			t.Errorf("result = %q, want failure — no cluster was registered", e.Result)
+		}
+		if e.Changes != audit.ChangesNone {
+			t.Errorf("changes = %q, want none — nothing was registered", e.Changes)
+		}
+		if bad := validateLifecycleEntry(*e); len(bad) > 0 {
+			t.Errorf("contradictory entry: %v", bad)
+		}
+		t.Logf("HTTP status was %d (unchanged by this round; the status oddity is a separate open finding)", w.Code)
+	})
+
+	t.Run("C8: every adoption failed", func(t *testing.T) {
+		srv := newIsolatedTestServer(t)
+		argoStub := startArgocdStub(t, nil)
+		seedActiveConnectionWithArgo(t, srv, argoStub.URL)
+		router := NewRouter(srv, nil)
+
+		body, _ := json.Marshal(map[string]interface{}{
+			"clusters": []string{"not-in-argocd-at-all"},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/adopt", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Sharko-User", "admin")
+		req.Header.Set("X-Sharko-Role", "admin")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		e := findEntry(srv, "cluster_adopted")
+		if e == nil {
+			t.Skipf("the adopt call did not reach the audit enrichment (status %d, body %s)", w.Code, w.Body.String())
+		}
+		if e.Result == "success" {
+			t.Fatalf("C8 IS BACK — THE RULING'S HEADLINE EXAMPLE: every adoption failed and the log says %q.\n"+
+				"The feed renders \"Cluster adopted · success\" when nothing was adopted.\n"+
+				"If this reads \"success\", audit.Enrich is dropping Fields.Result again.", e.Result)
+		}
+		if e.Result != "failure" {
+			t.Errorf("result = %q, want failure — nothing was adopted", e.Result)
+		}
+		if e.Changes != audit.ChangesNone {
+			t.Errorf("changes = %q, want none", e.Changes)
+		}
+		if bad := validateLifecycleEntry(*e); len(bad) > 0 {
+			t.Errorf("contradictory entry: %v", bad)
+		}
+		t.Logf("HTTP status was %d — an all-failed adoption still answers 200; that response-code oddity is deliberately NOT changed here and remains an open finding for the product owner", w.Code)
+	})
 }

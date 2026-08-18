@@ -103,11 +103,11 @@ const (
 	EventClusterSecretManagedSelfHeal = "cluster_secret_managed_self_heal"
 	EventClusterConnectionRepair      = "cluster_connection_repair"
 
-	eventClusterSecretCreateFailed          = "cluster_secret_create_failed"
-	eventClusterSecretDeleteFailed          = "cluster_secret_delete_failed"
-	eventClusterSecretUserLabelSyncFailed   = "cluster_secret_user_label_sync_failed"
-	eventClusterSecretManagedSelfHealFailed = "cluster_secret_managed_self_heal_failed"
-	eventClusterConnectionRepairFailed      = "cluster_connection_repair_failed"
+	EventClusterSecretCreateFailed          = "cluster_secret_create_failed"
+	EventClusterSecretDeleteFailed          = "cluster_secret_delete_failed"
+	EventClusterSecretUserLabelSyncFailed   = "cluster_secret_user_label_sync_failed"
+	EventClusterSecretManagedSelfHealFailed = "cluster_secret_managed_self_heal_failed"
+	EventClusterConnectionRepairFailed      = "cluster_connection_repair_failed"
 )
 
 const engineClusterConnection = "cluster_connection"
@@ -1452,7 +1452,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             eventClusterSecretUserLabelSyncFailed,
+			Event:             EventClusterSecretUserLabelSyncFailed,
 			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "sync_labels",
@@ -1656,7 +1656,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             eventClusterSecretManagedSelfHealFailed,
+			Event:             EventClusterSecretManagedSelfHealFailed,
 			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "self_heal",
@@ -1713,7 +1713,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 		)
 		r.audit(audit.Entry{
 			Level:     "error",
-			Event:     eventClusterSecretManagedSelfHealFailed,
+			Event:     EventClusterSecretManagedSelfHealFailed,
 			Changes:   audit.ChangesApplied,
 			User:      "sharko",
 			Action:    "self_heal",
@@ -2136,7 +2136,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             eventClusterSecretCreateFailed,
+			Event:             EventClusterSecretCreateFailed,
 			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "get_secret",
@@ -2215,7 +2215,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:    "error",
-			Event:    eventClusterSecretCreateFailed,
+			Event:    EventClusterSecretCreateFailed,
 			Changes:  audit.ChangesNone,
 			User:     "sharko",
 			Action:   "get_credentials",
@@ -2301,7 +2301,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             eventClusterSecretCreateFailed,
+			Event:             EventClusterSecretCreateFailed,
 			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "build_payload",
@@ -2342,7 +2342,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             eventClusterSecretCreateFailed,
+			Event:             EventClusterSecretCreateFailed,
 			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "create",
@@ -2415,7 +2415,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             eventClusterSecretDeleteFailed,
+			Event:             EventClusterSecretDeleteFailed,
 			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "delete",

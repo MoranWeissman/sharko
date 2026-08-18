@@ -183,10 +183,13 @@ const (
 	condLiveSecretMissing = "This cluster has no live connection Secret."
 	condComparisonFull    = "Every field Sharko owns was compared."
 	// condComparisonDrift is the product owner's exact ruled sentence
-	// (ruling b, 2026-08-19). It replaced "…does not match what Sharko
-	// intends.", which is now banned everywhere — Git defines the
-	// connection, so the comparison is against Git, not against an
-	// intention of Sharko's. Pinned character-for-character.
+	// (ruling b, 2026-08-19). The wording it replaced is banned everywhere
+	// and is deliberately NOT spelled out here — this is a production file,
+	// and the whole-tree sweep must be able to cover it. Git defines the
+	// connection, so a difference is a difference from Git.
+	//
+	// Pinned character-for-character by
+	// TestConnectionReconciliation_RuledConditionSentenceExact.
 	condComparisonDrift   = "At least one compared field differs from the Git-defined connection."
 	condArgoCDConnected   = "ArgoCD reports this connection as working."
 	condArgoCDUnavailable = "ArgoCD cannot currently use this connection."

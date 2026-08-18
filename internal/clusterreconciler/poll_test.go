@@ -611,7 +611,7 @@ func TestPollOnce_VaultFailsForOneCluster_OthersStillReconcile(t *testing.T) {
 	entries := audits.Snapshot()
 	// Ruling (f): c2's create FAILED, so it files under the failure-shaped
 	// event; c1 and c3 really were created, so they keep the past tense.
-	if !hasEventForResource(entries, eventClusterSecretCreateFailed, "cluster:c2") {
+	if !hasEventForResource(entries, EventClusterSecretCreateFailed, "cluster:c2") {
 		t.Fatalf("expected a cluster_secret_create_failed entry referencing cluster c2; got %v", entries)
 	}
 	if hasEventForResource(entries, EventClusterSecretCreate, "cluster:c2") {

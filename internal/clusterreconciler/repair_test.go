@@ -148,7 +148,7 @@ func TestRepairOwnedConnectionSecret_AuditsEveryAttempt(t *testing.T) {
 			// longer claims a repair that never ran.
 			wantEvent := EventClusterConnectionRepair
 			if tc.wantResult != "success" {
-				wantEvent = eventClusterConnectionRepairFailed
+				wantEvent = EventClusterConnectionRepairFailed
 			}
 			found := false
 			for _, e := range audits.Snapshot() {

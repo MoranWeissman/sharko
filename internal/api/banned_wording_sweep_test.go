@@ -73,11 +73,20 @@ var bannedSweepDirs = []string{
 
 // bannedSweepExempt are files whose JOB is to name a banned phrase. Each one
 // needs a reason here; anything else is a hit.
+//
+// PRODUCTION FILES MAY NEVER BE EXEMPTED. A whole-file exemption on a
+// non-test file switches the ban off exactly where the phrase would do harm
+// — and that is not hypothetical: connection_reconciliation.go, the file
+// holding the live user-facing sentence this ruling was aimed at, was
+// exempted here so its doc comment could quote the phrase it replaced. The
+// banned sentence could be put straight back into the shipped constant and
+// the whole Go suite passed. The doc comment was reworded instead, and
+// TestBannedWordings_NoProductionFileIsExempt now makes the rule structural.
 var bannedSweepExempt = map[string]string{
 	"internal/api/banned_wording_sweep_test.go":            "this sweep — it has to hold the phrases to look for them",
 	"internal/api/connection_messages_round6_test.go":      "per-file banned-phrase lists; naming the phrase is the assertion",
-	"internal/api/connection_reconciliation.go":            "the replacement sentence's doc comment names the phrase it replaced",
 	"cmd/sharko/repair_connection_test.go":                 "asserts the CLI no longer prints the phrase",
+	"internal/api/connection_reconciliation_test.go":       "asserts the reconciliation response no longer carries the phrase",
 	"internal/clusterreconciler/drift_notice_text_test.go": "per-file banned-phrase list",
 	"internal/connectioncompare/compare_test.go":           "per-file banned-phrase list",
 }
@@ -254,4 +263,28 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// TestBannedWordings_NoProductionFileIsExempt makes the exemption rule
+// structural instead of a convention somebody has to remember.
+//
+// An exemption exists so a file whose JOB is to name a banned phrase — a
+// banned-phrase list, this sweep itself — is not reported as a hit. A
+// production file has no such job. Exempting one switches the ban off
+// exactly where the phrase reaches a user, which is how the live sentence
+// this ruling was aimed at ended up unguarded.
+func TestBannedWordings_NoProductionFileIsExempt(t *testing.T) {
+	for path, reason := range bannedSweepExempt {
+		if !strings.HasSuffix(path, "_test.go") {
+			t.Errorf("production file %q is exempt from the banned-wording sweep (reason given: %q).\n"+
+				"Only test files may be exempt. Reword the production file so it does not contain the phrase.",
+				path, reason)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("exemption for %q has no reason", path)
+		}
+	}
+	if len(bannedSweepExempt) == 0 {
+		t.Fatal("the exemption map is empty — this test would pass vacuously")
+	}
 }

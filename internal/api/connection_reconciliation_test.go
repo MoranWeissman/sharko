@@ -1492,3 +1492,45 @@ func TestConnectionReconciliation_SelfManagedLabelDrift_HealsOnTheNextPass(t *te
 		t.Errorf("a healed connection still promises something: action=%q automatic=%q", healed.Plan.Action, healed.Plan.Automatic)
 	}
 }
+
+// TestConnectionReconciliation_RuledConditionSentenceExact pins the ruling
+// (b) replacement sentence character-for-character, at the constant AND on
+// the wire.
+//
+// It was missing, and that is the project's oldest repeat failure: a wrong
+// explanation once survived FOUR review rounds because its only test
+// asserted the string was non-empty. Here the gap was worse — the sweep that
+// bans the old phrase exempted this very file, so the banned sentence could
+// be put straight back into the shipped constant and the entire Go suite
+// passed. Both halves are closed: the exemption is gone, and this is the
+// exact-literal pin.
+func TestConnectionReconciliation_RuledConditionSentenceExact(t *testing.T) {
+	const ruled = "At least one compared field differs from the Git-defined connection."
+
+	if condComparisonDrift != ruled {
+		t.Errorf("condComparisonDrift = %q,\n                 want %q", condComparisonDrift, ruled)
+	}
+
+	// And it really is the sentence a caller receives — a constant nobody
+	// renders is not a promise kept.
+	live := expectedLiveSecretForFixture(t)
+	live.Data["config"] = []byte("a-rotated-live-config-that-differs")
+	_, router, _ := comparisonFixture(t, backendManagedYAML, live, comparisonFakeVault{})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, reconciliationReq(comparisonCluster))
+	out := decodeRecon(t, w)
+
+	var got string
+	for _, c := range out.Conditions {
+		if c.ID == conditionComparison {
+			got = c.Detail
+		}
+	}
+	if got != ruled {
+		t.Errorf("the comparison condition on the wire = %q,\n                              want %q", got, ruled)
+	}
+	// The retired phrasing may not appear anywhere in the response.
+	if strings.Contains(strings.ToLower(w.Body.String()), "sharko intends") {
+		t.Errorf("the response carries the banned phrase: %s", w.Body.String())
+	}
+}

@@ -167,6 +167,28 @@ func Enrich(ctx context.Context, fields Fields) {
 	if fields.Tier != "" {
 		f.Tier = fields.Tier
 	}
+	// Result and Changes follow the same non-empty-wins rule as everything
+	// above.
+	//
+	// THESE TWO WERE MISSING, AND IT MADE THE HANDLER-SIDE HALF OF RULING (f)
+	// DEAD CODE. The fields were added to Fields and read by the audit
+	// middleware, but Enrich — the only way a handler ever puts anything INTO
+	// the in-flight Fields — did not copy them, so every handler that set
+	// them was writing into a value that was thrown away on return. An
+	// all-failed adoption still recorded "Cluster adopted · success"; a
+	// repair that changed nothing still could not say so.
+	//
+	// Nothing failed anywhere, which is exactly why it survived a green
+	// suite: a dropped field has no symptom at the call site. That is what
+	// TestEnrich_CopiesEveryFieldOfFields exists for — it walks Fields by
+	// reflection and fails on any field this function does not carry, so the
+	// next field added cannot be forgotten the same way.
+	if fields.Result != "" {
+		f.Result = fields.Result
+	}
+	if fields.Changes != "" {
+		f.Changes = fields.Changes
+	}
 }
 
 // CurrentFields returns the in-flight audit fields attached to ctx, or nil if

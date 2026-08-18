@@ -111,7 +111,7 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 			Level: "error",
 			// Ruling (f): a repair that threw is not a repair. The
 			// past-tense event is reserved for work that happened.
-			Event:             eventClusterConnectionRepairFailed,
+			Event:             EventClusterConnectionRepairFailed,
 			User:              "sharko",
 			Action:            "repair_connection",
 			Resource:          fmt.Sprintf("cluster:%s", name),
