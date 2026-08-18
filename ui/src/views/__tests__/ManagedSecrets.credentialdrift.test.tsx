@@ -5,10 +5,20 @@
 // new optional fields on a connection row — credential_check,
 // credential_check_detail, credential_checked_at. This suite pins:
 //
-//  - a small badge next to the existing status mark, connection rows only,
-//    driven by credential_check: 'drifted' -> "Credential drift" (the
-//    fixed server sentence on the badge's title), 'not_compared' -> "Not
-//    compared", 'check_failed' -> "Check failed";
+//  - a small badge next to the existing status mark, connection rows only.
+//
+//    B5 (2026-08-19) narrowed it to TWO states, because four states read off
+//    credential_check — a field with no relationship to the canonical answer
+//    beside it — is exactly how a green "Synced" ended up next to "Not
+//    compared" on the same row:
+//      'drifted' -> "Credential drift" (the fixed server sentence on the
+//        badge's title); it names WHICH domain drifted, which the headline
+//        deliberately does not;
+//      verification_scope 'partial' -> "Credential not compared", read off
+//        the CANONICAL field the headline itself is derived from, so the two
+//        cannot contradict each other;
+//      'check_failed' -> NO badge. The headline already says "Unknown —
+//        check failed"; a badge repeating it is noise.
 //  - 'clear' or absent renders NO badge — a quiet healthy row stays quiet;
 //  - values rows never render the badge, regardless of what's on the row;
 //  - the "Cluster connections" tile gains a secondary line counting
@@ -44,6 +54,8 @@ const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockFetchAuditLog = vi.fn()
 
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
@@ -69,7 +81,12 @@ vi.mock('@/services/api', () => ({
   takeoverPreflight: vi.fn(),
   takeoverCluster: vi.fn(),
   dropLegacyLabels: vi.fn(),
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   triggerSecretsReconcile: vi.fn(),
@@ -102,8 +119,7 @@ const DRIFTED_SENTENCE =
   "This connection's stored details no longer match its configured credentials source. Nothing was changed. An admin can review and repair it from the connection page."
 
 const CREDENTIAL_DRIFT_BADGE_LABEL = 'Credential drift'
-const NOT_COMPARED_BADGE_LABEL = 'Not compared'
-const CHECK_FAILED_BADGE_LABEL = 'Check failed'
+const NOT_COMPARED_BADGE_LABEL = 'Credential not compared'
 
 const NOT_COMPARED_SENTENCE_FIXTURE =
   'This cluster was registered with a pasted kubeconfig, and those credentials are only stored in the connection itself. Sharko has no second copy to check the connection details against, so it checks the labels and the plain connection facts only.'
@@ -211,7 +227,7 @@ describe('credential-check row badge (W3-3 AC9)', () => {
     expect(badge).toHaveAttribute('data-credential-check', 'drifted')
   })
 
-  it('renders the muted "Not compared" badge, title carrying the server\'s limited-scope sentence', async () => {
+  it('renders the muted "Credential not compared" badge off the CANONICAL verification scope, not off a second vocabulary', async () => {
     mockGetManagedSecrets.mockResolvedValue(
       baseResponse({
         cluster_connection_secrets: [
@@ -219,7 +235,16 @@ describe('credential-check row badge (W3-3 AC9)', () => {
             cluster: 'prod-eu',
             secret_namespace: 'argocd',
             secret_name: 'prod-eu',
-            state: 'in_sync',
+            // The canonical answer for a clean legacy-inline connection:
+            // unknown at partial verification, never synced.
+            state: 'unknown',
+            sync_state: 'unknown',
+            management_mode: 'legacy_inline',
+            managed_scope: 'addon_labels',
+            verification_scope: 'partial',
+            approval_required: false,
+            headline: 'Verification incomplete',
+            health: 'connected',
             source: 'git',
             self_heals: true,
             credential_check: 'not_compared',
@@ -238,7 +263,7 @@ describe('credential-check row badge (W3-3 AC9)', () => {
     expect(badge).toHaveAttribute('data-credential-check', 'not_compared')
   })
 
-  it('renders the muted amber "Check failed" badge, title carrying the safe sentence', async () => {
+  it('renders NO badge when the check itself failed — the headline already says "Unknown — check failed"', async () => {
     mockGetManagedSecrets.mockResolvedValue(
       baseResponse({
         cluster_connection_secrets: [
@@ -246,7 +271,14 @@ describe('credential-check row badge (W3-3 AC9)', () => {
             cluster: 'prod-eu',
             secret_namespace: 'argocd',
             secret_name: 'prod-eu',
-            state: 'in_sync',
+            state: 'unknown',
+            sync_state: 'unknown',
+            management_mode: 'sharko_managed',
+            managed_scope: 'full_connection',
+            verification_scope: 'none',
+            approval_required: false,
+            headline: 'Unknown — check failed',
+            health: 'connected',
             source: 'git',
             self_heals: true,
             credential_check: 'check_failed',
@@ -259,10 +291,8 @@ describe('credential-check row badge (W3-3 AC9)', () => {
     renderPage()
 
     const row = await screen.findByTestId('secret-row-connection-prod-eu')
-    const badge = within(row).getByTestId('credential-check-badge')
-    expect(badge).toHaveTextContent(CHECK_FAILED_BADGE_LABEL)
-    expect(badge).toHaveAttribute('title', CHECK_FAILED_SENTENCE_FIXTURE)
-    expect(badge).toHaveAttribute('data-credential-check', 'check_failed')
+    expect(within(row).queryByTestId('credential-check-badge')).not.toBeInTheDocument()
+    expect(within(row).getByTestId('status-mark')).toHaveTextContent('Unknown — check failed')
   })
 
   it('renders no badge for credential_check "clear" — a quiet healthy row stays quiet', async () => {

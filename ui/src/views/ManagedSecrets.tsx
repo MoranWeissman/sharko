@@ -510,6 +510,29 @@ export interface UnifiedRow {
   /** (P2-C6) Which side moved for an out-of-sync connection row: 'git' or 'cluster'. Connection rows only. */
   driftSource?: 'git' | 'cluster'
   /**
+   * ── The canonical reconciliation answer (B5). Connection rows only. ───
+   *
+   * These are copied verbatim off the server row. The browser renders them
+   * and derives NOTHING from them — that is the product owner's ruling:
+   * "The fleet and detail page must derive their state from the same
+   * canonical reconciliation semantics. Do not maintain a second legacy
+   * vocabulary or duplicate status derivation in the browser."
+   *
+   * `state` above is the server's own PROJECTION of syncState, kept because
+   * the chips, the ?state= filter and the sort rank read it.
+   */
+  managementMode?: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  managedScope?: 'full_connection' | 'addon_labels' | 'none'
+  syncState?: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  verificationScope?: 'full' | 'partial' | 'none'
+  approvalRequired?: boolean
+  /** The display word for this row's git state — rendered VERBATIM, never selected from a table here. */
+  headline?: string
+  /** The scope sentence beside the headline. Absent when the state needs none. */
+  qualifier?: string
+  /** ArgoCD's own answer, INDEPENDENT of the git state above. */
+  health?: 'connected' | 'unavailable' | 'not_checked'
+  /**
    * (W3-3) The background credential-drift loop's own read-only verdict for
    * this connection — separate from `state` (the git-labels comparison).
    * Connection rows only; absent on a server that predates the loop or
@@ -543,6 +566,14 @@ export function buildUnifiedRows(
     // below (the panel's lastCheckError paragraph), no per-kind branch.
     lastCheckError: r.last_check_error,
     fightCount: r.fight_count,
+    managementMode: r.management_mode,
+    managedScope: r.managed_scope,
+    syncState: r.sync_state,
+    verificationScope: r.verification_scope,
+    approvalRequired: r.approval_required,
+    headline: r.headline,
+    qualifier: r.qualifier,
+    health: r.health,
     sourceLabel: r.source || 'git',
     comparedRevision: r.compared_revision,
     comparedPath: r.compared_path,
@@ -595,6 +626,85 @@ export function buildUnifiedRows(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// B5 — ONE status answer per row, for every surface on this page.
+//
+// The defect this replaces: the fleet showed `spoke-us` as a green **Synced**
+// while the same connection's own page said **Verification incomplete**, and
+// a "Not compared" chip sat right beside the green word. The server has been
+// fixed — a connection row's `state` is now a pure projection of the
+// canonical `sync_state`, and the words come down as `headline` — so the
+// browser's job is to render, not to decide.
+//
+// rowStatus is the one place any surface here asks "what is this row's
+// status?": the chip counts, the chip filter, the sort rank, the left edge
+// strip, the dot, the group rollups and the tiles all call it. One call
+// site per question means the chips and the word can never disagree again.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The word a connection row shows when the server has told us nothing
+ * canonical about it. Honest and deliberately not cheerful — it is the same
+ * word StatusMark uses for `unknown`, so the row's word, dot and strip agree.
+ */
+export const CONNECTION_NOT_CHECKED_LABEL = 'Not checked yet'
+
+/**
+ * rowStatus is the row's status bucket — the SERVER's answer, with one
+ * fail-closed guard on top.
+ *
+ * THE GUARD (break test 1 and 2). A connection row may not land in the
+ * `in_sync` bucket unless every field inside the scope Sharko owns was
+ * successfully compared. The server already enforces this in two places
+ * (connection_canonical.go and applyConnectionRowCanonical), so this should
+ * never fire — it is here because "the fleet says Synced when nothing was
+ * verified" is exactly the defect that shipped, and an enforcement point is
+ * one edit away from being forgotten. It can only ever DOWNGRADE a row to
+ * "not checked yet"; it can never invent a better state than the server sent,
+ * so it is a guard and not a second derivation.
+ *
+ * A connection row from a server that never sent the canonical fields at all
+ * reads `unknown` too, for the same reason: no canonical answer means no
+ * verdict, never the old label-only "Synced".
+ */
+export function rowStatus(row: UnifiedRow): ResourceStatus {
+  const projected = toResourceStatus(row.state)
+  if (row.kind !== 'connection') return projected
+  if (!row.headline) return 'unknown'
+  if (projected === 'in_sync' && row.verificationScope !== 'full') return 'unknown'
+  return projected
+}
+
+/**
+ * connectionRowLabel is the WORD a connection row shows — the server's
+ * `headline`, verbatim. There is no headline table in this file and no
+ * mapping from state to words: that derivation moved to the server so the
+ * fleet row and the connection page cannot phrase one connection differently.
+ *
+ * The only case that does not come from the server is the one where the
+ * server said nothing canonical, and then the honest word is "Not checked
+ * yet" — the same word the guard above puts the row's dot into.
+ */
+export function connectionRowLabel(row: UnifiedRow): string {
+  if (!row.headline) return CONNECTION_NOT_CHECKED_LABEL
+  if (rowStatus(row) === 'unknown' && toResourceStatus(row.state) === 'in_sync') {
+    // The guard fired: the server sent a synced word at a scope that cannot
+    // support it. Never render the word it sent.
+    return CONNECTION_NOT_CHECKED_LABEL
+  }
+  return row.headline
+}
+
+/** The three health words — ArgoCD's own answer, independent of the git state beside it. */
+export const HEALTH_COLUMN_WORDS: Record<string, string> = {
+  connected: 'Connected',
+  unavailable: 'Unavailable',
+  not_checked: 'Not checked',
+}
+
+/** The verification indicator on a connection row: part of what Sharko owns was not compared. */
+export const CREDENTIAL_NOT_COMPARED_LABEL = 'Credential not compared'
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Grouping (G2/G3)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -622,7 +732,7 @@ export const CONNECTIONS_GROUP_KEY = '__connections__'
 function worstRankInGroup(rows: UnifiedRow[]): number {
   let best = Infinity
   for (const r of rows) {
-    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    const rank = statusSortRank(rowStatus(r), !!r.lastCheckError)
     if (rank < best) best = rank
   }
   return best
@@ -643,10 +753,10 @@ export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
   let best = Infinity
   let worst: ResourceStatus = 'in_sync'
   for (const r of rows) {
-    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    const rank = statusSortRank(rowStatus(r), !!r.lastCheckError)
     if (rank < best) {
       best = rank
-      worst = toResourceStatus(r.state)
+      worst = rowStatus(r)
     }
   }
   return worst
@@ -659,7 +769,7 @@ export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
  * the one state that means "nothing here is worth a look."
  */
 export function groupHasIssues(group: RowGroup): boolean {
-  return group.rows.some((r) => toResourceStatus(r.state) !== 'in_sync')
+  return group.rows.some((r) => rowStatus(r) !== 'in_sync')
 }
 
 /**
@@ -737,7 +847,7 @@ export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[]
  */
 export function groupSummary(rows: UnifiedRow[]): string {
   const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
-  for (const r of rows) counts[toResourceStatus(r.state)]++
+  for (const r of rows) counts[rowStatus(r)]++
   const parts = [`${rows.length} secret${rows.length === 1 ? '' : 's'}`]
   for (const status of CHIP_ORDER) {
     if (counts[status] > 0) parts.push(`${counts[status]} ${statusLabel(status).toLowerCase()}`)
@@ -756,7 +866,7 @@ function matchesSearch(row: UnifiedRow, q: string): boolean {
   )
 }
 
-type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'state'
+type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'health' | 'state'
 
 /**
  * sourceShortLabel (design-secret-sync-visual-pass, section 2) — the SOURCE
@@ -804,8 +914,15 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
       return a.cluster < b.cluster ? -1 : a.cluster > b.cluster ? 1 : 0
     case 'source':
       return a.sourceLabel < b.sourceLabel ? -1 : a.sourceLabel > b.sourceLabel ? 1 : 0
+    case 'health': {
+      // Worst first, matching the state column's own habit: a connection
+      // ArgoCD cannot use outranks one it has never probed, which outranks
+      // one that works.
+      const rank = (r: UnifiedRow) => (r.health === 'unavailable' ? 0 : r.health === 'not_checked' || !r.health ? 1 : 2)
+      return rank(a) - rank(b)
+    }
     case 'state':
-      return statusSortRank(a.state, !!a.lastCheckError) - statusSortRank(b.state, !!b.lastCheckError)
+      return statusSortRank(rowStatus(a), !!a.lastCheckError) - statusSortRank(rowStatus(b), !!b.lastCheckError)
     default:
       return 0
   }
@@ -825,10 +942,22 @@ export function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: stri
   // is never Sharko's to write, whatever else is true about it (P1-A).
   if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_SYNC_REASON }
   if (row.kind === 'connection') {
-    if (row.state === 'in_sync') return { disabled: true, reason: 'Nothing to apply — this secret already matches git.' }
-    if (row.state === 'missing')
+    // RULING (a), 2026-08-19: Sharko re-applies a self-managed connection's
+    // addon labels on EVERY reconciler pass, unconditionally. Offering a
+    // manual button for work the reconciler performs itself is exactly what
+    // the ruling removed, and the connection page's plan already says so
+    // (buildReconciliationPlan sets plan.automatic and NO action for this
+    // mode). The fleet row must not disagree with the page.
+    if (row.managementMode === 'self_managed')
+      return { disabled: true, reason: 'Sharko re-applies the addon labels git declares on the next pass. Nothing to do here.' }
+    // The status word is the server's; this gate reads the same canonical
+    // projection every other surface on this page reads.
+    const status = rowStatus(row)
+    if (status === 'in_sync')
+      return { disabled: true, reason: 'Nothing to apply — this connection already matches the Git-defined connection.' }
+    if (status === 'missing')
       return { disabled: true, reason: "This secret hasn't been created yet — there's nothing to sync onto." }
-    if (row.state === 'unknown') return { disabled: true, reason: 'Click Check now first to check this secret.' }
+    if (status === 'unknown') return { disabled: true, reason: 'Click Check now first to check this secret.' }
     return { disabled: false }
   }
   if (row.state === 'in_sync') return { disabled: true, reason: 'Nothing to push — this secret already matches its source.' }
@@ -2236,24 +2365,62 @@ export function SecretDetailContent({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// W3-3 (AC9): the row-level credential-check badge. Separate from
-// <StatusMark> on purpose — `state` is the git-labels comparison,
-// `credentialCheck` is the background loop's own read-only verdict on this
-// connection's stored details. Connection rows only; a healthy ('clear') or
-// server-that-predates-the-loop (absent) row stays quiet, matching the rest
-// of the page's "no news is good news" style.
+// The connection row's status cell (B5) and its verification indicator.
+//
+// The WORD is the server's `headline`, rendered verbatim — the same string
+// the connection page's own headline shows. A values row keeps <StatusMark>,
+// whose six-word vocabulary still fits a "does the cluster copy match its
+// backend" question exactly.
+//
+// The DOT and the left edge strip read rowStatus(), which is the server's
+// projection with the fail-closed guard on top, so the colour beside the word
+// can never be greener than the word.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RowStatusCell({ row }: { row: UnifiedRow }) {
+  if (row.kind !== 'connection') return <StatusMark status={row.state} />
+  const status = rowStatus(row)
+  const label = connectionRowLabel(row)
+  return (
+    <span
+      data-testid="status-mark"
+      data-status={status}
+      // H2: colour lives on the dot only — the word is always plain dark
+      // ink, whatever the state.
+      className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium text-[#0a3a5a] dark:text-gray-200"
+      // The qualifier is the server's own sentence and can be a paragraph
+      // (the legacy-inline one is). It belongs on hover, not in a 12% column.
+      title={row.qualifier ? `${label} — ${row.qualifier}` : label}
+    >
+      <StatusDot status={status} />
+      <span className="truncate">{label}</span>
+    </span>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W3-3 (AC9), reworked for B5: the row-level verification indicator.
+//
+// The old badge had FOUR states read off `credential_check`, a field that has
+// nothing to do with the canonical answer beside it — which is how "Synced"
+// and "Not compared" ended up on the same row. Two of those states are gone:
+//
+//   - "Not compared" is now "Credential not compared" and comes from the
+//     CANONICAL verification_scope, the same field the headline is derived
+//     from server-side. It cannot contradict the word next to it anymore.
+//   - "Check failed" is gone entirely — the headline says "Unknown — check
+//     failed" in that state, and a badge repeating it is noise.
+//
+// "Credential drift" stays: it names WHICH domain drifted, which the headline
+// ("Out of sync — approval required") deliberately does not.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CREDENTIAL_DRIFT_BADGE_LABEL = 'Credential drift'
-const CREDENTIAL_NOT_COMPARED_BADGE_LABEL = 'Not compared'
-const CREDENTIAL_CHECK_FAILED_BADGE_LABEL = 'Check failed'
 
 function CredentialCheckBadge({ row }: { row: UnifiedRow }) {
   if (row.kind !== 'connection') return null
-  const check = row.credentialCheck
-  if (!check || check === 'clear') return null
 
-  if (check === 'drifted') {
+  if (row.credentialCheck === 'drifted') {
     return (
       <span
         data-testid="credential-check-badge"
@@ -2266,22 +2433,21 @@ function CredentialCheckBadge({ row }: { row: UnifiedRow }) {
     )
   }
 
-  // not_compared / check_failed: both muted (nothing is confirmed broken),
-  // check_failed keeps a quiet amber tint on the text — a hint something
-  // didn't finish — while not_compared stays fully neutral (an honest
-  // scope limit, not a problem).
-  const label = check === 'not_compared' ? CREDENTIAL_NOT_COMPARED_BADGE_LABEL : CREDENTIAL_CHECK_FAILED_BADGE_LABEL
-  const textClassName = check === 'check_failed' ? 'text-amber-700 dark:text-amber-500' : 'text-[#5a8aaa] dark:text-gray-500'
-  return (
-    <span
-      data-testid="credential-check-badge"
-      data-credential-check={check}
-      title={row.credentialCheckDetail}
-      className={`inline-flex items-center rounded-full bg-[#e8f4ff] px-2 py-0.5 text-xs font-medium ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:ring-gray-700 ${textClassName}`}
-    >
-      {label}
-    </span>
-  )
+  // Neutral, always — an honest scope limit is not a problem, and this badge
+  // must never read as damage next to a calm headline.
+  if (row.verificationScope === 'partial') {
+    return (
+      <span
+        data-testid="credential-check-badge"
+        data-credential-check="not_compared"
+        title={row.credentialCheckDetail || row.qualifier}
+        className="inline-flex items-center rounded-full bg-[#e8f4ff] px-2 py-0.5 text-xs font-medium text-[#5a8aaa] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-500 dark:ring-gray-700"
+      >
+        {CREDENTIAL_NOT_COMPARED_LABEL}
+      </span>
+    )
+  }
+  return null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2294,6 +2460,7 @@ function SecretTableRow({
   row,
   indented,
   busy,
+  healthColumn,
   onSelect,
   onRefresh,
   onRequestSync,
@@ -2303,6 +2470,8 @@ function SecretTableRow({
   /** true when the row sits under a group parent — a small left inset, nothing else changes. */
   indented?: boolean
   busy: boolean
+  /** B5: the connections subpage shows Health where the addons subpage shows "Compared with". */
+  healthColumn?: boolean
   onSelect: () => void
   onRefresh: () => void
   onRequestSync: () => void
@@ -2358,7 +2527,7 @@ function SecretTableRow({
           the row's own <StatusMark> dot and the filter chips, via
           statusStripClassName — it cannot disagree with the dot next to
           it. */}
-      <TableCell className={`py-2 px-1.5 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
+      <TableCell className={`py-2 px-1.5 ${statusStripClassName(rowStatus(row))} ${indented ? 'pl-2' : ''}`}>
         <div className="flex min-w-0 items-center gap-1.5">
           {indented && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-[#c0ddf0] dark:bg-gray-700" />}
           {row.kind === 'connection' ? (
@@ -2392,8 +2561,8 @@ function SecretTableRow({
           putting a resource's health right at the start of its row instead
           of buried at the end. */}
       <TableCell className="py-2 px-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <StatusMark status={row.state} />
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <RowStatusCell row={row} />
           <CredentialCheckBadge row={row} />
         </div>
       </TableCell>
@@ -2423,21 +2592,38 @@ function SecretTableRow({
       >
         {row.cluster}
       </TableCell>
-      {/* Compared with (G1/H3, design-secret-sync-visual-pass section 2):
-          the S3 honesty lock, sortable/filterable/searched on every row.
-          The RELATION ("compared with" — SSF-8 item 3, was "checked
-          against") now lives once in the sticky column header — this cell
-          states just the place name, so the longest demo name
-          (kube-prometheus-stack-grafana-admin, 35 chars) can render uncut
-          at 1280px. The full sentence — the same one the panel's Resource
-          details says — is one hover away. */}
-      <TableCell
-        className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
-        data-testid="cell-source"
-        title={row.kind === 'connection' ? 'Compared with git.' : `Compared with ${row.sourceLabel} — git only holds a pointer to it.`}
-      >
-        {sourceShortLabel(row.sourceLabel)}
-      </TableCell>
+      {/* B5, the product owner's stated preference: on the connections
+          subpage this column is HEALTH, not "Compared with".
+
+          "Compared with: git" was a hard-coded word — the server writes it
+          on every connection row regardless of whether any comparison
+          happened — and it only ever meant "git holds the addon labels".
+          Sitting beside "Not compared" it read as a completed comparison
+          that had not happened. The fleet now answers the same two
+          independent questions the connection page does: does the live
+          resource match the Git-defined state Sharko manages (the Status
+          column), and does ArgoCD report the connection works (this one).
+
+          The addon-secrets subpage keeps "Compared with" — there the
+          question is real and the answer differs per row (S3's honesty
+          lock: git only ever holds a pointer for a values row). */}
+      {healthColumn ? (
+        <TableCell
+          className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+          data-testid="cell-health"
+          title="What ArgoCD reports about this connection. Independent of the Git state beside it."
+        >
+          {row.kind === 'connection' ? (HEALTH_COLUMN_WORDS[row.health ?? ''] ?? HEALTH_COLUMN_WORDS.not_checked) : '—'}
+        </TableCell>
+      ) : (
+        <TableCell
+          className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+          data-testid="cell-source"
+          title={row.kind === 'connection' ? 'Compared with git.' : `Compared with ${row.sourceLabel} — git only holds a pointer to it.`}
+        >
+          {sourceShortLabel(row.sourceLabel)}
+        </TableCell>
+      )}
       {/* SSF-2 follow-up (browser verification): this cell holds the h-8
           (32px) row-menu trigger — RowActionsMenu's own touch target, not
           shrunk here. py-2 on this cell (matching the text cells) pushed
@@ -2609,7 +2795,11 @@ export type SecretsArea = 'connections' | 'addons'
 const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> = {
   connections: {
     title: 'Cluster connections',
-    description: 'Secrets Sharko uses to register clusters with Argo CD.',
+    // B5, the product owner's exact replacement. The old sentence
+    // ("Secrets Sharko uses to register clusters with Argo CD.") described
+    // the mechanism; the locked model is that Git defines the connection and
+    // Sharko maintains the resulting Secret, and the subtitle now says that.
+    description: 'Git-defined cluster connections Sharko maintains for Argo CD.',
   },
   addons: {
     title: 'Addon secrets',
@@ -2633,6 +2823,11 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   // happen to match (both empty is the common case). The legacy unified
   // mode keeps the pre-split key shape.
   const areaScope = area ? `${area}:` : ''
+  // B5: the connections subpage answers "does ArgoCD report this connection
+  // as working?" in its own column, in place of the hard-coded "Compared
+  // with: git". The addon-secrets subpage keeps "Compared with" — there the
+  // answer is real and differs per row.
+  const healthColumn = area === 'connections'
   const { data, loading, load } = useManagedSecretsData()
   // SSF-9 — the table's own scroll container (see the "max-h-[65vh]
   // overflow-y-auto" wrapper below), so openRowDetail can read its current
@@ -2943,7 +3138,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
 
   const counts = useMemo(() => {
     const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
-    for (const r of searchFiltered) c[toResourceStatus(r.state)]++
+    for (const r of searchFiltered) c[rowStatus(r)]++
     return c
   }, [searchFiltered])
 
@@ -2964,7 +3159,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
 
   const filtered = useMemo(() => {
     let rows = searchFiltered
-    if (stateFilter !== 'all') rows = rows.filter((r) => toResourceStatus(r.state) === stateFilter)
+    if (stateFilter !== 'all') rows = rows.filter((r) => rowStatus(r) === stateFilter)
     if (addonFilter) rows = rows.filter((r) => r.addon === addonFilter)
     if (sourceFilter) rows = rows.filter((r) => r.sourceLabel === sourceFilter)
     if (kindFilter) rows = rows.filter((r) => r.kind === kindFilter)
@@ -3557,7 +3752,11 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
                 <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
                 <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
                 <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[13%] px-1.5" />
-                <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                {healthColumn ? (
+                  <SortableTh label="Health" sortKeyName="health" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                ) : (
+                  <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                )}
                 <TableHead className="w-[4%] px-1.5" />
               </TableRow>
             </TableHeader>
@@ -3576,6 +3775,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
                             key={row.key}
                             row={row}
                             indented
+                            healthColumn={healthColumn}
                             busy={!!busyRows[row.key]}
                             onSelect={() => openRowDetail(row)}
                             onRefresh={() => handleRefreshRow(row)}
@@ -3589,6 +3789,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
                     <SecretTableRow
                       key={row.key}
                       row={row}
+                      healthColumn={healthColumn}
                       busy={!!busyRows[row.key]}
                       // `row` here is a plain element of `sorted` (a
                       // useMemo'd array, no ref involved); the identical

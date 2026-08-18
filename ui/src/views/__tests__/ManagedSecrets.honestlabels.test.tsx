@@ -41,6 +41,8 @@ const adminAuth = {
 }
 
 const mockShowToast = vi.fn()
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -69,7 +71,12 @@ vi.mock('@/services/api', () => ({
   takeoverPreflight: vi.fn(),
   takeoverCluster: vi.fn(),
   dropLegacyLabels: vi.fn(),
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   checkAllAddonValuesSecrets: (...args: unknown[]) => mockCheckAllAddonValuesSecrets(...args),

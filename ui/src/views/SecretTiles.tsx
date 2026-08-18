@@ -38,8 +38,8 @@
 // whole card" to "the heading above a row of boxes."
 
 import { KeyRound, Lock } from 'lucide-react'
-import { StatusMark, statusBarClassName, statusStripClassName, toResourceStatus } from '@/components/resource/StatusMark'
-import { CHIP_ORDER, groupSummary, type RowGroup, type UnifiedRow } from './ManagedSecrets'
+import { StatusDot, StatusMark, statusBarClassName, statusStripClassName } from '@/components/resource/StatusMark'
+import { CHIP_ORDER, connectionRowLabel, groupSummary, rowStatus, type RowGroup, type UnifiedRow } from './ManagedSecrets'
 
 // ~4-6 boxes per row at 1280px — a box carries one secret, not a whole
 // addon, so it's meant to sit noticeably smaller than the old addon card.
@@ -52,7 +52,7 @@ function SecretBox({ row, onClick }: { row: UnifiedRow; onClick: () => void }) {
       type="button"
       onClick={onClick}
       data-testid={`secret-box-${row.key}`}
-      className={`text-left rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm p-3 ${statusStripClassName(row.state)} hover:bg-[#e0f0ff] focus-visible:ring-[#1a3d5c] dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750`}
+      className={`text-left rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm p-3 ${statusStripClassName(rowStatus(row))} hover:bg-[#e0f0ff] focus-visible:ring-[#1a3d5c] dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-750`}
     >
       <div className="flex min-w-0 items-center gap-1.5">
         {row.kind === 'connection' ? (
@@ -64,8 +64,24 @@ function SecretBox({ row, onClick }: { row: UnifiedRow; onClick: () => void }) {
           {name}
         </span>
       </div>
+      {/* B5: a connection box shows the SERVER's headline, the same string
+          the list row and the connection page show. A values box keeps
+          <StatusMark>. The strip and dot read rowStatus(), so the colour can
+          never be greener than the word. */}
       <div className="mt-1.5">
-        <StatusMark status={row.state} />
+        {row.kind === 'connection' ? (
+          <span
+            data-testid="status-mark"
+            data-status={rowStatus(row)}
+            className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium text-[#0a3a5a] dark:text-gray-200"
+            title={row.qualifier ? `${connectionRowLabel(row)} — ${row.qualifier}` : connectionRowLabel(row)}
+          >
+            <StatusDot status={rowStatus(row)} />
+            <span className="truncate">{connectionRowLabel(row)}</span>
+          </span>
+        ) : (
+          <StatusMark status={row.state} />
+        )}
       </div>
       {/* The addon/cluster line — same dash rule the list's cell-addon
           column uses ("—" on a connection row, it isn't an addon secret). */}
@@ -89,7 +105,7 @@ function TileSection({ group, onRowClick }: { group: RowGroup; onRowClick: (row:
 
   const counts: Partial<Record<string, number>> = {}
   for (const row of group.rows) {
-    const s = toResourceStatus(row.state)
+    const s = rowStatus(row)
     counts[s] = (counts[s] ?? 0) + 1
   }
 

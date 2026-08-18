@@ -30,6 +30,8 @@ import type { ManagedSecretsResponse } from '@/services/models'
 // harness follows it there through the actual router. See renderPage.
 
 const mockShowToast = vi.fn()
+import { canonicalReconciliationSync, withCanonicalConnectionRows } from './connectionRowCanonical'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -70,14 +72,24 @@ vi.mock('@/services/api', () => {
     api: {
       getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
       getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
-      getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
+      getConnectionReconciliation: async (...args: unknown[]) => {
+        // B5: the page renders sync.headline verbatim, so a fixture that
+        // predates it gets the string the server would have sent.
+        const v = await mockGetConnectionReconciliation(...args)
+        return v && v.sync ? { ...v, sync: canonicalReconciliationSync(v.sync, v.management_mode) } : v
+      },
       repairConnection: (...args: unknown[]) => mockRepairConnection(...args),
     },
     // TakeoverDialog's own imports — inert unless a test opens the dialog.
     takeoverPreflight: vi.fn(),
     takeoverCluster: vi.fn(),
     dropLegacyLabels: vi.fn(),
-    getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+    getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
     getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
     getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
     triggerSecretsReconcile: vi.fn(),
@@ -927,11 +939,22 @@ describe('SSF-12 — the one health conclusion', () => {
   // connection page ever carried is banned by exact text — the absolute
   // "matches Git" pair AND the two-authority replacements the redesign
   // itself replaced.
+  //
+  // RULING (b), 2026-08-19: the FRAGMENT is banned, not just the two
+  // complete sentences. Banning whole sentences is exactly how "…what
+  // Sharko intends" survived in five Go files, two swagger summaries, four
+  // CLI strings and a live server sentence while seven banned-phrase tests
+  // were already running — each one banned one sentence inside one file.
+  // Git defines the connection, so a difference is a difference from GIT.
   const BANNED_OLD_VERDICT_SENTENCES = [
     'The cluster copy matches Git.',
     'The cluster copy does not match Git.',
     'This connection matches what Sharko intends',
     'This connection does not match what Sharko intends.',
+    // The bare fragment. Where a full sentence is needed the ruled
+    // replacement is exactly: "At least one compared field differs from the
+    // Git-defined connection."
+    'Sharko intends',
   ]
 
   it('never renders any old verdict sentence on a connection row — the reconciliation view replaced them', async () => {

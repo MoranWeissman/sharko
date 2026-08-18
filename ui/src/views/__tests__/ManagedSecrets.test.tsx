@@ -59,6 +59,8 @@ const adminAuth = {
 // P1-A A3 pins the exact toast wording, so the toast helper is mocked here
 // rather than rendered — the sentence is what matters, not the widget.
 const mockShowToast = vi.fn()
+import { canonicalReconciliationSync, withCanonicalConnectionRows } from './connectionRowCanonical'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -117,13 +119,23 @@ vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
     getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
-    getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
+    getConnectionReconciliation: async (...args: unknown[]) => {
+        // B5: the page renders sync.headline verbatim, so a fixture that
+        // predates it gets the string the server would have sent.
+        const v = await mockGetConnectionReconciliation(...args)
+        return v && v.sync ? { ...v, sync: canonicalReconciliationSync(v.sync, v.management_mode) } : v
+      },
   },
   // TakeoverDialog's own imports — inert here.
   takeoverPreflight: vi.fn(),
   takeoverCluster: vi.fn(),
   dropLegacyLabels: vi.fn(),
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   triggerSecretsReconcile: (...args: unknown[]) => mockTriggerSecretsReconcile(...args),
