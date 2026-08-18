@@ -255,7 +255,7 @@ func connectionSyncQualifier(st connectionCanonicalState) string {
 	if st.ManagementMode == managementModeSelfManaged {
 		return qualifierSelfManaged
 	}
-	if st.VerificationScope == verificationScopePartial || st.VerificationScope == verificationScopeLabelsOnly {
+	if st.VerificationScope == verificationScopePartial {
 		// Already the headline's own words on the clean-EKS row — don't say
 		// it twice.
 		if connectionSyncHeadline(st) == headlineConfigurationMatchesEKS {

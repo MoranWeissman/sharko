@@ -2994,7 +2994,7 @@ definitions:
       verification_scope:
         description: |-
           VerificationScope is how much of what Sharko OWNS was successfully
-          compared: full, partial, labels_only or none.
+          compared: full, partial or none.
         type: string
     type: object
   internal_api.connectionReconciliationView:
@@ -3082,8 +3082,9 @@ definitions:
       repaired:
         description: |-
           Repaired is true when Sharko actually changed something. False with a
-          successful response means the connection already matched what Sharko
-          intends — worth saying plainly rather than implying a fix happened.
+          successful response means the connection already matched the
+          Git-defined connection — worth saying plainly rather than implying a
+          fix happened.
         type: boolean
       repaired_at:
         description: RepairedAt is when the repair ran, RFC3339.
@@ -6760,7 +6761,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Compare a cluster's ArgoCD connection with what Sharko intends
+      summary: Compare a cluster's ArgoCD connection with the Git-defined connection
       tags:
       - clusters
   /clusters/{name}/connection-reconciliation:
@@ -6911,7 +6912,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Repair a cluster's ArgoCD connection to match what Sharko intends
+      summary: Repair a cluster's ArgoCD connection to match the Git-defined connection
       tags:
       - clusters
   /clusters/{name}/diagnose:

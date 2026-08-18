@@ -82,13 +82,19 @@ const (
 // verification_scope — how much OF WHAT SHARKO OWNS was successfully compared
 // (product correction 1). full is required for synced; partial means at least
 // one owned field could not be compared (EKS credential content, an inline
-// credential with no independent copy); labels_only means only the addon
-// labels were comparable; none means nothing was compared.
+// credential with no independent copy); none means nothing was compared.
+//
+// THREE VALUES, and that is the whole enum (ruling d, 2026-08-19). There used
+// to be a fourth, labels_only, which no code path could ever produce — Go
+// does not complain about an unused package-level constant, so it sat on the
+// wire contract and in the generated OpenAPI spec as a value no client would
+// ever receive. Speculative wire values are not published. The closed set is
+// pinned by the invariant sweep, which asserts it across every combination
+// the builder can be handed.
 const (
-	verificationScopeFull       = "full"
-	verificationScopePartial    = "partial"
-	verificationScopeLabelsOnly = "labels_only"
-	verificationScopeNone       = "none"
+	verificationScopeFull    = "full"
+	verificationScopePartial = "partial"
+	verificationScopeNone    = "none"
 )
 
 // ArgoCD connection health — independent of sync in every row of the matrix.
@@ -233,7 +239,7 @@ type connectionReconciliationSync struct {
 	// ONLY when VerificationScope is full — enforced in the builder.
 	State string `json:"state"`
 	// VerificationScope is how much of what Sharko OWNS was successfully
-	// compared: full, partial, labels_only or none.
+	// compared: full, partial or none.
 	VerificationScope string `json:"verification_scope"`
 	// ApprovalRequired is true exactly when the drift touches connection
 	// configuration or credential material — the halves Sharko never changes

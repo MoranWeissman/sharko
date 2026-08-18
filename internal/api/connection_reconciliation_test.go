@@ -247,6 +247,15 @@ func TestConnectionReconciliation_SyncedRequiresFullScope_Invariant(t *testing.T
 				t.Fatalf("approval-gated out_of_sync with no reason at all (%+v)", c)
 			}
 		}
+		// Ruling (d): the verification enum is CLOSED at three values. This
+		// is what keeps the removed labels_only from creeping back — and
+		// what would catch any other speculative value being published on
+		// the wire, across every combination the builder can be handed.
+		switch out.Sync.VerificationScope {
+		case verificationScopeFull, verificationScopePartial, verificationScopeNone:
+		default:
+			t.Fatalf("verification_scope = %q, outside the closed enum full|partial|none (%+v)", out.Sync.VerificationScope, c)
+		}
 		// Scope honesty (F2): a "full" verification claim never rides over
 		// deliberately-unchecked fields.
 		if out.Sync.VerificationScope == verificationScopeFull && len(v.NotChecked) > 0 {

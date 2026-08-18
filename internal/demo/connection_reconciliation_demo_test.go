@@ -34,7 +34,10 @@ func TestBigEstate_ConnectionReconciliation_Answers(t *testing.T) {
 	}
 
 	validStates := map[string]bool{"synced": true, "out_of_sync": true, "blocked": true, "unknown": true}
-	validScopes := map[string]bool{"full": true, "partial": true, "labels_only": true, "none": true}
+	// Ruling (d): the enum is exactly these three. labels_only was removed —
+	// it was declared but unreachable, and a value no handler can produce
+	// does not belong on the wire.
+	validScopes := map[string]bool{"full": true, "partial": true, "none": true}
 
 	tested := 0
 	for _, row := range body.ClusterConnectionSecrets {

@@ -3856,7 +3856,7 @@ const docTemplate = `{
                 "tags": [
                     "clusters"
                 ],
-                "summary": "Compare a cluster's ArgoCD connection with what Sharko intends",
+                "summary": "Compare a cluster's ArgoCD connection with the Git-defined connection",
                 "parameters": [
                     {
                         "type": "string",
@@ -3997,7 +3997,7 @@ const docTemplate = `{
                 "tags": [
                     "clusters"
                 ],
-                "summary": "Repair a cluster's ArgoCD connection to match what Sharko intends",
+                "summary": "Repair a cluster's ArgoCD connection to match the Git-defined connection",
                 "parameters": [
                     {
                         "type": "string",
@@ -13189,7 +13189,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "verification_scope": {
-                    "description": "VerificationScope is how much of what Sharko OWNS was successfully\ncompared: full, partial, labels_only or none.",
+                    "description": "VerificationScope is how much of what Sharko OWNS was successfully\ncompared: full, partial or none.",
                     "type": "string"
                 }
             }
@@ -13285,7 +13285,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "repaired": {
-                    "description": "Repaired is true when Sharko actually changed something. False with a\nsuccessful response means the connection already matched what Sharko\nintends — worth saying plainly rather than implying a fix happened.",
+                    "description": "Repaired is true when Sharko actually changed something. False with a\nsuccessful response means the connection already matched the\nGit-defined connection — worth saying plainly rather than implying a\nfix happened.",
                     "type": "boolean"
                 },
                 "repaired_at": {
