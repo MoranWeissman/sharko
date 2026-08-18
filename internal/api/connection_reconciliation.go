@@ -797,13 +797,21 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 		return p
 
 	case managementModeSelfManaged:
-		// Rows 13 and 14 — never a connection repair; label sync is the one
-		// door. (The reconciler's syncSelfManaged does also re-apply labels
-		// each tick, but the matrix pins this row's plan to the explicit
-		// door only — the automatic-sentence list is deliberately short.)
+		// Rows 13 and 14 — never a connection repair.
+		//
+		// RULING (a), 2026-08-19: matrix row 14 was WRONG and the running
+		// reconciler is authoritative. syncSelfManaged calls
+		// argosecrets.Manager.SyncLabelsOnly on EVERY tick for EVERY
+		// self-managed entry, unconditionally and with no setting gate
+		// (internal/clusterreconciler/reconciler.go — the reconcile pass and
+		// the resync path both do it), which is also why the fleet row
+		// already reports self_heals: true for these connections. So label
+		// drift here converges by itself: the plan says so, and Sharko does
+		// NOT offer a manual button for work the reconciler performs on its
+		// own. approval_required stays false — nothing here touches
+		// connection configuration or credential material.
 		if hasLabelDrift {
-			p.Action = planActionSyncAddonLabels
-			p.ActionScopes = []string{"metadata.labels"}
+			p.Automatic = planAutomaticLabelSync
 		}
 		return p
 

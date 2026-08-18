@@ -22,14 +22,17 @@ package api
 // legacy-inline no-reconstruction rules hold end to end.
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
@@ -427,7 +430,12 @@ func TestConnectionReconciliation_MatrixV3Rows(t *testing.T) {
 			want: want{state: syncStateSynced, verification: verificationScopeFull, managedScope: managedScopeAddonLabels, action: planActionNone},
 		},
 		{
-			row: "14: self-managed, labels drifted",
+			// MATRIX v4, ruling (a): row 14 is AUTOMATIC. The matrix was
+			// wrong and the running reconciler is authoritative —
+			// syncSelfManaged re-applies the addon labels on every tick with
+			// no setting gate, so Sharko must not offer a manual button for
+			// work it does itself. action none, approval_required false.
+			row: "14: self-managed, labels drifted — converges by itself (ruling a)",
 			view: reconView(func(v *connectionComparisonView) {
 				v.Status = string(connectioncompare.StatusOutOfSync)
 				v.Scope = string(connectioncompare.ScopeAddonLabelsOnly)
@@ -435,7 +443,7 @@ func TestConnectionReconciliation_MatrixV3Rows(t *testing.T) {
 				v.RepairScope = string(connectioncompare.RepairScopeAddonLabelsOnly)
 				v.Differences = []connectionComparisonDifference{reconSafeDiff("metadata.labels[datadog]")}
 			}),
-			want: want{state: syncStateOutOfSync, verification: verificationScopeFull, managedScope: managedScopeAddonLabels, action: planActionSyncAddonLabels},
+			want: want{state: syncStateOutOfSync, verification: verificationScopeFull, managedScope: managedScopeAddonLabels, action: planActionNone, automatic: planAutomaticLabelSync},
 		},
 		{
 			row: "15: never checked",
@@ -1341,5 +1349,137 @@ func assertExactKeys(t *testing.T, what string, got map[string]json.RawMessage, 
 		if _, ok := got[k]; !ok {
 			t.Errorf("%s lost the key %q", what, k)
 		}
+	}
+}
+
+// ============================================================================
+// Ruling (a) — matrix row 14 was wrong, the running reconciler is right.
+// ============================================================================
+
+// TestConnectionReconciliation_SelfManagedLabelDrift_IsAutomaticNeverAButton
+// pins ruling (a) at the builder: a self-managed connection whose addon
+// labels drifted converges by itself, so the plan says so and Sharko offers
+// NO manual door for work its own reconciler performs every tick.
+func TestConnectionReconciliation_SelfManagedLabelDrift_IsAutomaticNeverAButton(t *testing.T) {
+	for _, selfHeal := range []bool{false, true} {
+		out := buildRecon(reconView(func(v *connectionComparisonView) {
+			v.Status = string(connectioncompare.StatusOutOfSync)
+			v.Scope = string(connectioncompare.ScopeAddonLabelsOnly)
+			v.OwnershipMode = string(connectioncompare.ModeSelfManaged)
+			v.RepairScope = string(connectioncompare.RepairScopeAddonLabelsOnly)
+			v.Differences = []connectionComparisonDifference{reconSafeDiff("metadata.labels[datadog]")}
+		}), selfHeal)
+
+		if out.Plan.Action != planActionNone {
+			t.Errorf("selfHeal=%v: plan.action = %q — ruling (a) forbids offering a manual action the reconciler performs itself", selfHeal, out.Plan.Action)
+		}
+		if out.Plan.Automatic != planAutomaticLabelSync {
+			t.Errorf("selfHeal=%v: plan.automatic = %q, want the next-pass label sentence", selfHeal, out.Plan.Automatic)
+		}
+		if out.Sync.ApprovalRequired {
+			t.Errorf("selfHeal=%v: approval_required must stay false — no connection detail or credential is involved", selfHeal)
+		}
+		if out.Sync.Headline != headlineAddonLabelsOutOfSync {
+			t.Errorf("selfHeal=%v: headline = %q, want %q", selfHeal, out.Sync.Headline, headlineAddonLabelsOutOfSync)
+		}
+		if len(out.Plan.ActionScopes) != 0 {
+			t.Errorf("selfHeal=%v: action_scopes = %v on an action-free plan", selfHeal, out.Plan.ActionScopes)
+		}
+	}
+}
+
+// TestConnectionReconciliation_SelfManagedLabelDrift_HealsOnTheNextPass is the
+// transition ruling (a) asked for, end to end against a REAL reconciler: a
+// self-managed connection with drifted addon labels reports "Addon labels out
+// of sync" and promises nothing but the next pass; one reconciler pass later
+// the same connection reports "Addon labels synced". The promise the plan
+// makes is the behaviour the reconciler actually has.
+func TestConnectionReconciliation_SelfManagedLabelDrift_HealsOnTheNextPass(t *testing.T) {
+	selfYAML := "clusters:\n- name: " + comparisonCluster + "\n  connectionManagedBy: user\n  credsSource: secret-kubeconfig\n  labels:\n    datadog: enabled\n"
+	// The user's own Secret: no managed-by label, and the addon label the
+	// git record declares is wrong. Real drift, in the one scope Sharko owns
+	// on a self-managed connection.
+	live := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      comparisonCluster,
+			Namespace: "argocd",
+			Labels: map[string]string{
+				"argocd.argoproj.io/secret-type": "cluster",
+				"datadog":                        "disabled",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte(comparisonCluster),
+			"server": []byte("https://their-own-address.invalid"),
+			"config": []byte(`{"bearerToken":"theirs"}`),
+		},
+	}
+	srv, router, argoClient := comparisonFixture(t, selfYAML, live, comparisonFakeVault{})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, reconciliationReq(comparisonCluster))
+	before := decodeRecon(t, w)
+	if before.ManagementMode != managementModeSelfManaged {
+		t.Fatalf("management_mode = %q, want self_managed", before.ManagementMode)
+	}
+	if before.Sync.State != syncStateOutOfSync {
+		t.Fatalf("sync.state = %q, want out_of_sync (drift: %+v)", before.Sync.State, before.Drift)
+	}
+	if before.Sync.Headline != headlineAddonLabelsOutOfSync {
+		t.Errorf("headline = %q, want %q", before.Sync.Headline, headlineAddonLabelsOutOfSync)
+	}
+	if before.Plan.Action != planActionNone {
+		t.Errorf("plan.action = %q — ruling (a): no manual door for work the reconciler does itself", before.Plan.Action)
+	}
+	if before.Plan.Automatic != planAutomaticLabelSync {
+		t.Errorf("plan.automatic = %q, want the next-pass label sentence", before.Plan.Automatic)
+	}
+
+	// One real reconciler pass — the same syncSelfManaged the 30-second tick
+	// runs, on the same fake ArgoCD the comparison reads.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv.clusterRecon.Start(ctx)
+	defer srv.clusterRecon.Stop()
+	srv.clusterRecon.Trigger()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s, err := argoClient.CoreV1().Secrets("argocd").Get(ctx, comparisonCluster, metav1.GetOptions{})
+		if err == nil && s.Labels["datadog"] == "enabled" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	after, err := argoClient.CoreV1().Secrets("argocd").Get(ctx, comparisonCluster, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("reading the Secret back: %v", err)
+	}
+	if after.Labels["datadog"] != "enabled" {
+		t.Fatalf("the reconciler did not re-apply the addon label by itself (datadog=%q) — ruling (a)'s premise does not hold and the plan's promise would be a lie", after.Labels["datadog"])
+	}
+	// The user's own connection details are still theirs, untouched.
+	if got := string(after.Data["server"]); got != "https://their-own-address.invalid" {
+		t.Errorf("the reconciler rewrote the user's own API address to %q", got)
+	}
+	if got := string(after.Data["config"]); got != `{"bearerToken":"theirs"}` {
+		t.Error("the reconciler rewrote the user's own credential blob")
+	}
+
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, reconciliationReq(comparisonCluster))
+	healed := decodeRecon(t, w2)
+	if healed.Sync.State != syncStateSynced {
+		t.Fatalf("after the pass sync.state = %q, want synced (drift: %+v)", healed.Sync.State, healed.Drift)
+	}
+	if healed.Sync.VerificationScope != verificationScopeFull {
+		t.Errorf("verification_scope = %q, want full of the owned addon-label scope", healed.Sync.VerificationScope)
+	}
+	if healed.Sync.Headline != headlineAddonLabelsSynced {
+		t.Errorf("headline = %q, want %q — never bare Synced, never Connection synced", healed.Sync.Headline, headlineAddonLabelsSynced)
+	}
+	if healed.Plan.Action != planActionNone || healed.Plan.Automatic != "" {
+		t.Errorf("a healed connection still promises something: action=%q automatic=%q", healed.Plan.Action, healed.Plan.Automatic)
 	}
 }
