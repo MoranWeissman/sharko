@@ -609,8 +609,13 @@ func TestPollOnce_VaultFailsForOneCluster_OthersStillReconcile(t *testing.T) {
 	// Audit shape: a failure event for c2; success events for c1 and c3;
 	// the tick summary fired with result=partial.
 	entries := audits.Snapshot()
-	if !hasEventForResource(entries, "cluster_secret_create", "cluster:c2") {
-		t.Fatalf("expected an audit entry referencing cluster c2 (the failure); got %v", entries)
+	// Ruling (f): c2's create FAILED, so it files under the failure-shaped
+	// event; c1 and c3 really were created, so they keep the past tense.
+	if !hasEventForResource(entries, eventClusterSecretCreateFailed, "cluster:c2") {
+		t.Fatalf("expected a cluster_secret_create_failed entry referencing cluster c2; got %v", entries)
+	}
+	if hasEventForResource(entries, EventClusterSecretCreate, "cluster:c2") {
+		t.Fatalf("a past-tense \"Secret created\" entry was written for c2, whose Secret does not exist; got %v", entries)
 	}
 	if !hasEventForResource(entries, "cluster_secret_create", "cluster:c1") {
 		t.Fatalf("expected an audit entry referencing cluster c1 (success); got %v", entries)

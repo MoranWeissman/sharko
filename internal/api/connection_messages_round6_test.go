@@ -119,11 +119,13 @@ func TestAuditRepairCredentialFailure_ExactText(t *testing.T) {
 		t.Fatal("could not find auditRepairCredentialFailure function")
 	}
 
-	// Find the finishRepairAudit call within this function.
+	// Find the audit call within this function. (Ruling f renamed the
+	// helper: a repair that could not read the credentials source FAILED, it
+	// did not complete, so it files under the failure event.)
 	funcText := sourceText[funcStart:]
-	auditLineStart := strings.Index(funcText, `s.finishRepairAudit(r, cluster, "failed:`)
+	auditLineStart := strings.Index(funcText, `s.failedRepairAudit(r, cluster, "failed:`)
 	if auditLineStart == -1 {
-		t.Fatal("could not find finishRepairAudit call in auditRepairCredentialFailure")
+		t.Fatal("could not find the failedRepairAudit call in auditRepairCredentialFailure")
 	}
 
 	// Extract just the string literal.

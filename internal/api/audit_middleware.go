@@ -76,6 +76,16 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		source := detectSource(r)
 		result := resultFromStatus(rec.statusCode)
 		level := levelFromStatus(rec.statusCode)
+		// Ruling (f): a handler that knows its own outcome overrides the
+		// status-derived one. The status code is the wrong source for a
+		// batch endpoint — an adoption where every cluster failed still
+		// returns 200, because 207 is only set when at least one succeeded.
+		// Empty keeps today's behaviour for every handler that does not opt
+		// in.
+		if fields.Result != "" {
+			result = fields.Result
+			level = levelFromResult(fields.Result)
+		}
 
 		event := fields.Event
 		if event == "" {
@@ -113,6 +123,7 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			Detail:          fields.Detail,
 			Source:          source,
 			Result:          result,
+			Changes:         fields.Changes,
 			DurationMs:      duration.Milliseconds(),
 			Tier:            tier,
 			AttributionMode: mode,
@@ -151,6 +162,23 @@ func detectSource(r *http.Request) string {
 // [200,300) so a naive range check swallows it as "success" and mislabels
 // every partial-success response (PR created but not merged, ArgoCD
 // registered but Git failed) as a full success (V2-cleanup-85.2).
+// levelFromResult maps a handler-declared outcome onto the log level, so an
+// overridden result does not leave a contradicting level behind (ruling f:
+// title, outcome and change result must never contradict each other — and
+// the level is part of how a reader sees the outcome).
+func levelFromResult(result string) string {
+	switch result {
+	case "success":
+		return "info"
+	case "partial", "rejected":
+		return "warn"
+	case "failure":
+		return "error"
+	default:
+		return "info"
+	}
+}
+
 func resultFromStatus(code int) string {
 	switch {
 	case code == 207:

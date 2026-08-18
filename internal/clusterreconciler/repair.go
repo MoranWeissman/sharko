@@ -108,13 +108,16 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 		log.Error("[clusterreconciler] connection repair failed — nothing was written",
 			"cluster", name, "namespace", r.namespace, "error", err)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_connection_repair",
+			Level: "error",
+			// Ruling (f): a repair that threw is not a repair. The
+			// past-tense event is reserved for work that happened.
+			Event:             eventClusterConnectionRepairFailed,
 			User:              "sharko",
 			Action:            "repair_connection",
 			Resource:          fmt.Sprintf("cluster:%s", name),
 			Source:            "reconciler",
 			Result:            "failure",
+			Changes:           audit.ChangesNone,
 			Error:             err.Error(),
 			CredentialFailure: credsafe.Is(err),
 			RequestID:         logging.RequestID(ctx),
@@ -138,13 +141,18 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 		log.Info("[clusterreconciler] connection repair found nothing to change",
 			"cluster", name, "namespace", r.namespace)
 		r.audit(audit.Entry{
-			Level:     "info",
-			Event:     "cluster_connection_repair",
-			User:      "sharko",
-			Action:    "repair_connection",
-			Resource:  fmt.Sprintf("cluster:%s", name),
-			Source:    "reconciler",
-			Result:    "success",
+			Level:    "info",
+			Event:    EventClusterConnectionRepair,
+			User:     "sharko",
+			Action:   "repair_connection",
+			Resource: fmt.Sprintf("cluster:%s", name),
+			Source:   "reconciler",
+			Result:   "success",
+			// Ruling (f), C3: THIS is the one case where "no changes made"
+			// is true — the repair ran to completion and deliberately wrote
+			// nothing. It is an ACTION RESULT, not evidence the check
+			// failed, and it used to be the one case a reader never saw.
+			Changes:   audit.ChangesNone,
 			Detail:    "the connection already matched the Git-defined connection; nothing was written",
 			RequestID: logging.RequestID(ctx),
 		})
@@ -159,12 +167,13 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 		"revision", comparedRevision)
 	r.audit(audit.Entry{
 		Level:     "info",
-		Event:     "cluster_connection_repair",
+		Event:     EventClusterConnectionRepair,
 		User:      "sharko",
 		Action:    "repair_connection",
 		Resource:  fmt.Sprintf("cluster:%s", name),
 		Source:    "reconciler",
 		Result:    "success",
+		Changes:   audit.ChangesApplied,
 		Detail:    fmt.Sprintf("rewrote %d owned field(s) to match commit %s", len(outcome.FieldsWritten), comparedRevision),
 		RequestID: logging.RequestID(ctx),
 	})

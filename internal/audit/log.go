@@ -48,6 +48,67 @@ type Entry struct {
 	// about what it used to be. TestAdd_StoredCredentialEntryHasAllFourSafeProperties
 	// pins all of that.
 	CredentialFailure bool `json:"-"`
+
+	// Changes says whether this entry's operation ACTUALLY changed anything.
+	//
+	// WHY IT EXISTS (ruling f, 2026-08-19). The activity feed rendered
+	// "<title> · <outcome> · No changes made" with all three coming from
+	// different places and nothing reconciling them — the third part was
+	// invented in the browser from a static read-only flag in a title table,
+	// so it could never agree with reality. It said "No changes made" on
+	// operations that wrote, and stayed silent on the one case where it was
+	// true. A surface cannot render the truth it was never told, so the
+	// truth now travels on the entry.
+	//
+	// WHY A STRING ENUM AND NOT A BOOL. A bool has no way to say "this
+	// question does not apply". A read-only check neither changed anything
+	// nor failed to change anything, and forcing it to answer false is
+	// exactly the lie being removed. A *bool could carry three states but
+	// nil is ambiguous between "not applicable" and "nobody set it", and a
+	// pointer on a struct that is reflected over, serialized and stored is a
+	// footgun for one bit of information. A string enum states the case
+	// plainly, serializes as itself, and can grow a value later without
+	// changing the type.
+	//
+	// The four cases:
+	//   ""                 unset — a writer that has not been updated, or a
+	//                      stored entry from before this field existed. The
+	//                      reader must render nothing, never "no changes".
+	//   ChangesNotApplicable  read-only. Nothing was going to change.
+	//   ChangesNone           an action ran and deliberately changed nothing.
+	//   ChangesApplied        something really changed.
+	//
+	// Add normalizes an unrecognized value to "" so an uninterpretable word
+	// can never reach a reader; the writer-coverage test is what catches the
+	// writer that produced it.
+	Changes ChangeResult `json:"changes,omitempty"`
+}
+
+// ChangeResult is the "did anything actually change" answer on an Entry.
+type ChangeResult string
+
+const (
+	// ChangesNotApplicable is a read-only operation: a check, a comparison, a
+	// read. It neither changed anything nor failed to — and that is a
+	// different statement from "nothing changed".
+	ChangesNotApplicable ChangeResult = "not_applicable"
+	// ChangesNone is an action that ran to completion and deliberately wrote
+	// nothing, because nothing needed writing. This is the ONE case where
+	// "No changes made" is a true thing to render.
+	ChangesNone ChangeResult = "none"
+	// ChangesApplied is an action that really wrote something.
+	ChangesApplied ChangeResult = "applied"
+)
+
+// Valid reports whether c is one of the three defined answers. The empty
+// value is deliberately NOT valid — it means "nobody said", which a writer
+// should never leave behind on purpose.
+func (c ChangeResult) Valid() bool {
+	switch c {
+	case ChangesNotApplicable, ChangesNone, ChangesApplied:
+		return true
+	}
+	return false
 }
 
 // Fields contains semantic enrichment that handlers attach to the in-flight audit entry.
@@ -57,6 +118,22 @@ type Fields struct {
 	Detail          string
 	AttributionMode AttributionMode
 	Tier            Tier
+
+	// Result overrides the outcome the audit middleware would otherwise
+	// derive from the HTTP status code (ruling f, 2026-08-19).
+	//
+	// The status code is the wrong source for a batch endpoint. An adoption
+	// where EVERY cluster failed returns 200, because 207 is only set when
+	// there is at least one success — so the audit log recorded "Cluster
+	// adopted · success" for a run that adopted nothing. A handler that
+	// knows its own outcome says so here; empty keeps the status-derived
+	// answer, so every existing handler is unaffected.
+	Result string
+
+	// Changes is the handler's answer to "did anything actually change".
+	// Empty leaves the entry's field unset, which a reader renders as
+	// nothing rather than as "no changes made".
+	Changes ChangeResult
 }
 
 type ctxKey struct{}
@@ -160,6 +237,11 @@ func (l *Log) Add(entry Entry) {
 		entry.Timestamp = time.Now().UTC()
 	}
 	entry = sanitize(entry)
+	// An uninterpretable change answer must never reach a reader. Blank it
+	// here; the writer-coverage test is what catches the writer.
+	if entry.Changes != "" && !entry.Changes.Valid() {
+		entry.Changes = ""
+	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

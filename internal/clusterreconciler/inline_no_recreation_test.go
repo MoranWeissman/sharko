@@ -63,7 +63,13 @@ func TestPollOnce_DeletedInlineSecret_IsNeverRecreated(t *testing.T) {
 
 	// And the refusal is visible, not silent: the create attempt failed at
 	// the credential fetch and was audited as such.
-	if !hasEventForResource(audits.Snapshot(), "cluster_secret_create", "cluster:kind-inline") {
-		t.Fatal("expected a failed cluster_secret_create audit entry for kind-inline — the refusal must be recorded, not silent")
+	// Ruling (f): the failure-shaped event, because no Secret was created.
+	// "Connection Secret created · failure" was a past-tense claim nothing
+	// backed up.
+	if !hasEventForResource(audits.Snapshot(), eventClusterSecretCreateFailed, "cluster:kind-inline") {
+		t.Fatal("expected a cluster_secret_create_failed audit entry for kind-inline — the refusal must be recorded, not silent")
+	}
+	if hasEventForResource(audits.Snapshot(), EventClusterSecretCreate, "cluster:kind-inline") {
+		t.Fatal("a past-tense \"Secret created\" entry was written for a Secret that does not exist")
 	}
 }

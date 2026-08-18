@@ -1599,7 +1599,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns recent audit log entries (webhook pushes, cluster registrations, secret reconciliations, init runs).\nEntries are ordered newest-first. Supports filtering by user, action, source, result, cluster, and time range.",
+                "description": "Returns recent audit log entries (webhook pushes, cluster registrations, secret reconciliations, init runs).\nEntries are ordered newest-first. Supports filtering by user, action, source, result, cluster, and time range.\nEach entry carries a \"changes\" field saying whether the operation actually changed anything: \"applied\" (something was written), \"none\" (it ran and deliberately wrote nothing) or \"not_applicable\" (a read-only check, which neither changed anything nor failed to). The field is absent on entries recorded before it existed, and an absent value means \"not stated\" — never \"no changes made\".",
                 "produces": [
                     "application/json"
                 ],

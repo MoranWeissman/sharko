@@ -15,6 +15,7 @@ import (
 // @Summary List audit log entries
 // @Description Returns recent audit log entries (webhook pushes, cluster registrations, secret reconciliations, init runs).
 // @Description Entries are ordered newest-first. Supports filtering by user, action, source, result, cluster, and time range.
+// @Description Each entry carries a "changes" field saying whether the operation actually changed anything: "applied" (something was written), "none" (it ran and deliberately wrote nothing) or "not_applicable" (a read-only check, which neither changed anything nor failed to). The field is absent on entries recorded before it existed, and an absent value means "not stated" — never "no changes made".
 // @Tags system
 // @Produce json
 // @Security BearerAuth

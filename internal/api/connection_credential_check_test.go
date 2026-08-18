@@ -23,6 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/connectioncompare"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -353,16 +354,26 @@ func TestConnectionCredentialCheckStore_TransitionOnlyAudit(t *testing.T) {
 	// when the backend comes back and the same drift is still there.
 	installCredProvider(srv, comparisonFakeVault{failWith: errors.New("backend down")}, nil, nil)
 	loop.runOnce(ctx)
+	loop.runOnce(ctx)
 	if rec, _ := srv.connCredChecks.get(comparisonCluster); rec.Status != credentialCheckFailed {
 		t.Fatalf("status during the backend outage = %q, want check_failed", rec.Status)
 	}
 	if n := countAuditEvents(srv, cleared); n != 0 {
 		t.Fatalf("a failed check wrote %d drift-cleared entries, want 0 — a check that could not look clears nothing", n)
 	}
+	// RULING (f): a genuinely failed check is VISIBLE, with a failure-shaped
+	// title — and transition-only, like every other episode here, so a
+	// backend that is down for an hour does not write four entries a minute.
+	if n := countAuditEvents(srv, "connection_credential_check_failed"); n != 1 {
+		t.Fatalf("two failing passes wrote %d check-failed entries, want exactly 1 (it used to write ZERO — the one real failure was invisible)", n)
+	}
 	installCredProvider(srv, workingVault, nil, nil)
 	loop.runOnce(ctx)
 	if n := countAuditEvents(srv, detected); n != 1 {
 		t.Fatalf("a flapping backend re-announced the same drift: %d detected entries, want still exactly 1", n)
+	}
+	if n := countAuditEvents(srv, "connection_credential_check_recovered"); n != 1 {
+		t.Fatalf("the check completing again wrote %d recovered entries, want exactly 1", n)
 	}
 
 	// Drift cleared: exactly one cleared entry, then silence.
@@ -383,6 +394,28 @@ func TestConnectionCredentialCheckStore_TransitionOnlyAudit(t *testing.T) {
 	// endpoint writes — Recent activity must not flood every interval.
 	if n := countAuditEvents(srv, "secret_resource_read"); n != 0 {
 		t.Errorf("the background loop wrote %d per-check (secret_resource_read) audit entries, want 0 — that entry belongs to the human-driven endpoint only", n)
+	}
+
+	// RULING (f): every entry this surface wrote says the same thing three
+	// ways. Detection is a SUCCESS (the check ran and found something), a
+	// real failure is a failure, and all of them are read-only so nothing
+	// changed and nothing was going to.
+	for _, e := range srv.AuditLog().List(0) {
+		switch e.Event {
+		case detected, cleared, "connection_credential_check_recovered":
+			if e.Result != "success" {
+				t.Errorf("%s recorded result %q — a check that ran to completion is a success; the drift state supplies the warning", e.Event, e.Result)
+			}
+		case "connection_credential_check_failed":
+			if e.Result != "failure" {
+				t.Errorf("%s recorded result %q, want failure", e.Event, e.Result)
+			}
+		default:
+			continue
+		}
+		if e.Changes != audit.ChangesNotApplicable {
+			t.Errorf("%s recorded changes %q — a read-only check neither changed anything nor failed to", e.Event, e.Changes)
+		}
 	}
 }
 

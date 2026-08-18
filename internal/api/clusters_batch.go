@@ -99,10 +99,26 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 
 	result := orch.RegisterClusterBatch(r.Context(), req.Clusters)
 
+	// RULING (f), C9: the audit result says what happened, not what the
+	// status code implies. A batch where EVERY registration failed returned
+	// 207 and was recorded as "partial" — partial success, with no success
+	// in it. The HTTP status is left exactly as it was; only the audit line
+	// stops overstating.
+	auditResult := "success"
+	changes := audit.ChangesApplied
+	switch {
+	case result.Failed > 0 && result.Failed == len(req.Clusters):
+		auditResult = "failure"
+		changes = audit.ChangesNone
+	case result.Failed > 0:
+		auditResult = "partial"
+	}
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "cluster_registered",
 		Resource: fmt.Sprintf("clusters:%d", len(req.Clusters)),
 		Detail:   fmt.Sprintf("batch of %d", len(req.Clusters)),
+		Result:   auditResult,
+		Changes:  changes,
 	})
 
 	status := http.StatusOK

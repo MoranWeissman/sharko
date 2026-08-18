@@ -114,13 +114,6 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	} else if len(successNames) > 1 {
 		resource = fmt.Sprintf("clusters:%d", len(successNames))
 	}
-	audit.Enrich(r.Context(), audit.Fields{
-		Event:    "cluster_adopted",
-		Resource: resource,
-	})
-
-	// Determine HTTP status.
-	status := http.StatusOK
 	hasFailure := false
 	hasSuccess := false
 	for _, cr := range result.Results {
@@ -130,6 +123,38 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 			hasSuccess = true
 		}
 	}
+
+	// RULING (f), C8: the audit result is set from what actually happened,
+	// not derived from the HTTP status. 207 is only set when at least one
+	// adoption succeeded, so an adoption where EVERY cluster failed returned
+	// 200 and was recorded as "Cluster adopted · success" — a completed
+	// adoption that adopted nothing.
+	//
+	// The HTTP status is deliberately NOT changed here. That an all-failed
+	// adoption answers 200 is its own defect and belongs to the product
+	// owner, not to a wording round; the audit log stops repeating it either
+	// way.
+	auditResult := "success"
+	changes := audit.ChangesApplied
+	switch {
+	case hasFailure && !hasSuccess:
+		auditResult = "failure"
+		changes = audit.ChangesNone
+	case hasFailure:
+		auditResult = "partial"
+	case !hasSuccess:
+		// Nothing was asked for at all.
+		changes = audit.ChangesNone
+	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_adopted",
+		Resource: resource,
+		Result:   auditResult,
+		Changes:  changes,
+	})
+
+	// Determine HTTP status.
+	status := http.StatusOK
 	if hasFailure && hasSuccess {
 		status = http.StatusMultiStatus
 	}

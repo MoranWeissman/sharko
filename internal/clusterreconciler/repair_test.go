@@ -142,9 +142,17 @@ func TestRepairOwnedConnectionSecret_AuditsEveryAttempt(t *testing.T) {
 			_, _ = r.RepairOwnedConnectionSecret(context.Background(),
 				desiredConnSecret(t, map[string]string{"datadog": "enabled"}), "cafe1234")
 
+			// Ruling (f): a repair that did NOT happen is recorded under
+			// the failure-shaped event, not under the past-tense one. Rule
+			// 15 still holds — every attempt is audited — the entry just no
+			// longer claims a repair that never ran.
+			wantEvent := EventClusterConnectionRepair
+			if tc.wantResult != "success" {
+				wantEvent = eventClusterConnectionRepairFailed
+			}
 			found := false
 			for _, e := range audits.Snapshot() {
-				if e.Event == "cluster_connection_repair" {
+				if e.Event == wantEvent {
 					found = true
 					if e.Result != tc.wantResult {
 						t.Errorf("audit result = %q, want %q", e.Result, tc.wantResult)
@@ -155,7 +163,14 @@ func TestRepairOwnedConnectionSecret_AuditsEveryAttempt(t *testing.T) {
 				}
 			}
 			if !found {
-				t.Errorf("no cluster_connection_repair audit entry was written for %q — rule 15 says every attempt is audited, including refusals", tc.name)
+				t.Errorf("no %s audit entry was written for %q — rule 15 says every attempt is audited, including refusals", wantEvent, tc.name)
+			}
+			// And the past-tense event must NEVER carry a non-success
+			// outcome: that pairing is the contradiction ruling (f) removed.
+			for _, e := range audits.Snapshot() {
+				if e.Event == EventClusterConnectionRepair && e.Result != "success" {
+					t.Errorf("%q recorded result %q — a past-tense \"repaired\" title may only ever be a success", e.Event, e.Result)
+				}
 			}
 		})
 	}

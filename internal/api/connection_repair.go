@@ -222,18 +222,18 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	})
 
 	if s.clusterRecon == nil {
-		s.finishRepairAudit(r, cluster, "refused: no reconciler on this server")
+		s.refusedRepairAudit(r, cluster, "refused: no reconciler on this server")
 		writeError(w, http.StatusServiceUnavailable, repairFailNoReconciler)
 		return
 	}
 	if s.clusterRecon.GitProviderForRead() == nil {
-		s.finishRepairAudit(r, cluster, "refused: no git connection")
+		s.refusedRepairAudit(r, cluster, "refused: no git connection")
 		writeError(w, http.StatusServiceUnavailable, repairFailNoGit)
 		return
 	}
 	client, ns, ok := s.k8sClientAndNamespace()
 	if !ok {
-		s.finishRepairAudit(r, cluster, "refused: no in-cluster Kubernetes client")
+		s.refusedRepairAudit(r, cluster, "refused: no in-cluster Kubernetes client")
 		writeError(w, http.StatusServiceUnavailable, repairFailNoHubClient)
 		return
 	}
@@ -247,7 +247,7 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	// commit they never looked at.
 	reviewedCommit := r.URL.Query().Get("reviewed_commit")
 	if reviewedCommit == "" {
-		s.finishRepairAudit(r, cluster, "refused: no reviewed commit supplied")
+		s.refusedRepairAudit(r, cluster, "refused: no reviewed commit supplied")
 		writeError(w, http.StatusBadRequest, repairFailRevisionMissing)
 		return
 	}
@@ -268,12 +268,12 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	// a provider — it just reports no commit and no full repair.
 	revisionAtStart := s.clusterRecon.ResolveComparedRevision(ctx)
 	if revisionAtStart == "" {
-		s.finishRepairAudit(r, cluster, "refused: git cannot report the branch commit")
+		s.refusedRepairAudit(r, cluster, "refused: git cannot report the branch commit")
 		writeError(w, http.StatusConflict, repairFailRevisionUnknown)
 		return
 	}
 	if revisionAtStart != reviewedCommit {
-		s.finishRepairAudit(r, cluster, "refused: the branch moved since the caller reviewed it")
+		s.refusedRepairAudit(r, cluster, "refused: the branch moved since the caller reviewed it")
 		writeError(w, http.StatusConflict, repairFailRevisionMoved)
 		return
 	}
@@ -283,12 +283,12 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	if desiredErr != nil {
 		slog.Warn("[connection-repair] could not read the desired state from git",
 			"cluster", cluster, "branch", branch, "path", desired.ComparedPath)
-		s.finishRepairAudit(r, cluster, "failed: could not read the desired state from git")
+		s.failedRepairAudit(r, cluster, "failed: could not read the desired state from git")
 		writeError(w, http.StatusBadGateway, repairFailGitRead)
 		return
 	}
 	if !desired.Found {
-		s.finishRepairAudit(r, cluster, "refused: cluster is not in the git-managed list")
+		s.refusedRepairAudit(r, cluster, "refused: cluster is not in the git-managed list")
 		writeError(w, http.StatusNotFound, repairFailNotManaged)
 		return
 	}
@@ -302,7 +302,7 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	// cluster's addons. The reconciler and the check pass both already refuse in
 	// this state; the repair endpoint must too.
 	if !desired.AddonLabelsKnown {
-		s.finishRepairAudit(r, cluster, "refused: addon labels are unknown — cannot repair without knowing which addons should run here")
+		s.refusedRepairAudit(r, cluster, "refused: addon labels are unknown — cannot repair without knowing which addons should run here")
 		writeError(w, http.StatusUnprocessableEntity, "Sharko cannot repair this cluster's connection right now because it could not read which addons should run on this cluster (v4 repos: cluster-addons file missing or unparseable). A repair without that information would strip addon labels. Wait for the file to be available, then try again.")
 		return
 	}
@@ -317,7 +317,7 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	case getErr != nil:
 		slog.Warn("[connection-repair] could not read the live connection secret",
 			"cluster", cluster, "namespace", ns)
-		s.finishRepairAudit(r, cluster, "failed: could not read the live connection")
+		s.failedRepairAudit(r, cluster, "failed: could not read the live connection")
 		writeError(w, http.StatusBadGateway, repairFailWrite)
 		return
 	}
@@ -337,7 +337,7 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	// this handler reads that and does not re-decide it.
 	switch policy.RepairScope {
 	case connectioncompare.RepairScopeNone:
-		s.finishRepairAudit(r, cluster, "refused: this connection is owned by another tool")
+		s.refusedRepairAudit(r, cluster, "refused: this connection is owned by another tool")
 		writeError(w, http.StatusUnprocessableEntity, policy.LimitReason)
 		return
 
@@ -353,7 +353,7 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 	default:
 		// A repair scope this handler has never heard of gets the narrow answer,
 		// not the trusting one.
-		s.finishRepairAudit(r, cluster, "refused: unknown repair scope")
+		s.refusedRepairAudit(r, cluster, "refused: unknown repair scope")
 		writeError(w, http.StatusUnprocessableEntity, repairFailBuild)
 		return
 	}
@@ -377,7 +377,7 @@ func (s *Server) repairFullConnection(
 	if !desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts) {
 		// The policy said full repair and the record disagrees. The narrower
 		// answer wins.
-		s.finishRepairAudit(r, cluster, "refused: no independent copy of the sign-in details")
+		s.refusedRepairAudit(r, cluster, "refused: no independent copy of the sign-in details")
 		writeError(w, http.StatusUnprocessableEntity, repairFailBuild)
 		return
 	}
@@ -439,7 +439,7 @@ func (s *Server) repairFullConnection(
 	built, buildErr := argosecrets.BuildClusterSecret(spec, ns)
 	if buildErr != nil {
 		slog.Warn("[connection-repair] could not build the expected connection", "cluster", cluster)
-		s.finishRepairAudit(r, cluster, "failed: could not build the expected connection")
+		s.failedRepairAudit(r, cluster, "failed: could not build the expected connection")
 		writeError(w, http.StatusBadGateway, repairFailBuild)
 		return
 	}
@@ -456,12 +456,12 @@ func (s *Server) repairFullConnection(
 	// small as the code can make it.
 	revisionNow := s.clusterRecon.ResolveComparedRevision(ctx)
 	if revisionNow == "" {
-		s.finishRepairAudit(r, cluster, "refused: git could not report the branch commit at write time")
+		s.refusedRepairAudit(r, cluster, "refused: git could not report the branch commit at write time")
 		writeError(w, http.StatusConflict, repairFailRevisionUnknown)
 		return
 	}
 	if revisionNow != reviewedCommit {
-		s.finishRepairAudit(r, cluster, "refused: the branch moved while Sharko was preparing the repair")
+		s.refusedRepairAudit(r, cluster, "refused: the branch moved while Sharko was preparing the repair")
 		writeError(w, http.StatusConflict, repairFailRevisionMoved)
 		return
 	}
@@ -470,8 +470,8 @@ func (s *Server) repairFullConnection(
 	// object it is about to update, with nothing but in-memory work between.
 	result, repairErr := s.clusterRecon.RepairOwnedConnectionSecret(ctx, built, revisionNow)
 	if repairErr != nil {
-		status, message, detail := repairRefusal(repairErr)
-		s.finishRepairAudit(r, cluster, detail)
+		status, message, detail, tried := repairRefusal(repairErr)
+		s.repairWritePathAudit(r, cluster, detail, tried)
 		writeError(w, status, message)
 		return
 	}
@@ -505,7 +505,7 @@ func (s *Server) repairFullConnection(
 	// the repair achieved instead of being told "done" and having to ask.
 	view.Comparison = s.freshComparisonAfterRepair(ctx, cluster, ns, branch, revisionNow, desired, backendCanProvideStoredFacts)
 
-	s.finishRepairAudit(r, cluster, repairOutcomeDetail(result.Changed, len(result.FieldsWritten), view.Comparison.Status))
+	s.completedRepairAudit(r, cluster, repairOutcomeDetail(result.Changed, len(result.FieldsWritten), view.Comparison.Status), result.Changed)
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -543,12 +543,12 @@ func (s *Server) repairAddonLabelsOnly(
 	// branch moved — not to read new labels from it.
 	revisionNow := s.clusterRecon.ResolveComparedRevision(ctx)
 	if revisionNow == "" {
-		s.finishRepairAudit(r, cluster, "refused: git could not report the branch commit at write time")
+		s.refusedRepairAudit(r, cluster, "refused: git could not report the branch commit at write time")
 		writeError(w, http.StatusConflict, repairFailRevisionUnknown)
 		return
 	}
 	if revisionNow != reviewedCommit {
-		s.finishRepairAudit(r, cluster, "refused: the branch moved while Sharko was preparing the repair")
+		s.refusedRepairAudit(r, cluster, "refused: the branch moved while Sharko was preparing the repair")
 		writeError(w, http.StatusConflict, repairFailRevisionMoved)
 		return
 	}
@@ -611,7 +611,7 @@ func (s *Server) repairAddonLabelsOnly(
 	// cluster happened to fall into. A caller cannot write sane retry logic
 	// against that.
 	if err != nil {
-		status, message, detail := repairRefusal(err)
+		status, message, detail, tried := repairRefusal(err)
 		// The error's text is not passed to the caller — repairRefusal returns
 		// one of this file's fixed sentences. It is logged, because a
 		// Kubernetes error here is a Kubernetes error: the credential read on
@@ -619,7 +619,7 @@ func (s *Server) repairAddonLabelsOnly(
 		// to leak.
 		slog.Warn("[connection-repair] the labels-only repair did not complete",
 			"cluster", cluster, "error", err)
-		s.finishRepairAudit(r, cluster, detail)
+		s.repairWritePathAudit(r, cluster, detail, tried)
 		writeError(w, status, message)
 		return
 	}
@@ -628,7 +628,7 @@ func (s *Server) repairAddonLabelsOnly(
 	// reconciler's job to create on its normal pass, and doing it here would
 	// conflate "repair" with "provision".
 	if !found {
-		s.finishRepairAudit(r, cluster, "no-op: the ArgoCD connection Secret does not exist yet")
+		s.refusedRepairAudit(r, cluster, "no-op: the ArgoCD connection Secret does not exist yet")
 		writeError(w, http.StatusNotFound, "This cluster's ArgoCD connection Secret does not exist yet. Wait for the reconciler to create it on its next pass, then repair if needed.")
 		return
 	}
@@ -684,7 +684,7 @@ func (s *Server) repairAddonLabelsOnly(
 	// which is the whole reason the repair was labels-only.
 	view.Comparison = s.freshComparisonAfterRepair(ctx, cluster, ns, branch, revisionNow, desired, false)
 
-	s.finishRepairAudit(r, cluster, repairOutcomeDetail(outcome.Changed, len(outcome.FieldsWritten), view.Comparison.Status))
+	s.completedRepairAudit(r, cluster, repairOutcomeDetail(outcome.Changed, len(outcome.FieldsWritten), view.Comparison.Status), outcome.Changed)
 	writeJSON(w, http.StatusOK, view)
 }
 
@@ -824,18 +824,24 @@ func (s *Server) storedSpecForRepair(entry models.ManagedClusterEntry) (*argosec
 
 // repairRefusal maps a write refusal to its status, its safe sentence, and the
 // audit detail. By error TYPE, never by reading any error's words.
-func repairRefusal(err error) (status int, message, auditDetail string) {
+// repairRefusal classifies a write-path error into the caller-facing status
+// and message, the fixed audit detail, and — ruling (f) — whether this was a
+// REFUSAL (Sharko declined; nothing was touched) or a FAILURE (Sharko tried
+// and the write did not complete). The two are recorded as different events,
+// so the classification is returned explicitly rather than left to be
+// re-derived from the detail's wording.
+func repairRefusal(err error) (status int, message, auditDetail string, tried bool) {
 	switch {
 	case errors.Is(err, argosecrets.ErrRepairOwnershipChanged):
-		return http.StatusUnprocessableEntity, repairFailNotOwned, "refused: the connection is not Sharko's to change"
+		return http.StatusUnprocessableEntity, repairFailNotOwned, "refused: the connection is not Sharko's to change", false
 	case errors.Is(err, argosecrets.ErrRepairSecretMissing):
-		return http.StatusNotFound, repairFailSecretGone, "refused: there is no connection to repair"
+		return http.StatusNotFound, repairFailSecretGone, "refused: there is no connection to repair", false
 	case errors.Is(err, argosecrets.ErrRepairSecretChangedUnderneath):
-		return http.StatusConflict, repairFailRaced, "refused: the connection changed while Sharko was repairing it"
+		return http.StatusConflict, repairFailRaced, "refused: the connection changed while Sharko was repairing it", false
 	case errors.Is(err, clusterreconciler.ErrRepairNoClient):
-		return http.StatusServiceUnavailable, repairFailNoHubClient, "refused: no in-cluster Kubernetes client"
+		return http.StatusServiceUnavailable, repairFailNoHubClient, "refused: no in-cluster Kubernetes client", false
 	default:
-		return http.StatusBadGateway, repairFailWrite, "failed: the write did not complete"
+		return http.StatusBadGateway, repairFailWrite, "failed: the write did not complete", true
 	}
 }
 
@@ -848,15 +854,72 @@ func repairOutcomeDetail(changed bool, fields int, comparisonStatus string) stri
 	return fmt.Sprintf("repaired %d owned field(s); the fresh check says %s", fields, comparisonStatus)
 }
 
-// finishRepairAudit records the outcome onto the in-flight audit entry.
+// The repair audit helpers. The detail is always one of this file's own fixed
+// phrases plus counts — never an error's text, and never anything read off a
+// Secret.
 //
-// The detail is always one of this file's own fixed phrases plus counts — never
-// an error's text, and never anything read off a Secret.
-func (s *Server) finishRepairAudit(r *http.Request, cluster, detail string) {
+// RULING (f), 2026-08-19 — this used to file EVERY exit under
+// "cluster_connection_repair". The handler enriches with
+// cluster_connection_repair_requested up front so a repair that dies
+// anywhere below still answers "who asked", and every later call to this
+// function overwrote that Event — so all sixteen refusal paths, which never
+// touched the connection, were recorded as a completed repair, and
+// "Connection repair requested" was unreachable. A refusal is not a repair.
+//
+// So the event now follows what actually happened:
+//   - refusedRepairAudit    → cluster_connection_repair_refused
+//   - failedRepairAudit     → cluster_connection_repair_failed
+//   - completedRepairAudit  → cluster_connection_repair, with the honest
+//     changes answer (applied, or none when the connection already matched)
+//
+// The two earliest 4xx paths — no role, empty cluster name — return before
+// any enrichment at all and therefore still fall through to the middleware's
+// derived event name. That is left alone deliberately: they are refusals of
+// the REQUEST, before Sharko has a cluster to name, and inventing a
+// connection-repair event for them would be the same class of lie in the
+// other direction.
+// repairWritePathAudit records a write-path exit, as the refusal or the
+// failure it actually was — see repairRefusal's tried return.
+func (s *Server) repairWritePathAudit(r *http.Request, cluster, detail string, tried bool) {
+	if tried {
+		s.failedRepairAudit(r, cluster, detail)
+		return
+	}
+	s.refusedRepairAudit(r, cluster, detail)
+}
+
+// refusedRepairAudit records a repair Sharko declined to perform. Nothing was
+// touched, so the change answer is "none" — the request completed, and it
+// deliberately wrote nothing.
+func (s *Server) refusedRepairAudit(r *http.Request, cluster, detail string) {
+	s.repairAudit(r, cluster, "cluster_connection_repair_refused", detail, "rejected", audit.ChangesNone)
+}
+
+// failedRepairAudit records a repair that tried and did not finish. Nothing
+// landed.
+func (s *Server) failedRepairAudit(r *http.Request, cluster, detail string) {
+	s.repairAudit(r, cluster, "cluster_connection_repair_failed", detail, "failure", audit.ChangesNone)
+}
+
+// completedRepairAudit records a repair that ran to completion, saying
+// whether it actually wrote anything. "Nothing needed changing" is an ACTION
+// RESULT, not evidence the check failed — this is the one case where "no
+// changes made" is a true thing for a reader to see.
+func (s *Server) completedRepairAudit(r *http.Request, cluster, detail string, changed bool) {
+	changes := audit.ChangesApplied
+	if !changed {
+		changes = audit.ChangesNone
+	}
+	s.repairAudit(r, cluster, "cluster_connection_repair", detail, "success", changes)
+}
+
+func (s *Server) repairAudit(r *http.Request, cluster, event, detail, result string, changes audit.ChangeResult) {
 	audit.Enrich(r.Context(), audit.Fields{
-		Event:    "cluster_connection_repair",
+		Event:    event,
 		Resource: fmt.Sprintf("cluster:%s", cluster),
 		Detail:   detail,
+		Result:   result,
+		Changes:  changes,
 	})
 }
 
@@ -869,7 +932,7 @@ func (s *Server) finishRepairAudit(r *http.Request, cluster, detail string) {
 // empties Detail, and clears the flag before anything is stored or streamed.
 func (s *Server) auditRepairCredentialFailure(r *http.Request, cluster string, err error) {
 	// Keep the request-scoped entry honest too, with no error text in it.
-	s.finishRepairAudit(r, cluster, "failed: could not read the configured credentials source")
+	s.failedRepairAudit(r, cluster, "failed: could not read the configured credentials source")
 
 	if s == nil || s.auditLog == nil {
 		return

@@ -80,6 +80,36 @@ import (
 // request-scoped sink a test can swap for a spy; a promauto counter has no
 // such need and is safe to touch directly in tests too (see
 // internal/metrics/metrics_test.go's own direct-call pattern).
+// Audit event names for this reconciler's cluster-Secret lifecycle.
+//
+// RULING (f), 2026-08-19: title, outcome and change result must never
+// contradict each other. Every event below in the past tense reports work
+// that actually happened; every *_failed event reports work that did not.
+// Before this, a create that threw wrote "Connection Secret created ·
+// failure" — a past-tense claim that no Secret existed to back up — and a
+// self-heal that wrote but did not converge wrote "Addon labels
+// self-healed · failure", where the title, the outcome and reality all
+// disagreed at once.
+//
+// The success names are UNCHANGED on purpose: internal/api's
+// connectionSecretRepairDetail keys off them to decide what counts as a
+// repair, and its doc comment already states the right rule — only
+// Result == "success" entries count. Renaming them would break that join
+// silently.
+const (
+	EventClusterSecretCreate          = "cluster_secret_create"
+	EventClusterSecretDelete          = "cluster_secret_delete"
+	EventClusterSecretUserLabelSync   = "cluster_secret_user_label_sync"
+	EventClusterSecretManagedSelfHeal = "cluster_secret_managed_self_heal"
+	EventClusterConnectionRepair      = "cluster_connection_repair"
+
+	eventClusterSecretCreateFailed          = "cluster_secret_create_failed"
+	eventClusterSecretDeleteFailed          = "cluster_secret_delete_failed"
+	eventClusterSecretUserLabelSyncFailed   = "cluster_secret_user_label_sync_failed"
+	eventClusterSecretManagedSelfHealFailed = "cluster_secret_managed_self_heal_failed"
+	eventClusterConnectionRepairFailed      = "cluster_connection_repair_failed"
+)
+
 const engineClusterConnection = "cluster_connection"
 
 // syntheticTickID returns the canonical "recon-<unix_ts>" correlation ID
@@ -1422,7 +1452,8 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             "cluster_secret_user_label_sync",
+			Event:             eventClusterSecretUserLabelSyncFailed,
+			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "sync_labels",
 			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
@@ -1468,7 +1499,8 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 		)
 		r.audit(audit.Entry{
 			Level:     "info",
-			Event:     "cluster_secret_user_label_sync",
+			Event:     EventClusterSecretUserLabelSync,
+			Changes:   audit.ChangesApplied,
 			User:      "sharko",
 			Action:    "sync_labels",
 			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
@@ -1624,7 +1656,8 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             "cluster_secret_managed_self_heal",
+			Event:             eventClusterSecretManagedSelfHealFailed,
+			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "self_heal",
 			Resource:          fmt.Sprintf("cluster:%s", name),
@@ -1680,7 +1713,8 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 		)
 		r.audit(audit.Entry{
 			Level:     "error",
-			Event:     "cluster_secret_managed_self_heal",
+			Event:     eventClusterSecretManagedSelfHealFailed,
+			Changes:   audit.ChangesApplied,
 			User:      "sharko",
 			Action:    "self_heal",
 			Resource:  fmt.Sprintf("cluster:%s", name),
@@ -1700,7 +1734,8 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 		)
 		r.audit(audit.Entry{
 			Level:     "info",
-			Event:     "cluster_secret_managed_self_heal",
+			Event:     EventClusterSecretManagedSelfHeal,
+			Changes:   audit.ChangesApplied,
 			User:      "sharko",
 			Action:    "self_heal",
 			Resource:  fmt.Sprintf("cluster:%s", name),
@@ -2101,7 +2136,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             "cluster_secret_create",
+			Event:             eventClusterSecretCreateFailed,
+			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "get_secret",
 			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
@@ -2179,7 +2215,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:    "error",
-			Event:    "cluster_secret_create",
+			Event:    eventClusterSecretCreateFailed,
+			Changes:  audit.ChangesNone,
 			User:     "sharko",
 			Action:   "get_credentials",
 			Resource: fmt.Sprintf("cluster:%s", entry.Name),
@@ -2264,7 +2301,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             "cluster_secret_create",
+			Event:             eventClusterSecretCreateFailed,
+			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "build_payload",
 			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
@@ -2304,7 +2342,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             "cluster_secret_create",
+			Event:             eventClusterSecretCreateFailed,
+			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "create",
 			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
@@ -2326,7 +2365,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	)
 	r.audit(audit.Entry{
 		Level:     "info",
-		Event:     "cluster_secret_create",
+		Event:     EventClusterSecretCreate,
+		Changes:   audit.ChangesApplied,
 		User:      "sharko",
 		Action:    "create",
 		Resource:  fmt.Sprintf("cluster:%s", entry.Name),
@@ -2375,7 +2415,8 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		)
 		r.audit(audit.Entry{
 			Level:             "error",
-			Event:             "cluster_secret_delete",
+			Event:             eventClusterSecretDeleteFailed,
+			Changes:           audit.ChangesNone,
 			User:              "sharko",
 			Action:            "delete",
 			Resource:          fmt.Sprintf("cluster:%s", name),
@@ -2403,7 +2444,8 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 	)
 	r.audit(audit.Entry{
 		Level:     "info",
-		Event:     "cluster_secret_delete",
+		Event:     EventClusterSecretDelete,
+		Changes:   audit.ChangesApplied,
 		User:      "sharko",
 		Action:    "delete",
 		Resource:  fmt.Sprintf("cluster:%s", name),

@@ -56,11 +56,24 @@ package api
 //
 // # Transition-only reporting
 //
-// One audit entry when drift appears, one when it clears. Never repeated
-// while unchanged, and the loop never writes the per-check audit entry the
-// human endpoint writes — Recent activity must not flood every interval. No
-// Kubernetes events (the reconciler's shape notice owns that channel), no
-// email, no webhook.
+// Four transitions, each written once per episode: drift appears, drift
+// clears, the check starts failing, the check completes again. Never
+// repeated while unchanged, and the loop never writes the per-check audit
+// entry the human endpoint writes — Recent activity must not flood every
+// interval. No Kubernetes events (the reconciler's shape notice owns that
+// channel), no email, no webhook.
+//
+// # Every entry here says what it means (ruling f, 2026-08-19)
+//
+// Finding drift is a check that SUCCEEDED. It used to be recorded as
+// Result: "failure" on an entry whose own detail said "Nothing was changed",
+// while a check that genuinely did not finish wrote no entry at all — so the
+// only outcome word this surface produced was a "failure" that had not
+// happened, and the one real failure was invisible. Now: detection is
+// success with a warn level (the drift state supplies the warning), a real
+// failure has a failure-shaped title AND a failure outcome, and every entry
+// carries Changes: not_applicable, because a read-only check neither changed
+// anything nor failed to.
 
 import (
 	"context"
@@ -106,6 +119,10 @@ const credentialDriftNotice = "This connection's stored details no longer match 
 // credentialDriftClearedNotice is the transition sentence for the audit
 // entry written when a drift episode ends.
 const credentialDriftClearedNotice = "This connection's check no longer reports credential drift."
+
+// credentialCheckRecoveredNotice closes an open check-FAILURE episode: the
+// check is finishing again, whatever it now finds.
+const credentialCheckRecoveredNotice = "This connection's check is completing again."
 
 // credentialCheckFromView maps one finished comparison onto the store's
 // status word and fixed sentence.
@@ -178,6 +195,14 @@ type connectionCredentialCheckRecord struct {
 type connectionCredentialCheckStore struct {
 	mu      sync.Mutex
 	records map[string]connectionCredentialCheckRecord
+	// checkFailing tracks the open CHECK-FAILURE episode per cluster, the
+	// same transition-only shape driftAnnounced uses below and for the same
+	// reason: a backend that is down must not write an entry every pass.
+	// It is separate from driftAnnounced because the two say different
+	// things — "Sharko looked and found a difference" versus "Sharko could
+	// not look" — and a check that could not look must not disturb an open
+	// drift episode in either direction.
+	checkFailing map[string]bool
 	// driftAnnounced tracks the open drift EPISODE per cluster, separately
 	// from the last check's status. It opens when drift is first seen
 	// (one "detected" entry), closes when a later check answers clear or
@@ -198,6 +223,7 @@ func newConnectionCredentialCheckStore(auditFn func(audit.Entry)) *connectionCre
 	return &connectionCredentialCheckStore{
 		records:        make(map[string]connectionCredentialCheckRecord),
 		driftAnnounced: make(map[string]bool),
+		checkFailing:   make(map[string]bool),
 		auditFn:        auditFn,
 	}
 }
@@ -223,7 +249,8 @@ func (st *connectionCredentialCheckStore) record(cluster string, view connection
 		Canonical: canonical,
 	}
 	announced := st.driftAnnounced[cluster]
-	var announce, clear bool
+	failed := st.checkFailing[cluster]
+	var announce, clear, failing, recovered bool
 	switch status {
 	case credentialCheckDrifted:
 		if !announced {
@@ -235,15 +262,54 @@ func (st *connectionCredentialCheckStore) record(cluster string, view connection
 			delete(st.driftAnnounced, cluster)
 			clear = true
 		}
-		// credentialCheckFailed: deliberately no arm — see driftAnnounced.
+	case credentialCheckFailed:
+		// Ruling (f): a check that genuinely did not finish must be VISIBLE.
+		// It used to write nothing at all, so the only outcome word this
+		// surface ever produced was the "failure" on a check that had in
+		// fact succeeded — the one real execution failure was silent.
+		//
+		// Transition-only, exactly like the drift episode above and for the
+		// same reason: a backend that is down for an hour must not write
+		// four entries a minute. The drift episode is deliberately left
+		// alone here — a check that could not look can neither clear a
+		// drift nor re-announce it.
+		if !failed {
+			st.checkFailing[cluster] = true
+			failing = true
+		}
+	}
+	if status != credentialCheckFailed && failed {
+		delete(st.checkFailing, cluster)
+		recovered = true
 	}
 	st.mu.Unlock()
 
 	if st.auditFn == nil {
 		return
 	}
+	if recovered {
+		st.auditFn(audit.Entry{
+			Level:    "info",
+			Event:    "connection_credential_check_recovered",
+			User:     "sharko",
+			Action:   "credential_check",
+			Resource: "cluster:" + cluster,
+			Source:   "server",
+			Result:   "success",
+			Changes:  audit.ChangesNotApplicable,
+			Detail:   credentialCheckRecoveredNotice,
+		})
+	}
 	switch {
 	case announce:
+		// RULING (f), the primary target. This check SUCCEEDED — it ran end
+		// to end and correctly found a difference. It used to record
+		// Result: "failure" on an entry whose own detail said "Nothing was
+		// changed", so the title, the outcome and the change line all
+		// disagreed. Successfully detecting drift is a successful check
+		// with an attention result; the drift state itself supplies the
+		// warning, which is what the warn level is for. Nothing was written
+		// and nothing was going to be — the check is read-only.
 		st.auditFn(audit.Entry{
 			Level:    "warn",
 			Event:    "connection_credential_drift_detected",
@@ -251,7 +317,8 @@ func (st *connectionCredentialCheckStore) record(cluster string, view connection
 			Action:   "credential_check",
 			Resource: "cluster:" + cluster,
 			Source:   "server",
-			Result:   "failure",
+			Result:   "success",
+			Changes:  audit.ChangesNotApplicable,
 			Detail:   credentialDriftNotice,
 		})
 	case clear:
@@ -263,7 +330,23 @@ func (st *connectionCredentialCheckStore) record(cluster string, view connection
 			Resource: "cluster:" + cluster,
 			Source:   "server",
 			Result:   "success",
+			Changes:  audit.ChangesNotApplicable,
 			Detail:   credentialDriftClearedNotice,
+		})
+	case failing:
+		// A failure-shaped title for a genuinely failed check. The detail is
+		// the comparison's own safe classified sentence — never a live
+		// backend error.
+		st.auditFn(audit.Entry{
+			Level:    "error",
+			Event:    "connection_credential_check_failed",
+			User:     "sharko",
+			Action:   "credential_check",
+			Resource: "cluster:" + cluster,
+			Source:   "server",
+			Result:   "failure",
+			Changes:  audit.ChangesNotApplicable,
+			Detail:   detail,
 		})
 	}
 }
