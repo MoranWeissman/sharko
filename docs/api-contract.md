@@ -93,7 +93,7 @@ All write endpoints are **synchronous** — they return the final result once al
 }
 ```
 
-When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, the PR is merged immediately after creation and `merged` will be `true`.
+When `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`, the PR is merged immediately after creation and `merged` will be `true`.
 
 ### Standard Error Codes
 
@@ -398,7 +398,7 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | name | string | yes | Cluster name. Must match the values file name (coupling contract). Alphanumeric + hyphens. |
-| addons | map[string]bool | no | Addon labels to set. Defaults to `SHARKO_DEFAULT_ADDONS` if configured, otherwise none. |
+| addons | map[string]bool | no | Addon labels to set. Defaults to `SHARKO_CONN_GITOPS_DEFAULT_ADDONS` if configured, otherwise none. |
 | region | string | no | Cluster region metadata. |
 
 **Orchestration Steps:**
@@ -407,7 +407,7 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 3. Verify Kubernetes connectivity (connect to cluster API, get version)
 4. Register cluster in ArgoCD (create cluster secret with addon labels)
 5. Generate cluster values file
-6. Commit to Git (always as a PR; auto-merged when `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+6. Commit to Git (always as a PR; auto-merged when `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`)
 7. If addon secret definitions are configured, deliver secrets to the remote cluster
 
 **Success Response (201 Created):**

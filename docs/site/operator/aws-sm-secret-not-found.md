@@ -235,7 +235,7 @@ Four outcomes:
 
 ```sh
 SHARKO_PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER_PREFIX")].value}')
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_PREFIX")].value}')
 echo "Configured prefix: '${SHARKO_PREFIX:-<empty>}'"
 
 # Also read the Helm value if present:
@@ -293,7 +293,7 @@ the cause; either move the secret or change the Helm prefix
 
    ```sh
    PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
-     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER_PREFIX")].value}')
+     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_PREFIX")].value}')
    CLUSTER=<failing-cluster-name>
    PATH_=${PREFIX}${CLUSTER}
    AWS_REGION=<region>

@@ -19,7 +19,7 @@ import (
 // engine pin, and polls for sync verification.
 func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*InitRepoResult, error) {
 	if o.gitops.RepoURL == "" {
-		return nil, fmt.Errorf("git repo URL is required for init — set SHARKO_GITOPS_REPO_URL")
+		return nil, fmt.Errorf("git repo URL is required for init — set it on the active connection (Settings → Connections) or declare SHARKO_CONN_GIT_REPO_URL")
 	}
 
 	// Step 1 — Check if repo is already initialized. The engine pin is the
@@ -240,7 +240,7 @@ func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) 
 // recording progress between each.
 func (o *Orchestrator) CollectBootstrapFiles(ctx context.Context) (map[string][]byte, error) {
 	if o.gitops.RepoURL == "" {
-		return nil, fmt.Errorf("git repo URL is required — set SHARKO_GITOPS_REPO_URL")
+		return nil, fmt.Errorf("git repo URL is required — set it on the active connection (Settings → Connections) or declare SHARKO_CONN_GIT_REPO_URL")
 	}
 	// Preflight (Story A1) — same check InitRepo runs, and for the same
 	// reason: this is the async init flow's Step 1 (runInitOperation,

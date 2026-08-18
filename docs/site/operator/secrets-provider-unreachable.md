@@ -212,7 +212,7 @@ Verify, in order:
 
 ```sh
 NS=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_SECRETS_NAMESPACE")].value}')
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_NAMESPACE")].value}')
 SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}')
 

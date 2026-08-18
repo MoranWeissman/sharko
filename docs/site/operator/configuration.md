@@ -552,9 +552,9 @@ Inject arbitrary environment variables into the Sharko pod:
 
 ```yaml
 extraEnv:
-  - name: SHARKO_GITOPS_PR_AUTO_MERGE
+  - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
     value: "true"
-  - name: SHARKO_GITOPS_BASE_BRANCH
+  - name: SHARKO_CONN_GITOPS_BASE_BRANCH
     value: "main"
 ```
 

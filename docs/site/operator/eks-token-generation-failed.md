@@ -208,7 +208,7 @@ SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
 AWS_REGION=$(kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AWS_REGION")].value}')
 PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER_PREFIX")].value}')
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_PREFIX")].value}')
 
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   aws --region "$AWS_REGION" secretsmanager get-secret-value \

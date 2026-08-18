@@ -172,7 +172,7 @@ To override, set one of:
 
 ```bash
 # env var
-SHARKO_SECRETS_PROVIDER=vault   # or aws-sm / gcp-sm / azure-kv / k8s-secrets / argocd
+SHARKO_CONN_PROVIDER_TYPE=vault   # or aws-sm / gcp-sm / azure-kv / k8s-secrets / argocd
 ```
 
 ```yaml

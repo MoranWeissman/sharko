@@ -112,8 +112,8 @@ In tests where concurrency is not under test, pass `nil` for `gitMu`. The orches
 Sharko always creates pull requests for Git changes. There is no direct commit mode.
 
 **Configuration:**
-- `SHARKO_GITOPS_PR_AUTO_MERGE=false` (default) — PR is created and left open for human review
-- `SHARKO_GITOPS_PR_AUTO_MERGE=true` — PR is created and immediately merged (suitable for automated pipelines)
+- `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false` (default) — PR is created and left open for human review
+- `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true` — PR is created and immediately merged (suitable for automated pipelines)
 
 **GitResult shape:**
 ```go
@@ -496,7 +496,7 @@ The Helm chart (`charts/sharko/templates/rbac.yaml`) creates a namespaced Role +
 
 Sharko commits changes to the addons Git repository via the configured Git provider.
 
-All Git operations go through pull requests. When `SHARKO_GITOPS_PR_AUTO_MERGE` is `true`, PRs are merged immediately after creation. When `false` (default), PRs require manual approval.
+All Git operations go through pull requests. When `SHARKO_CONN_GITOPS_PR_AUTO_MERGE` is `true`, PRs are merged immediately after creation. When `false` (default), PRs require manual approval.
 
 Git providers implement the `GitProvider` interface:
 
@@ -544,14 +544,16 @@ The only coupling point between Sharko and the GitOps repository is:
 
 When you run `sharko add-cluster prod-eu`, the server creates `configuration/addons-clusters-values/prod-eu.yaml`. The ArgoCD ApplicationSet finds it via `{{.name}}`. This naming convention is the entire framework contract.
 
-Directory paths are configurable via server-side environment variables:
+One directory path is configurable via a server-side environment variable:
 
 | Variable | Default |
 |----------|---------|
-| `SHARKO_REPO_PATH_CLUSTER_VALUES` | `configuration/addons-clusters-values` |
-| `SHARKO_REPO_PATH_GLOBAL_VALUES` | `configuration/addons-global-values` |
-| `SHARKO_REPO_PATH_CHARTS` | `charts/` |
-| `SHARKO_REPO_PATH_BOOTSTRAP` | `bootstrap/` |
+| `SHARKO_REPO_PATH_MANAGED_CLUSTERS` | `configuration/managed-clusters.yaml` |
+
+The other repository paths — the per-cluster values directory, the global
+values directory, the charts directory and the bootstrap directory — are
+fixed. Sharko reads no environment variable for them, so setting names like
+`SHARKO_REPO_PATH_CLUSTER_VALUES` has no effect.
 
 ---
 

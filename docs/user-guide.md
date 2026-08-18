@@ -117,7 +117,7 @@ sharko login --server https://sharko.your-cluster.com
 sharko init
 ```
 
-This creates the addons repository structure from the embedded starter templates and pushes it to Git via the configured connection. The generated structure includes bootstrap ApplicationSet templates, directory layout for cluster values, and global values. The change is made via a pull request (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`).
+This creates the addons repository structure from the embedded starter templates and pushes it to Git via the configured connection. The generated structure includes bootstrap ApplicationSet templates, directory layout for cluster values, and global values. The change is made via a pull request (auto-merged if `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`).
 
 ### Add an Addon
 
@@ -479,7 +479,7 @@ As of v3.0.0, the cluster reconciler uses a 30-second safety-net tick plus sub-5
 
 Every change you make in Sharko — adding a cluster, configuring an addon, upgrading, removing — is recorded in the Audit Log. Open Settings → Audit to filter by who, what, when, and result. Failed operations show the error.
 
-Sharko records significant events in an in-memory audit log (default capacity: 1000 entries, configurable via `SHARKO_AUDIT_BUFFER_SIZE`). Every cluster registration, adoption, removal, upgrade, PR merge, and configuration change is logged.
+Sharko records significant events in an in-memory audit log. The buffer holds the last 1000 entries and that size is fixed — there is no setting or environment variable to change it. Every cluster registration, adoption, removal, upgrade, PR merge, and configuration change is logged.
 
 ### Query the Audit Log
 
@@ -719,10 +719,10 @@ Each upgrade creates a PR (or multiple PRs for per-cluster upgrades). Use the ve
 
 Every write operation (cluster registration, addon changes, upgrades) creates a Git pull request. Sharko never commits directly to the base branch.
 
-**With `SHARKO_GITOPS_PR_AUTO_MERGE=false` (default):**
+**With `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false` (default):**
 The PR is created and left open. A human reviews and merges it. This is the recommended workflow for production changes.
 
-**With `SHARKO_GITOPS_PR_AUTO_MERGE=true`:**
+**With `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`:**
 The PR is created and immediately merged. Suitable for automated pipelines where human review is handled elsewhere (e.g., CI policy checks).
 
 The PR URL is included in every write operation response and CLI output, so you can always navigate directly to the change.
@@ -944,17 +944,18 @@ If ArgoCD or Git connections fail:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SHARKO_PORT` | HTTP server port | `8080` |
-| Provider type | Secrets provider backend (`aws-sm`, `k8s-secrets`) — configure via **Settings UI** or API | (none) |
-| `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
+| `SHARKO_CONN_PROVIDER_TYPE` | Secrets provider backend (`aws-sm`, `k8s-secrets`) — can also be set in the **Settings UI** or API | (none) |
+| `SHARKO_CONN_PROVIDER_REGION` | AWS region for secrets provider | (none) |
+| `SHARKO_CONN_PROVIDER_PREFIX` | Path prefix inside the secrets provider | (none) |
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection store (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
-| `SHARKO_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
-| `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR branches | `sharko/` |
-| `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
-| `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
-| `SHARKO_GITOPS_REPO_URL` | Git repo URL for template placeholders | (none) |
-| `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
-| `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
+| `SHARKO_CONN_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
+| `SHARKO_CONN_GITOPS_BRANCH_PREFIX` | Branch prefix for PR branches | `sharko/` |
+| `SHARKO_CONN_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
+| `SHARKO_CONN_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
+| `SHARKO_CONN_GIT_REPO_URL` | Git repo URL for the addons repository | (none) |
+| `SHARKO_CONN_GITOPS_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
+| `SHARKO_CONN_GITOPS_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
 | `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |
 | `GITHUB_TOKEN` | GitHub PAT | (none) |
 | `AI_PROVIDER` | AI provider (`ollama`, `openai`, `claude`, `gemini`, `custom-openai`) | (none) |

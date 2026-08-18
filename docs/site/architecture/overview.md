@@ -271,4 +271,4 @@ Sharko never changes your cluster or your Git repo directly — it opens a pull 
 
 This means Sharko's state is always reflected in Git — the addons repo is the source of truth, not the Sharko database.
 
-When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, Sharko also deletes the feature branch immediately after a successful merge (`DeleteBranch`). Branch cleanup is best-effort — a failure is logged but does not affect the operation result.
+When `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`, Sharko also deletes the feature branch immediately after a successful merge (`DeleteBranch`). Branch cleanup is best-effort — a failure is logged but does not affect the operation result.

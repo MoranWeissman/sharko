@@ -7,7 +7,7 @@ Sharko provides flexible upgrade workflows: upgrade a single addon globally, upg
 Every upgrade is a GitOps operation:
 
 1. Sharko updates the version in the relevant `values.yaml` file(s) in your addons repo
-2. A PR is opened in Git (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+2. A PR is opened in Git (auto-merged if `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`)
 3. ArgoCD detects the change and syncs the new version to the cluster(s)
 
 No changes are applied directly to the cluster — all changes go through the Git PR.
@@ -104,7 +104,7 @@ To auto-merge upgrade PRs without manual review, set:
 
 ```yaml
 extraEnv:
-  - name: SHARKO_GITOPS_PR_AUTO_MERGE
+  - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
     value: "true"
 ```
 
