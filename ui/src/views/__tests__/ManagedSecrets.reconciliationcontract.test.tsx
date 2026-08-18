@@ -290,11 +290,24 @@ describe('the synchronization invariant holds on the fleet, in both the word and
 
   it('the Synced chip counts ONLY the rows that really are synced at full verification', async () => {
     mockGetManagedSecrets.mockResolvedValue(
-      response([sharkoManagedClean, sharkoManagedEKS, legacyInlineClean, selfManagedClean, selfManagedDrifted, foreignOwned]),
+      response([
+        sharkoManagedClean,
+        sharkoManagedEKS,
+        legacyInlineClean,
+        selfManagedClean,
+        selfManagedDrifted,
+        foreignOwned,
+        // The shape the OLD server sent for spoke-us: the legacy word
+        // in_sync on a connection whose credential was never compared. It is
+        // in this count deliberately — the count is where the lie was least
+        // visible.
+        { ...legacyInlineClean, cluster: 'spoke-us-old', secret_name: 'spoke-us-old', state: 'in_sync', sync_state: 'synced', headline: 'Connection synced' },
+      ]),
     )
     renderConnections()
     await screen.findByTestId('secret-row-connection-prod-eu')
     // prod-eu (full connection) and guest-1 (full of its owned addon labels).
+    // Nothing else, and above all not the old-shaped row.
     expect(syncedChipCount()).toBe(2)
   })
 
