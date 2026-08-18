@@ -35,6 +35,15 @@ settings:
   allowInlineCredentials: "false"       # git wins; pins the default-off legacy paste path
 ```
 
+!!! note "Both settings need a settings store, which means in-cluster"
+    The settings store is a Kubernetes ConfigMap, wired only when Sharko has
+    an in-cluster Kubernetes client. Out of cluster there is no store, so
+    both settings read as their defaults and a `PUT` on either returns 503.
+    For `allow_inline_credentials` that means pasted-kubeconfig registration
+    stays refused with no way to enable it — the correct fail-closed
+    behaviour, and documented in
+    [Connections → Allow legacy inline credentials](../user-guide/connections.md#allow-legacy-inline-credentials).
+
 ### Connection Configuration (Non-Secret Fields)
 
 The **non-secret fields** of the active connection are Helm-declarable with git-wins. Sharko's connection is one encrypted JSON blob in the `sharko-connections` Secret, so "git wins on non-secret fields" is a **field-level merge**: the declared non-secret fields are overwritten from env while the encrypted secret material (git token/PAT, ArgoCD token) is **preserved untouched**, then re-encrypted on save.

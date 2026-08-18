@@ -108,6 +108,44 @@ A pasted (inline) credential exists **only in the live ArgoCD cluster Secret** �
 
 To move an existing pasted connection onto a supported provider, follow [Migrating Off Pasted (Inline) Credentials](../operator/migrate-inline-credentials.md). Once scoped RBAC lands (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than a single server-wide switch.
 
+#### Where there is no settings store, the answer is always no
+
+The setting is persisted in a Kubernetes ConfigMap, and Sharko only wires
+that store up when it has an in-cluster Kubernetes client. Run Sharko
+out-of-cluster — local development, a laptop binary, anything pointed at a
+kubeconfig from outside — and there is no settings store at all.
+
+In that situation:
+
+- Reading the setting returns `false`. `GET /api/v1/settings/allow-inline-credentials`
+  answers 200 with the static default.
+- Writing it fails. `PUT` on the same path returns **503**, on purpose: a
+  write with nowhere to persist to must be visible as an error rather than
+  silently dropped.
+- So a pasted kubeconfig is refused, and **there is no way to turn the paste
+  path on.**
+
+This is deliberate, not a gap waiting for a fix. Fail-closed is the right
+answer for a credential path whose material can never be recovered from Git.
+
+**What to do instead.** Do not go looking for a flag. Register the cluster
+with a credential Sharko can re-read:
+
+- **Point at a stored secret** — put the kubeconfig in AWS Secrets Manager or
+  a Kubernetes Secret and register the cluster with a reference to it. Sharko
+  re-reads it whenever it needs to, so the connection survives losing the
+  ArgoCD Secret.
+- **Let Sharko mint an EKS token** — for EKS, register with the cluster's own
+  details and no stored credential at all.
+- **Register with no credentials** — allowed for every connection mode. Add
+  the credential source later.
+- **Self-managed connection** — you create the ArgoCD cluster Secret by hand
+  and Sharko only syncs addon labels onto it.
+
+All four are documented in [Adding a Cluster](clusters.md#adding-a-cluster).
+If you genuinely need the paste path, run Sharko in-cluster, where the
+settings store exists and an admin can turn it on.
+
 ## GitOps
 
 Controls how Sharko creates PRs in your addons repo.
