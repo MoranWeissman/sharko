@@ -190,6 +190,10 @@ func TestConnectionRepairSwaggerDescription_ExactTextAndSource(t *testing.T) {
 	bannedPhrases := []string{
 		"independently stored copy of the cluster's sign-in details",
 		"Sign-in details are re-fetched",
+		// Ruling (b), 2026-08-19. The FRAGMENT, not a whole sentence: it
+		// survived in five files at once precisely because every existing
+		// ban listed complete sentences. Git defines the connection.
+		"Sharko intends",
 	}
 
 	for _, banned := range bannedPhrases {
@@ -229,10 +233,17 @@ func TestConnectionComparisonSwaggerDescription_ExactTextAndSource(t *testing.T)
 		t.Errorf("connection_comparison.go @Description must contain: %q", wantText)
 	}
 
-	// Verify banned phrase is absent.
-	bannedPhrase := "an independently stored copy of the cluster's sign-in details"
-	if strings.Contains(sourceText, bannedPhrase) {
-		t.Errorf("connection_comparison.go must not contain banned phrase %q", bannedPhrase)
+	// Verify banned phrases are absent.
+	bannedPhrases := []string{
+		"an independently stored copy of the cluster's sign-in details",
+		// Ruling (b), 2026-08-19 — the fragment, same reasoning as the
+		// repair test above.
+		"Sharko intends",
+	}
+	for _, bannedPhrase := range bannedPhrases {
+		if strings.Contains(sourceText, bannedPhrase) {
+			t.Errorf("connection_comparison.go must not contain banned phrase %q", bannedPhrase)
+		}
 	}
 
 	t.Logf("Source of truth: internal/api/connection_comparison.go @Description annotation")

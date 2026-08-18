@@ -106,16 +106,22 @@ Without it the server cannot tell whether the caller reviewed what is about to b
 	}
 
 	// It shows what was wrong, then what it did, then where things stand.
+	// The closing status word is the ruled wording (ruling b, 2026-08-19):
+	// Git defines the connection, so the CLI says so. The old phrase is
+	// banned below.
 	for _, want := range []string{
 		"Connection check for prod-eu",
 		"data.server",
 		"data.config",
 		"After the repair:",
-		"matches what Sharko intends",
+		"matches the Git-defined connection",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output is missing %q\n---\n%s", want, out)
 		}
+	}
+	if strings.Contains(strings.ToLower(out), "sharko intends") {
+		t.Errorf("the CLI still prints the banned phrase\n---\n%s", out)
 	}
 }
 

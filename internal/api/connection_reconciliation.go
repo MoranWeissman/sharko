@@ -176,7 +176,12 @@ const (
 	condLiveSecretFound   = "The live connection Secret was found."
 	condLiveSecretMissing = "This cluster has no live connection Secret."
 	condComparisonFull    = "Every field Sharko owns was compared."
-	condComparisonDrift   = "At least one compared field does not match what Sharko intends."
+	// condComparisonDrift is the product owner's exact ruled sentence
+	// (ruling b, 2026-08-19). It replaced "…does not match what Sharko
+	// intends.", which is now banned everywhere — Git defines the
+	// connection, so the comparison is against Git, not against an
+	// intention of Sharko's. Pinned character-for-character.
+	condComparisonDrift   = "At least one compared field differs from the Git-defined connection."
 	condArgoCDConnected   = "ArgoCD reports this connection as working."
 	condArgoCDUnavailable = "ArgoCD cannot currently use this connection."
 	condArgoCDNotChecked  = "ArgoCD has not checked this connection. ArgoCD only probes a cluster once an application is scheduled on it."

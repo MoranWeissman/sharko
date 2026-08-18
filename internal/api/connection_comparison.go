@@ -24,7 +24,7 @@ package api
 // expected manifest, a hash, a secrets-backend path, a destination override or
 // a namespace — the namespace comes from the running reconciler. That is what
 // stops this from becoming a way to guess at a value: a caller cannot ask "is
-// the token X?", only "does the connection match what Sharko intends?", and the
+// the token X?", only "does the connection match the Git-defined connection?", and
 // answer to that is the same no matter what else they put on the request.
 // TestConnectionComparison_IsNotAGuessingOracle pins it.
 //
@@ -202,7 +202,7 @@ type connectionComparisonView struct {
 
 // handleGetConnectionComparison godoc
 //
-// @Summary Compare a cluster's ArgoCD connection with what Sharko intends
+// @Summary Compare a cluster's ArgoCD connection with the Git-defined connection
 // @Description Read-only. Works out what the named cluster's ArgoCD connection Secret should look like — from git plus, where one exists, the cluster's configured credentials source held outside the connection — and compares it with the connection that is actually there. For an EKS cluster that source is the cluster's own details rather than a reusable sign-in credential, and the check creates no sign-in tokens. Writes nothing. The answer says how much of the connection could honestly be checked: a cluster whose sign-in details only exist inside the connection itself, or whose record does not say where they are kept, is reported with a narrower scope rather than being compared against itself. Sign-in details are compared in memory and neither side is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true, with no expected value and no live value present at all. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.
 // @Tags clusters
 // @Produce json
@@ -238,7 +238,7 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	s.connCredChecks.record(cluster, view)
 
 	s.auditSecretResourceRead(r, fmt.Sprintf("cluster:%s", cluster),
-		"compared the cluster connection with what Sharko intends", auditResultFor(connectioncompare.Status(view.Status)))
+		"compared the cluster connection with the Git-defined connection", auditResultFor(connectioncompare.Status(view.Status)))
 	writeJSON(w, http.StatusOK, view)
 }
 

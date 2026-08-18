@@ -132,7 +132,7 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 	}
 
 	if !outcome.Changed {
-		// Already what Sharko intends. No write happened, so the applied
+		// Already the Git-defined connection. No write happened, so the applied
 		// revision is untouched — the previous one is still the honest answer
 		// for "what commit was the last write built from".
 		log.Info("[clusterreconciler] connection repair found nothing to change",
@@ -145,7 +145,7 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 			Resource:  fmt.Sprintf("cluster:%s", name),
 			Source:    "reconciler",
 			Result:    "success",
-			Detail:    "the connection already matched what Sharko intends; nothing was written",
+			Detail:    "the connection already matched the Git-defined connection; nothing was written",
 			RequestID: logging.RequestID(ctx),
 		})
 		result.AppliedRevision = r.appliedRevisionFor(name)

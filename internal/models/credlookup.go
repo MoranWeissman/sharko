@@ -204,7 +204,8 @@ func credentialsResolvable(credsSource, connectionManagedBy string, backendConfi
 //     automatically, and never fall back to reading the live Secret.
 //   - a self-managed connection (connectionManagedBy = user): Sharko never
 //     writes this Secret's credential material at all, so it has no expected
-//     value to compare against — there is nothing Sharko intends it to be.
+//     value to compare against — the Git-defined connection says nothing
+//     about what it should be.
 //
 // backendCanProvideStoredFacts is NARROWER than CredentialsResolvable's
 // backendConfigured, and the difference is the whole point of the parameter's

@@ -1216,7 +1216,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/reconcile", srv.handleReconcileCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/resync", srv.handleResyncCluster)
-	// "Make this cluster's ArgoCD connection match what Sharko intends."
+	// "Make this cluster's ArgoCD connection match the Git-defined connection."
 	// A separate route from /resync above on purpose: that one re-applies
 	// addon labels and is unchanged by this step, while this one can
 	// rewrite the whole connection and is admin-gated for that reason.

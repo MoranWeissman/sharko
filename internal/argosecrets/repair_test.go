@@ -434,7 +434,8 @@ func TestRepair_MissingSecretIsRefusedNotCreated(t *testing.T) {
 // --- no churn ---------------------------------------------------------------
 
 // TestRepair_AlreadyCorrectWritesNothing: a connection that already matches what
-// Sharko intends gets no write at all, and therefore no provenance stamp — an
+// the Git-defined connection gets no write at all, and therefore no provenance
+// stamp — an
 // untouched Secret has nothing to be provenance for.
 func TestRepair_AlreadyCorrectWritesNothing(t *testing.T) {
 	desired := desiredFor(t, map[string]string{"datadog": "enabled"})

@@ -93,7 +93,8 @@ var ErrRepairSecretChangedUnderneath = errors.New("something else changed this c
 // RepairOutcome reports what a repair actually did.
 type RepairOutcome struct {
 	// Changed is true when a real Update was issued. False means the
-	// connection already matched what Sharko intends and no write was needed.
+	// connection already matched the Git-defined connection and no write was
+	// needed.
 	Changed bool
 
 	// FieldsWritten are the owned field paths the repair changed, sorted. It
@@ -314,7 +315,7 @@ func (m *Manager) RepairOwnedConnection(ctx context.Context, desired *corev1.Sec
 		foreignPreservationCounts(updated.Labels, updated.Data, preserved)
 
 	if len(written) == 0 {
-		// Already what Sharko intends. No write, no churn, and no provenance
+		// Already the Git-defined connection. No write, no churn, and no provenance
 		// stamp — an untouched Secret has nothing to be provenance for.
 		slog.Debug("[argosecrets] connection repair found nothing to change",
 			"cluster", name, "namespace", m.namespace)

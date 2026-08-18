@@ -675,7 +675,7 @@ func TestRepair_FullConnectionMakesTheComparisonSynced(t *testing.T) {
 	if view.Comparison.Status != "synced" {
 		t.Errorf(`the fresh comparison says %q, want synced.
 
-The repair is meant to leave the connection matching what Sharko intends, and the response is meant to show that rather than just claiming "done".
+The repair is meant to leave the connection matching the Git-defined connection, and the response is meant to show that rather than just claiming "done".
 differences: %+v`, view.Comparison.Status, view.Comparison.Differences)
 	}
 
@@ -1127,7 +1127,7 @@ func TestRepair_NeverWritesToGit(t *testing.T) {
 	if len(gp.writes) > 0 {
 		t.Errorf(`the repair wrote to git: %v.
 
-Rule 7: repair fixes the cluster to match what Sharko intends — git for addon labels, the configured credentials source for connection details. Git itself is never changed by a repair.`, gp.writes)
+Rule 7: repair fixes the cluster to match the Git-defined connection — git for addon labels, the configured credentials source for connection details. Git itself is never changed by a repair.`, gp.writes)
 	}
 }
 

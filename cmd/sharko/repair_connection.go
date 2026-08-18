@@ -73,7 +73,7 @@ type connectionRepairResult struct {
 
 var repairConnectionCmd = &cobra.Command{
 	Use:   "repair-connection <cluster>",
-	Short: "Make a cluster's ArgoCD connection match what Sharko intends",
+	Short: "Make a cluster's ArgoCD connection match the Git-defined connection",
 	Long: `Checks a cluster's ArgoCD connection against what Sharko means it to be, shows
 you what does not match, and then puts it right.
 
@@ -232,7 +232,7 @@ Run with --check-only to look without changing anything.`,
 				fmt.Printf("  %s\n", f)
 			}
 		} else {
-			fmt.Printf("%s's connection already matched what Sharko intends. Nothing was changed.\n", name)
+			fmt.Printf("%s's connection already matched the Git-defined connection. Nothing was changed.\n", name)
 		}
 		if result.PreservedForeignLabels > 0 || result.PreservedForeignDataKeys > 0 {
 			fmt.Printf("  Left alone: %d label(s) and %d connection setting(s) that are not Sharko's.\n",
@@ -298,7 +298,7 @@ func printConnectionCheck(c *connectionCheckResult) {
 func plainStatus(status string) string {
 	switch status {
 	case "synced":
-		return "matches what Sharko intends"
+		return "matches the Git-defined connection"
 	case "out_of_sync":
 		return "does not match"
 	case "missing":
@@ -318,7 +318,7 @@ func plainStatus(status string) string {
 func plainFieldStatus(status string) string {
 	switch status {
 	case "different":
-		return "different from what Sharko intends"
+		return "differs from the Git-defined connection"
 	case "missing":
 		return "missing"
 	case "unexpected":
