@@ -48,6 +48,7 @@ import { TimeChip } from '@/components/resource/TimeChip'
 import { TakeoverDialog } from '@/components/TakeoverDialog'
 import {
   ACTIVITY_EMPTY_SENTENCE,
+  ACTIVITY_FETCH_LIMIT,
   mapActivityEntries,
   NO_CHANGES_MADE,
   RECENT_ACTIVITY_LABEL,
@@ -98,7 +99,11 @@ export const PLAN_UNTOUCHED_SENTENCE = 'Foreign labels, other annotations and ot
 
 /** The documented migration path for a legacy inline credential (Story 4 publishes the page at this stable path). */
 export const MIGRATE_CREDENTIALS_DOC_PATH = '/operator/migrate-inline-credentials/'
-export const MIGRATE_CREDENTIALS_DOC_URL = `https://sharko.readthedocs.io${MIGRATE_CREDENTIALS_DOC_PATH}`
+// The site serves under /en/latest/ (readthedocs language/version prefix) —
+// the unprefixed form of a published page hard-404s. Same prefix every other
+// UI doc link uses (AuditViewer, ClusterIdentityPanel,
+// PerClusterAddonOverridesEditor).
+export const MIGRATE_CREDENTIALS_DOC_URL = `https://sharko.readthedocs.io/en/latest${MIGRATE_CREDENTIALS_DOC_PATH}`
 export const MIGRATE_CREDENTIALS_LINK_LABEL = 'How to move this credential to a supported provider'
 
 /** Existing action names — unchanged by this redesign. */
@@ -366,7 +371,10 @@ export function ConnectionReconciliationView({
   useEffect(() => {
     if (!canRead) return
     let cancelled = false
-    fetchAuditLog({ cluster })
+    // The ring-sized budget, not the server's 50-entry default — routine
+    // reads must never drown the lifecycle events out of the response (see
+    // ACTIVITY_FETCH_LIMIT).
+    fetchAuditLog({ cluster, limit: ACTIVITY_FETCH_LIMIT })
       .then((result) => {
         if (!cancelled) setActivity(mapActivityEntries((result.entries ?? []) as AuditEntry[]))
       })
@@ -469,7 +477,13 @@ export function ConnectionReconciliationView({
           <ActionButton onClick={onRequestSync} icon={RotateCcw} label={ACTION_SYNC_ADDON_LABELS} testId="recon-action-sync" strong />
         )
       case 'take_over':
-        return <ActionButton onClick={() => setTakeoverOpen(true)} icon={Wrench} label={ACTION_TAKE_OWNERSHIP} testId="recon-action-takeover" />
+        // The takeover endpoint is admin-only (authz cluster.takeover:
+        // RoleAdmin) — same rule as repair: an operator must not see a
+        // button that could only ever come back 403. Absent, never greyed
+        // out.
+        return isAdmin ? (
+          <ActionButton onClick={() => setTakeoverOpen(true)} icon={Wrench} label={ACTION_TAKE_OWNERSHIP} testId="recon-action-takeover" />
+        ) : null
       case 'migrate_credentials':
         return (
           <a
@@ -844,8 +858,9 @@ export function ConnectionReconciliationView({
       />
 
       {/* The existing takeover entry point, mounted only for the one state
-          that offers it (foreign ownership). */}
-      {view.plan.action === 'take_over' && (
+          that offers it (foreign ownership) — and only for the admin who can
+          actually use it. */}
+      {isAdmin && view.plan.action === 'take_over' && (
         <TakeoverDialog
           clusterName={cluster}
           open={takeoverOpen}

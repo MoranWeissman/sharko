@@ -32,6 +32,19 @@ export const ACTIVITY_EMPTY_SENTENCE = 'Nothing recorded since Sharko started.'
 /** How many entries the feed shows at most. */
 export const ACTIVITY_FEED_LIMIT = 5
 
+/**
+ * How many audit entries the feed ASKS the server for. The server truncates
+ * to its 50-entry default BEFORE this module's read-exclusion runs, and every
+ * open of the connection page writes a secret_resource_read (the
+ * redacted-YAML fetch writes another) — so with the default budget, ~25 page
+ * opens push every lifecycle event out of the returned window while they
+ * still sit in the ring, and the feed would falsely say nothing was
+ * recorded. 1000 is the ring's own default size (internal/audit.NewLog via
+ * SHARKO_AUDIT_BUFFER_SIZE), so this budget covers everything the server can
+ * still hold.
+ */
+export const ACTIVITY_FETCH_LIMIT = 1000
+
 export interface ActivityEventMapping {
   /** The plain-English title the feed renders — never the raw event id. */
   title: string

@@ -381,7 +381,9 @@ describe('Secrets architecture doc link (W3-5 discoverability)', () => {
 
     const link = screen.getByTestId('secrets-architecture-doc-link')
     expect(link).toHaveTextContent('How Sharko manages secrets')
-    expect(link).toHaveAttribute('href', 'https://sharko.readthedocs.io/architecture/engine-and-secret-sync/')
+    // /en/latest/ is the readthedocs prefix the published site serves under —
+    // the unprefixed form hard-404s (composed-review blocker 1).
+    expect(link).toHaveAttribute('href', 'https://sharko.readthedocs.io/en/latest/architecture/engine-and-secret-sync/')
     expect(link).toHaveAttribute('target', '_blank')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })

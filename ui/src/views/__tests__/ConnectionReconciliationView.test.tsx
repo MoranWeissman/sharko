@@ -44,7 +44,7 @@ import {
   MIGRATE_CREDENTIALS_DOC_URL,
   RECONCILIATION_NEEDS_OPERATOR,
 } from '@/views/ConnectionReconciliationView'
-import { RECENT_ACTIVITY_LABEL, ACTIVITY_EMPTY_SENTENCE, NO_CHANGES_MADE } from '@/views/connectionActivity'
+import { RECENT_ACTIVITY_LABEL, ACTIVITY_EMPTY_SENTENCE, ACTIVITY_FETCH_LIMIT, NO_CHANGES_MADE } from '@/views/connectionActivity'
 
 const mockShowToast = vi.fn()
 vi.mock('@/components/ToastNotification', async () => {
@@ -742,6 +742,30 @@ describe('role gates', () => {
     expect(screen.queryByTestId('recon-action-repair')).toBeNull()
   })
 
+  it('an operator never sees the takeover button on a foreign row — the endpoint is admin-only; an admin does', async () => {
+    const foreignView = makeView({
+      management_mode: 'foreign_owned',
+      managed_scope: 'none',
+      mode_statement: S.modeForeign,
+      sync: { state: 'blocked', verification_scope: 'none', approval_required: false, reason: S.modeForeign, checked_at: '2026-08-18T10:00:00Z' },
+      conditions: [
+        { id: 'ownership', status: 'blocked', detail: S.modeForeign },
+        { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
+      ],
+      plan: { action: 'take_over', action_scopes: [] },
+    })
+    const operatorRender = renderView(foreignView, 'operator')
+    await waitForView()
+    // Absent, never greyed out — same rule as the repair button.
+    expect(screen.queryByTestId('recon-action-takeover')).toBeNull()
+    expect(screen.queryByText('Take ownership')).toBeNull()
+    operatorRender.unmount()
+
+    renderView(foreignView, 'admin')
+    await waitForView()
+    expect(screen.getByTestId('recon-action-takeover')).toBeTruthy()
+  })
+
   it('a failed reconciliation read shows the error with a Try again that re-fetches', async () => {
     mockGetConnectionReconciliation.mockRejectedValueOnce(new Error('The check failed.')).mockResolvedValueOnce(makeView())
     mockFetchAuditLog.mockResolvedValue({ entries: [] })
@@ -883,6 +907,40 @@ describe('Recent activity since Sharko started', () => {
     renderView(makeView(), 'admin', [auditEntry('secret_resource_read')])
     await waitForView()
     expect(screen.getByTestId('recon-activity-empty').textContent).toBe(ACTIVITY_EMPTY_SENTENCE)
+  })
+
+  it('asks for the ring-sized budget, so read noise cannot drown the lifecycle events out of the window (composed-review blocker 2)', async () => {
+    // 60 reads NEWER than the 2 lifecycle entries: under the server's
+    // 50-entry default, the lifecycle entries would never reach the client
+    // and the feed would falsely say nothing was recorded — while both
+    // events still sit in the 1000-entry ring.
+    const noisy: AuditEntry[] = []
+    for (let i = 0; i < 60; i++) {
+      noisy.push(auditEntry('secret_resource_read', { id: `read-${i}`, timestamp: `2026-08-18T10:${String(i % 60).padStart(2, '0')}:00Z` }))
+    }
+    noisy.push(auditEntry('cluster_connection_repair', { timestamp: '2026-08-18T09:00:00Z' }))
+    noisy.push(auditEntry('cluster_registered', { timestamp: '2026-08-18T08:00:00Z' }))
+    renderView(makeView(), 'admin', noisy)
+    await waitForView()
+    // The fetch carries the ring-sized budget, not the server default.
+    await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'spoke-eu', limit: ACTIVITY_FETCH_LIMIT }))
+    expect(ACTIVITY_FETCH_LIMIT).toBe(1000)
+    // Both lifecycle titles render; the empty sentence does NOT.
+    expect(await screen.findByText('Connection repaired')).toBeTruthy()
+    expect(screen.getByText('Cluster registered')).toBeTruthy()
+    expect(screen.queryByTestId('recon-activity-empty')).toBeNull()
+    expect(screen.queryByText(ACTIVITY_EMPTY_SENTENCE)).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The migration link points at a page that actually resolves
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('the migration doc link', () => {
+  it('carries the /en/latest/ readthedocs prefix — the unprefixed form hard-404s (composed-review blocker 1)', () => {
+    expect(MIGRATE_CREDENTIALS_DOC_URL).toBe('https://sharko.readthedocs.io/en/latest/operator/migrate-inline-credentials/')
+    expect(MIGRATE_CREDENTIALS_DOC_URL).toContain('/en/latest/')
   })
 })
 

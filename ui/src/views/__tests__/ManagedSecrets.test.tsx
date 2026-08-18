@@ -1635,7 +1635,9 @@ describe('ManagedSecrets', () => {
     // Story 3 (ruling 6): the feed carries the honest label and human
     // titles; the audit fetch is scoped to this cluster.
     expect(await within(panel).findByTestId('recon-activity-label')).toHaveTextContent('Recent activity since Sharko started')
-    await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us' }))
+    // limit: the ring-sized budget — the server's 50-entry default would let
+    // routine reads drown the lifecycle events (composed-review blocker 2).
+    await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us', limit: 1000 }))
     expect(await within(panel).findByText('Connection repaired')).toBeInTheDocument()
     const fullLogLink = within(panel).getByTestId('recon-view-audit-log')
     expect(fullLogLink).toHaveTextContent('View audit log')

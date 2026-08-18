@@ -2621,7 +2621,9 @@ const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> =
 // page, linked once from the Secrets area's own header — the same
 // readthedocs pattern AuditViewer's retention banner and
 // ClusterIdentityPanel's own doc link already use.
-const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/architecture/engine-and-secret-sync/'
+// /en/latest/ is the readthedocs language/version prefix — the unprefixed
+// form of a published page hard-404s.
+const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/en/latest/architecture/engine-and-secret-sync/'
 const SECRETS_ARCHITECTURE_DOC_LINK_TEXT = 'How Sharko manages secrets'
 
 export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
