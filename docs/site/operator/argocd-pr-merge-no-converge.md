@@ -409,10 +409,12 @@ change you intended to keep:
   it within 1s. Catches the "wiring broken" cause before any
   PR-merge happens.
 
-- **Scheduled work — quarterly chaos drill.** Inject a 1-minute pause
-  in the reconciler's `pollOnce` (e.g.
-  `SHARKO_RECONCILER_TEST_PAUSE_MS=60000`) in staging. Verify the
-  monitoring alert fires. Verify the operator can follow this runbook
+- **Scheduled work — quarterly chaos drill.** Simulate a stalled
+  reconciler in staging. There is no pause hook in the shipped binary and
+  no environment variable that adds one, so either run a staging build
+  with a deliberate sleep in `pollOnce`, or cut the reconciler off from
+  git (point the connection at an unreachable host) so ticks run and
+  never converge. Verify the monitoring alert fires. Verify the operator can follow this runbook
   to diagnose and mitigate. Trains the procedure before a real
   incident.
 

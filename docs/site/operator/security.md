@@ -25,18 +25,37 @@ Sharko applies rate limiting to both authentication endpoints and admin write en
 | Auth endpoints (`/api/v1/auth/*`) | Per-IP burst limit |
 | Write endpoints (admin POST/DELETE/PATCH) | 30 requests/minute per IP |
 
-Rate limiting relies on the client's real IP address, which requires correct **trusted proxy** configuration.
+### How Sharko decides which IP it is limiting
 
-If Sharko is behind a reverse proxy or ingress controller, set the `SHARKO_TRUSTED_PROXIES` environment variable to the proxy's IP CIDR or `"*"` to trust all proxies (only safe in controlled environments):
+Rate limiting is per client IP, and this is exactly how Sharko works out
+that IP today:
 
-```yaml
-extraEnv:
-  - name: SHARKO_TRUSTED_PROXIES
-    value: "10.0.0.0/8"
-```
+1. If the request carries an `X-Forwarded-For` header, Sharko takes the
+   **first** address in it.
+2. Otherwise it uses the connection's own remote address.
 
-!!! warning
-    Without a trusted proxy configuration, the rate limiter sees the proxy's IP instead of the real client IP, which means a single attacker could exhaust the rate limit for all users.
+There is **no trusted-proxy list**. Sharko has no setting and no
+environment variable for one — any name you may have seen for this,
+including `SHARKO_TRUSTED_PROXIES`, is not read by any Sharko build.
+Putting it in `extraEnv` does nothing at all.
+
+Two consequences you have to plan around:
+
+!!! warning "Sharko believes `X-Forwarded-For` from whoever sends it"
+    Because the header is trusted unconditionally, anyone who can reach
+    Sharko's port directly can send a different `X-Forwarded-For` value on
+    every request and never hit the rate limit. **Make sure the only route
+    to Sharko is through your ingress or proxy**, and make sure that proxy
+    *overwrites* `X-Forwarded-For` rather than appending to a
+    client-supplied one. Most ingress controllers do this by default;
+    confirm yours does. A NetworkPolicy that allows traffic to the Sharko
+    pod only from the ingress controller is the belt-and-braces version.
+
+!!! note "Behind a well-behaved proxy this is the correct behaviour"
+    With a proxy in front that rewrites the header, the first address is
+    the real client, so the rate limiter counts per real client — which is
+    what you want. The risk above is only about paths that bypass the
+    proxy.
 
 ## Authentication
 

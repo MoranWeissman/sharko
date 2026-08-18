@@ -544,11 +544,13 @@ func RequireWithResponse(w http.ResponseWriter, r *http.Request, action string) 
 type Entry struct {
     ID, Level, Event, User, Action, Resource, Source, Result string
     Timestamp time.Time; DurationMs int64; Error, RequestID string
+    Changes string // "" | not_applicable | none | applied (ruling f, 2026-08-19)
 }
 type AuditFilter struct { User, Action, Source, Result, Cluster string; Since time.Time; Limit int }
 func (l *Log) ListFiltered(filter AuditFilter) []Entry
 func (l *Log) Subscribe() (<-chan Entry, func()) // SSE support, buffered channel
-// Default buffer: 1000 events (SHARKO_AUDIT_BUFFER_SIZE)
+// Buffer: audit.NewLog(1000) in internal/api/router.go — a hardcoded literal.
+// NOT configurable; there is no SHARKO_AUDIT_BUFFER_SIZE and never was.
 ```
 
 ### `internal/auth/` (updated in Epic 2)
@@ -709,8 +711,12 @@ CI fails if any mutating handler in `internal/api/` lacks `audit.Enrich(` — en
 ## Write Rate Limiting
 
 Write endpoints (admin, POST/DELETE/PATCH) are rate-limited to **30 requests/minute** per IP.
-Rate limiter middleware is in `internal/api/router.go`. The same `SHARKO_TRUSTED_PROXIES` env var
-governs IP extraction.
+Rate limiter middleware is in `internal/api/router.go`. IP extraction is `clientIP()` in the same
+file: it takes the first entry of `X-Forwarded-For` when the header is present, otherwise
+`RemoteAddr` with the port stripped. There is **no trusted-proxy allowlist and no
+`SHARKO_TRUSTED_PROXIES` env var** — this file claimed one until 2026-08-19 and no Go file has
+ever read it. The header is trusted unconditionally, so the deployment has to be the thing that
+guarantees only a proxy can reach the port.
 
 ## Webhook HMAC Verification
 

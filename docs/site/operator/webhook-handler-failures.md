@@ -195,7 +195,7 @@ Two outcomes:
   with no secret. The handler accepts any payload (no signature
   check). If the symptom is 401 anyway, the env var is non-empty
   in the running pod but the secret-ref isn't resolving; check
-  `kubectl -n <sharko-ns> exec <pod> -- env | grep SHARKO_WEBHOOK`.
+  `kubectl -n <sharko-ns> exec <pod> -- env | grep SHARKO_WEBHOOK_SECRET`.
 
 In the GitHub UI: `Settings -> Webhooks -> Edit -> Secret`. The
 field shows `••••••••••• (Click to change)`. You cannot read the

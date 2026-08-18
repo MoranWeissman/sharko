@@ -250,20 +250,27 @@ runbook.
       # auto-merge once CI green
       ```
 
-   b. **Disable the reconciler temporarily** to give the operator time
-      to debug. Patch the deployment to set
-      `SHARKO_RECONCILER_ENABLED=false` (or whatever the env-var
-      kill-switch is; verify with the engineering team):
+   b. **Stop the reconciler temporarily** to give the operator time
+      to debug. **There is no kill-switch environment variable.** Sharko
+      reads no `SHARKO_RECONCILER_ENABLED` or equivalent — the cluster
+      reconciler starts whenever Sharko has an in-cluster Kubernetes
+      client and a ConfigMap store, and there is no way to ask it not to.
+
+      The only ways to stop it are to stop the process or to take away
+      what it needs:
 
       ```sh
-      kubectl -n "$SHARKO_NS" set env deployment/sharko \
-        SHARKO_RECONCILER_ENABLED=false
-      kubectl -n "$SHARKO_NS" rollout status deployment/sharko
+      # Blunt but certain — no Sharko, no reconciler (and no API either):
+      kubectl -n "$SHARKO_NS" scale deployment/sharko --replicas=0
       ```
 
       With the reconciler off, ArgoCD's existing Secrets continue to
       work, but new registrations/deregistrations require manual
       `kubectl` patching of ArgoCD Secrets until the bug is fixed.
+
+      If you need Sharko's API up while the reconciler is down, that is
+      not something the product supports today — say so in the incident
+      channel rather than reaching for an env var that does nothing.
       Document this as the temporary state in the audit log.
 
 5. **Last resort — scale Sharko to zero and back.** A clean restart
@@ -390,11 +397,10 @@ For Mitigation step 4a (revert a bad commit in `managed-clusters.yaml`):
 
 For Mitigation step 4b (disable reconciler):
 
-1. Re-enable the reconciler by removing the env var:
+1. Bring Sharko back up:
 
    ```sh
-   kubectl -n "$SHARKO_NS" set env deployment/sharko \
-     SHARKO_RECONCILER_ENABLED-
+   kubectl -n "$SHARKO_NS" scale deployment/sharko --replicas=1
    kubectl -n "$SHARKO_NS" rollout status deployment/sharko
    ```
 
@@ -425,13 +431,13 @@ For Mitigation step 4b (disable reconciler):
   negligible; the cost of not having it during a crash-loop diagnosis
   is "we restarted before capturing the dump."
 
-- **Scheduled work — chaos drill once per quarter.** Inject a panic
-  into the reconciler in staging (set
-  `SHARKO_RECONCILER_PANIC_TEST=true` if such a hook exists, or
-  `kubectl exec` a `kill -9 <reconciler-goroutine>` if pprof allows).
-  Verify the panic-recovery wrapper catches and logs cleanly. Tests
-  the runbook end-to-end and trains the operator on Mitigation
-  step 2's "verify ticks resumed" check.
+- **Scheduled work — chaos drill once per quarter.** There is no
+  panic-injection hook in the shipped binary — no environment variable
+  turns one on. Run the drill against a staging build with a deliberate
+  panic compiled into `pollOnce`, or exercise the same recovery path by
+  deleting the Sharko pod mid-tick. Verify the panic-recovery wrapper
+  catches and logs cleanly. Tests the runbook end-to-end and trains the
+  operator on Mitigation step 2's "verify ticks resumed" check.
 
 ---
 

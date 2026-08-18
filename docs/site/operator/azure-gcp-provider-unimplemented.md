@@ -18,8 +18,9 @@
 > mitigation" rule. Re-verify when either provider ships an
 > implementation that flips the stub.
 
-The operator configured Sharko's `provider` value (Helm
-`secrets.provider`, env var `SHARKO_PROVIDER`, or the API config) to
+The operator configured Sharko's provider type (Helm
+`secrets.provider`, env var `SHARKO_CONN_PROVIDER_TYPE` /
+`SHARKO_CONN_ADDON_SECRET_PROVIDER_TYPE`, or the API config) to
 `azure` or `gcp`, expecting Sharko to fetch cluster credentials from
 Azure Key Vault or GCP Secret Manager. Sharko ships **stub
 implementations** of both providers in v1.x — they're registered in
@@ -120,10 +121,11 @@ runtime state.
 # Helm value:
 helm get values sharko -n <sharko-ns> | grep -A2 -E 'secrets:|provider:'
 
-# Resolved env var on the pod (read-only when the pod is running):
-SHARKO_PROVIDER=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER")].value}')
-echo "Configured provider: ${SHARKO_PROVIDER:-aws-sm (default)}"
+# What Sharko actually resolved, from Sharko rather than the pod spec —
+# the provider type usually lives on the active connection, not in env:
+curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
+  "http://sharko/api/v1/connections/" \
+  | jq '.connections[] | select(.is_active) | {provider, addon_secret_provider}'
 ```
 
 If the value is `azure` or `gcp`, this runbook applies. If it's
@@ -143,15 +145,22 @@ Sharko has three provider surfaces (per V125-1-11):
 Inspect the resolved provider per surface:
 
 ```sh
-# Pod env vars for each provider surface:
+# Git-declared overrides, when the install uses them. Most installs set
+# none of these and configure the providers through the API instead, so
+# an empty result here is normal and is not the answer on its own.
 kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env}' \
-  | jq -c '.[] | select(.name | test("SHARKO.*PROVIDER")) | {name, value}'
+  | jq -c '.[] | select(.name | test("^SHARKO_(CONN_.*PROVIDER_TYPE|CLUSTER_REG_TYPE)$")) | {name, value}'
 ```
 
-If `SHARKO_PROVIDER` (addon secrets) is `azure`/`gcp`, the pod
-fails to start. If only `SHARKO_CLUSTER_TEST_PROVIDER` or
-`SHARKO_CLUSTERREG_PROVIDER` is `azure`/`gcp`, the pod runs but
+The names Sharko really reads are `SHARKO_CONN_PROVIDER_TYPE` (cluster
+credentials), `SHARKO_CONN_ADDON_SECRET_PROVIDER_TYPE` (addon secrets)
+and `SHARKO_CLUSTER_REG_TYPE` (cluster registration source). There is no
+`SHARKO_PROVIDER` and no `SHARKO_CLUSTER_TEST_PROVIDER` — this page named
+both until 2026-08-19 and no Sharko build reads either.
+
+If the addon-secret provider is `azure`/`gcp`, the pod fails to start. If
+only the cluster-registration source is `azure`/`gcp`, the pod runs but
 the corresponding operations fail.
 
 ### 3. Inspect the pod's startup logs for the explicit stub error

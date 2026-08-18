@@ -266,9 +266,12 @@ first step that restores reachability — don't keep walking the list.
      nslookup argocd-server.argocd.svc.cluster.local
    ```
 
-   If the Service was renamed, set `SHARKO_ARGOCD_SERVER` in the Sharko
-   deployment to the new name (or wait for the next pod restart — see
-   step 1 — to let `autoDiscoverArgoCD()` find it).
+   If the Service was renamed, set the ArgoCD server URL on the active
+   connection under **Settings → Connections** (or declare it in git with
+   `SHARKO_CONN_ARGOCD_SERVER_URL`). Leaving it empty is also valid: with no
+   URL configured, Sharko discovers one from the ArgoCD namespace on each
+   client build (`argocd.DiscoverServerURL`), so it picks the new Service up
+   without a restart.
 
 5. **Last resort — scale Sharko to zero and back.** If steps 1-4 don't
    surface a root cause, a clean restart with no in-flight retry storm
