@@ -13162,8 +13162,16 @@
                     "description": "CheckedAt is when this check ran, RFC3339. ABSENT when no check has\nrun — never Go's zero time (the W3-6 rule).",
                     "type": "string"
                 },
+                "headline": {
+                    "description": "Headline is the display word for this state, named by scope — the\nSERVER's answer, so the fleet list and this page can never phrase the\nsame connection differently (B5). The browser renders it verbatim and\nderives nothing. See connection_canonical.go.",
+                    "type": "string"
+                },
                 "last_successful_application": {
                     "description": "LastSuccessfulApplication is the live Secret's sharko.dev/written-at\nprovenance annotation. ABSENT when unknown.",
+                    "type": "string"
+                },
+                "qualifier": {
+                    "description": "Qualifier is the sentence beside the headline when the verification is\nnarrower than the full connection, or when the connection's data is\nmanaged outside Sharko. Absent when the state needs none.",
                     "type": "string"
                 },
                 "reason": {
@@ -13303,6 +13311,10 @@
                     "description": "AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL\nWRITE to this cluster's secret was built from — empty until this\nserver instance has ever successfully written it.",
                     "type": "string"
                 },
+                "approval_required": {
+                    "description": "ApprovalRequired is true exactly when the drift touches connection\nconfiguration or credential material.",
+                    "type": "boolean"
+                },
                 "cluster": {
                     "type": "string"
                 },
@@ -13334,6 +13346,14 @@
                     "description": "FightCount (P2-D D3) is the connection reconciler's label-fight\ncounter for this cluster — how many consecutive ticks something else\nhas reverted Sharko's own write on this cluster's self-managed ArgoCD\nsecret. 0/omitted for every cluster with no fight in progress\n(including every Sharko-managed, non-self-managed cluster, which has\nno fight concept). The UI shows a quiet row warning at 3 or more.",
                     "type": "integer"
                 },
+                "headline": {
+                    "description": "Headline is the display word, produced by the server so this row and\nthe connection page can never phrase the same connection differently.\nRendered verbatim; the browser derives nothing.",
+                    "type": "string"
+                },
+                "health": {
+                    "description": "Health is ArgoCD's OWN answer for this connection — connected,\nunavailable or not_checked — mapped through the same function the\nconnection page uses. It is INDEPENDENT of the git state above:\n\"Connected\" beside \"Verification incomplete\" is correct, not a\ncontradiction. Free of charge: it comes off the ArgoCD cluster listing\nthe list handler already fetched, so this adds no call of any kind.",
+                    "type": "string"
+                },
                 "last_check_error": {
                     "description": "LastCheckError (P1-B B1) is a safe, canned sentence describing why the\nlast check didn't finish — set only when this cluster's most recent\nreconcile record is OutcomeFailed. Mirrors addonValuesSecretRow's\nfield of the same name exactly: distinct from State == \"out_of_sync\"\n(which claims Sharko actually compared the secret and found a\nmismatch), this field exists so the UI can say plainly \"the last\ncheck failed: …\" instead of implying drift when the truth is the\ncheck itself never finished. Always the mapped output of\nclusterreconciler.FailureSentence — NEVER the reconciler's raw\nrecord text.",
                     "type": "string"
@@ -13347,6 +13367,18 @@
                     "type": "string"
                 },
                 "last_repaired_detail": {
+                    "type": "string"
+                },
+                "managed_scope": {
+                    "description": "ManagedScope is what Sharko OWNS on this connection: full_connection,\naddon_labels or none.",
+                    "type": "string"
+                },
+                "management_mode": {
+                    "description": "ManagementMode is sharko_managed, self_managed, legacy_inline or\nforeign_owned.",
+                    "type": "string"
+                },
+                "qualifier": {
+                    "description": "Qualifier is the sentence beside the headline when the verification is\nnarrower than the whole connection, or the connection's data is\nmanaged outside Sharko. Absent when the state needs none.",
                     "type": "string"
                 },
                 "secret_name": {
@@ -13364,7 +13396,15 @@
                     "type": "string"
                 },
                 "state": {
-                    "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", or \"unknown\" —\nsee connectionSecretState for exactly how each is derived. A FAILED\ncheck (P1-B B1) renders as \"unknown\", never \"out_of_sync\": Sharko\ncould not look, which is a different fact from \"Sharko looked and it\ndiffers\". See LastCheckError below for the two-facts shape this\nimplies (ArgoCD's own sync-state / last-operation-result split).",
+                    "description": "State is the legacy row word — \"in_sync\", \"out_of_sync\", \"missing\",\n\"foreign\" or \"unknown\".\n\nB5: it is now a PROJECTION of SyncState below, not a second\nderivation. It used to come from the cluster reconciler's own record,\nwhose drift comparison covers only Sharko's bare addon-label keys — so\n\"in_sync\" meant \"the addon labels match\" and said nothing at all about\nthe credential, which is how a legacy pasted-credential connection\nrendered a green \"Synced\" here while its own page said \"Verification\nincomplete\". The product owner ruled that out: both surfaces derive\nfrom the same canonical semantics, and there is no second vocabulary.\n\nIt stays on the wire because the ?state= filter, the sort rank and\nevery existing caller read it — and because it is now a pure\nprojection, the filter, the chips and the counts cannot drift apart\nfrom the canonical answer again. See connectionRowLegacyState.",
+                    "type": "string"
+                },
+                "sync_state": {
+                    "description": "SyncState is synced, out_of_sync, blocked or unknown. \"synced\" is\npossible ONLY at VerificationScope \"full\" — the row builder refuses to\nemit any other combination (see applyConnectionRowCanonical).",
+                    "type": "string"
+                },
+                "verification_scope": {
+                    "description": "VerificationScope is how much of what Sharko owns was successfully\ncompared: full, partial or none. \"none\" on a row no check has reached\nyet — which is the honest answer, not a cheerful one.",
                     "type": "string"
                 }
             }

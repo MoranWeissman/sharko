@@ -2965,10 +2965,23 @@ definitions:
           CheckedAt is when this check ran, RFC3339. ABSENT when no check has
           run — never Go's zero time (the W3-6 rule).
         type: string
+      headline:
+        description: |-
+          Headline is the display word for this state, named by scope — the
+          SERVER's answer, so the fleet list and this page can never phrase the
+          same connection differently (B5). The browser renders it verbatim and
+          derives nothing. See connection_canonical.go.
+        type: string
       last_successful_application:
         description: |-
           LastSuccessfulApplication is the live Secret's sharko.dev/written-at
           provenance annotation. ABSENT when unknown.
+        type: string
+      qualifier:
+        description: |-
+          Qualifier is the sentence beside the headline when the verification is
+          narrower than the full connection, or when the connection's data is
+          managed outside Sharko. Absent when the state needs none.
         type: string
       reason:
         description: Reason is a fixed sentence explaining a state that is not clean.
@@ -3105,6 +3118,11 @@ definitions:
           WRITE to this cluster's secret was built from — empty until this
           server instance has ever successfully written it.
         type: string
+      approval_required:
+        description: |-
+          ApprovalRequired is true exactly when the drift touches connection
+          configuration or credential material.
+        type: boolean
       cluster:
         type: string
       compared_path:
@@ -3159,6 +3177,21 @@ definitions:
           (including every Sharko-managed, non-self-managed cluster, which has
           no fight concept). The UI shows a quiet row warning at 3 or more.
         type: integer
+      headline:
+        description: |-
+          Headline is the display word, produced by the server so this row and
+          the connection page can never phrase the same connection differently.
+          Rendered verbatim; the browser derives nothing.
+        type: string
+      health:
+        description: |-
+          Health is ArgoCD's OWN answer for this connection — connected,
+          unavailable or not_checked — mapped through the same function the
+          connection page uses. It is INDEPENDENT of the git state above:
+          "Connected" beside "Verification incomplete" is correct, not a
+          contradiction. Free of charge: it comes off the ArgoCD cluster listing
+          the list handler already fetched, so this adds no call of any kind.
+        type: string
       last_check_error:
         description: |-
           LastCheckError (P1-B B1) is a safe, canned sentence describing why the
@@ -3186,6 +3219,22 @@ definitions:
         type: string
       last_repaired_detail:
         type: string
+      managed_scope:
+        description: |-
+          ManagedScope is what Sharko OWNS on this connection: full_connection,
+          addon_labels or none.
+        type: string
+      management_mode:
+        description: |-
+          ManagementMode is sharko_managed, self_managed, legacy_inline or
+          foreign_owned.
+        type: string
+      qualifier:
+        description: |-
+          Qualifier is the sentence beside the headline when the verification is
+          narrower than the whole connection, or the connection's data is
+          managed outside Sharko. Absent when the state needs none.
+        type: string
       secret_name:
         type: string
       secret_namespace:
@@ -3208,12 +3257,34 @@ definitions:
         type: string
       state:
         description: |-
-          State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
-          see connectionSecretState for exactly how each is derived. A FAILED
-          check (P1-B B1) renders as "unknown", never "out_of_sync": Sharko
-          could not look, which is a different fact from "Sharko looked and it
-          differs". See LastCheckError below for the two-facts shape this
-          implies (ArgoCD's own sync-state / last-operation-result split).
+          State is the legacy row word — "in_sync", "out_of_sync", "missing",
+          "foreign" or "unknown".
+
+          B5: it is now a PROJECTION of SyncState below, not a second
+          derivation. It used to come from the cluster reconciler's own record,
+          whose drift comparison covers only Sharko's bare addon-label keys — so
+          "in_sync" meant "the addon labels match" and said nothing at all about
+          the credential, which is how a legacy pasted-credential connection
+          rendered a green "Synced" here while its own page said "Verification
+          incomplete". The product owner ruled that out: both surfaces derive
+          from the same canonical semantics, and there is no second vocabulary.
+
+          It stays on the wire because the ?state= filter, the sort rank and
+          every existing caller read it — and because it is now a pure
+          projection, the filter, the chips and the counts cannot drift apart
+          from the canonical answer again. See connectionRowLegacyState.
+        type: string
+      sync_state:
+        description: |-
+          SyncState is synced, out_of_sync, blocked or unknown. "synced" is
+          possible ONLY at VerificationScope "full" — the row builder refuses to
+          emit any other combination (see applyConnectionRowCanonical).
+        type: string
+      verification_scope:
+        description: |-
+          VerificationScope is how much of what Sharko owns was successfully
+          compared: full, partial or none. "none" on a row no check has reached
+          yet — which is the honest answer, not a cheerful one.
         type: string
     type: object
   internal_api.doctorCheck:
