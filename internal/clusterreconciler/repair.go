@@ -161,7 +161,7 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 	}
 
 	recordWrite("updated")
-	log.Info("[clusterreconciler] cluster connection repaired to match git and the secrets backend",
+	log.Info("[clusterreconciler] cluster connection repaired to the connection git defines, with credential values resolved from the configured credentials source",
 		"cluster", name, "namespace", r.namespace,
 		"fields_written", len(outcome.FieldsWritten),
 		"revision", comparedRevision)
