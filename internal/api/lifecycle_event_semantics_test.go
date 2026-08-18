@@ -775,9 +775,29 @@ func TestLifecycleWriters_BatchEndpoints_AllFailed(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
+		// The status is ASSERTED, not just logged. An all-failed adoption
+		// answering 200 is a known oddity — 207 is only set when at least
+		// one cluster succeeded — and the product owner still has to rule on
+		// it. Pinning it here records the CURRENT behaviour rather than
+		// blessing it: if the status is ever corrected, this line fails and
+		// whoever changes it has to come and say so deliberately. It also
+		// makes the round's "no HTTP status code was changed" claim checked
+		// on both batch endpoints instead of one.
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 (the known all-failed-adoption oddity, unchanged by this round), got %d (%s)",
+				w.Code, w.Body.String())
+		}
+
 		e := findEntry(srv, "cluster_adopted")
 		if e == nil {
-			t.Skipf("the adopt call did not reach the audit enrichment (status %d, body %s)", w.Code, w.Body.String())
+			// NOT a skip. This subtest guards the product owner's own
+			// headline example, and a test that can quietly stop testing is
+			// the exact failure mode this round exists to remove — it is how
+			// two contradictions survived a green suite. If the handler stops
+			// reaching its audit enrichment, that is a defect to investigate,
+			// never a reason to pass.
+			t.Fatalf("the adopt handler wrote no cluster_adopted entry, so C8 was not tested at all (status %d, body %s).\n"+
+				"Fix the handler or the fixture — do not soften this to a skip.", w.Code, w.Body.String())
 		}
 		if e.Result == "success" {
 			t.Fatalf("C8 IS BACK — THE RULING'S HEADLINE EXAMPLE: every adoption failed and the log says %q.\n"+
@@ -793,6 +813,6 @@ func TestLifecycleWriters_BatchEndpoints_AllFailed(t *testing.T) {
 		if bad := validateLifecycleEntry(*e); len(bad) > 0 {
 			t.Errorf("contradictory entry: %v", bad)
 		}
-		t.Logf("HTTP status was %d — an all-failed adoption still answers 200; that response-code oddity is deliberately NOT changed here and remains an open finding for the product owner", w.Code)
+		t.Log("an all-failed adoption still answers HTTP 200 (asserted above) — that response-code oddity is deliberately NOT changed here and remains an open finding for the product owner")
 	})
 }
