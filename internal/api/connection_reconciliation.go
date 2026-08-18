@@ -123,8 +123,30 @@ const (
 // Fixed reason sentences. Every one is a literal here — never provider,
 // git or Kubernetes error text.
 const (
+	// reasonOutOfSyncApprovalRequired points the admin at the repair door.
+	// It may ONLY be used when plan.action is repair_connection — pointing
+	// at a door that is not offered is the exact lie the withheld-door
+	// sentences below exist to prevent. outOfSyncApprovalReason enforces
+	// the pairing; the invariant sweep pins it.
 	reasonOutOfSyncApprovalRequired = "The live connection no longer matches what git defines. Sharko will not change connection details or credential material by itself — an admin reviews and applies the change through the repair action."
 	reasonOutOfSyncLabelsOnly       = "Some addon labels on this connection do not match what git declares."
+	// reasonOutOfSyncLegacyInline is the legacy-inline drift explanation:
+	// the repair door does not exist for this mode (no durable credential
+	// reference — ruling 1), so the sentence points at migration and never
+	// at the repair action.
+	reasonOutOfSyncLegacyInline = "The live connection no longer matches what git defines. Its credential exists only in the live Secret, so Sharko cannot rebuild the connection from Git. Store a fresh credential in a supported credentials provider and move the cluster onto it."
+	// reasonOutOfSyncRepairWithheld is the fallback when drift needs an
+	// admin but no repair is offered and the comparison did not carry its
+	// own withheld-door sentence. It should rarely be seen — the
+	// commit-unknown, unknown-source and backend-unreadable cases all carry
+	// the comparison's own sentence, which wins.
+	reasonOutOfSyncRepairWithheld = "The live connection no longer matches what git defines, and Sharko cannot offer a repair for this connection right now."
+	// reasonVerificationIncomplete is the fallback for an unknown state
+	// whose comparison carried no limit sentence (e.g. a provider hot-swap
+	// between the policy decision and the read left a full-scope comparison
+	// with unchecked fields). An unknown state never ships with an empty
+	// reason.
+	reasonVerificationIncomplete    = "Sharko could not compare part of what it owns on this connection, so it cannot call the connection synced."
 	reasonSecretMissingDurable      = "This cluster has no connection Secret right now. Sharko will create it from git and the configured credentials source on the reconciler's next pass."
 	reasonSecretMissingLegacyInline = "This cluster's connection Secret is gone, and its credential existed only in that Secret — Sharko cannot restore it from Git. Store a fresh credential in a supported credentials provider and move the cluster onto it."
 	reasonSecretMissingSelfManaged  = "You maintain this cluster's connection Secret yourself and it has not been created yet. Sharko does not create it."
@@ -433,9 +455,13 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 		ValuesNeverReturned: true,
 	}
 
-	out.Sync = buildReconciliationSync(v, mode, drift)
+	// The plan is built FIRST: whether the repair door is actually offered
+	// decides which sentences sync and the conditions are allowed to use —
+	// the generic "…through the repair action" wording may only ever appear
+	// next to plan.action: repair_connection.
 	out.Plan = buildReconciliationPlan(v, mode, drift, f.selfHealOn)
-	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, f.healthState)
+	out.Sync = buildReconciliationSync(v, mode, drift, out.Plan)
+	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, f.healthState)
 
 	// THE INVARIANT, enforced last and fail-closed: synced is only ever
 	// shipped at full verification scope. This guard should never fire — the
@@ -537,9 +563,37 @@ func groupConnectionDrift(v connectionComparisonView) connectionReconciliationDr
 	return d
 }
 
+// outOfSyncApprovalReason picks the honest sentence for approval-gated
+// drift. The generic "…through the repair action" sentence may ONLY appear
+// when repair_connection IS the offered action. When the door is withheld,
+// the body explains why it is absent instead of pointing at it — the
+// contract's own "the plan explaining what is withheld" rule:
+//
+//   - legacy_inline: the mode-appropriate migration sentence, which never
+//     mentions the repair action (the door does not exist for this mode).
+//   - the comparison's own limit sentence when it carries one — verbatim.
+//     That is the R3-8 commit-unknown withdrawal sentence ("Sharko cannot
+//     tell which commit your git branch is on…"), the unknown-source
+//     "source not recorded / not understood" sentences, or the
+//     backend-unreadable sentence.
+//   - otherwise a fixed fallback that names the absence plainly.
+func outOfSyncApprovalReason(v connectionComparisonView, mode string, repairOffered bool) string {
+	if repairOffered {
+		return reasonOutOfSyncApprovalRequired
+	}
+	if mode == managementModeLegacyInline {
+		return reasonOutOfSyncLegacyInline
+	}
+	if v.LimitReason != "" {
+		return v.LimitReason
+	}
+	return reasonOutOfSyncRepairWithheld
+}
+
 // buildReconciliationSync derives the sync block. The mapping is the
-// page-state matrix v3, row by row.
-func buildReconciliationSync(v connectionComparisonView, mode string, drift connectionReconciliationDrift) connectionReconciliationSync {
+// page-state matrix v3, row by row. The plan is an input because the
+// approval sentences depend on whether the repair door is actually offered.
+func buildReconciliationSync(v connectionComparisonView, mode string, drift connectionReconciliationDrift, plan connectionReconciliationPlan) connectionReconciliationSync {
 	sync := connectionReconciliationSync{
 		// CheckedAt copies the comparison's own timestamp — a string, never a
 		// Go time, so a zero time cannot be fabricated (the W3-6 rule).
@@ -548,6 +602,7 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 	}
 	approval := len(drift.ConnectionConfiguration) > 0 || len(drift.CredentialMaterial) > 0
 	sync.ApprovalRequired = approval
+	repairOffered := plan.Action == planActionRepairConnection
 
 	switch connectioncompare.Status(v.Status) {
 	case connectioncompare.StatusCheckFailed:
@@ -583,7 +638,7 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 		sync.State = syncStateOutOfSync
 		sync.VerificationScope = verificationScopeForComparison(v)
 		if approval {
-			sync.Reason = reasonOutOfSyncApprovalRequired
+			sync.Reason = outOfSyncApprovalReason(v, mode, repairOffered)
 		} else {
 			sync.Reason = reasonOutOfSyncLabelsOnly
 		}
@@ -592,19 +647,22 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 		// Row 1 — the comparison itself only produces synced at full scope
 		// with nothing unchecked, so this is the one bare-synced path. A
 		// reported difference beats the word: if the input ever carried both
-		// (which Compare never does), the difference wins, fail-closed.
+		// (which Compare never does), the difference wins, fail-closed. And
+		// the scope comes from the same honesty mapping as everywhere else,
+		// so an unchecked field can never ride under a "full" claim — the
+		// invariant guard then downgrades the word too.
 		if len(v.Differences) > 0 {
 			sync.State = syncStateOutOfSync
 			sync.VerificationScope = verificationScopeForComparison(v)
 			if approval {
-				sync.Reason = reasonOutOfSyncApprovalRequired
+				sync.Reason = outOfSyncApprovalReason(v, mode, repairOffered)
 			} else {
 				sync.Reason = reasonOutOfSyncLabelsOnly
 			}
 			break
 		}
 		sync.State = syncStateSynced
-		sync.VerificationScope = verificationScopeFull
+		sync.VerificationScope = verificationScopeForComparison(v)
 
 	case connectioncompare.StatusLimited:
 		// Everything the comparison could check matched, but the scope was
@@ -615,7 +673,7 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 			sync.State = syncStateOutOfSync
 			sync.VerificationScope = verificationScopeForComparison(v)
 			if approval {
-				sync.Reason = reasonOutOfSyncApprovalRequired
+				sync.Reason = outOfSyncApprovalReason(v, mode, repairOffered)
 			} else {
 				sync.Reason = reasonOutOfSyncLabelsOnly
 			}
@@ -626,18 +684,26 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 			// of them was compared and matched: that is full verification of
 			// the owned scope, and honestly synced. managed_scope names the
 			// scope so the page can say "Addon labels synced", never bare
-			// "Synced".
+			// "Synced". Scope through the same honesty mapping — an unchecked
+			// field demotes it, and the invariant guard demotes the word.
 			sync.State = syncStateSynced
-			sync.VerificationScope = verificationScopeFull
+			sync.VerificationScope = verificationScopeForComparison(v)
 		} else {
 			// Rows 2 and 12 — part of what Sharko owns was not compared
 			// (EKS credential content, an inline credential, an unreadable
 			// backend, an unrecorded source). "I found no problem in the part
 			// I looked at" is not "this is right": the state is unknown, with
-			// the comparison's own limit sentence as the reason.
+			// the comparison's own limit sentence as the reason — and never
+			// an empty reason: a full-scope policy whose read then came back
+			// narrower (provider hot-swap between the policy decision and
+			// the read) carries no limit sentence, so a fixed fallback
+			// covers it.
 			sync.State = syncStateUnknown
 			sync.VerificationScope = verificationScopeForComparison(v)
 			sync.Reason = v.LimitReason
+			if sync.Reason == "" {
+				sync.Reason = reasonVerificationIncomplete
+			}
 		}
 
 	default:
@@ -653,13 +719,28 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 
 // verificationScopeForComparison maps the comparison's scope onto the
 // verification_scope enum for a comparison that actually ran.
+//
+// The NotChecked list beats the scope word: a comparison that reported ANY
+// deliberately-unchecked field did not verify everything Sharko owns,
+// whatever its declared scope says. That combination is real — a provider
+// hot-swap between the policy decision and the stored-facts read leaves a
+// full-scope comparison with the data fields unchecked — and "full" would
+// be a false claim there. The invariant sweep pins scope-vs-NotChecked
+// honesty across every combination.
 func verificationScopeForComparison(v connectionComparisonView) string {
 	switch connectioncompare.Scope(v.Scope) {
 	case connectioncompare.ScopeFull:
+		if len(v.NotChecked) > 0 {
+			return verificationScopePartial
+		}
 		return verificationScopeFull
 	case connectioncompare.ScopeAddonLabelsOnly:
 		// Everything Sharko owns at this scope (the addon labels) was
-		// compared — full, of the owned scope managed_scope names.
+		// compared — full, of the owned scope managed_scope names. Unless
+		// something was reported unchecked, which demotes it the same way.
+		if len(v.NotChecked) > 0 {
+			return verificationScopePartial
+		}
 		return verificationScopeFull
 	case connectioncompare.ScopeLimited:
 		// The identity, type and owned labels were genuinely compared; at
@@ -719,7 +800,9 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 			p.Action = planActionMigrateCredential
 		}
 		if hasConfigDrift || hasCredDrift {
-			p.RequiresApproval = planRequiresApprovalSentence
+			// Never the generic repair-door sentence: the repair action does
+			// not exist for this mode, so the sentence points at migration.
+			p.RequiresApproval = reasonOutOfSyncLegacyInline
 		}
 		return p
 	}
@@ -741,12 +824,18 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 			// Rows 3, 6, 7 — the approval-gated half. The repair offer
 			// follows the comparison's own policy: it is already withdrawn
 			// when the compared commit is unknown (R3-8) or the mode does not
-			// allow a full rewrite.
-			p.RequiresApproval = planRequiresApprovalSentence
+			// allow a full rewrite. The generic repair-door sentence rides
+			// ONLY with an actually-offered repair; a withheld door carries
+			// the explanation of the absence instead (the comparison's own
+			// sentence when it has one — the R3-8 withdrawal, the
+			// unknown-source sentences — else the fixed fallback).
 			if v.RepairAvailable && connectioncompare.RepairScope(v.RepairScope) == connectioncompare.RepairScopeFullConnection {
 				p.Action = planActionRepairConnection
 				p.ActionScopes = []string{"metadata.labels", "data.name", "data.server", "data.config"}
 				p.ReviewedCommit = v.ComparedCommit
+				p.RequiresApproval = planRequiresApprovalSentence
+			} else {
+				p.RequiresApproval = outOfSyncApprovalReason(v, mode, false)
 			}
 			if hasLabelDrift && labelsSelfHeal {
 				p.Automatic = planAutomaticLabelSync
@@ -781,8 +870,9 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 
 // buildReconciliationConditions itemises the current facts (product ruling
 // 5). Routine success renders compactly on the page; the API always names
-// the facts it has.
-func buildReconciliationConditions(v connectionComparisonView, mode string, sync connectionReconciliationSync, healthState string) []connectionReconciliationCondition {
+// the facts it has. The plan is an input so the approval condition can only
+// name the repair door when the plan actually offers it.
+func buildReconciliationConditions(v connectionComparisonView, mode string, sync connectionReconciliationSync, plan connectionReconciliationPlan, healthState string) []connectionReconciliationCondition {
 	argoCond := connectionReconciliationCondition{ID: conditionArgoCDConnection}
 	switch healthState {
 	case healthStateConnected:
@@ -906,8 +996,14 @@ func buildReconciliationConditions(v connectionComparisonView, mode string, sync
 	conds = append(conds, argoCond)
 
 	if sync.ApprovalRequired {
+		// The condition names the repair door only when the plan actually
+		// offers it; a withheld door carries the explanation of its absence.
+		detail := condApprovalRequired
+		if plan.Action != planActionRepairConnection {
+			detail = outOfSyncApprovalReason(v, mode, false)
+		}
 		conds = append(conds, connectionReconciliationCondition{
-			ID: conditionApproval, Status: conditionStatusBlocked, Detail: condApprovalRequired,
+			ID: conditionApproval, Status: conditionStatusBlocked, Detail: detail,
 		})
 	}
 	return conds

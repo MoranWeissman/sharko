@@ -23,16 +23,19 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/kubernetes/fake"
+
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/connectioncompare"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/settings"
-	"k8s.io/client-go/kubernetes/fake"
 )
 
 // reconTestCommit is the fixture git head SHA (comparisonGP's headSHA).
@@ -132,8 +135,23 @@ func TestConnectionReconciliation_SyncedRequiresFullScope_Invariant(t *testing.T
 	}
 	paths := []string{clusterreconciler.DefaultManagedClustersPath, clusterreconciler.V4ManagedClustersPath}
 	commits := []string{"", reconTestCommit}
+	limitReasons := []string{"", "a limit sentence"}
 
-	checked := 0
+	type combo struct {
+		status      connectioncompare.Status
+		scope       connectioncompare.Scope
+		mode        connectioncompare.Mode
+		source      string
+		diffs       []connectionComparisonDifference
+		nc          []connectionComparisonNotChecked
+		repairAvail bool
+		repairScope connectioncompare.RepairScope
+		path        string
+		commit      string
+		limitReason string
+		selfHeal    bool
+	}
+	var combos []combo
 	for _, status := range statuses {
 		for _, scope := range scopes {
 			for _, mode := range modes {
@@ -143,52 +161,9 @@ func TestConnectionReconciliation_SyncedRequiresFullScope_Invariant(t *testing.T
 							for _, rep := range repairs {
 								for _, path := range paths {
 									for _, commit := range commits {
-										for _, selfHeal := range []bool{false, true} {
-											v := reconView(func(cv *connectionComparisonView) {
-												cv.Status = string(status)
-												cv.Scope = string(scope)
-												cv.OwnershipMode = string(mode)
-												cv.CredentialSourceType = source
-												cv.Differences = diffs
-												cv.NotChecked = nc
-												cv.RepairAvailable = rep.available
-												cv.RepairScope = string(rep.scope)
-												cv.ComparedPath = path
-												cv.ComparedCommit = commit
-												cv.LimitReason = "a limit sentence"
-												cv.FailureReason = "a failure sentence"
-											})
-											out := buildRecon(v, selfHeal)
-											checked++
-											if out.Sync.State == syncStateSynced && out.Sync.VerificationScope != verificationScopeFull {
-												t.Fatalf("INVARIANT VIOLATED: sync.state=synced with verification_scope=%q for status=%q scope=%q mode=%q source=%q diffs=%d",
-													out.Sync.VerificationScope, status, scope, mode, source, len(diffs))
-											}
-											// A reported difference must never wear the synced word,
-											// whatever the input status claimed.
-											if out.Sync.State == syncStateSynced && len(v.Differences) > 0 {
-												t.Fatalf("synced with %d reported differences (status=%q scope=%q mode=%q)",
-													len(v.Differences), status, scope, mode)
-											}
-											// Blocked is deterministic: foreign ownership only.
-											if out.Sync.State == syncStateBlocked && connectioncompare.Status(v.Status) != connectioncompare.StatusOwnershipConflict {
-												t.Fatalf("blocked without an ownership conflict (status=%q)", v.Status)
-											}
-											// legacy_inline never gets repair_connection; foreign never
-											// gets anything but take_over (dispatch hard rules).
-											if out.ManagementMode == managementModeLegacyInline && out.Plan.Action == planActionRepairConnection {
-												t.Fatalf("legacy_inline offered repair_connection (status=%q scope=%q)", v.Status, v.Scope)
-											}
-											if out.ManagementMode == managementModeForeignOwned && out.Plan.Action != planActionTakeOver {
-												t.Fatalf("foreign_owned offered %q, only take_over is allowed", out.Plan.Action)
-											}
-											// approval_required is true exactly when drift touches
-											// connection configuration or credential material.
-											wantApproval := len(out.Drift.ConnectionConfiguration) > 0 || len(out.Drift.CredentialMaterial) > 0
-											if out.Sync.ApprovalRequired != wantApproval {
-												t.Fatalf("approval_required=%v, want %v (config=%d cred=%d)",
-													out.Sync.ApprovalRequired, wantApproval,
-													len(out.Drift.ConnectionConfiguration), len(out.Drift.CredentialMaterial))
+										for _, limitReason := range limitReasons {
+											for _, selfHeal := range []bool{false, true} {
+												combos = append(combos, combo{status, scope, mode, source, diffs, nc, rep.available, rep.scope, path, commit, limitReason, selfHeal})
 											}
 										}
 									}
@@ -198,6 +173,87 @@ func TestConnectionReconciliation_SyncedRequiresFullScope_Invariant(t *testing.T
 					}
 				}
 			}
+		}
+	}
+
+	checked := 0
+	for _, c := range combos {
+		v := reconView(func(cv *connectionComparisonView) {
+			cv.Status = string(c.status)
+			cv.Scope = string(c.scope)
+			cv.OwnershipMode = string(c.mode)
+			cv.CredentialSourceType = c.source
+			cv.Differences = c.diffs
+			cv.NotChecked = c.nc
+			cv.RepairAvailable = c.repairAvail
+			cv.RepairScope = string(c.repairScope)
+			cv.ComparedPath = c.path
+			cv.ComparedCommit = c.commit
+			cv.LimitReason = c.limitReason
+			cv.FailureReason = "a failure sentence"
+		})
+		out := buildRecon(v, c.selfHeal)
+		checked++
+
+		if out.Sync.State == syncStateSynced && out.Sync.VerificationScope != verificationScopeFull {
+			t.Fatalf("INVARIANT VIOLATED: sync.state=synced with verification_scope=%q for %+v",
+				out.Sync.VerificationScope, c)
+		}
+		// A reported difference must never wear the synced word, whatever
+		// the input status claimed.
+		if out.Sync.State == syncStateSynced && len(v.Differences) > 0 {
+			t.Fatalf("synced with %d reported differences (%+v)", len(v.Differences), c)
+		}
+		// Blocked is deterministic: foreign ownership only.
+		if out.Sync.State == syncStateBlocked && c.status != connectioncompare.StatusOwnershipConflict {
+			t.Fatalf("blocked without an ownership conflict (%+v)", c)
+		}
+		// legacy_inline never gets repair_connection; foreign never gets
+		// anything but take_over (dispatch hard rules).
+		if out.ManagementMode == managementModeLegacyInline && out.Plan.Action == planActionRepairConnection {
+			t.Fatalf("legacy_inline offered repair_connection (%+v)", c)
+		}
+		if out.ManagementMode == managementModeForeignOwned && out.Plan.Action != planActionTakeOver {
+			t.Fatalf("foreign_owned offered %q, only take_over is allowed (%+v)", out.Plan.Action, c)
+		}
+		// approval_required is true exactly when drift touches connection
+		// configuration or credential material.
+		wantApproval := len(out.Drift.ConnectionConfiguration) > 0 || len(out.Drift.CredentialMaterial) > 0
+		if out.Sync.ApprovalRequired != wantApproval {
+			t.Fatalf("approval_required=%v, want %v (config=%d cred=%d, %+v)",
+				out.Sync.ApprovalRequired, wantApproval,
+				len(out.Drift.ConnectionConfiguration), len(out.Drift.CredentialMaterial), c)
+		}
+		// The generic repair-door sentences ride ONLY with an
+		// actually-offered repair. A withheld door must carry the
+		// explanation of its absence instead of pointing the admin at an
+		// action that is not there (review blocker, 2026-08-18).
+		if out.Sync.ApprovalRequired && out.Plan.Action != planActionRepairConnection {
+			if out.Sync.Reason == reasonOutOfSyncApprovalRequired {
+				t.Fatalf("sync.reason points at the repair action while plan.action=%q (%+v)", out.Plan.Action, c)
+			}
+			if out.Plan.RequiresApproval == planRequiresApprovalSentence {
+				t.Fatalf("plan.requires_approval points at the repair action while plan.action=%q (%+v)", out.Plan.Action, c)
+			}
+			for _, cond := range out.Conditions {
+				if cond.ID == conditionApproval && cond.Detail == condApprovalRequired {
+					t.Fatalf("the approval condition points at the repair action while plan.action=%q (%+v)", out.Plan.Action, c)
+				}
+			}
+			if out.Sync.State == syncStateOutOfSync && out.Sync.Reason == "" {
+				t.Fatalf("approval-gated out_of_sync with no reason at all (%+v)", c)
+			}
+		}
+		// Scope honesty (F2): a "full" verification claim never rides over
+		// deliberately-unchecked fields.
+		if out.Sync.VerificationScope == verificationScopeFull && len(v.NotChecked) > 0 {
+			t.Fatalf("verification_scope=full with %d unchecked field(s) (%+v)", len(v.NotChecked), c)
+		}
+		// An unknown produced by a comparison that RAN as limited never has
+		// an empty reason (the never-run row 15 is the one legitimate
+		// empty, and its status is empty too).
+		if out.Sync.State == syncStateUnknown && c.status == connectioncompare.StatusLimited && out.Sync.Reason == "" {
+			t.Fatalf("unknown from a limited comparison with an empty reason (%+v)", c)
 		}
 	}
 	if checked < 100000 {
@@ -247,6 +303,22 @@ func TestConnectionReconciliation_MatrixV3Rows(t *testing.T) {
 				v.Differences = []connectionComparisonDifference{reconSafeDiff("data.server")}
 			}),
 			want: want{state: syncStateOutOfSync, verification: verificationScopeFull, managedScope: managedScopeFullConnection, approval: true, action: planActionRepairConnection, reason: reasonOutOfSyncApprovalRequired},
+		},
+		{
+			row: "3b: details drift, commit unknown — repair withheld (R3-8)",
+			view: reconView(func(v *connectionComparisonView) {
+				v.Status = string(connectioncompare.StatusOutOfSync)
+				v.Differences = []connectionComparisonDifference{reconSafeDiff("data.server")}
+				// The comparison already withdrew the repair and wrote the
+				// R3-8 withdrawal sentence into the limit reason — exactly
+				// what compareClusterConnection does when the git provider
+				// cannot name a commit.
+				v.ComparedCommit = ""
+				v.RepairAvailable = false
+				v.RepairScope = string(connectioncompare.RepairScopeNone)
+				v.LimitReason = "Sharko cannot tell which commit your git branch is on, so it will not offer to rewrite this connection. Sharko only makes this change when it can name the exact commit it is matching."
+			}),
+			want: want{state: syncStateOutOfSync, verification: verificationScopeFull, managedScope: managedScopeFullConnection, approval: true, action: planActionNone, reason: "Sharko cannot tell which commit your git branch is on, so it will not offer to rewrite this connection. Sharko only makes this change when it can name the exact commit it is matching."},
 		},
 		{
 			row: "4: v4 addon-label drift (sharko_managed) — converges by itself",
@@ -500,6 +572,9 @@ func TestConnectionReconciliation_NewSentencesExact(t *testing.T) {
 		planAutomaticSecretCreate:       "Sharko will create this connection Secret from git and the configured credentials source on the reconciler's next pass.",
 		planAutomaticLabelSync:          "Sharko re-applies the addon labels git declares on the reconciler's next pass.",
 		reasonOutOfSyncApprovalRequired: "The live connection no longer matches what git defines. Sharko will not change connection details or credential material by itself — an admin reviews and applies the change through the repair action.",
+		reasonOutOfSyncLegacyInline:     "The live connection no longer matches what git defines. Its credential exists only in the live Secret, so Sharko cannot rebuild the connection from Git. Store a fresh credential in a supported credentials provider and move the cluster onto it.",
+		reasonOutOfSyncRepairWithheld:   "The live connection no longer matches what git defines, and Sharko cannot offer a repair for this connection right now.",
+		reasonVerificationIncomplete:    "Sharko could not compare part of what it owns on this connection, so it cannot call the connection synced.",
 	}
 	for got, want := range exact {
 		if got != want {
@@ -511,6 +586,117 @@ func TestConnectionReconciliation_NewSentencesExact(t *testing.T) {
 	// promise Sharko cannot keep there.
 	if strings.Contains(reasonSecretMissingLegacyInline, "next pass") {
 		t.Error("the legacy-inline missing sentence promises a next-pass fix — banned (ruling 1)")
+	}
+	// The legacy-inline withheld-door sentence must never point at the
+	// repair action — the door does not exist for this mode.
+	if strings.Contains(strings.ToLower(reasonOutOfSyncLegacyInline), "repair") {
+		t.Error("the legacy-inline drift sentence mentions the repair action — banned (review blocker)")
+	}
+}
+
+// TestConnectionReconciliation_RepairWithheldExplanations pins the review
+// blocker end to end: whenever drift needs an admin but the repair door is
+// NOT offered, the body explains WHY the door is absent — and the generic
+// "…through the repair action" sentences appear nowhere in the response.
+func TestConnectionReconciliation_RepairWithheldExplanations(t *testing.T) {
+	// The R3-8 withdrawal sentence, verbatim — the exact literal
+	// compareClusterConnection writes when the git provider cannot name a
+	// commit.
+	const r38Sentence = "Sharko cannot tell which commit your git branch is on, so it will not offer to rewrite this connection. Sharko only makes this change when it can name the exact commit it is matching."
+
+	cases := []struct {
+		name       string
+		view       connectionComparisonView
+		wantAction string
+		wantReason string
+	}{
+		{
+			name: "commit unknown — repair withdrawn (R3-8), sentence surfaces verbatim",
+			view: reconView(func(v *connectionComparisonView) {
+				v.Status = string(connectioncompare.StatusOutOfSync)
+				v.Differences = []connectionComparisonDifference{reconSafeDiff("data.server")}
+				v.ComparedCommit = ""
+				v.RepairAvailable = false
+				v.RepairScope = string(connectioncompare.RepairScopeNone)
+				v.LimitReason = r38Sentence
+			}),
+			wantAction: planActionNone,
+			wantReason: r38Sentence,
+		},
+		{
+			name: "legacy inline with connection-configuration drift — migration, never the repair door",
+			view: reconView(func(v *connectionComparisonView) {
+				v.Status = string(connectioncompare.StatusOutOfSync)
+				v.Scope = string(connectioncompare.ScopeLimited)
+				v.OwnershipMode = string(connectioncompare.ModeInlineKubeconfig)
+				v.CredentialSourceType = models.CredsSourceInlineKubeconfig
+				v.Differences = []connectionComparisonDifference{reconSafeDiff("type")}
+				v.RepairAvailable = true
+				v.RepairScope = string(connectioncompare.RepairScopeAddonLabelsOnly)
+				v.LimitReason = "the inline limit sentence"
+			}),
+			wantAction: planActionMigrateCredential,
+			wantReason: reasonOutOfSyncLegacyInline,
+		},
+		{
+			name: "unknown source with connection-configuration drift — the not-recorded sentence explains",
+			view: reconView(func(v *connectionComparisonView) {
+				v.Status = string(connectioncompare.StatusOutOfSync)
+				v.Scope = string(connectioncompare.ScopeLimited)
+				v.OwnershipMode = string(connectioncompare.ModeUnknownSource)
+				v.CredentialSourceType = ""
+				v.Differences = []connectionComparisonDifference{reconSafeDiff("type")}
+				v.RepairAvailable = true
+				v.RepairScope = string(connectioncompare.RepairScopeAddonLabelsOnly)
+				v.LimitReason = connectioncompare.LimitReasonSourceNotRecorded
+			}),
+			wantAction: planActionNone,
+			wantReason: connectioncompare.LimitReasonSourceNotRecorded,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := buildRecon(tc.view, false)
+
+			if !out.Sync.ApprovalRequired {
+				t.Fatal("connection-configuration drift must set approval_required")
+			}
+			if out.Plan.Action != tc.wantAction {
+				t.Fatalf("plan.action = %q, want %q", out.Plan.Action, tc.wantAction)
+			}
+			if out.Sync.Reason != tc.wantReason {
+				t.Errorf("sync.reason = %q, want the withheld-door explanation %q", out.Sync.Reason, tc.wantReason)
+			}
+			if out.Plan.RequiresApproval != tc.wantReason {
+				t.Errorf("plan.requires_approval = %q, want the withheld-door explanation %q", out.Plan.RequiresApproval, tc.wantReason)
+			}
+			sawApprovalCond := false
+			for _, c := range out.Conditions {
+				if c.ID == conditionApproval {
+					sawApprovalCond = true
+					if c.Detail != tc.wantReason {
+						t.Errorf("approval condition detail = %q, want %q", c.Detail, tc.wantReason)
+					}
+				}
+			}
+			if !sawApprovalCond {
+				t.Error("the approval condition is missing")
+			}
+
+			// The generic repair-door sentences must appear NOWHERE in the
+			// marshalled response — not in the reason, the plan, or any
+			// condition.
+			body, err := json.Marshal(out)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			for _, banned := range []string{reasonOutOfSyncApprovalRequired, planRequiresApprovalSentence, condApprovalRequired} {
+				if strings.Contains(string(body), banned) {
+					t.Errorf("the response points the admin at a repair door that is not offered: %q", banned)
+				}
+			}
+		})
 	}
 }
 
@@ -788,5 +974,91 @@ func TestConnectionReconciliation_ComparisonEndpointUnchanged(t *testing.T) {
 	}
 	if _, ok := raw["applied_revision"]; ok {
 		t.Error("the provenance join leaked onto the comparison endpoint")
+	}
+}
+
+// --- F5: the EKS proof for the NEW endpoint ----------------------------------
+
+// TestConnectionReconciliation_EKSPath_ZeroMintAndNoLeak drives the real EKS
+// metadata path through handleGetConnectionReconciliation, across its
+// branches (clean, and with label drift): the mint counter stays at ZERO and
+// no form of the stored sentinel appears in the response or the logs. Same
+// fixtures as the comparison endpoint's own EKS proof — the two endpoints
+// share the read core, and this pins that the join layer did not open a new
+// route to the mint.
+func TestConnectionReconciliation_EKSPath_ZeroMintAndNoLeak(t *testing.T) {
+	liveClean := liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		// A live config carrying a token minted at some earlier moment — the
+		// sentinel rides inside it, so the endpoint really has something to
+		// leak.
+		"config": `{"bearerToken":"` + eksMetadataAPISentinel + `","tlsClientConfig":{}}`,
+	}, nil)
+	liveLabelDrift := liveConnectionSecret(map[string]string{"datadog": "disabled"}, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"bearerToken":"` + eksMetadataAPISentinel + `","tlsClientConfig":{}}`,
+	}, nil)
+
+	cases := []struct {
+		name      string
+		live      *corev1.Secret
+		wantState string
+	}{
+		{"clean — row 2, unknown/partial, repair offered by policy", liveClean, syncStateUnknown},
+		{"label drift — out_of_sync, labels group only", liveLabelDrift, syncStateOutOfSync},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mint := &eksAPIMintCounter{}
+			backend := eksBackendForAPI(t, mint)
+
+			var logs strings.Builder
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(restore) })
+
+			_, router, _ := comparisonFixture(t, eksManagedYAML, tc.live, backend)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, reconciliationReq(comparisonCluster))
+			out := decodeRecon(t, w)
+
+			// 1. THE MINT. Zero, not low — same bar as the comparison's own
+			// EKS proof, inherited because both run the same read core.
+			if mint.calls != 0 {
+				t.Fatalf("the reconciliation view minted %d EKS sign-in token(s); it must mint ZERO — the read path must never reach GetCredentials", mint.calls)
+			}
+
+			// 2. The honest answer.
+			if out.ManagementMode != managementModeSharkoManaged {
+				t.Errorf("management_mode = %q, want sharko_managed", out.ManagementMode)
+			}
+			if out.Sync.State != tc.wantState {
+				t.Errorf("sync.state = %q, want %q", out.Sync.State, tc.wantState)
+			}
+			if out.Sync.State == syncStateSynced {
+				t.Fatal("an EKS cluster was reported synced; its credential content was never compared")
+			}
+			if out.Sync.VerificationScope != verificationScopePartial {
+				t.Errorf("verification_scope = %q, want partial for EKS", out.Sync.VerificationScope)
+			}
+			sawConfigUnchecked := false
+			for _, n := range out.Drift.NotChecked {
+				if n.Path == "data.config" {
+					sawConfigUnchecked = true
+				}
+			}
+			if !sawConfigUnchecked {
+				t.Errorf("data.config must be in drift.not_checked for EKS, got %+v", out.Drift.NotChecked)
+			}
+
+			// 3. No form of the sentinel anywhere.
+			assertNoEKSAPISentinel(t, "reconciliation response body", w.Body.String())
+			assertNoEKSAPILengthInJSON(t, "reconciliation response body", w.Body.Bytes())
+			assertNoEKSAPISentinel(t, "log output", logs.String())
+		})
 	}
 }
