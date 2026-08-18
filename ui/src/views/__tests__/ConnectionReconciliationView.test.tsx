@@ -1167,6 +1167,132 @@ describe('B7 — the action plan renders under explicit labels', () => {
     expect(screen.getByTestId('recon-plan-untouched').textContent).toBe(PLAN_UNTOUCHED_SENTENCE)
   })
 
+  /**
+   * B7: "Do not rewrite the server's promises in the browser; only provide
+   * visual structure around the returned fields."
+   *
+   * PLAN_UNTOUCHED_SENTENCE is composed in the browser, so showing it where
+   * the server promised nothing is the browser authoring a promise — and on
+   * a legacy-inline connection, one that is not even true: Sharko writes
+   * nothing there, so there is no write whose scope needs bounding.
+   */
+  describe('the Preserved line only appears where the server said a write is coming', () => {
+    it('a clean legacy-inline connection gets the migration link and NO preserved promise', async () => {
+      renderView(
+        makeView({
+          management_mode: 'legacy_inline',
+          managed_scope: 'addon_labels',
+          mode_statement: S.modeLegacy,
+          definition: { file: 'managed-clusters.yaml', branch: 'main', desired_revision: FULL_SHA, credential_source_type: 'inline-kubeconfig' },
+          sync: {
+            state: 'unknown',
+            verification_scope: 'partial',
+            approval_required: false,
+            headline: HEADLINE_VERIFICATION_INCOMPLETE,
+            qualifier: QUALIFIER_LEGACY_INLINE,
+            reason: S.modeLegacy,
+            checked_at: '2026-08-18T10:00:00Z',
+          },
+          // No credential_reference condition, so the migration link has no
+          // condition to sit beside and lands in the PLAN section — which is
+          // what makes the plan block render at all here. (With that
+          // condition present the link renders beside it and the plan block
+          // is absent, so a fixture that keeps it would pass this test
+          // vacuously. It did, first time round.)
+          conditions: [{ id: 'argocd_connection', status: 'ok', detail: S.condArgoOK }],
+          // The server promises nothing: no automatic write, no scopes.
+          plan: { action: 'migrate_credentials', action_scopes: [] },
+        }),
+      )
+      await waitForView()
+      // The plan block DOES render — it carries the migration link. Asserted
+      // first so this test can never pass just because the block was absent.
+      expect(screen.getByTestId('recon-plan')).toBeTruthy()
+      expect(screen.getByTestId('recon-action-migrate')).toBeTruthy()
+      // But nothing claims anything is preserved, because nothing is written.
+      expect(screen.queryByTestId('recon-plan-untouched')).toBeNull()
+      expect(screen.queryByTestId('recon-plan-preserved-label')).toBeNull()
+      expect(screen.getByTestId('recon-view').textContent ?? '').not.toContain(PLAN_UNTOUCHED_SENTENCE)
+    })
+
+    it('a foreign-owned connection makes no preserved promise either — Sharko owns nothing on it', async () => {
+      renderView(
+        makeView({
+          management_mode: 'foreign_owned',
+          managed_scope: 'none',
+          mode_statement: S.modeForeign,
+          sync: {
+            state: 'blocked',
+            verification_scope: 'none',
+            approval_required: false,
+            headline: HEADLINE_BLOCKED,
+            reason: S.modeForeign,
+            checked_at: '2026-08-18T10:00:00Z',
+          },
+          // Same reason as above: no ownership condition, so the takeover
+          // action lands in the plan section and the block really renders.
+          conditions: [{ id: 'argocd_connection', status: 'ok', detail: S.condArgoOK }],
+          plan: { action: 'take_over', action_scopes: [] },
+        }),
+      )
+      await waitForView()
+      expect(screen.getByTestId('recon-plan')).toBeTruthy()
+      expect(screen.getByTestId('recon-plan-action')).toBeTruthy()
+      expect(screen.queryByTestId('recon-plan-untouched')).toBeNull()
+      expect(screen.getByTestId('recon-view').textContent ?? '').not.toContain(PLAN_UNTOUCHED_SENTENCE)
+    })
+
+    it('an automatic write DOES get it — that write really does leave everything else alone', async () => {
+      renderView(
+        makeView({
+          sync: {
+            state: 'out_of_sync',
+            verification_scope: 'full',
+            approval_required: false,
+            headline: HEADLINE_OUT_OF_SYNC,
+            reason: S.labelsOnly,
+            checked_at: '2026-08-18T10:00:00Z',
+          },
+          conditions: [{ id: 'comparison', status: 'attention', detail: S.condCompDrift }],
+          drift: {
+            connection_configuration: [],
+            credential_material: [],
+            addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+            not_checked: [],
+          },
+          plan: { action: 'none', action_scopes: [], automatic: S.planAutoLabels },
+        }),
+      )
+      await waitForView()
+      expect(screen.getByTestId('recon-plan-untouched').textContent).toBe(PLAN_UNTOUCHED_SENTENCE)
+    })
+
+    it('an offered action that names its scopes DOES get it — the scopes are what it bounds', async () => {
+      renderView(
+        makeView({
+          sync: {
+            state: 'out_of_sync',
+            verification_scope: 'full',
+            approval_required: true,
+            headline: HEADLINE_OUT_OF_SYNC_APPROVAL,
+            reason: S.approvalRequired,
+            checked_at: '2026-08-18T10:00:00Z',
+          },
+          conditions: [{ id: 'approval', status: 'blocked', detail: S.condApproval }],
+          drift: {
+            connection_configuration: [{ path: 'data.server', status: 'different', expected: 'a', live: 'b' }],
+            credential_material: [],
+            addon_labels: [],
+            not_checked: [],
+          },
+          plan: { action: 'repair_connection', action_scopes: ['data.server'], reviewed_commit: FULL_SHA, requires_approval: S.planApproval },
+        }),
+      )
+      await waitForView()
+      expect(screen.getByTestId('recon-plan-untouched').textContent).toBe(PLAN_UNTOUCHED_SENTENCE)
+    })
+  })
+
   it('RULING (a): self-managed label drift promises the automatic re-apply and offers NO manual door', async () => {
     const onRequestSync = vi.fn()
     mockGetConnectionReconciliation.mockResolvedValue(

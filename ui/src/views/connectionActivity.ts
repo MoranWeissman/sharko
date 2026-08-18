@@ -76,9 +76,17 @@ export const ACTIVITY_FEED_LIMIT = 5
 export const ACTIVITY_FETCH_LIMIT = 1000
 
 /**
- * What an event's TITLE claims happened. Mirrors the Go rule engine's six
- * kinds one for one — the two surfaces classify the same events the same
- * way, so a title here can never disagree with the outcome the server wrote.
+ * What an event's TITLE claims happened. The six kinds, and which kind each
+ * event gets, are IDENTICAL to the Go rule engine's
+ * (internal/api/lifecycle_event_semantics_test.go `lifecycleEventCatalog`),
+ * so a title here can never disagree with the outcome the server wrote.
+ *
+ * The RULES are identical too, with ONE deliberate difference, stated here
+ * rather than left for someone to trip over: Go requires a completed write to
+ * SET its change answer, because Go governs what the code writes today. This
+ * side governs what is RENDERED, and the feed reads a live in-memory ring
+ * that still holds entries from before the `changes` field existed. So an
+ * unset `changes` is tolerated here and says nothing, where Go rejects it.
  */
 export type ActivityEventKind =
   /** A past-tense title claiming work landed. Only ever a success outcome. */
@@ -136,7 +144,14 @@ export const ACTIVITY_EVENT_TITLES: Record<string, ActivityEventMapping> = {
   // did not finish.
   connection_credential_drift_detected: { title: 'Credential drift noticed', kind: 'read_only' },
   connection_credential_drift_cleared: { title: 'Credential drift cleared', kind: 'read_only' },
-  connection_credential_check_failed: { title: 'Credential check did not finish', kind: 'failure_shaped' },
+  // read_only, NOT failure_shaped, matching Go exactly. A check that did not
+  // finish is still a check: it neither changed anything nor failed to, so
+  // its change answer is not_applicable — which is the rule the
+  // failure_shaped kind does NOT impose. Classifying it failure_shaped here
+  // (the first version of this table did) left that rule unenforced on the
+  // one event most likely to need it. The failure OUTCOME is still required:
+  // read_only carries a "…_failed" sub-case below, exactly as Go does.
+  connection_credential_check_failed: { title: 'Credential check did not finish', kind: 'read_only' },
   connection_credential_check_recovered: { title: 'Credential check completed again', kind: 'read_only' },
 
   // ── Fan-out endpoints ─────────────────────────────────────────────────

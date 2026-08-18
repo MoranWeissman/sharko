@@ -95,7 +95,19 @@ export const RECONCILIATION_NEEDS_OPERATOR = 'Reading this connection needs oper
 /** The fixed redaction text for sensitive drift, both sides, every time. */
 const REDACTED_TEXT = '<redacted>'
 
-/** What stays untouched whenever anything on this page writes — a scope statement, not a promise of any automatic fix. */
+/**
+ * What stays untouched whenever anything on this page writes — a scope
+ * statement, not a promise of any automatic fix.
+ *
+ * BROWSER-AUTHORED, and that is a known gap, not a design choice. Every other
+ * sentence in the plan section comes down from the server; this one is
+ * composed here, so it is the browser stating a promise about Sharko's write
+ * behaviour. It renders only where the server's own plan says a write is
+ * coming (see planDescribesAWrite in the view) so it can never be a claim
+ * with nothing behind it, but the real fix is a `plan.preserved` string on
+ * connectionReconciliationPlan, written next to the plan's other fixed
+ * sentences in internal/api/connection_reconciliation.go.
+ */
 export const PLAN_UNTOUCHED_SENTENCE = 'Foreign labels, other annotations and other data keys are never touched.'
 
 /**
@@ -557,6 +569,28 @@ export function ConnectionReconciliationView({
   const hasPlanContent =
     Boolean(view.plan.automatic) || Boolean(view.plan.requires_approval) || actionInPlanSection
 
+  // B7's own rule, applied to the one line on this page that breaks it:
+  // "Do not rewrite the server's promises in the browser; only provide
+  // visual structure around the returned fields."
+  //
+  // PLAN_UNTOUCHED_SENTENCE is composed HERE, not returned by the server, so
+  // showing it unconditionally is the browser authoring a promise. Worse, it
+  // is a promise about what a WRITE leaves alone — and it rendered on rows
+  // where Sharko writes nothing at all. On a clean legacy-inline connection
+  // the plan block renders (for the migration link) with no automatic
+  // sentence and no action scopes, and the page still said "Foreign labels,
+  // other annotations and other data keys are never touched." about a
+  // connection Sharko will never touch in the first place. Not merely a rule
+  // violation: a claim with nothing behind it.
+  //
+  // Until the server returns the sentence itself, the line renders ONLY when
+  // the server's own plan says Sharko will write something — either it
+  // promised an automatic write (plan.automatic), or the offered action
+  // names the scopes it changes (plan.action_scopes). Both are server facts.
+  // A plan with neither describes no write, so there is no scope to bound
+  // and nothing to preserve, and the line stays off.
+  const planDescribesAWrite = Boolean(view.plan.automatic) || view.plan.action_scopes.length > 0
+
   const healthWord = HEALTH_WORDS[view.health.state] ?? HEALTH_WORDS.not_checked
 
   const desiredSha = view.definition.desired_revision
@@ -780,14 +814,16 @@ export function ConnectionReconciliationView({
                 </dd>
               </div>
             )}
-            <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
-              <dt className="shrink-0 text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] sm:w-40 dark:text-gray-500" data-testid="recon-plan-preserved-label">
-                {PLAN_LABEL_PRESERVED}
-              </dt>
-              <dd className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-untouched">
-                {PLAN_UNTOUCHED_SENTENCE}
-              </dd>
-            </div>
+            {planDescribesAWrite && (
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+                <dt className="shrink-0 text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] sm:w-40 dark:text-gray-500" data-testid="recon-plan-preserved-label">
+                  {PLAN_LABEL_PRESERVED}
+                </dt>
+                <dd className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-untouched">
+                  {PLAN_UNTOUCHED_SENTENCE}
+                </dd>
+              </div>
+            )}
           </dl>
           {actionInPlanSection && <div data-testid="recon-plan-action">{actionButtonFor(view.plan.action)}</div>}
         </div>

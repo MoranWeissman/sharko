@@ -129,8 +129,48 @@ describe('the mapping table', () => {
     expect(ACTIVITY_EVENT_TITLES['connection_credential_drift_detected'].kind).toBe('read_only')
     expect(ACTIVITY_EVENT_TITLES['connection_credential_drift_cleared'].kind).toBe('read_only')
     expect(ACTIVITY_EVENT_TITLES['connection_credential_check_recovered'].kind).toBe('read_only')
-    // Only the check that genuinely did not finish is failure-shaped.
-    expect(ACTIVITY_EVENT_TITLES['connection_credential_check_failed'].kind).toBe('failure_shaped')
+    // The check that did not finish is read_only TOO, exactly as Go
+    // classifies it — a check that broke is still a check, so it must claim
+    // not_applicable changes, a rule the failure_shaped kind does not carry.
+    // Its failure outcome comes from read_only's own "…_failed" sub-case.
+    expect(ACTIVITY_EVENT_TITLES['connection_credential_check_failed'].kind).toBe('read_only')
+  })
+
+  /**
+   * The reviewer's finding: the comment claimed the TS kinds mirror the Go
+   * kinds one for one, and one event disagreed. This test makes the claim
+   * checkable instead of aspirational — the map below is transcribed from
+   * lifecycleEventCatalog in internal/api/lifecycle_event_semantics_test.go.
+   */
+  it('assigns every event the SAME kind Go assigns it', () => {
+    const GO_KINDS: Record<string, ActivityEventKind> = {
+      cluster_secret_create: 'completed_write',
+      cluster_secret_delete: 'completed_write',
+      cluster_secret_user_label_sync: 'completed_write',
+      cluster_secret_managed_self_heal: 'completed_write',
+      cluster_connection_repair: 'completed_write',
+      cluster_secret_create_failed: 'failure_shaped',
+      cluster_secret_delete_failed: 'failure_shaped',
+      cluster_secret_user_label_sync_failed: 'failure_shaped',
+      cluster_secret_managed_self_heal_failed: 'failure_shaped',
+      cluster_connection_repair_failed: 'failure_shaped',
+      cluster_connection_repair_requested: 'request_scoped',
+      cluster_connection_repair_refused: 'refusal',
+      connection_credential_drift_detected: 'read_only',
+      connection_credential_drift_cleared: 'read_only',
+      connection_credential_check_failed: 'read_only',
+      connection_credential_check_recovered: 'read_only',
+      cluster_adopted: 'batch',
+      cluster_registered: 'batch',
+    }
+    for (const [event, kind] of Object.entries(GO_KINDS)) {
+      expect(ACTIVITY_EVENT_TITLES[event], `${event} is missing from the feed's table`).toBeTruthy()
+      expect(ACTIVITY_EVENT_TITLES[event].kind, `${event}: Go says ${kind}`).toBe(kind)
+    }
+    // cluster_taken_over is not in Go's catalog (it is the takeover
+    // handler's own event, outside the connection-lifecycle rule engine) —
+    // the feed still names it, which is why it is not in the map above.
+    expect(ACTIVITY_EVENT_TITLES['cluster_taken_over']).toBeTruthy()
   })
 })
 
@@ -204,9 +244,9 @@ function contradictions(e: AuditEntry): string[] {
   if (e.result === 'success' && failureShapedTitle) {
     bad.push(`"${line}" — a success wearing a failure title`)
   }
-  if (e.result !== 'success' && (kind === 'completed_write' || kind === 'read_only')) {
+  if (e.result !== 'success' && kind === 'completed_write') {
     bad.push(
-      `"${line}" — a title claiming the work ran to completion, beside outcome "${e.result}"` +
+      `"${line}" — a past-tense title claiming work landed, beside outcome "${e.result}"` +
         ` (the server has a failure-shaped event name for this path — use it)`,
     )
   }
@@ -218,9 +258,22 @@ function contradictions(e: AuditEntry): string[] {
   if (kind === 'completed_write' && e.changes === 'not_applicable') {
     bad.push(`"${line}" — a completed write claiming the change question does not apply to it`)
   }
-  // A read-only check neither changed anything nor failed to.
-  if (kind === 'read_only' && e.changes !== undefined && e.changes !== 'not_applicable') {
-    bad.push(`"${line}" — a read-only check reporting changes "${e.changes}"`)
+
+  // read_only mirrors Go's kindReadOnly rule character for character,
+  // INCLUDING its "…_failed" sub-case: a check that did not finish is still a
+  // check (changes not_applicable), but it must carry the failure outcome,
+  // and one that ran to completion must carry success whatever it found —
+  // "successfully detecting drift is a successful check with an attention
+  // result, not an execution failure".
+  if (kind === 'read_only') {
+    if (e.changes !== undefined && e.changes !== 'not_applicable') {
+      bad.push(`"${line}" — a read-only check reporting changes "${e.changes}"; it neither changed anything nor failed to`)
+    }
+    if (e.event.endsWith('_failed')) {
+      if (e.result !== 'failure') bad.push(`"${line}" — a check-failure event carrying outcome "${e.result}"`)
+    } else if (e.result !== 'success') {
+      bad.push(`"${line}" — a check that ran to completion carrying outcome "${e.result}"; whatever it found, the check succeeded`)
+    }
   }
 
   // '"No changes made" is an action result, not proof the check failed.'
