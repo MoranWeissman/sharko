@@ -166,6 +166,16 @@ func TestFullAndLabelsOnlyRepairEventsAreTellableApart(t *testing.T) {
 	if !strings.Contains(full, "rewrote this connection's sign-in details") {
 		t.Errorf("the full-repair event does not say it rewrote the sign-in details: %q", full)
 	}
+	// The revoked split-authority phrasing must never come back (ruling 8):
+	// the sign-in details are the values git references, resolved from the
+	// configured credentials source — the source is never a second authority
+	// standing next to git.
+	if strings.Contains(full, "sign-in details from its configured credentials source and re-applied") {
+		t.Errorf("the full-repair event uses the revoked split-authority phrasing: %q", full)
+	}
+	if !strings.Contains(full, "the values git references") {
+		t.Errorf("the full-repair event does not name the sign-in details as the values git references: %q", full)
+	}
 	if !strings.Contains(labelsOnly, "sign-in details were not read or changed") {
 		t.Errorf("the labels-only event does not say the sign-in details were left alone: %q", labelsOnly)
 	}

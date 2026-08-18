@@ -188,7 +188,10 @@ func TestConnectionRepairSwaggerDescription_ExactTextAndSource(t *testing.T) {
 		t.Errorf("connection_repair.go @Description must contain: %q", wantReReadSentence)
 	}
 
-	// Verify banned phrases are absent.
+	// Verify banned phrases are absent. The last five are the revoked
+	// split-authority framing (ruling 8): the desired connection comes from
+	// git alone — credential values are RESOLVED from the referenced
+	// provider, which is never a second source of truth next to git.
 	bannedPhrases := []string{
 		"independently stored copy of the cluster's sign-in details",
 		"Sign-in details are re-fetched",
@@ -196,6 +199,12 @@ func TestConnectionRepairSwaggerDescription_ExactTextAndSource(t *testing.T) {
 		// survived in five files at once precisely because every existing
 		// ban listed complete sentences. Git defines the connection.
 		"Sharko intends",
+		"the configured git branch plus",
+		"from git plus",
+		"to match git and this cluster's configured credentials source",
+		"authoritative for connection details",
+		"two authorities",
+		"hybrid ownership",
 	}
 
 	for _, banned := range bannedPhrases {
@@ -235,16 +244,24 @@ func TestConnectionComparisonSwaggerDescription_ExactTextAndSource(t *testing.T)
 		t.Errorf("connection_comparison.go @Description must contain: %q", wantText)
 	}
 
-	// Verify banned phrases are absent.
-	bannedPhrases := []string{
+	// Verify banned phrases are absent. Beyond the round-6 phrase, the rest
+	// are the revoked split-authority framing (ruling 8): the desired
+	// connection comes from git alone — credential values are RESOLVED from
+	// the referenced provider, which is never a second source of truth next
+	// to git.
+	comparisonBannedPhrases := []string{
 		"an independently stored copy of the cluster's sign-in details",
 		// Ruling (b), 2026-08-19 — the fragment, same reasoning as the
 		// repair test above.
 		"Sharko intends",
+		"from git plus",
+		"authoritative for connection details",
+		"two authorities",
+		"hybrid ownership",
 	}
-	for _, bannedPhrase := range bannedPhrases {
-		if strings.Contains(sourceText, bannedPhrase) {
-			t.Errorf("connection_comparison.go must not contain banned phrase %q", bannedPhrase)
+	for _, banned := range comparisonBannedPhrases {
+		if strings.Contains(sourceText, banned) {
+			t.Errorf("connection_comparison.go must not contain banned phrase %q", banned)
 		}
 	}
 

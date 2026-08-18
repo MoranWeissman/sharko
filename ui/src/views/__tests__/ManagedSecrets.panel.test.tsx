@@ -955,6 +955,17 @@ describe('SSF-12 — the one health conclusion', () => {
     // replacement is exactly: "At least one compared field differs from the
     // Git-defined connection."
     'Sharko intends',
+    // The revoked split-authority model (ruling 8), banned in every variant:
+    // the credentials source is a resolved reference, never a second source
+    // of truth standing next to git.
+    'two authorities',
+    'hybrid ownership',
+    'hybrid connection',
+    'authoritative for connection details',
+    'authoritative for addon assignments',
+    'safer alternative to editing with kubectl',
+    'Git controls the addon labels',
+    'Your configured credentials source controls how ArgoCD connects',
   ]
 
   it('never renders any old verdict sentence on a connection row — the reconciliation view replaced them', async () => {

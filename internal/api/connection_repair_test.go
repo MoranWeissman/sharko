@@ -1127,7 +1127,7 @@ func TestRepair_NeverWritesToGit(t *testing.T) {
 	if len(gp.writes) > 0 {
 		t.Errorf(`the repair wrote to git: %v.
 
-Rule 7: repair fixes the cluster to match the Git-defined connection — git for addon labels, the configured credentials source for connection details. Git itself is never changed by a repair.`, gp.writes)
+Rule 7: repair fixes the cluster to match the connection git defines — credential values are resolved from the referenced provider, never stored in git. Git itself is never changed by a repair.`, gp.writes)
 	}
 }
 

@@ -200,7 +200,7 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 	//
 	// "configured credentials source" is true either way — it names where the
 	// credentials come from without claiming what is kept there.
-	r.recordReconcile(name, OutcomeSucceeded, "connection repaired — rewritten to match git and this cluster's configured credentials source", nil)
+	r.recordReconcile(name, OutcomeSucceeded, "connection repaired — rewritten to the connection git defines, with credential values resolved from this cluster's configured credentials source", nil)
 	return result, nil
 }
 
@@ -349,7 +349,7 @@ func (r *Reconciler) EmitConnectionRepairEvent(cluster string, fieldsWritten int
 	}
 	r.eventRecorder.Eventf(
 		events.ReasonConnectionRepaired,
-		"Cluster %s: Sharko rewrote this connection's sign-in details from its configured credentials source and re-applied the labels git declares (%d owned field(s) rewritten).",
+		"Cluster %s: Sharko rewrote this connection's sign-in details — the values git references, resolved from its configured credentials source — and re-applied the labels git declares (%d owned field(s) rewritten).",
 		events.EventTypeNormal,
 		cluster, fieldsWritten,
 	)

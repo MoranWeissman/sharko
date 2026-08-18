@@ -217,6 +217,15 @@ function expectNoBannedWording() {
   expect(screen.queryByText(/How Sharko manages this connection/)).toBeNull()
   expect(screen.queryByText(/Git controls the addon labels/)).toBeNull()
   expect(screen.queryByText(/Your configured credentials source controls how ArgoCD connects/)).toBeNull()
+  // The revoked split-authority model (ruling 8) — banned in every variant:
+  // the credentials source is a resolved reference, never a second source of
+  // truth standing next to git.
+  expect(screen.queryByText(/two authorities/i)).toBeNull()
+  expect(screen.queryByText(/hybrid ownership/i)).toBeNull()
+  expect(screen.queryByText(/hybrid connection/i)).toBeNull()
+  expect(screen.queryByText(/authoritative for connection details/i)).toBeNull()
+  expect(screen.queryByText(/authoritative for addon assignments/i)).toBeNull()
+  expect(screen.queryByText(/safer alternative to editing with kubectl/i)).toBeNull()
   expect(screen.queryByText(/Needs attention/)).toBeNull()
   expect(screen.queryByText(/Sharko will fix this on the next pass/)).toBeNull()
   expect(screen.queryByText(/This connection does not match what Sharko intends\./)).toBeNull()
