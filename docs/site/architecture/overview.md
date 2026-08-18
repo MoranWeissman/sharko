@@ -227,7 +227,7 @@ Security advisory notifications are raised when an addon has a new **major** ver
 
 ## Audit Log
 
-Every write operation that passes through the API is recorded in the audit log. The audit log provides an immutable trail of who did what and when.
+Every write operation that passes through the API is recorded in the audit log. The in-app feed shows what happened **since Sharko started**: it lives in an in-memory ring buffer that empties on every pod restart (the same records also go to stdout for your log pipeline — see [Audit Log Retention Model](../operator/audit-log.md)). The durable reconciliation evidence is elsewhere: the Git commits themselves and the applied-revision annotations Sharko stamps on the Secrets it writes.
 
 ```
 HTTP Handler (write operation)

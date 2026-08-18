@@ -242,8 +242,8 @@ a typed, actionable error instead of a silent no-op.
 ## Why identity-based access is the recommended path
 
 Sharko supports three ways to give it a spoke cluster's credentials at
-registration time (paste a kubeconfig, point at a stored kubeconfig, or
-mint an Amazon EKS token — see
+registration time (point at a stored kubeconfig, mint an Amazon EKS
+token, or — legacy and off by default — paste a kubeconfig; see
 [Managing Clusters](../user-guide/clusters.md#adding-a-cluster)), plus
 this hub-and-spoke recipe for clusters whose ArgoCD Secret already
 exists. **The identity-based path — Sharko minting its own EKS token via

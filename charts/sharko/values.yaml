@@ -85,10 +85,13 @@ settings:
   # Leave empty to keep runtime API value authoritative (today's behavior).
   probeMode: ""
 
-  # allowInlineCredentials: Whether the "Paste a kubeconfig" registration path
-  # is enabled server-wide (true | false, default true when unset).
-  # Set to false to forbid inline credential paste install-wide; connection-only
-  # registrations are unaffected.
+  # allowInlineCredentials: The "Allow legacy inline credentials" switch —
+  # whether the "Paste a kubeconfig" registration path is enabled server-wide
+  # (true | false, default FALSE when unset). The paste path is a legacy
+  # escape hatch: a pasted credential exists only in the live ArgoCD cluster
+  # Secret and cannot be recovered from Git. Set to true only if this install
+  # still depends on pasted registrations; connection-only registrations are
+  # unaffected either way.
   # Leave empty to keep runtime API value authoritative (today's behavior).
   allowInlineCredentials: ""
 

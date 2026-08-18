@@ -22,7 +22,7 @@ Two server-wide toggles are now Helm-declarable:
 | Helm value | Type | Default | What it controls |
 |------------|------|---------|------------------|
 | `settings.probeMode` | string | `""` (undeclared) | Connectivity probe mode: `"check-app"` (default, auto-deploy a transient connectivity-check Application to new zero-addon clusters) or `"api-test"` (no app ever auto-deployed, reachability from ArgoCD connection state only). Leave empty to keep the runtime API value authoritative. |
-| `settings.allowInlineCredentials` | string | `""` (undeclared) | Whether the "Paste a kubeconfig" registration path is enabled server-wide: `"true"` (default) or `"false"`. Set to `"false"` to forbid inline credential paste install-wide; connection-only registrations unaffected. Leave empty to keep the runtime API value authoritative. |
+| `settings.allowInlineCredentials` | string | `""` (undeclared) | The **Allow legacy inline credentials** switch: whether the "Paste a kubeconfig" registration path is enabled server-wide — `"false"` (the server default) or `"true"` (the legacy escape hatch; a pasted credential exists only in the live Secret and cannot be recovered from Git). Connection-only registrations are unaffected either way. Leave empty to keep the runtime API value authoritative. |
 
 When `settings.probeMode` is set to `"check-app"` or `"api-test"` in Helm values, that becomes the authoritative mode; a runtime `PUT /settings/probe-mode` edit is accepted but reverted to the git value within 60 seconds. The `GET /settings/probe-mode` response includes `managed_by_git: true` so the UI can show "git-managed; your edit will revert."
 
@@ -32,7 +32,7 @@ When `settings.probeMode` is set to `"check-app"` or `"api-test"` in Helm values
 # charts/sharko/values.yaml
 settings:
   probeMode: "check-app"                # git wins; UI edit will revert
-  allowInlineCredentials: "false"       # git wins; forbid inline paste install-wide
+  allowInlineCredentials: "false"       # git wins; pins the default-off legacy paste path
 ```
 
 ### Connection Configuration (Non-Secret Fields)
@@ -186,7 +186,7 @@ Operators who want GitOps-clean server config can now declare everything in Helm
 # charts/sharko/values.yaml (production hardening)
 settings:
   probeMode: "check-app"
-  allowInlineCredentials: "false"  # forbid inline kubeconfig paste
+  allowInlineCredentials: "false"  # pins the default-off legacy paste path
 
 connection:
   git:

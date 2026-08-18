@@ -95,16 +95,18 @@ curl -X PUT https://sharko.your-domain.com/api/v1/settings/probe-mode \
   -d '{"probe_mode": "api-test"}'
 ```
 
-### Allow Inline Credentials
+### Allow legacy inline credentials
 
-**Settings → same section as Connectivity Probe.** Server-wide, admin-only toggle (`allow_inline_credentials`, default **true**) that controls whether cluster registration is allowed to accept a pasted kubeconfig at all.
+**Settings → same section as Connectivity Probe.** Server-wide, admin-only toggle (`allow_inline_credentials`, default **false**) that controls whether cluster registration is allowed to accept a pasted kubeconfig at all.
+
+A pasted (inline) credential exists **only in the live ArgoCD cluster Secret** — it is never stored in Git, so Sharko cannot restore it from Git if that Secret is lost. That is why the paste path is off by default: it is a legacy escape hatch, not a recommended registration source.
 
 | Value | Behavior |
 |-------|----------|
-| `true` (default) | Every registration source — paste a kubeconfig, point at a stored secret, mint an EKS token, or no credentials at all — works as documented in [Adding a Cluster](clusters.md#adding-a-cluster). |
-| `false` | Registrations that paste inline kubeconfig bytes are rejected with a plain message. The **paste a kubeconfig** option disappears from the UI entirely. Pointing at an already-stored secret, minting an EKS token, or registering with no credentials at all are all unaffected — this only closes the one path where sensitive bytes travel inside the registration request itself. |
+| `false` (default) | Registrations that paste inline kubeconfig bytes are rejected with a plain message pointing at the supported credential providers. The **paste a kubeconfig** option does not appear in the UI. Pointing at an already-stored secret, minting an EKS token, or registering with no credentials at all all work as documented in [Adding a Cluster](clusters.md#adding-a-cluster). |
+| `true` (legacy) | The paste path is re-enabled install-wide. Existing installs that depend on pasted registrations can turn this on explicitly — nothing existing is deleted or converted either way, and connections registered with a pasted kubeconfig keep working regardless of this setting. |
 
-Turn this off in production to enforce GitOps-clean secret-store pointers — see [Security → Secrets Management Recommendations](../operator/security.md#secrets-management-recommendations). Once scoped RBAC lands (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than a single server-wide switch.
+To move an existing pasted connection onto a supported provider, follow [Migrating Off Pasted (Inline) Credentials](../operator/migrate-inline-credentials.md). Once scoped RBAC lands (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than a single server-wide switch.
 
 ## GitOps
 
