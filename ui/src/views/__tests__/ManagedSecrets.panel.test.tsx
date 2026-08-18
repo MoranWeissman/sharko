@@ -23,7 +23,6 @@ import { ManagedSecrets } from '@/views/ManagedSecrets'
 import { SecretDetailPage } from '@/views/SecretDetailPage'
 import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
-import { ApiError } from '@/services/api'
 
 // SSF-9: react-router-dom is used for real here — a row click now
 // navigates to its own full page (SecretDetailPage, at
@@ -39,6 +38,7 @@ vi.mock('@/components/ToastNotification', async () => {
 const mockGetManagedSecrets = vi.fn()
 const mockGetClusterComparison = vi.fn()
 const mockGetConnectionComparison = vi.fn()
+const mockGetConnectionReconciliation = vi.fn()
 const mockRepairConnection = vi.fn()
 const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
@@ -70,8 +70,13 @@ vi.mock('@/services/api', () => {
     api: {
       getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
       getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
+      getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
       repairConnection: (...args: unknown[]) => mockRepairConnection(...args),
     },
+    // TakeoverDialog's own imports — inert unless a test opens the dialog.
+    takeoverPreflight: vi.fn(),
+    takeoverCluster: vi.fn(),
+    dropLegacyLabels: vi.fn(),
     getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
     getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
     getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
@@ -221,9 +226,50 @@ const blankedResource = {
   values_blanked: true,
 }
 
+// The connection page's one read (Story 2): a clean, fully verified
+// sharko-managed connection by default; tests override per state. The deep
+// per-state behavior is pinned in ConnectionReconciliationView.test.tsx —
+// here it only has to render.
+function reconViewFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    cluster: 'prod-eu',
+    management_mode: 'sharko_managed',
+    managed_scope: 'full_connection',
+    mode_statement: 'Git defines the connection. Sharko resolves its credential references and maintains the resulting ArgoCD Secret.',
+    definition: {
+      file: 'configuration/managed-clusters.yaml',
+      branch: 'main',
+      desired_revision: 'abcdef1234567890abcdef1234567890abcdef12',
+      applied_revision: 'abcdef1234567890abcdef1234567890abcdef12',
+      credential_source_type: 'secret-kubeconfig',
+    },
+    sync: {
+      state: 'synced',
+      verification_scope: 'full',
+      approval_required: false,
+      checked_at: '2026-08-13T12:00:00Z',
+      last_successful_application: '2026-08-13T11:00:00Z',
+    },
+    health: { state: 'connected' },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: 'The connection definition was read from git.' },
+      { id: 'credential_reference', status: 'ok', detail: 'The credential reference resolves from the configured credentials source.' },
+      { id: 'ownership', status: 'ok', detail: 'Sharko owns this connection Secret.' },
+      { id: 'live_secret', status: 'ok', detail: 'The live connection Secret was found.' },
+      { id: 'comparison', status: 'ok', detail: 'Every field Sharko owns was compared.' },
+      { id: 'argocd_connection', status: 'ok', detail: 'ArgoCD reports this connection as working.' },
+    ],
+    drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+    plan: { action: 'none', action_scopes: [] },
+    values_never_returned: true,
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetManagedSecrets.mockResolvedValue(response)
+  mockGetConnectionReconciliation.mockResolvedValue(reconViewFixture())
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
   mockGetClusterComparison.mockResolvedValue({
@@ -359,57 +405,6 @@ describe('the comparison: provenance above, a real field table inside', () => {
   // (a) provenance test ID changed to connection-comparison-provenance but rule
   // preserved (file and commit must be visible); (a) 7-char short commit with
   // full commit on hover preserved.
-  it('provenance paints from row data alone — the git file and commit are there before the connection-comparison fetch resolves', async () => {
-    // S4-1: connection rows now read getConnectionComparison, which returns
-    // immediately from our mock, so this test no longer proves the provenance-
-    // before-table rule the old version did. Keep the test to verify provenance
-    // structure and the 7-char + hover behavior.
-    renderPage()
-    const panel = await openRow('connection-prod-eu')
-    // S4-1: NO toggle click - comparison is inline and always expanded.
-
-    // Wait for provenance to appear (async mock resolution)
-    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
-    // S4-1: Changed 2026-08-13: (b) text split across elements ("File: " + path), use textContent.
-    expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
-    const shortCommit = within(provenance).getByText('abcdef1')
-    expect(shortCommit).toBeInTheDocument()
-    // (a) RESTORED: full commit on hover — regression caught in coordinator review.
-    expect(shortCommit.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
-  })
-
-  // S4-1: Changed 2026-08-13: (a) test ID updated but rule preserved (must show
-  // something when commit is unknown, not hide provenance section entirely).
-  it('a connection row with no compared commit says so instead of showing a blank table', async () => {
-    // S4-1: Mock connection-comparison for no-commit cluster with no compared_commit.
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'no-commit',
-      status: 'synced',
-      scope: 'full',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      compared_path: 'configuration/managed-clusters.yaml',
-      // NO compared_commit
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: false,
-      repair_scope: 'none',
-      values_never_returned: true,
-    })
-    renderPage()
-    const panel = await openRow('connection-no-commit')
-    // Pre-existing flake fix (found while running this story's gates,
-    // 2026-08-16): the connection comparison resolves asynchronously —
-    // this used a synchronous getByTestId, which occasionally raced the
-    // mocked fetch and failed to find the provenance element at all.
-    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
-    // (a) Rule preserved: when commit is unknown, say so instead of hiding.
-    // New text: "Branch: main (commit unknown)"
-    expect(provenance).toHaveTextContent('commit unknown')
-  })
-
   it('the provenance line of a values row names the real store, never Git', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog')
@@ -418,57 +413,6 @@ describe('the comparison: provenance above, a real field table inside', () => {
     const provenance = within(panel).getByTestId('comparison-provenance')
     expect(provenance).toHaveTextContent('Compared with AWS Secrets Manager.')
     expect(provenance).toHaveTextContent('Git holds a pointer to where each value lives, never the value itself.')
-  })
-
-  // S4-1/S4-2: Changed 2026-08-13: Connection comparison now checks the ENTIRE
-  // connection (server, credentials, labels, metadata), not just labels. The
-  // SECURITY RULE "never a value" for SENSITIVE fields is preserved (they show
-  // "<redacted>"). Non-sensitive fields (like label keys/values) CAN show values
-  // because the server deliberately sends them.
-  //
-  // (b) Test ID changed from comparison-label-drift to connection-comparison-differences.
-  // (b) Column headers changed: "Expected in Git" → "Expected", "On the cluster" → "Live".
-  // (a) Security rule preserved: sensitive fields never show values.
-  // (b) Behavior change: label VALUES now shown (addon label values are not sensitive).
-  it('a connection row\'s comparison table shows field differences with sensitive fields redacted, never showing credential values', async () => {
-    // Mock showing label drift — these are NOT sensitive fields.
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'no-commit',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      compared_path: 'configuration/managed-clusters.yaml',
-      differences: [
-        { path: 'metadata.labels[addons.sharko.dev/datadog]', status: 'missing' },
-        { path: 'metadata.labels[addons.sharko.dev/old-addon]', status: 'unexpected' },
-        // Add a sensitive field to prove redaction works:
-        { path: 'data.config', status: 'different', sensitive: true },
-      ],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-    renderPage()
-    const panel = await openRow('connection-no-commit')
-    const diffs = await within(panel).findByTestId('connection-comparison-differences')
-
-    // (b) New column headers:
-    expect(within(diffs).getByText('Field')).toBeInTheDocument()
-    expect(within(diffs).getByText('Expected')).toBeInTheDocument()
-    expect(within(diffs).getByText('Live')).toBeInTheDocument()
-    expect(within(diffs).getByText('Status')).toBeInTheDocument()
-
-    // (b) Label field paths are shown:
-    expect(diffs).toHaveTextContent('metadata.labels[addons.sharko.dev/datadog]')
-    expect(diffs).toHaveTextContent('metadata.labels[addons.sharko.dev/old-addon]')
-
-    // (a) SECURITY RULE PRESERVED: Sensitive field shows "<redacted>" on both sides, never the value.
-    const sensitiveRows = within(diffs).getAllByText('<redacted>')
-    expect(sensitiveRows.length).toBeGreaterThanOrEqual(2) // Both Expected and Live columns for the sensitive field
   })
 
   // SSF-12/SSF-14 honesty rule: a values row's ONLY comparable field is key
@@ -495,68 +439,6 @@ describe('the comparison: provenance above, a real field table inside', () => {
     // in (detail-resource-disclosure) is gone.
     expect(presence).not.toHaveTextContent('Opaque')
     expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
-  })
-
-  // S4-1: Changed 2026-08-13: Connection comparison now shows status from the
-  // server (synced/out_of_sync/etc), not a detailed field-by-field match table.
-  // (a) Rule preserved: must show EVIDENCE when healthy, not just claim.
-  // (b) Structure changed: evidence is now the status sentence plus the fact that
-  // there are zero differences, rather than a per-label match table.
-  it('a healthy connection row shows its status with evidence (zero differences), not just a claim', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'synced',
-      scope: 'full',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      compared_path: 'configuration/managed-clusters.yaml',
-      compared_commit: 'abcdef1234567890abcdef1234567890abcdef12',
-      differences: [], // ZERO differences = evidence of health
-      not_checked: [],
-      checked_field_count: 15,
-      repair_available: false,
-      repair_scope: 'none',
-      values_never_returned: true,
-    })
-    renderPage()
-    const panel = await openRow('connection-prod-eu')
-    // S4-1: NO toggle - always expanded.
-
-    // (a) EVIDENCE: Status sentence says "matches" (wait for async mock)
-    const statusSentence = await within(panel).findByTestId('connection-comparison-status-sentence')
-    expect(statusSentence).toHaveTextContent('This connection matches what Sharko intends.')
-    // (a) EVIDENCE: No differences section (because differences array is empty)
-    expect(within(panel).queryByTestId('connection-comparison-differences')).not.toBeInTheDocument()
-    // (a) EVIDENCE: Field count shown
-    expect(within(panel).getByTestId('connection-comparison-result')).toBeInTheDocument()
-  })
-
-  // S4-1: Changed 2026-08-13: (b) This test's premise no longer applies - the
-  // connection-comparison endpoint returns immediately with a status, not a
-  // pending fetch. Keeping a related test: when status is check_failed, show
-  // the failure reason (honesty rule).
-  it('shows the check failure reason when the connection check could not complete', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'check_failed',
-      scope: 'none',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      failure_reason: 'Sharko could not read this cluster\'s record from git, so it cannot tell what the connection should look like. Check the git connection and try again.',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 0,
-      repair_available: false,
-      repair_scope: 'none',
-      values_never_returned: true,
-    })
-    renderPage()
-    const panel = await openRow('connection-prod-eu')
-
-    // (a) HONESTY RULE PRESERVED: Show the failure reason, don't hide it.
-    expect(within(panel).getByTestId('connection-comparison-failure-reason')).toHaveTextContent('Sharko could not read')
   })
 
   // Walkthrough follow-up on SSF-14 item 3, values-row half: a healthy
@@ -794,13 +676,6 @@ describe('SSF-12 — comparison heading, action naming, and Sync visibility', ()
   // S4-1: Changed 2026-08-13: (b) Heading changed to "Connection check" for
   // connection rows per product owner design. For addon-values rows, still
   // "Comparison" (match) or "Differences" (differ).
-  it('calls the connection section "Connection check" — connection rows no longer use "Comparison"', async () => {
-    renderPage()
-    const panel = await openRow('connection-prod-eu')
-    expect(within(panel).getByRole('heading', { name: 'Connection check' })).toBeInTheDocument()
-    expect(within(panel).queryByRole('heading', { name: 'Comparison' })).not.toBeInTheDocument()
-  })
-
   it('calls the comparison "Differences" when the row does not match — never "Diff", which would claim a git-only check', async () => {
     renderPage()
     const panel = await openRow('values-staging-us-datadog') // out_of_sync -> differ
@@ -931,17 +806,12 @@ describe('SSF-8/SSF-14 — comparison on demand, and the toggle actually toggles
   // default — no toggle. Test REWRITTEN to assert the NEW rule: connection rows
   // have no toggle and comparison is always visible; addon-values rows still
   // have the toggle and start collapsed for matches.
-  it('connection rows have no toggle and are always expanded; addon rows still toggle and start collapsed for matches', async () => {
-    // First: connection row has no toggle, provenance always visible
+  it('a connection row has no comparison toggle — its page is the reconciliation view; addon rows still toggle and start collapsed for matches', async () => {
+    // First: a connection row's page IS the reconciliation view now.
     const firstRender = renderPage('operator', ['/secret-sync/connection-prod-eu'])
-    const first = await screen.findByTestId('secret-detail-panel') // match
-    // (b) NEW RULE: no toggle for connection rows
+    const first = await screen.findByTestId('secret-detail-panel')
     expect(within(first).queryByTestId('view-comparison-toggle')).not.toBeInTheDocument()
-    // (b) NEW RULE: provenance always visible (no click needed).
-    // Pre-existing flake fix (found while running this story's gates,
-    // 2026-08-16): the connection comparison resolves asynchronously, so
-    // this awaits it instead of asserting synchronously.
-    expect(await within(first).findByTestId('connection-comparison-provenance')).toBeInTheDocument()
+    expect(await within(first).findByTestId('recon-view')).toBeInTheDocument()
     firstRender.unmount()
 
     // Second: addon-values row still has toggle, starts collapsed for match
@@ -1013,10 +883,10 @@ describe('SSF-14 item 4 — Resource details and Keys are gone from Overview; SS
 
   it('the "View related events" link points at the audit log, pre-filtered to this row\'s cluster', async () => {
     renderPage()
-    const panel = await openRow('connection-drifted-eu')
+    const panel = await openRow('values-staging-us-datadog')
     const link = await within(panel).findByTestId('detail-related-events-link')
     expect(link).toHaveTextContent('View related events')
-    expect(link).toHaveAttribute('href', '/audit?cluster=drifted-eu')
+    expect(link).toHaveAttribute('href', '/audit?cluster=staging-us')
   })
 
   it('a current failure still shows even with the activity list gone — removing it never hides an active problem', async () => {
@@ -1032,20 +902,6 @@ describe('SSF-14 item 4 — Resource details and Keys are gone from Overview; SS
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('SSF-12 — the one health conclusion', () => {
-  it('a healthy connection row says "In sync" with the exact source-named sentence, no repair note', async () => {
-    renderPage()
-    const panel = await openRow('connection-prod-eu') // in_sync -> match
-    const conclusion = within(panel).getByTestId('detail-health-conclusion')
-    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('In sync')
-    // Round 3 ruling (2026-08-16), Ruling 4: names both authorities — git
-    // for addon labels, the configured credentials source for connection
-    // details — instead of the old absolute "matches Git" claim.
-    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent(
-      'This connection matches what Sharko intends — git for addon labels, the configured credentials source for connection details. No action is needed.',
-    )
-    expect(within(conclusion).queryByTestId('detail-repair-note')).not.toBeInTheDocument()
-  })
-
   it('a healthy addon-values row names the real configured store, never "Git"', async () => {
     renderPage()
     const panel = await openRow('values-prod-eu-datadog') // in_sync -> match
@@ -1053,22 +909,6 @@ describe('SSF-12 — the one health conclusion', () => {
     expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('In sync')
     expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent(
       'The cluster copy matches AWS Secrets Manager. No action is needed.',
-    )
-  })
-
-  it('a broken connection row says "Needs attention" and promises only the labels — never that the copy will match Git (HL-1)', async () => {
-    renderPage()
-    const panel = await openRow('connection-drifted-eu') // out_of_sync -> differ
-    const conclusion = within(panel).getByTestId('detail-health-conclusion')
-    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
-    // Round 3 ruling (2026-08-16), Ruling 4: names both authorities.
-    expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('This connection does not match what Sharko intends.')
-    // HL-1: the old sentence here ("Sync will update the cluster copy to
-    // match Git.") was untrue — the action re-applies only Sharko's own
-    // addon label keys. The note now promises exactly that. Round 3
-    // (2026-08-16) renamed the action to "Sync addon labels".
-    expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent(
-      "Sync addon labels puts git's addon labels back on this secret. Nothing else on it changes.",
     )
   })
 
@@ -1083,37 +923,35 @@ describe('SSF-12 — the one health conclusion', () => {
     )
   })
 
-  // W3 review fix (FIX 3): the two old absolute verdict sentences, banned
-  // by exact text — a connection row's health conclusion must never claim
-  // git alone owns the connection (Round 3 ruling 4 replaced these with the
-  // "names both authorities" sentences pinned above).
-  const BANNED_OLD_VERDICT_SENTENCES = ['The cluster copy matches Git.', 'The cluster copy does not match Git.']
+  // Ruling 8 (connection-reconciliation epic): every old verdict sentence a
+  // connection page ever carried is banned by exact text — the absolute
+  // "matches Git" pair AND the two-authority replacements the redesign
+  // itself replaced.
+  const BANNED_OLD_VERDICT_SENTENCES = [
+    'The cluster copy matches Git.',
+    'The cluster copy does not match Git.',
+    'This connection matches what Sharko intends',
+    'This connection does not match what Sharko intends.',
+  ]
 
-  it('never renders the old absolute "matches Git" / "does not match Git" verdict sentences, on a healthy or a broken connection row', async () => {
-    const healthyRender = renderPage()
-    const healthyPanel = await openRow('connection-prod-eu') // in_sync -> match
-    for (const banned of BANNED_OLD_VERDICT_SENTENCES) {
-      expect(healthyPanel.textContent ?? '').not.toContain(banned)
-    }
-    healthyRender.unmount()
-
+  it('never renders any old verdict sentence on a connection row — the reconciliation view replaced them', async () => {
     renderPage()
-    const brokenPanel = await openRow('connection-drifted-eu') // out_of_sync -> differ
+    const panel = await openRow('connection-prod-eu')
+    await within(panel).findByTestId('recon-view')
     for (const banned of BANNED_OLD_VERDICT_SENTENCES) {
-      expect(brokenPanel.textContent ?? '').not.toContain(banned)
+      expect(panel.textContent ?? '').not.toContain(banned)
     }
   })
 
-  // Round 3 ruling (2026-08-16), Ruling 2: the Overview|YAML pill is gone
-  // entirely for a connection row — there's no tab to switch to anymore, so
-  // this just confirms the conclusion (and the redacted YAML, which now
-  // renders unconditionally) are both there on the one page a connection
-  // row has.
-  it('shows freshness ("Checked …") in the conclusion, with no YAML tab to switch to', async () => {
+  // Story 2: the redacted YAML must not dominate the connection page — it
+  // sits behind collapsed Technical evidence, and there is no YAML tab.
+  it('a connection row has no YAML tab, and the redacted YAML sits behind collapsed Technical evidence', async () => {
     renderPage()
     const panel = await openRow('connection-prod-eu')
-    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+    await within(panel).findByTestId('recon-view')
     expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-yaml-content')).not.toBeInTheDocument()
+    fireEvent.click(within(panel).getByTestId('recon-technical-evidence-toggle'))
     expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
@@ -1127,10 +965,11 @@ describe('SSF-12 — the one health conclusion', () => {
     expect(await screen.findByText(/Someone else created this one/)).toBeInTheDocument()
   })
 
-  it('the conclusion is an accessible status region a screen reader announces on change', async () => {
+  it('the reconciliation summary is an accessible status region a screen reader announces on change', async () => {
     renderPage()
     const panel = await openRow('connection-prod-eu')
-    expect(within(panel).getByTestId('detail-health-conclusion')).toHaveAttribute('role', 'status')
+    const summary = await within(panel).findByTestId('recon-summary')
+    expect(summary).toHaveAttribute('role', 'status')
   })
 })
 
@@ -1139,26 +978,14 @@ describe('SSF-12 — the one health conclusion', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('SSF-14 item 1 — Overview is the default tab', () => {
-  // S4-2: Changed 2026-08-13: For connection rows, redacted YAML now appears
-  // on Overview (below comparison), not on YAML tab.
-  // Round 3 ruling (2026-08-16), Ruling 2: went further — a connection row
-  // has no Overview|YAML pill at all anymore, so "opens on Overview" is now
-  // just "there is only ever the one page", proven by the pill's absence
-  // plus the YAML content rendering unconditionally.
-  it('has no Overview|YAML pill for a healthy connection row — the YAML content is just there', async () => {
+  // Story 2: a connection row's page is the reconciliation view — no
+  // Overview|YAML pill at all (YAML lives behind Technical evidence).
+  it('has no Overview|YAML pill for a connection row', async () => {
     renderPage()
-    const panel = await openRow('connection-prod-eu') // in_sync -> match
+    const panel = await openRow('connection-prod-eu')
+    await within(panel).findByTestId('recon-view')
     expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
     expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
-    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
-  })
-
-  it('has no Overview|YAML pill for a broken connection row either', async () => {
-    renderPage()
-    const panel = await openRow('connection-drifted-eu') // out_of_sync -> differ
-    expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
-    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
-    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
   it('a values row keeps the Overview|YAML pill exactly as before, opening on Overview', async () => {
@@ -1187,697 +1014,80 @@ describe('SSF-14 item 7 — the comparison toggle is 14px, not 12px', () => {
   })
 })
 
-// S4-4 / S4-5: Connection repair tests.
-// Every user-facing sentence pinned by exact full text.
-// Wording agreed on 2026-08-13.
-describe('Connection repair (S4-4 / S4-5)', () => {
-  // Pinned sentences — wording agreed 2026-08-13
-  const REPAIR_BUTTON_LABEL = 'Repair connection'
-  const REPAIR_BUTTON_LABEL_EKS = 'Refresh EKS connection'
-  const RECENT_ACTIVITY_HEADING = 'Recent activity'
-  const VIEW_FULL_AUDIT_LOG_LINK = 'View full audit log'
-
-  const CONFIRM_DESC_FULL = `This will rewrite this cluster's connection to match git and this cluster's configured credentials source. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
-  const CONFIRM_DESC_EKS = `This will refresh the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
-  const CONFIRM_DESC_LABELS_ONLY = `This will re-apply this cluster's addon labels to match git. Sharko will not read or change this connection's sign-in details. The self-heal setting will not be changed.`
-
-  // 409 error sentences — the server's exact wording (internal/api/connection_repair.go:87-92)
-  const REPAIR_FAIL_REVISION_MOVED = `Your git branch moved while you were looking at this connection, so what you reviewed is not what Sharko would write now. Sharko changed nothing. Run the connection check again and repair from the fresh result.`
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    mockGetManagedSecrets.mockResolvedValue(response)
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-    mockFetchAuditLog.mockResolvedValue({ entries: [] })
-  })
-
-  // S4-4: Repair button gating
-  it('shows the repair button when all conditions are met', async () => {
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    // Wait for button to appear
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    expect(button).toHaveTextContent(REPAIR_BUTTON_LABEL)
-  })
-
-  it('does NOT show the repair button when repair_available is false', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: false,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
-  })
-
-  it('does NOT show the repair button when repair_scope is "none"', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'none',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
-  })
-
-  it('does NOT show the repair button when there is no commit', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: undefined,
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
-  })
-
-  // R1-1: the repair endpoint is admin-only (internal/authz/authz.go,
-  // "cluster.connection.repair": RoleAdmin). An operator who saw the button
-  // could only ever get a 403 back, painted as a generic failure — a
-  // permission wall dressed up as a fault. So the button must be ABSENT for
-  // an operator, not greyed out, with every other condition satisfied.
-  it('an operator does not see the repair button at all — the endpoint is admin-only (R1-1)', async () => {
-    renderPage('operator')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    // The other actions inside the same admin-or-operator RoleGuard are
-    // still there — only the repair button is admin-gated.
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
-  })
-
-  it('an admin does see the repair button, all other conditions being equal (R1-1)', async () => {
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    expect(button).toHaveTextContent(REPAIR_BUTTON_LABEL)
-  })
-
-  // S4-4: EKS button label
-  it('shows "Refresh EKS connection" for EKS clusters (wording agreed 2026-08-13)', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'eks-token',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    expect(button).toHaveTextContent(REPAIR_BUTTON_LABEL_EKS)
-  })
-
-  // S4-4: Confirmation modal wording
-  it('shows correct confirmation wording for full repair (wording agreed 2026-08-13)', async () => {
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    fireEvent.click(button)
-
-    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
-    expect(screen.getByText(CONFIRM_DESC_FULL)).toBeInTheDocument()
-  })
-
-  it('shows correct confirmation wording for EKS (wording agreed 2026-08-13)', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'eks-token',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    fireEvent.click(button)
-
-    await waitFor(() => screen.getByText(`Refresh EKS connection for "prod-eu"?`))
-    expect(screen.getByText(CONFIRM_DESC_EKS)).toBeInTheDocument()
-  })
-
-  it('shows correct confirmation wording for labels-only (wording agreed 2026-08-13)', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'addon_labels',
-      ownership_mode: 'self_managed',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'addon_labels_only',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    fireEvent.click(button)
-
-    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
-    expect(screen.getByText(CONFIRM_DESC_LABELS_ONLY)).toBeInTheDocument()
-  })
-
-  // S4-4: Sends displayed commit
-  // This is the critical rule: the browser sends the commit from the check it
-  // just showed, not a freshly fetched one. The endpoint demands reviewed_commit
-  // to prevent repairing against a commit the person never looked at.
-  //
-  // To catch a re-fetch bug, we make the mock return a DIFFERENT commit if
-  // called again during the repair flow.
-  it('sends the commit from the check on screen, not a re-fetched one', async () => {
-    // First call (on panel open) returns 'abc123'
-    // Second call (if code re-fetches) would return 'def456'
-    mockGetConnectionComparison
-      .mockResolvedValueOnce({
-        cluster: 'prod-eu',
-        status: 'out_of_sync',
-        scope: 'full',
-        ownership_mode: 'owned',
-        checked_at: new Date().toISOString(),
-        branch: 'main',
-        compared_commit: 'abc123',
-        compared_path: 'clusters.yaml',
-        credential_source_type: 'secret-kubeconfig',
-        differences: [],
-        not_checked: [],
-        checked_field_count: 10,
-        repair_available: true,
-        repair_scope: 'full_connection',
-        values_never_returned: true,
-      })
-      .mockResolvedValueOnce({
-        cluster: 'prod-eu',
-        status: 'out_of_sync',
-        scope: 'full',
-        ownership_mode: 'owned',
-        checked_at: new Date().toISOString(),
-        branch: 'main',
-        compared_commit: 'def456',  // Different commit
-        compared_path: 'clusters.yaml',
-        credential_source_type: 'secret-kubeconfig',
-        differences: [],
-        not_checked: [],
-        checked_field_count: 10,
-        repair_available: true,
-        repair_scope: 'full_connection',
-        values_never_returned: true,
-      })
-
-    mockRepairConnection.mockResolvedValue({
-      cluster: 'prod-eu',
-      repaired: true,
-      scope_applied: 'full_connection',
-      fields_repaired: ['metadata.labels["sharko.dev/addon.cert-manager"]'],
-      preserved_foreign_labels: 0,
-      preserved_foreign_data_keys: 0,
-      branch: 'main',
-      repaired_at_commit: 'abc123',
-      repaired_at: new Date().toISOString(),
-      message: 'Repaired',
-      comparison: {
-        cluster: 'prod-eu',
-        status: 'synced',
-        scope: 'full',
-        ownership_mode: 'owned',
-        checked_at: new Date().toISOString(),
-        branch: 'main',
-        compared_commit: 'abc123',
-        compared_path: 'clusters.yaml',
-        credential_source_type: 'secret-kubeconfig',
-        differences: [],
-        not_checked: [],
-        checked_field_count: 10,
-        repair_available: false,
-        repair_scope: 'none',
-        values_never_returned: true,
-      },
-      self_heal_unchanged: true,
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    fireEvent.click(button)
-
-    // Wait for modal and confirm
-    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
-    const confirmButton = screen.getByRole('button', { name: 'Repair connection' })
-    fireEvent.click(confirmButton)
-
-    // The repair MUST have been called with 'abc123', the commit from the
-    // comparison mock returned above, not a re-fetched value.
-    await waitFor(() =>
-      expect(mockRepairConnection).toHaveBeenCalledWith('prod-eu', 'abc123'),
-    )
-  })
-
-  // S4-5: Recent activity
-  it('shows Recent activity heading (wording agreed 2026-08-13)', async () => {
-    mockFetchAuditLog.mockResolvedValue({
-      entries: [
-        {
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          event: 'cluster_reconcile',
-          user: 'admin',
-          action: 'reconcile',
-          resource: 'cluster:prod-eu',
-          detail: 'Reconciled',
-          result: 'success',
-        },
-      ],
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-
-    await waitFor(() => within(panel).getByText(RECENT_ACTIVITY_HEADING))
-  })
-
-  it('shows "View full audit log" link (wording agreed 2026-08-13)', async () => {
-    mockFetchAuditLog.mockResolvedValue({
-      entries: [
-        {
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          event: 'cluster_reconcile',
-          user: 'admin',
-          action: 'reconcile',
-          resource: 'cluster:prod-eu',
-          detail: 'Reconciled',
-          result: 'success',
-        },
-      ],
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-
-    const link = await within(panel).findByTestId('view-full-audit-log')
-    expect(link).toHaveTextContent(VIEW_FULL_AUDIT_LOG_LINK)
-    expect(link).toHaveAttribute('href', '/audit?cluster=prod-eu')
-  })
-
-  it('does not show Recent activity when there are no entries', async () => {
-    mockFetchAuditLog.mockResolvedValue({ entries: [] })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    expect(within(panel).queryByText(RECENT_ACTIVITY_HEADING)).not.toBeInTheDocument()
-  })
-
-  // Banned wording tests
-  it('NEVER says "fully synced" for an EKS connection, even after successful repair', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'limited',
-      scope: 'partial',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'eks-token',
-      limit_reason: 'EKS connections are checked with no token minted.',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 5,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText('Connection check'))
-
-    // Must show "limited" status, never "synced" or "fully synced"
-    expect(within(panel).getByText('Sharko checked part of this connection.')).toBeInTheDocument()
-    expect(within(panel).queryByText(/fully synced/i)).not.toBeInTheDocument()
-    expect(within(panel).queryByText(/^synced$/i)).not.toBeInTheDocument()
-  })
-
-  it('NEVER says "Kubernetes events" instead of "Recent activity"', async () => {
-    mockFetchAuditLog.mockResolvedValue({
-      entries: [
-        {
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          event: 'cluster_reconcile',
-          user: 'admin',
-          action: 'reconcile',
-          resource: 'cluster:prod-eu',
-          detail: 'Reconciled',
-          result: 'success',
-        },
-      ],
-    })
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    await waitFor(() => within(panel).getByText(RECENT_ACTIVITY_HEADING))
-
-    expect(within(panel).queryByText(/Kubernetes events/i)).not.toBeInTheDocument()
-  })
-
-  // S4-4: 409 handling - exact sentence from server
-  it('shows the server\'s moved-branch sentence UNCHANGED on 409 (wording agreed 2026-08-13)', async () => {
-    // This test verifies the UI passes through the server's 409 sentence exactly,
-    // with no paraphrase, rewrite, or truncation, and shows it as 'info' (not 'error').
-    mockRepairConnection.mockRejectedValue(
-      new ApiError(409, { error: REPAIR_FAIL_REVISION_MOVED }, 'Conflict'),
-    )
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    fireEvent.click(button)
-
-    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
-    const confirmButton = screen.getByRole('button', { name: 'Repair connection' })
-    fireEvent.click(confirmButton)
-
-    // Wait for the repair to finish and assert the toast
-    await waitFor(() => {
-      expect(mockShowToast).toHaveBeenCalledWith(REPAIR_FAIL_REVISION_MOVED, 'info')
-    })
-
-    // The page should remain usable after 409 - not stuck in error state
-    expect(within(panel).getByTestId('detail-repair-connection')).toBeInTheDocument()
-  })
-
-  it('does NOT auto-retry after 409', async () => {
-    mockRepairConnection.mockRejectedValue(
-      new ApiError(409, { error: REPAIR_FAIL_REVISION_MOVED }, 'Conflict'),
-    )
-
-    renderPage('admin')
-    const panel = await openRow('connection-prod-eu')
-    const button = await within(panel).findByTestId('detail-repair-connection')
-    fireEvent.click(button)
-
-    await waitFor(() => screen.getByText(`Repair connection for "prod-eu"?`))
-    const confirmButton = screen.getByRole('button', { name: 'Repair connection' })
-    fireEvent.click(confirmButton)
-
-    // Wait a moment for any potential retry
-    await new Promise((resolve) => setTimeout(resolve, 100))
-
-    // mockRepairConnection must have been called exactly ONCE
-    expect(mockRepairConnection).toHaveBeenCalledTimes(1)
-  })
-})
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Round 3 walkthrough ruling (2026-08-16), Ruling 1 (W3-1) — the teaching
-// block plus the three action InfoHints. Every sentence pinned as a const,
-// exact text, with a banned-phrases sweep — the pattern this story asked
-// for is ConnectionComparisonDisplay.test.tsx:1-64.
+// Story 2 (connection-reconciliation epic) — the connection page is the
+// reconciliation view. The deep per-state behavior (matrix rows, contextual
+// actions, repair confirm, 409 handling, activity feed, technical evidence)
+// is pinned in ConnectionReconciliationView.test.tsx; these tests pin the
+// INTEGRATION — the page mounts the view — and ban the replaced page's
+// wording and its permanent write-button row by name.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('Round 3 (2026-08-16) — the connection page teaches the split model', () => {
-  const CONNECTION_MODEL_HEADING = 'How Sharko manages this connection'
-  const CONNECTION_MODEL_BODY =
-    "ArgoCD keeps addon labels and connection details in the same Secret, but Sharko manages them differently. Git controls the addon labels. Your configured credentials source controls how ArgoCD connects. Sharko can self-heal addon labels when enabled; it never changes connection credentials automatically."
-  const CHECK_HINT = 'Looks at this connection and reports what it finds. Nothing is changed.'
-  const SYNC_HINT = "Puts git's addon labels back on this secret. Only Sharko's addon label keys — nothing else."
-  const REPAIR_HINT =
-    "Rewrites the connection details from this cluster's configured credentials source, against the commit shown. Addon labels are re-applied too."
-
-  // Banned by exact text — the name this action used to carry, superseded
-  // by the Round 3 ruling.
-  const BANNED_PHRASES = ['Re-apply addon labels', 'Re-apply labels']
-
-  function assertNoBannedPhrases(container: HTMLElement) {
-    for (const banned of BANNED_PHRASES) {
-      expect(container.textContent ?? '').not.toContain(banned)
-    }
-  }
-
-  it('shows the teaching block by default (not behind a click), exact heading and body', async () => {
+describe('the connection page is the reconciliation view (Story 2)', () => {
+  it('a connection row renders the reconciliation view, with its title and header intact', async () => {
     renderPage()
     const panel = await openRow('connection-prod-eu')
-    const block = within(panel).getByTestId('detail-connection-model')
-    expect(within(block).getByText(CONNECTION_MODEL_HEADING)).toBeInTheDocument()
-    expect(block).toHaveTextContent(CONNECTION_MODEL_BODY)
+    expect(screen.getByRole('heading', { name: 'prod-eu connection' })).toBeInTheDocument()
+    expect(await within(panel).findByTestId('recon-view')).toBeInTheDocument()
+    expect(within(panel).getByTestId('recon-sync-headline')).toHaveTextContent('Connection synced')
   })
 
-  it('never renders the teaching block on a values row', async () => {
+  it('never renders the old teaching block — heading or body — on any row', async () => {
     renderPage()
-    const panel = await openRow('values-prod-eu-datadog')
-    expect(within(panel).queryByTestId('detail-connection-model')).not.toBeInTheDocument()
+    const panel = await openRow('connection-prod-eu')
+    await within(panel).findByTestId('recon-view')
+    expect(screen.queryByTestId('detail-connection-model')).not.toBeInTheDocument()
+    expect(screen.queryByText('How Sharko manages this connection')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Git controls the addon labels/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Your configured credentials source controls how ArgoCD connects/)).not.toBeInTheDocument()
   })
 
-  it('Check now/again carries an InfoHint stating it only looks, never changes anything', async () => {
-    const user = userEvent.setup()
-    renderPage()
-    const panel = await openRow('connection-drifted-eu')
-    const checkButton = within(panel).getByTestId('detail-refresh')
-    // This fixture has no last_checked yet, so the button reads "Check now".
-    expect(checkButton).toHaveTextContent('Check now')
-    await user.click(within(panel).getByLabelText('What does Check now do?'))
-    expect(await screen.findByText(CHECK_HINT)).toBeInTheDocument()
-  })
-
-  it('Sync addon labels carries an InfoHint naming its exact scope', async () => {
-    const user = userEvent.setup()
-    renderPage()
-    const panel = await openRow('connection-drifted-eu') // out_of_sync -> Sync visible
-    expect(within(panel).getByTestId('detail-sync')).toHaveTextContent('Sync addon labels')
-    await user.click(within(panel).getByLabelText('What does Sync addon labels do?'))
-    expect(await screen.findByText(SYNC_HINT)).toBeInTheDocument()
-  })
-
-  it('a values row\'s Sync carries no scope InfoHint — the connection-only text would be wrong for it', async () => {
-    renderPage()
-    const panel = await openRow('values-staging-us-datadog') // out_of_sync -> Sync visible
-    expect(within(panel).getByTestId('detail-sync')).toHaveTextContent(/^Sync$/)
-    expect(within(panel).queryByLabelText('What does Sync addon labels do?')).not.toBeInTheDocument()
-  })
-
-  it('Repair connection carries an InfoHint naming its exact scope', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'prod-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-    const user = userEvent.setup()
+  it('has NO permanent row of write buttons — the old header controls are gone; read-only checking stays', async () => {
     renderPage('admin')
     const panel = await openRow('connection-prod-eu')
-    const repairButton = await within(panel).findByTestId('detail-repair-connection')
-    expect(repairButton).toHaveTextContent('Repair connection')
-    await user.click(within(panel).getByLabelText('What does Repair connection do?'))
-    expect(await screen.findByText(REPAIR_HINT)).toBeInTheDocument()
+    await within(panel).findByTestId('recon-view')
+    expect(within(panel).queryByTestId('detail-refresh')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-repair-connection')).not.toBeInTheDocument()
+    expect(within(panel).getByTestId('recon-check')).toBeInTheDocument()
   })
 
-  // W3 review fix (FIX 2): the repair hint must match the repair scope. The
-  // old hint always said "rewrites the connection details", even when the
-  // button only re-applies addon labels (repair_scope === 'addon_labels_only')
-  // — directly contradicting the confirm dialog's own "Sharko will not read
-  // or change this connection's sign-in details" for that exact click. Each
-  // variant below is pinned by exact text, derived from the same condition
-  // ladder as the confirm dialog description at :~2504.
-  it('Repair connection\'s InfoHint matches the addon_labels_only scope, and never claims to touch sign-in details', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'drifted-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'secret-kubeconfig',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'addon_labels_only',
-      values_never_returned: true,
-    })
-    const user = userEvent.setup()
-    renderPage('admin')
-    const panel = await openRow('connection-drifted-eu')
-    const repairButton = await within(panel).findByTestId('detail-repair-connection')
-    // Button label is still "Repair connection" for a non-EKS source —
-    // only the scope of what it does has changed, not its name.
-    expect(repairButton).toHaveTextContent('Repair connection')
-    await user.click(within(panel).getByLabelText('What does Repair connection do?'))
-    const hint = await screen.findByText(
-      "Puts git's addon labels back on this secret. Sharko will not read or change this connection's sign-in details.",
+  it('a drifted connection never says "Needs attention" and never promises "Sharko will fix this on the next pass"', async () => {
+    mockGetConnectionReconciliation.mockResolvedValue(
+      reconViewFixture({
+        sync: {
+          state: 'out_of_sync',
+          verification_scope: 'full',
+          approval_required: false,
+          reason: 'Some addon labels on this connection do not match what git declares.',
+          checked_at: '2026-08-13T12:00:00Z',
+        },
+        drift: {
+          connection_configuration: [],
+          credential_material: [],
+          addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+          not_checked: [],
+        },
+        plan: { action: 'sync_addon_labels', action_scopes: ['metadata.labels'] },
+      }),
     )
-    expect(hint).toBeInTheDocument()
-    expect(hint.textContent ?? '').not.toContain('configured credentials source')
-  })
-
-  it('Repair connection\'s InfoHint matches the EKS scope, and its aria-label follows the EKS button name (FIX 4)', async () => {
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'drifted-eu',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'owned',
-      checked_at: new Date().toISOString(),
-      branch: 'main',
-      compared_commit: 'abc123',
-      compared_path: 'clusters.yaml',
-      credential_source_type: 'eks-token',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
-    const user = userEvent.setup()
-    renderPage('admin')
-    const panel = await openRow('connection-drifted-eu')
-    const repairButton = await within(panel).findByTestId('detail-repair-connection')
-    expect(repairButton).toHaveTextContent('Refresh EKS connection')
-    // FIX 4: the hint's aria-label used to be hardcoded to "What does
-    // Repair connection do?" even on this EKS button — wrong name for the
-    // button actually on screen. It must now follow the button's own label.
-    expect(within(panel).queryByLabelText('What does Repair connection do?')).not.toBeInTheDocument()
-    await user.click(within(panel).getByLabelText('What does Refresh EKS connection do?'))
-    expect(
-      await screen.findByText(
-        'Refreshes the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels are re-applied too.',
-      ),
-    ).toBeInTheDocument()
-  })
-
-  it('never renders the old "Re-apply addon labels" / "Re-apply labels" wording anywhere on a connection row', async () => {
     renderPage()
     const panel = await openRow('connection-drifted-eu')
-    assertNoBannedPhrases(panel)
+    await within(panel).findByTestId('recon-view')
+    expect(within(panel).getByTestId('recon-sync-headline')).toHaveTextContent('Out of sync')
+    // Banned: the generic old label and the UI-computed next-pass promise
+    // (the server's plan.automatic sentence is the only allowed automatic
+    // promise, and this response carries none).
+    expect(panel.textContent ?? '').not.toContain('Needs attention')
+    expect(panel.textContent ?? '').not.toContain('Sharko will fix this on the next pass')
   })
 
-  it('the check and sync buttons never render a label containing "Refresh", and no button reads exactly bare "Sync" on a connection row', async () => {
-    renderPage()
-    const panel = await openRow('connection-drifted-eu')
-    const checkButton = within(panel).getByTestId('detail-refresh')
-    const syncButton = within(panel).getByTestId('detail-sync')
-    expect(checkButton.textContent).not.toMatch(/Refresh/)
-    expect(syncButton.textContent).not.toMatch(/Refresh/)
-    expect(syncButton.textContent?.trim()).not.toBe('Sync')
+  it('a viewer sees the calm access sentence and the reconciliation read never fires', async () => {
+    renderPage('viewer')
+    const panel = await openRow('connection-prod-eu')
+    expect(await within(panel).findByTestId('recon-needs-operator')).toHaveTextContent(
+      'Reading this connection needs operator access.',
+    )
+    expect(mockGetConnectionReconciliation).not.toHaveBeenCalled()
   })
-
-  // Break-test performed by hand during development (removed the
-  // data-testid="detail-connection-model" block and separately renamed
-  // syncActionLabel's connection case) — both breaks failed the matching
-  // test above, then were restored. Not left in the suite; recorded here
-  // for the record.
 })

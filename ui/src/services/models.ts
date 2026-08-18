@@ -703,6 +703,91 @@ export interface ConnectionComparisonNotChecked {
   reason: string
 }
 
+// ConnectionReconciliation — the response from
+// GET /clusters/{name}/connection-reconciliation.
+// Wire shape documented in internal/api/connection_reconciliation.go. The
+// synchronization invariant is enforced SERVER-SIDE: sync.state === 'synced'
+// only ever arrives with verification_scope === 'full' — the UI renders the
+// combination it is given and never repairs one.
+export interface ConnectionReconciliation {
+  cluster: string
+  management_mode: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  managed_scope: 'full_connection' | 'addon_labels' | 'none'
+  mode_statement: string
+  definition: ConnectionReconciliationDefinition
+  sync: ConnectionReconciliationSync
+  health: ConnectionReconciliationHealth
+  conditions: ConnectionReconciliationCondition[]
+  drift: ConnectionReconciliationDrift
+  plan: ConnectionReconciliationPlan
+  values_never_returned: boolean
+}
+
+export interface ConnectionReconciliationDefinition {
+  file?: string
+  branch?: string
+  desired_revision?: string
+  applied_revision?: string
+  credential_source_type?: string
+}
+
+export interface ConnectionReconciliationSync {
+  state: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  verification_scope: 'full' | 'partial' | 'labels_only' | 'none'
+  approval_required: boolean
+  reason?: string
+  /** RFC3339 — ABSENT when no check has run, never a zero time. */
+  checked_at?: string
+  /** RFC3339, from the live Secret's provenance annotation. ABSENT when unknown. */
+  last_successful_application?: string
+}
+
+export interface ConnectionReconciliationHealth {
+  state: 'connected' | 'unavailable' | 'not_checked'
+  /** ArgoCD's own failure text — only ever set for a failed connection. */
+  message?: string
+}
+
+export interface ConnectionReconciliationCondition {
+  id: string
+  status: 'ok' | 'attention' | 'blocked'
+  detail: string
+}
+
+// One non-sensitive field that did not match.
+export interface ConnectionReconciliationDriftEntry {
+  path: string
+  status: string
+  expected?: string
+  live?: string
+}
+
+// One sensitive field that did not match. The wire type has NO expected and
+// NO live properties at all — there is nothing here to redact client-side.
+export interface ConnectionReconciliationSensitiveDriftEntry {
+  path: string
+  status: string
+  sensitive: boolean
+}
+
+export interface ConnectionReconciliationDrift {
+  connection_configuration: ConnectionReconciliationDriftEntry[]
+  credential_material: ConnectionReconciliationSensitiveDriftEntry[]
+  addon_labels: ConnectionReconciliationDriftEntry[]
+  not_checked: ConnectionComparisonNotChecked[]
+}
+
+export interface ConnectionReconciliationPlan {
+  /** Fixed server sentence for what happens by itself — rendered VERBATIM. */
+  automatic?: string
+  /** Fixed server sentence for the approval-gated half — rendered VERBATIM. */
+  requires_approval?: string
+  action: 'none' | 'repair_connection' | 'sync_addon_labels' | 'take_over' | 'migrate_credentials'
+  action_scopes: string[]
+  /** The commit a repair must echo back — set only when action is repair_connection. */
+  reviewed_commit?: string
+}
+
 // ConnectionRepairView — the response from POST /clusters/{name}/connection-repair.
 // Wire shape documented in internal/api/connection_repair.go.
 export interface ConnectionRepairView {

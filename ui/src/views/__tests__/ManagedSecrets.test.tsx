@@ -83,12 +83,46 @@ const mockGetAddonValuesSecretResource = vi.fn()
 // the opened row — mocked here the same way every other API call in this
 // suite is, defaulted to an empty list in beforeEach.
 const mockFetchAuditLog = vi.fn()
+const mockGetConnectionReconciliation = vi.fn()
+
+// Story 2: the connection detail page consumes the reconciliation endpoint.
+// Clean by default; tests override per state.
+function reconViewFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    cluster: 'prod-eu',
+    management_mode: 'sharko_managed',
+    managed_scope: 'full_connection',
+    mode_statement: 'Git defines the connection. Sharko resolves its credential references and maintains the resulting ArgoCD Secret.',
+    definition: {
+      file: 'configuration/managed-clusters.yaml',
+      branch: 'main',
+      desired_revision: 'abcdef1234567890abcdef1234567890abcdef12',
+      applied_revision: 'abcdef1234567890abcdef1234567890abcdef12',
+      credential_source_type: 'secret-kubeconfig',
+    },
+    sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-13T12:00:00Z' },
+    health: { state: 'connected' },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: 'The connection definition was read from git.' },
+      { id: 'argocd_connection', status: 'ok', detail: 'ArgoCD reports this connection as working.' },
+    ],
+    drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+    plan: { action: 'none', action_scopes: [] },
+    values_never_returned: true,
+    ...overrides,
+  }
+}
 
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
     getConnectionComparison: (...args: unknown[]) => mockGetConnectionComparison(...args),
+    getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
   },
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
@@ -230,6 +264,7 @@ beforeEach(() => {
     values_never_returned: true,
   })
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  mockGetConnectionReconciliation.mockResolvedValue(reconViewFixture())
   // SSF-9's scroll/group-override restore rides in sessionStorage, which
   // jsdom does NOT reset between tests on its own — without this, a saved
   // key from one test (e.g. group=addon) would silently seed the next
@@ -789,10 +824,25 @@ describe('ManagedSecrets', () => {
     expect(dot).toHaveAttribute('data-status', 'unknown')
     expect(within(row).getByTestId('status-mark')).not.toHaveTextContent(/out of sync/i)
 
+    // Story 2: the panel is the reconciliation view — the failed check
+    // arrives as the server's own unknown-state reason, verbatim.
+    mockGetConnectionReconciliation.mockResolvedValue(
+      reconViewFixture({
+        cluster: 'spoke-asia',
+        sync: {
+          state: 'unknown',
+          verification_scope: 'none',
+          approval_required: false,
+          reason: 'Sharko could not read git, so this check did not finish. Check that Sharko can reach your git host, then click Refresh.',
+          checked_at: '2026-08-05T00:05:00Z',
+        },
+      }),
+    )
     fireEvent.click(row)
     const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('last-check-error')).toHaveTextContent(
-      'The last check failed: Sharko could not read git, so this check did not finish. Check that Sharko can reach your git host, then click Refresh.',
+    expect(await within(panel).findByTestId('recon-sync-headline')).toHaveTextContent('Unknown — check failed')
+    expect(within(panel).getByTestId('recon-sync-reason')).toHaveTextContent(
+      'Sharko could not read git, so this check did not finish. Check that Sharko can reach your git host, then click Refresh.',
     )
   })
 
@@ -914,25 +964,30 @@ describe('ManagedSecrets', () => {
     expect(unknownDot).toHaveAttribute('data-hollow', 'true')
   })
 
-  // S4-1: Changed 2026-08-13: (b) Connection comparison now fetches the FULL
-  // connection via getConnectionComparison, not labels-only via getClusterComparison.
-  // (a) Rules preserved: identity, purpose, ONE conclusion still required.
-  it('clicking a connection-secret row opens the detail panel with identity, purpose, the ONE conclusion, and a full connection comparison', async () => {
+  // Story 2 (connection-reconciliation epic): a connection row's page is
+  // the reconciliation view — identity and purpose stay; the verdict, the
+  // drift groups and every sentence come from the reconciliation endpoint.
+  it('clicking a connection-secret row opens the reconciliation view with identity, purpose, and the drift it reports', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'staging-us',
-      status: 'out_of_sync',
-      scope: 'full',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      differences: [{ path: 'metadata.labels[addons.sharko.dev/datadog]', status: 'missing' }],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: true,
-      repair_scope: 'full_connection',
-      values_never_returned: true,
-    })
+    mockGetConnectionReconciliation.mockResolvedValue(
+      reconViewFixture({
+        cluster: 'staging-us',
+        sync: {
+          state: 'out_of_sync',
+          verification_scope: 'full',
+          approval_required: false,
+          reason: 'Some addon labels on this connection do not match what git declares.',
+          checked_at: '2026-08-13T12:00:00Z',
+        },
+        drift: {
+          connection_configuration: [],
+          credential_material: [],
+          addon_labels: [{ path: 'metadata.labels[addons.sharko.dev/datadog]', status: 'missing', expected: 'enabled' }],
+          not_checked: [],
+        },
+        plan: { action: 'sync_addon_labels', action_scopes: ['metadata.labels'] },
+      }),
+    )
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
@@ -940,102 +995,69 @@ describe('ManagedSecrets', () => {
 
     const panel = await screen.findByTestId('secret-detail-panel')
     expect(within(panel).getByText(/Connects/)).toBeInTheDocument()
-    // (a) ONE conclusion preserved
-    expect(within(panel).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
-    // Round 3 ruling (2026-08-16), Ruling 4: names both authorities.
-    expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent('This connection does not match what Sharko intends.')
-
-    // (b) Now checks getConnectionComparison, not getClusterComparison
-    await waitFor(() => expect(mockGetConnectionComparison).toHaveBeenCalled())
-    const diffs = await within(panel).findByTestId('connection-comparison-differences')
-    expect(within(diffs).getByText(/datadog/)).toBeInTheDocument()
+    expect(await within(panel).findByTestId('recon-sync-headline')).toHaveTextContent('Out of sync')
+    const labels = within(panel).getByTestId('recon-drift-labels')
+    // Human label first, raw path secondary — both name the drifted key.
+    expect(within(labels).getAllByText(/datadog/).length).toBeGreaterThanOrEqual(1)
   })
 
-  // S4-1: Changed 2026-08-13: (b) testid changed to connection-comparison-provenance.
-  // (a) PROVENANCE RULES PRESERVED: file path visible, short commit (7 chars) visible,
-  // full commit on hover via title attribute. This is the test that caught the regression.
-  it('the connection panel states which commit and file it was compared against, above the comparison table', async () => {
+  // Story 2: the identity block states the desired git file and revision —
+  // 7-char short SHA visible, the full commit one hover away, same rule the
+  // old provenance line pinned.
+  it('the connection page states which git file and revision define it, short SHA with the full commit on hover', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockGetConnectionComparison.mockResolvedValue({
-      cluster: 'staging-us',
-      status: 'synced',
-      scope: 'full',
-      ownership_mode: 'sharko_managed',
-      checked_at: '2026-08-13T12:00:00Z',
-      branch: 'main',
-      compared_path: 'configuration/managed-clusters.yaml',
-      compared_commit: 'abcdef1234567890abcdef1234567890abcdef12',
-      differences: [],
-      not_checked: [],
-      checked_field_count: 10,
-      repair_available: false,
-      repair_scope: 'none',
-      values_never_returned: true,
-    })
+    mockGetConnectionReconciliation.mockResolvedValue(reconViewFixture({ cluster: 'staging-us' }))
     renderPage()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
 
     const panel = await screen.findByTestId('secret-detail-panel')
-
-    // Pre-existing flake fix (found while running this story's gates,
-    // 2026-08-16): the connection comparison resolves asynchronously, so
-    // this awaits it instead of asserting synchronously.
-    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
-    // (a) File path visible
-    // S4-1: Changed 2026-08-13: (b) text split across elements ("File: " + path), use textContent.
-    expect(provenance.textContent).toContain('configuration/managed-clusters.yaml')
-    // (a) Short commit (7 chars) visible
-    expect(within(provenance).getByText('abcdef1')).toBeInTheDocument()
-    // (a) REGRESSION CAUGHT: Full commit on hover restored
-    expect(within(provenance).getByText('abcdef1').title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
+    const identity = await within(panel).findByTestId('recon-identity')
+    expect(identity.textContent).toContain('configuration/managed-clusters.yaml')
+    const shortSha = within(identity).getByTestId('recon-desired-revision')
+    expect(shortSha).toHaveTextContent('abcdef1')
+    expect(shortSha.title).toBe('Full commit: abcdef1234567890abcdef1234567890abcdef12')
   })
 
-  // SSF-14 item 4 removed the Resource details accordion these two
-  // sentences (P2-C3's self-heal promise, P2-C6's drift blame) used to
-  // live in — but the PM's rules require diagnostic information stay
-  // visible and the main result keep showing anything that needs action,
-  // so a walkthrough follow-up restored both directly into the ONE health
-  // conclusion block (never a new accordion, never back into a deleted
-  // Resource details, never inside the comparison table). Wording and the
-  // conditions that decide whether they show are byte-for-byte the same
-  // as before — only the place changed.
-  it('shows the drift-blame sentence and the self-heal promise inside the health conclusion, for a broken connection row', async () => {
+  // Story 2: a broken CONNECTION row carries no UI-computed drift blame or
+  // self-heal promise anymore — the server's plan.automatic sentence is the
+  // one allowed automatic promise, rendered verbatim.
+  it('a broken connection row shows the server plan sentence verbatim, never the old UI-computed promises', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
-    mockGetClusterComparison.mockResolvedValue({
-      cluster: {
-        name: 'staging-us',
-        labels: {},
-        last_reconcile: { time: '2026-08-05T00:00:00Z', outcome: 'succeeded', label_drift: { added: [], removed: [], changed: [] } },
-      },
-    })
-    renderPage()
-
-    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
-
-    const panel = await screen.findByTestId('secret-detail-panel')
-    const conclusion = within(panel).getByTestId('detail-health-conclusion')
-
-    // C6: compared_revision != applied_revision, drift_source: 'git' -> "git moved" sentence.
-    expect(within(conclusion).getByTestId('detail-drift-source')).toHaveTextContent(
-      'Git moved — a newer commit changed what this secret should be.',
+    mockGetConnectionReconciliation.mockResolvedValue(
+      reconViewFixture({
+        cluster: 'staging-us',
+        sync: {
+          state: 'out_of_sync',
+          verification_scope: 'full',
+          approval_required: false,
+          reason: 'Some addon labels on this connection do not match what git declares.',
+          checked_at: '2026-08-13T12:00:00Z',
+        },
+        drift: {
+          connection_configuration: [],
+          credential_material: [],
+          addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+          not_checked: [],
+        },
+        plan: { action: 'none', action_scopes: [], automatic: "Sharko re-applies the addon labels git declares on the reconciler's next pass." },
+      }),
     )
-    // C3: self_heals: false on an out_of_sync row -> waiting for the
-    // action. HL-1: a connection row points at the action's real name,
-    // renamed to "Sync addon labels" by the Round 3 ruling (2026-08-16).
-    expect(within(conclusion).getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync addon labels.')
+    renderPage()
 
-    // Never back inside a Resource details accordion or any other
-    // disclosure — that section stays deleted, and neither sentence lives
-    // in the comparison area (provenance or the safe-field table) either.
-    expect(screen.queryByTestId('detail-resource-disclosure')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('detail-keys-disclosure')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('detail-activity-disclosure')).not.toBeInTheDocument()
-    // S4-1: Changed 2026-08-13: (b) testid changed to connection-comparison-provenance.
-    const provenance = await within(panel).findByTestId('connection-comparison-provenance')
-    expect(within(provenance).queryByText(/Waiting for Sync addon labels|Git moved/)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('secret-row-connection-staging-us')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
+
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(await within(panel).findByTestId('recon-plan-automatic')).toHaveTextContent(
+      "Sharko re-applies the addon labels git declares on the reconciler's next pass.",
+    )
+    // The old UI-computed sentences are gone.
+    expect(within(panel).queryByTestId('detail-drift-source')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-self-heals')).not.toBeInTheDocument()
+    expect(panel.textContent ?? '').not.toContain('Sharko will fix this on the next pass')
+    expect(panel.textContent ?? '').not.toContain('Waiting for Sync addon labels.')
   })
 
   // P2-C3: the in-sync row (prod-eu) must show neither the drift sentence
@@ -1587,18 +1609,19 @@ describe('ManagedSecrets', () => {
   // SSF-14 item 6 + S4-5: For connection rows, "Recent activity" is back
   // (the newest 5 audit entries, fetched on mount) with a "View full audit
   // log" link. The "View related events" link is also present.
-  it('offers a "View related events" link into the audit log, scoped to this row\'s cluster, instead of its own activity list', async () => {
+  it('the connection page shows the honest activity feed with its "View audit log" link, scoped to this cluster', async () => {
     mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockGetConnectionReconciliation.mockResolvedValue(reconViewFixture({ cluster: 'staging-us' }))
     mockFetchAuditLog.mockResolvedValue({
       entries: [
         {
           timestamp: new Date().toISOString(),
           level: 'info',
-          event: 'cluster_reconcile',
+          event: 'cluster_connection_repair',
           user: 'admin',
-          action: 'reconcile',
+          action: 'update',
           resource: 'cluster:staging-us',
-          detail: 'Reconciled cluster connection',
+          detail: 'Repaired cluster connection',
           result: 'success',
         },
       ],
@@ -1609,16 +1632,13 @@ describe('ManagedSecrets', () => {
     fireEvent.click(screen.getByTestId('secret-row-connection-staging-us'))
 
     const panel = await screen.findByTestId('secret-detail-panel')
-    const link = await within(panel).findByTestId('detail-related-events-link')
-    expect(link).toHaveTextContent('View related events')
-    expect(link).toHaveAttribute('href', '/audit?cluster=staging-us')
-
-    // S4-5: For connection rows, Recent activity IS shown and fetchAuditLog
-    // IS called to populate it.
-    await waitFor(() => expect(within(panel).getByText('Recent activity')).toBeInTheDocument())
-    expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us' })
-    const fullLogLink = within(panel).getByTestId('view-full-audit-log')
-    expect(fullLogLink).toHaveTextContent('View full audit log')
+    // Story 3 (ruling 6): the feed carries the honest label and human
+    // titles; the audit fetch is scoped to this cluster.
+    expect(await within(panel).findByTestId('recon-activity-label')).toHaveTextContent('Recent activity since Sharko started')
+    await waitFor(() => expect(mockFetchAuditLog).toHaveBeenCalledWith({ cluster: 'staging-us' }))
+    expect(await within(panel).findByText('Connection repaired')).toBeInTheDocument()
+    const fullLogLink = within(panel).getByTestId('recon-view-audit-log')
+    expect(fullLogLink).toHaveTextContent('View audit log')
     expect(fullLogLink).toHaveAttribute('href', '/audit?cluster=staging-us')
   })
 })

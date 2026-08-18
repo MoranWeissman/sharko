@@ -357,13 +357,10 @@ import {
   RotateCcw,
   Search,
   Trash2,
-  Wrench,
   X,
 } from 'lucide-react'
 import {
-  api,
   deleteOrphanedSecret,
-  fetchAuditLog,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
   getManagedSecrets,
@@ -372,19 +369,15 @@ import {
   resyncClusterLabels,
   syncAddonValuesSecret,
   checkAllAddonValuesSecrets,
-  ApiError,
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
-  AuditEntry,
-  ConnectionComparisonView,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
   OrphanedSecretRow,
   SecretResource,
 } from '@/services/models'
-import { CREDS_SOURCE_EKS_TOKEN } from '@/services/models'
 import { InfoHint } from '@/components/InfoHint'
 import { RoleGuard } from '@/components/RoleGuard'
 import { AuthContext } from '@/hooks/useAuth'
@@ -397,7 +390,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SecretsSubnav } from '@/components/SecretsSubnav'
 import { SecretTiles } from './SecretTiles'
-import { ConnectionComparisonDisplay } from './ConnectionComparisonDisplay'
+import { ConnectionReconciliationView } from './ConnectionReconciliationView'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified row model — one shape for both secret kinds, hoisted at module
@@ -1423,18 +1416,12 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
       // SSF-8 binding honesty rule, still true here: a values row's source
       // is NEVER called "Git" — git only ever holds a pointer for a values
       // row, the real source is row.sourceLabel (e.g. an AWS Secrets
-      // Manager path). Round 3 ruling (2026-08-16), Ruling 4: a connection
-      // row's source is NOT "really git" either — git owns the addon
-      // labels, and the configured credentials source owns the connection
-      // details, so the sentence names both authorities instead of
-      // collapsing them into one.
-      return row.kind === 'connection'
-        ? 'This connection matches what Sharko intends — git for addon labels, the configured credentials source for connection details. No action is needed.'
-        : `The cluster copy matches ${row.sourceLabel}. No action is needed.`
+      // Manager path). Connection rows never reach this function anymore —
+      // their page is ConnectionReconciliationView, and the old
+      // two-authority connection sentences are gone with it (ruling 8).
+      return `The cluster copy matches ${row.sourceLabel}. No action is needed.`
     case 'differ':
-      return row.kind === 'connection'
-        ? 'This connection does not match what Sharko intends.'
-        : `The cluster copy does not match ${row.sourceLabel}.`
+      return `The cluster copy does not match ${row.sourceLabel}.`
     case 'never_created':
       return row.kind === 'values'
         ? 'This secret was never created on the cluster — Sync creates it.'
@@ -1897,41 +1884,13 @@ export function secretTitleFor(row: UnifiedRow): string {
   return row.kind === 'connection' ? `${row.cluster} connection` : row.addon ? `${row.addon} values on ${row.cluster}` : `Secret on ${row.cluster}`
 }
 
-/**
- * Round 3 ruling (2026-08-16) — "the page must make these understandable
- * without documentation": the connection detail page's teaching block
- * (heading + body, exact words from the ruling) and the always-visible
- * scope InfoHint carried by each of the three connection-row action
- * buttons (the enabled-button InfoHint precedent at :3357's "Check all
- * now"). Connection rows only — a values row's Check/Sync pair keeps its
- * existing, unhinted behaviour.
- */
-const CONNECTION_MODEL_HEADING = 'How Sharko manages this connection'
-const CONNECTION_MODEL_BODY =
-  "ArgoCD keeps addon labels and connection details in the same Secret, but Sharko manages them differently. Git controls the addon labels. Your configured credentials source controls how ArgoCD connects. Sharko can self-heal addon labels when enabled; it never changes connection credentials automatically."
-const CHECK_CONNECTION_SCOPE_HINT = 'Looks at this connection and reports what it finds. Nothing is changed.'
-const SYNC_ADDON_LABELS_SCOPE_HINT =
-  "Puts git's addon labels back on this secret. Only Sharko's addon label keys — nothing else."
-const REPAIR_CONNECTION_SCOPE_HINT =
-  "Rewrites the connection details from this cluster's configured credentials source, against the commit shown. Addon labels are re-applied too."
-// Round W3 review fix — the hint used to say "rewrites the connection
-// details" even when the button only re-applies addon labels
-// (repair_scope === 'addon_labels_only'), which directly contradicted the
-// confirm dialog's own "Sharko will not read or change this connection's
-// sign-in details" sentence for that same click. These two scope-specific
-// variants, plus repairConnectionScopeHint() below, are derived from the
-// SAME condition ladder the confirm dialog's description uses (:~2504) so
-// the hint and the confirm text can never disagree again.
-const REPAIR_CONNECTION_SCOPE_HINT_ADDON_LABELS_ONLY =
-  "Puts git's addon labels back on this secret. Sharko will not read or change this connection's sign-in details."
-const REPAIR_CONNECTION_SCOPE_HINT_EKS =
-  'Refreshes the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels are re-applied too.'
-
-function repairConnectionScopeHint(comparison: ConnectionComparisonView | null): string {
-  if (comparison?.credential_source_type === CREDS_SOURCE_EKS_TOKEN) return REPAIR_CONNECTION_SCOPE_HINT_EKS
-  if (comparison?.repair_scope === 'addon_labels_only') return REPAIR_CONNECTION_SCOPE_HINT_ADDON_LABELS_ONLY
-  return REPAIR_CONNECTION_SCOPE_HINT
-}
+// Connection rows: the always-visible teaching block ("How Sharko manages
+// this connection") and the three per-button scope hints are GONE — the
+// connection-reconciliation redesign (epic-connection-reconciliation-view,
+// ruling 8) replaced the page's split-authority framing with the server's
+// own mode statement, rendered once inside ConnectionReconciliationView.
+// The banned-wording tests in ConnectionReconciliationView.test.tsx pin
+// that the old heading and body never come back.
 
 export function SecretDetailContent({
   row,
@@ -1950,6 +1909,7 @@ export function SecretDetailContent({
   // SSF-5 (Secret Sync finish pass) — Overview vs Redacted YAML. Always
   // reopens on Overview for whichever row the panel is now showing; a tab
   // choice made on one row must not carry over to the next one it opens.
+  // Values rows only — a connection row's page is the reconciliation view.
   const [detailTab, setDetailTabState] = useState<'overview' | 'yaml'>('overview')
   // SSF-8/SSF-14 — whether the comparison box is expanded. Item 2 (SSF-14):
   // this now SURVIVES a Check again — a reader who opened it stays opened,
@@ -1958,144 +1918,11 @@ export function SecretDetailContent({
   // is never hidden behind a closed toggle. See the effect below.
   const [comparisonOpen, setComparisonOpen] = useState(false)
 
-  // S4-1: Connection-comparison check — runs once when the page opens for a
-  // connection row, using the new GET /clusters/{name}/connection-comparison
-  // endpoint. Re-runs whenever a DIFFERENT row is shown.
-  const [connectionComparisonData, setConnectionComparisonData] = useState<ConnectionComparisonView | null>(null)
-  const [connectionComparisonLoading, setConnectionComparisonLoading] = useState(false)
-  const [connectionComparisonError, setConnectionComparisonError] = useState<string | null>(null)
-
-  // S4-4 / S4-5: Connection repair state
-  const [repairInProgress, setRepairInProgress] = useState(false)
-  const [showRepairConfirm, setShowRepairConfirm] = useState(false)
-  const [recentAuditEntries, setRecentAuditEntries] = useState<AuditEntry[]>([])
-
-  useEffect(() => {
-    setConnectionComparisonData(null)
-    setConnectionComparisonError(null)
-    if (!row || row.kind !== 'connection') {
-      setConnectionComparisonLoading(false)
-      return
-    }
-    let cancelled = false
-    setConnectionComparisonLoading(true)
-    api
-      .getConnectionComparison(row.cluster)
-      .then((result) => {
-        if (!cancelled) setConnectionComparisonData(result)
-      })
-      .catch((err) => {
-        if (!cancelled) setConnectionComparisonError(err instanceof Error ? err.message : 'The check failed.')
-      })
-      .finally(() => {
-        if (!cancelled) setConnectionComparisonLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.key])
-
-  const handleConnectionComparisonRetry = () => {
-    if (!row || row.kind !== 'connection') return
-    setConnectionComparisonError(null)
-    setConnectionComparisonLoading(true)
-    api
-      .getConnectionComparison(row.cluster)
-      .then((result) => setConnectionComparisonData(result))
-      .catch((err) => setConnectionComparisonError(err instanceof Error ? err.message : 'The check failed.'))
-      .finally(() => setConnectionComparisonLoading(false))
-  }
-
-  // S4-5: Fetch recent audit entries for connection rows
-  useEffect(() => {
-    setRecentAuditEntries([])
-    if (!row || row.kind !== 'connection') {
-      return
-    }
-    let cancelled = false
-    fetchAuditLog({ cluster: row.cluster })
-      .then((result) => {
-        if (!cancelled && result.entries) {
-          // Take the newest 5 entries
-          setRecentAuditEntries(result.entries.slice(0, 5))
-        }
-      })
-      .catch((err) => {
-        // Audit fetch failure is logged but not shown as an error —
-        // Recent activity is supplemental, not critical
-        console.warn('Failed to fetch recent audit entries:', err)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [row?.key])
-
-  // R1-1: the repair endpoint is ADMIN-ONLY — see internal/authz/authz.go,
-  // "cluster.connection.repair": RoleAdmin. A repair can rewrite the whole
-  // credential material ArgoCD signs in with, which is a much bigger blast
-  // radius than cluster.resync (label-only, operator).
-  //
-  // The RoleGuard wrapping the action row below is admin-or-operator, which
-  // is correct for every OTHER action inside it, so the repair button
-  // carries its own admin check. Both the button AND the handlers check it:
-  // a rendering-only gate still lets a click reach the endpoint and paint a
-  // 403 as a generic failure — a permission wall dressed up as a fault,
-  // exactly the bug fixed once already for the live-secret read below.
-  const auth = useContext(AuthContext)
-  const canRepairConnection = auth?.isAdmin === true
-
-  // S4-4: Repair button click handler
-  const handleRepairClick = () => {
-    if (!canRepairConnection) return
-    setShowRepairConfirm(true)
-  }
-
-  // S4-4: Repair confirmation
-  const handleRepairConfirm = async () => {
-    // R1-1: the request itself is gated, not just the button — this is the
-    // call site that actually reaches the admin-only endpoint.
-    if (!canRepairConnection) return
-    if (!row || row.kind !== 'connection' || !connectionComparisonData?.compared_commit) {
-      return
-    }
-    setShowRepairConfirm(false)
-    setRepairInProgress(true)
-    try {
-      const result = await api.repairConnection(row.cluster, connectionComparisonData.compared_commit)
-      // Update the comparison data with the fresh check from the repair
-      setConnectionComparisonData(result.comparison)
-      // Refresh recent audit entries to show the repair action
-      const auditResult = await fetchAuditLog({ cluster: row.cluster })
-      if (auditResult.entries) {
-        setRecentAuditEntries(auditResult.entries.slice(0, 5))
-      }
-      showToast(result.message, 'success')
-      onChanged()
-    } catch (err) {
-      // S4-4: Handle 409 specifically — the branch moved or git cannot tell
-      // which commit it's on. The server sends one of three sentences, all
-      // deliberately worded. Show the server's sentence unchanged.
-      // Do NOT auto-retry — the person decides when to check again.
-      if (err instanceof ApiError && err.status === 409) {
-        // Server sent one of: repairFailRevisionUnknown, repairFailRevisionMoved,
-        // or repairFailRaced. All three say "nothing changed" and tell the person
-        // to run the check again. Show the message as-is.
-        showToast(err.message, 'info')
-      } else {
-        const message = err instanceof Error ? err.message : 'The repair failed.'
-        showToast(message, 'error')
-      }
-    } finally {
-      setRepairInProgress(false)
-    }
-  }
-
   // The same role predicate RoleGuard applies below, read here so the
   // REQUEST is gated too and not just the rendering. A viewer's panel used
   // to fire the read anyway and paint the 403 as an error — a permission
-  // dialog dressed up as a fault. (`auth` is read once, further up, next to
-  // canRepairConnection.)
+  // dialog dressed up as a fault.
+  const auth = useContext(AuthContext)
   const canReadLive = auth?.role === 'admin' || auth?.role === 'operator'
   const { live, retry } = useLiveSecret(row, canReadLive)
 
@@ -2130,16 +1957,14 @@ export function SecretDetailContent({
     prevVerdictRef.current = verdict
   }, [row?.key, verdict])
 
+  // Values rows only — a connection row's Check lives inside
+  // ConnectionReconciliationView (re-fetching the read-only reconciliation
+  // endpoint IS the check there).
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      if (row.kind === 'connection') {
-        await reconcileCluster(row.cluster)
-        showToast(connectionRefreshToast(row.cluster), 'success')
-      } else {
-        const result = await refreshAddonValuesSecret(row.cluster, row.addon!)
-        showToast(result.message, 'success')
-      }
+      const result = await refreshAddonValuesSecret(row.cluster, row.addon!)
+      showToast(result.message, 'success')
       onChanged()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to trigger refresh', 'error')
@@ -2176,24 +2001,68 @@ export function SecretDetailContent({
   // SSF-12: "Differences" only when there really are some (the "differ"
   // verdict) — every other state (including the four boundary/unknown
   // verdicts that used to borrow "Diff"/"Comparison" from row kind) gets
-  // the calmer, generic "Comparison" heading. Row kind no longer decides
-  // this word at all — "Diff" is gone; it always read as a claim that a
-  // values row is checked against git, which was never true.
+  // the calmer, generic "Comparison" heading.
   const comparisonHeading = verdict === 'differ' ? 'Differences' : 'Comparison'
 
   // SSF-12: "Check again" once a check has actually produced a result;
   // "Check now" only before the very first one.
   const checkLabel = hasCheckedBefore(row) ? 'Check again' : 'Check now'
 
-  // W3 review fix (FIX 4): the repair button's own label, computed once so
-  // its InfoHint's aria-label can follow it instead of a hardcoded "Repair
-  // connection" that was wrong on the EKS button ("Refresh EKS connection").
-  const repairLabel =
-    connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN ? 'Refresh EKS connection' : 'Repair connection'
-
   const viewPageLabel = row.kind === 'connection' || !row.addon ? 'View cluster page' : 'View addon page'
   const viewPageHref =
     row.kind === 'connection' || !row.addon ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon)}`
+
+  const header = (
+    <div className="min-w-0 space-y-1">
+      <h1 className="text-2xl font-semibold leading-tight text-[#0a2a4a] dark:text-gray-100 sm:text-[28px]">{secretTitleFor(row)}</h1>
+      <p className="text-base text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+      {/* SSF-14 item 5: "View cluster"/"View addon" next to the description,
+          as a normal secondary link. */}
+      <button
+        type="button"
+        onClick={() => navigate(viewPageHref)}
+        data-testid="detail-view-page-link"
+        className="text-sm text-teal-700 hover:underline dark:text-teal-400"
+      >
+        {viewPageLabel}
+      </button>
+    </div>
+  )
+
+  // ── The connection page (epic-connection-reconciliation-view, Story 2) —
+  // a GitOps reconciliation view consuming ONE new API. Everything the old
+  // page hand-assembled here (teaching block, health conclusion, comparison
+  // section, repair button row, repeated verdict sentences) is replaced by
+  // ConnectionReconciliationView, which renders the server's own contract.
+  // An orphaned row is never kind 'connection' (buildUnifiedRows folds
+  // orphans in as 'values'), so this branch needs no orphan handling.
+  if (row.kind === 'connection') {
+    return (
+      <div data-testid="secret-detail-panel" className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">{header}</div>
+        {/* P2-D D3: the label-fight warning is a fleet-row fact with no
+            equivalent in the reconciliation contract — it stays. */}
+        {(row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
+          <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
+            {fightWarningSentence(row.fightCount ?? 0)}
+          </p>
+        )}
+        <ConnectionReconciliationView
+          cluster={row.cluster}
+          onRequestSync={() => onRequestSync(row)}
+          onChanged={onChanged}
+          technicalEvidenceExtra={
+            canReadLive ? (
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Redacted YAML</h3>
+                <RedactedYamlSection row={row} live={live} onRetry={retry} />
+              </div>
+            ) : undefined
+          }
+        />
+      </div>
+    )
+  }
 
   return (
     <div data-testid="secret-detail-panel" className="space-y-4">
@@ -2202,21 +2071,7 @@ export function SecretDetailContent({
           the single Delete action) sit RIGHT, in the same row. flex-wrap
           alone stacks this safely once the row runs out of room. */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-semibold leading-tight text-[#0a2a4a] dark:text-gray-100 sm:text-[28px]">{secretTitleFor(row)}</h1>
-          <p className="text-base text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
-          {/* SSF-14 item 5: "View cluster"/"View addon" moves up here, next
-              to the description, as a normal secondary link — it used to
-              live inside the removed Resource details section. */}
-          <button
-            type="button"
-            onClick={() => navigate(viewPageHref)}
-            data-testid="detail-view-page-link"
-            className="text-sm text-teal-700 hover:underline dark:text-teal-400"
-          >
-            {viewPageLabel}
-          </button>
-        </div>
+        {header}
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex flex-wrap items-center gap-2">
             {/* leftover-secrets S1.2: an orphaned row gets exactly one
@@ -2235,16 +2090,12 @@ export function SecretDetailContent({
               <>
                 {/* SSF-12: "Check now" only before the first result ever
                     lands; "Check again" every time after — testid
-                    unchanged. Round 3 (2026-08-16): a connection row's
-                    Check button carries an always-visible scope InfoHint —
-                    a values row's Check is unchanged. */}
+                    unchanged. */}
                 <PanelActionButton
                   onClick={handleRefresh}
                   loading={refreshing}
                   icon={RefreshCw}
                   label={checkLabel}
-                  hint={row.kind === 'connection' ? CHECK_CONNECTION_SCOPE_HINT : undefined}
-                  hintLabel={row.kind === 'connection' ? `What does ${checkLabel} do?` : undefined}
                   testId="detail-refresh"
                 />
                 {/* SSF-12: Sync is HIDDEN entirely — not just disabled —
@@ -2254,69 +2105,23 @@ export function SecretDetailContent({
                     push (!gate.disabled); when it's genuinely unavailable
                     (foreign, not checked yet, …) PanelActionButton's own
                     InfoHint says why — never an unexplained disabled
-                    button. Round 3 (2026-08-16): a connection row's Sync
-                    also carries an always-visible scope InfoHint. */}
+                    button. */}
                 {verdict !== 'match' && (
                   <PanelActionButton
                     onClick={() => onRequestSync(row)}
                     disabled={gate.disabled}
                     icon={RotateCcw}
-                    // HL-1: per kind — see syncActionLabel. The testid
-                    // stays detail-sync on purpose; only the words change.
                     label={syncActionLabel(row.kind)}
                     reason={gate.reason}
-                    hint={row.kind === 'connection' ? SYNC_ADDON_LABELS_SCOPE_HINT : undefined}
-                    hintLabel={row.kind === 'connection' ? 'What does Sync addon labels do?' : undefined}
                     testId="detail-sync"
                     strong={!gate.disabled}
                   />
                 )}
-                {/* S4-4: Repair button — only for connection rows, only when
-                    the server says repair_available is true AND repair_scope
-                    is not 'none' AND there's a commit on screen.
-                    R1-1: and only for an ADMIN. The endpoint is admin-only,
-                    so an operator must not see a button that could only ever
-                    come back 403. Not greyed out — absent. Round 3
-                    (2026-08-16): carries an always-visible scope InfoHint —
-                    "Repair connection" is the ruled name; "Refresh EKS
-                    connection" is kept out of scope for this round, but the
-                    same InfoHint applies to both since it's the same
-                    underlying action. */}
-                {canRepairConnection &&
-                  row.kind === 'connection' &&
-                  connectionComparisonData?.repair_available &&
-                  connectionComparisonData.repair_scope !== 'none' &&
-                  connectionComparisonData.compared_commit && (
-                    <PanelActionButton
-                      onClick={handleRepairClick}
-                      loading={repairInProgress}
-                      icon={Wrench}
-                      label={repairLabel}
-                      hint={repairConnectionScopeHint(connectionComparisonData)}
-                      hintLabel={`What does ${repairLabel} do?`}
-                      testId="detail-repair-connection"
-                      strong
-                    />
-                  )}
               </>
             )}
           </div>
         </RoleGuard>
       </div>
-
-      {/* Round 3 ruling (2026-08-16), Ruling 1 — the teaching block: a
-          connection row beside its status and actions, visible by default
-          (not behind a click), explaining the split model so the page is
-          understandable without documentation. Connection rows only. */}
-      {row.kind === 'connection' && (
-        <div
-          data-testid="detail-connection-model"
-          className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800"
-        >
-          <h2 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{CONNECTION_MODEL_HEADING}</h2>
-          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{CONNECTION_MODEL_BODY}</p>
-        </div>
-      )}
 
       {/* ── ONE health conclusion (SSF-12) — replaces the old three-line
           Synced / Matches Git / Compared with git trio. Visible on both
@@ -2327,49 +2132,37 @@ export function SecretDetailContent({
       {/* SSF-5 (Secret Sync finish pass) — Overview vs the read-only YAML
           view, same segmented-pill pattern the page's own Group by /
           List-Tiles controls already use. Resets to Overview whenever a
-          different row opens (the effect above).
-          Round 3 ruling (2026-08-16), Ruling 2: the pill is gone entirely
-          for a CONNECTION row — the redacted YAML already renders
-          unconditionally on Overview (below the connection check), so a
-          separate YAML tab that only pointed back there was redundant. A
-          VALUES row keeps the pill and its YAML tab exactly as before. */}
-      {row.kind !== 'connection' && (
-        <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
-          <button
-            type="button"
-            onClick={() => setDetailTabState('overview')}
-            aria-pressed={detailTab === 'overview'}
-            data-testid="detail-tab-overview"
-            className={`px-3 py-1.5 text-sm font-medium ${
-              detailTab === 'overview'
-                ? 'bg-[#1a3d5c] text-white'
-                : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            onClick={() => setDetailTabState('yaml')}
-            aria-pressed={detailTab === 'yaml'}
-            data-testid="detail-tab-yaml"
-            className={`px-3 py-1.5 text-sm font-medium ${
-              detailTab === 'yaml'
-                ? 'bg-[#1a3d5c] text-white'
-                : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
-          >
-            YAML
-          </button>
-        </div>
-      )}
+          different row opens (the effect above). */}
+      <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-[#6aade0] dark:ring-gray-700">
+        <button
+          type="button"
+          onClick={() => setDetailTabState('overview')}
+          aria-pressed={detailTab === 'overview'}
+          data-testid="detail-tab-overview"
+          className={`px-3 py-1.5 text-sm font-medium ${
+            detailTab === 'overview'
+              ? 'bg-[#1a3d5c] text-white'
+              : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+          }`}
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          onClick={() => setDetailTabState('yaml')}
+          aria-pressed={detailTab === 'yaml'}
+          data-testid="detail-tab-yaml"
+          className={`px-3 py-1.5 text-sm font-medium ${
+            detailTab === 'yaml'
+              ? 'bg-[#1a3d5c] text-white'
+              : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+          }`}
+        >
+          YAML
+        </button>
+      </div>
 
-      {/* row.kind !== 'connection' guards the yaml branch too — a
-          connection row has no pill to set detailTab to 'yaml' with, but a
-          stale 'yaml' value can still be sitting in state from whichever
-          values row was open just before this one; this keeps a connection
-          row on its Overview content regardless. */}
-      {row.kind !== 'connection' && detailTab === 'yaml' ? (
+      {detailTab === 'yaml' ? (
         <RoleGuard
           roles={['admin', 'operator']}
           fallback={
@@ -2389,31 +2182,34 @@ export function SecretDetailContent({
               The last check failed: {row.lastCheckError}
             </p>
           )}
-          {row.kind === 'connection' && (row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
-            <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
-              {fightWarningSentence(row.fightCount ?? 0)}
-            </p>
-          )}
-          {row.kind === 'values' && (row.consecutiveFailures ?? 0) >= ROW_WARNING_THRESHOLD && (
+          {(row.consecutiveFailures ?? 0) >= ROW_WARNING_THRESHOLD && (
             <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="consecutive-failures-warning">
               {consecutiveFailuresSentence(row.consecutiveFailures ?? 0)}
             </p>
           )}
 
           {/* ── Comparison, only when useful (SSF-12/SSF-14) ───────────────
-              S4-1/S4-2: For connection rows, the comparison is now the full
-              connection check (inline and already open, no toggle) using the
-              new GET /clusters/{name}/connection-comparison endpoint. For
-              addon-values rows, it remains the key-presence check.
-
-              An orphaned row has nothing left to compare (its source in
-              git is gone — the conclusion above already says so), so no
-              Comparison zone renders for it at all. */}
+              The key-presence check for an addon-values row. An orphaned
+              row has nothing left to compare (its source in git is gone —
+              the conclusion above already says so), so no Comparison zone
+              renders for it at all. */}
           {row.state !== 'orphaned' && (
             <div>
-              {row.kind === 'connection' ? (
-                <>
-                  <h2 className="mb-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Connection check</h2>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
+                <button
+                  type="button"
+                  onClick={() => setComparisonOpen((open) => !open)}
+                  aria-expanded={comparisonOpen}
+                  data-testid="view-comparison-toggle"
+                  className="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium text-teal-700 hover:bg-teal-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400 dark:hover:bg-teal-950/40"
+                >
+                  {comparisonOpen ? 'Hide comparison' : 'View comparison'}
+                </button>
+              </div>
+              {comparisonOpen && (
+                <div className="space-y-3 rounded-md border border-border bg-card p-3">
+                  <ComparisonProvenance row={row} />
                   <RoleGuard
                     roles={['admin', 'operator']}
                     fallback={
@@ -2422,121 +2218,18 @@ export function SecretDetailContent({
                       </p>
                     }
                   >
-                    <ConnectionComparisonDisplay
-                      comparison={connectionComparisonData}
-                      loading={connectionComparisonLoading}
-                      error={connectionComparisonError}
-                      onRetry={handleConnectionComparisonRetry}
-                    />
+                    <ValuesKeyComparison live={live} onRetry={retry} />
                   </RoleGuard>
-
-                  {/* S4-2: RedactedYamlSection moves below the comparison for
-                      connection rows, so a reader sees check → differences →
-                      redacted YAML, all on one scrolling page. */}
-                  <div className="mt-4">
-                    <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Redacted YAML</h3>
-                    <RoleGuard
-                      roles={['admin', 'operator']}
-                      fallback={
-                        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-                          {LIVE_READ_NEEDS_OPERATOR}
-                        </p>
-                      }
-                    >
-                      <RedactedYamlSection row={row} live={live} onRetry={retry} />
-                    </RoleGuard>
-                  </div>
-
-                  {/* S4-5: Recent activity — the newest 5 audit entries for
-                      this cluster, then a link to the full log. */}
-                  {recentAuditEntries.length > 0 && (
-                    <div className="mt-4">
-                      <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Recent activity</h3>
-                      <div className="space-y-2">
-                        {recentAuditEntries.map((entry, idx) => (
-                          <div key={idx} className="rounded-md border border-border bg-card p-2 text-xs" data-testid={`recent-activity-entry-${idx}`}>
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium text-[#0a2a4a] dark:text-gray-200">{entry.event}</span>
-                              <span className="text-[#5a8aaa] dark:text-gray-500">{new Date(entry.timestamp).toLocaleString()}</span>
-                            </div>
-                            {entry.detail && <p className="mt-1 text-[#2a5a7a] dark:text-gray-400">{entry.detail}</p>}
-                          </div>
-                        ))}
-                        <a href={`/audit?cluster=${encodeURIComponent(row.cluster)}`} className="inline-block text-sm text-teal-700 hover:underline dark:text-teal-400" data-testid="view-full-audit-log">
-                          View full audit log
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <h2 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{comparisonHeading}</h2>
-                    <button
-                      type="button"
-                      onClick={() => setComparisonOpen((open) => !open)}
-                      aria-expanded={comparisonOpen}
-                      data-testid="view-comparison-toggle"
-                      className="inline-flex items-center rounded-md px-2 py-1 text-sm font-medium text-teal-700 hover:bg-teal-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400 dark:hover:bg-teal-950/40"
-                    >
-                      {comparisonOpen ? 'Hide comparison' : 'View comparison'}
-                    </button>
-                  </div>
-                  {comparisonOpen && (
-                    <div className="space-y-3 rounded-md border border-border bg-card p-3">
-                      <ComparisonProvenance row={row} />
-                      <RoleGuard
-                        roles={['admin', 'operator']}
-                        fallback={
-                          <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="live-needs-operator">
-                            {LIVE_READ_NEEDS_OPERATOR}
-                          </p>
-                        }
-                      >
-                        <ValuesKeyComparison live={live} onRetry={retry} />
-                      </RoleGuard>
-                    </div>
-                  )}
-                </>
+                </div>
               )}
             </div>
           )}
 
-          {/* ── Related events (SSF-14 item 6) — replaces the old "Recent
-              activity" accordion. No new history: this is one quiet link
-              into the SAME audit log AuditViewer already shows, scoped to
-              this row's cluster via a URL param it now reads on mount. Any
-              CURRENT problem is still visible above (the health conclusion
-              and, for connection rows, the last-check-error line) — this
-              link never has to be opened to see an active failure. */}
+          {/* ── Related events (SSF-14 item 6) — one quiet link into the
+              SAME audit log AuditViewer already shows, scoped to this row's
+              cluster via a URL param it reads on mount. */}
           <RelatedEventsLink row={row} />
         </>
-      )}
-
-      {/* S4-4: Repair confirmation modal */}
-      {row.kind === 'connection' && (
-        <ConfirmationModal
-          open={showRepairConfirm}
-          onClose={() => setShowRepairConfirm(false)}
-          onConfirm={handleRepairConfirm}
-          title={
-            connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN
-              ? `Refresh EKS connection for "${row.cluster}"?`
-              : `Repair connection for "${row.cluster}"?`
-          }
-          description={
-            connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN
-              ? `This will refresh the short-lived sign-in token for this EKS connection to match what Sharko intends. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
-              : connectionComparisonData?.repair_scope === 'addon_labels_only'
-                ? `This will re-apply this cluster's addon labels to match git. Sharko will not read or change this connection's sign-in details. The self-heal setting will not be changed.`
-                : `This will rewrite this cluster's connection to match git and this cluster's configured credentials source. Addon labels will be re-applied. Foreign labels, other data keys and annotations will be left alone. The self-heal setting will not be changed.`
-          }
-          confirmText={
-            connectionComparisonData?.credential_source_type === CREDS_SOURCE_EKS_TOKEN ? 'Refresh connection' : 'Repair connection'
-          }
-          loading={repairInProgress}
-        />
       )}
     </div>
   )

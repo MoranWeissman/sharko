@@ -57,12 +57,18 @@ const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockFetchAuditLog = vi.fn()
 const mockDeleteOrphanedSecret = vi.fn()
+const mockGetConnectionReconciliation = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
     getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
   },
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
@@ -154,6 +160,31 @@ beforeEach(() => {
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  // Story 2: the connection page consumes the reconciliation endpoint.
+  // This file's fixture is a labels-drifted connection whose one offered
+  // door is Sync addon labels — repair is NOT offered, matching the old
+  // repair_available: false premise.
+  mockGetConnectionReconciliation.mockResolvedValue({
+    cluster: 'prod-eu',
+    management_mode: 'sharko_managed',
+    managed_scope: 'full_connection',
+    mode_statement: 'Git defines the connection. Sharko resolves its credential references and maintains the resulting ArgoCD Secret.',
+    definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+    sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: 'Some addon labels on this connection do not match what git declares.', checked_at: '2026-08-13T12:00:00Z' },
+    health: { state: 'connected' },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: 'The connection definition was read from git.' },
+      { id: 'argocd_connection', status: 'ok', detail: 'ArgoCD reports this connection as working.' },
+    ],
+    drift: {
+      connection_configuration: [],
+      credential_material: [],
+      addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+      not_checked: [],
+    },
+    plan: { action: 'sync_addon_labels', action_scopes: ['metadata.labels'] },
+    values_never_returned: true,
+  })
   window.sessionStorage.clear()
 })
 
@@ -162,7 +193,9 @@ describe('HL-1 — the connection action is named for what it does', () => {
     const user = userEvent.setup()
     renderApp(['/secrets/connections/prod-eu'])
 
-    const syncButton = await screen.findByTestId('detail-sync')
+    // Story 2: the action renders beside the addon-assignments drift group
+    // inside the reconciliation view, driven by plan.action.
+    const syncButton = await screen.findByTestId('recon-action-sync')
     expect(syncButton).toHaveTextContent('Sync addon labels')
     expect(syncButton).not.toHaveTextContent(/^Sync$/)
 
@@ -212,11 +245,15 @@ describe('HL-1 — the connection action is named for what it does', () => {
 
   it('no connection sentence promises the cluster copy will match Git, and the addon promise still names its store', async () => {
     const conn = renderApp(['/secrets/connections/prod-eu'])
-    const note = await screen.findByTestId('detail-repair-note')
-    expect(note).toHaveTextContent("Sync addon labels puts git's addon labels back on this secret.")
-    expect(note).not.toHaveTextContent('match Git')
-    // The "who fixes this" sentence points at the renamed action.
-    expect(screen.getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Sync addon labels.')
+    // Story 2: the connection page renders the server's reason verbatim and
+    // computes no promise of its own — no "match Git" claim, no UI-invented
+    // next-pass promise, anywhere on the page.
+    const view = await screen.findByTestId('recon-view')
+    expect(view.textContent ?? '').not.toContain('match Git')
+    expect(view.textContent ?? '').not.toContain('Sharko will fix this on the next pass')
+    expect(screen.getByTestId('recon-sync-reason')).toHaveTextContent(
+      'Some addon labels on this connection do not match what git declares.',
+    )
     conn.unmount()
 
     renderApp(['/secrets/addons/prod-eu/datadog'])
@@ -249,9 +286,10 @@ describe('HL-1 / HL-4 — the addon-labels action never claims to "Repair", and 
 
     // The detail page of a BROKEN connection row — the place a "Repair"
     // label would be most tempting to put, and the sync (addon-labels)
-    // action itself must never say it either.
+    // action itself must never say it either. The plan here offers only
+    // sync_addon_labels, so no Repair text may exist anywhere.
     renderApp(['/secrets/connections/prod-eu'])
-    const syncButton = await screen.findByTestId('detail-sync')
+    const syncButton = await screen.findByTestId('recon-action-sync')
     expect(syncButton).not.toHaveTextContent(/Repair/)
     expect(screen.queryByText(/Repair/)).not.toBeInTheDocument()
   })

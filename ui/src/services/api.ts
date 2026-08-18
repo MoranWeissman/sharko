@@ -15,6 +15,7 @@ import type {
   ClustersResponse,
   ConfigDiffResponse,
   ConnectionComparisonView,
+  ConnectionReconciliation,
   ConnectionRepairView,
   CredsSource,
   ConnectionsListResponse,
@@ -1549,6 +1550,11 @@ export const api = {
   getCluster: (name: string) => fetchJSON<ClusterDetailResponse>(`/clusters/${name}`),
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
   getConnectionComparison: (name: string) => fetchJSON<ConnectionComparisonView>(`/clusters/${name}/connection-comparison`),
+  // The connection page's one read (epic-connection-reconciliation-view,
+  // Story 2): the full reconciliation contract — read-only and zero-mint on
+  // the server, so re-fetching it IS "Check again".
+  getConnectionReconciliation: (name: string) =>
+    fetchJSON<ConnectionReconciliation>(`/clusters/${encodeURIComponent(name)}/connection-reconciliation`),
   repairConnection: (name: string, reviewedCommit: string) =>
     postJSON<ConnectionRepairView>(`/clusters/${name}/connection-repair?reviewed_commit=${encodeURIComponent(reviewedCommit)}`),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),

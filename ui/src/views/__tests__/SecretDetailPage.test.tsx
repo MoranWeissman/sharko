@@ -34,12 +34,18 @@ const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockDeleteOrphanedSecret = vi.fn()
 const mockFetchAuditLog = vi.fn()
+const mockGetConnectionReconciliation = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
     getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
   },
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
   getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
@@ -146,6 +152,23 @@ beforeEach(() => {
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  // Story 2: a connection row's page consumes the reconciliation endpoint.
+  mockGetConnectionReconciliation.mockResolvedValue({
+    cluster: 'prod-eu',
+    management_mode: 'sharko_managed',
+    managed_scope: 'full_connection',
+    mode_statement: 'Git defines the connection. Sharko resolves its credential references and maintains the resulting ArgoCD Secret.',
+    definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+    sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-13T12:00:00Z' },
+    health: { state: 'connected' },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: 'The connection definition was read from git.' },
+      { id: 'argocd_connection', status: 'ok', detail: 'ArgoCD reports this connection as working.' },
+    ],
+    drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+    plan: { action: 'none', action_scopes: [] },
+    values_never_returned: true,
+  })
 })
 
 describe('direct load and refresh', () => {
@@ -296,40 +319,37 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(screen.getByTestId('secret-detail-container')).toHaveClass('max-w-screen-2xl')
   })
 
-  // Round 3 ruling (2026-08-16), Ruling 2: a connection row has no
-  // Overview|YAML pill anymore — the redacted YAML that used to sit behind
-  // the YAML tab's redirect message now just renders unconditionally, so
-  // this proves the header actions are reachable on the one page a
-  // connection row has, and that there's no pill to find.
-  it('Check now and Sync sit in the header, next to the title, with no Overview|YAML pill to switch', async () => {
-    // staging-us is out_of_sync — SSF-12 hides Sync entirely once a row is
-    // healthy, so a row that still needs repair is the one that proves
-    // both actions render in the header.
+  // Story 2 (connection-reconciliation epic): a connection row's page is
+  // the reconciliation view — no Overview|YAML pill, no permanent header
+  // write buttons; the title stays and read-only checking lives inside the
+  // view itself.
+  it('a connection row keeps its title and renders the reconciliation view, with no Overview|YAML pill', async () => {
     renderApp(['/secret-sync/connection-staging-us'])
     const panel = await screen.findByTestId('secret-detail-panel')
 
     expect(within(panel).getByRole('heading', { name: 'staging-us connection' })).toBeInTheDocument()
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
+    expect(await within(panel).findByTestId('recon-view')).toBeInTheDocument()
     expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
     expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
-    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
-  it('SSF-12: Sync is hidden entirely (not disabled) for a healthy row — only Check now stays', async () => {
-    renderApp(['/secret-sync/connection-prod-eu']) // in_sync -> match
-    const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
-  })
-
-  // Round 3 ruling (2026-08-16), Ruling 2: no pill, no tab switch needed —
-  // the conclusion and the redacted YAML are both just there.
-  it('the status/compared-with/last-checked row is visible, with the redacted YAML right below it — no tab to hide it behind', async () => {
+  it('Story 2: a connection row has no permanent write buttons — read-only checking stays inside the view', async () => {
     renderApp(['/secret-sync/connection-prod-eu'])
     const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
-    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
+    await within(panel).findByTestId('recon-view')
+    expect(within(panel).queryByTestId('detail-refresh')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
+    expect(within(panel).getByTestId('recon-check')).toBeInTheDocument()
+  })
+
+  // Story 2: the summary is up front; the redacted YAML sits behind the
+  // collapsed Technical evidence toggle, never as primary content.
+  it('the reconciliation summary is visible, with the redacted YAML behind collapsed Technical evidence', async () => {
+    renderApp(['/secret-sync/connection-prod-eu'])
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(await within(panel).findByTestId('recon-summary')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-yaml-content')).not.toBeInTheDocument()
+    fireEvent.click(within(panel).getByTestId('recon-technical-evidence-toggle'))
     expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
