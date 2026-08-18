@@ -91,13 +91,62 @@ type connectionSecretRow struct {
 	Cluster         string `json:"cluster"`
 	SecretNamespace string `json:"secret_namespace,omitempty"`
 	SecretName      string `json:"secret_name,omitempty"`
-	// State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
-	// see connectionSecretState for exactly how each is derived. A FAILED
-	// check (P1-B B1) renders as "unknown", never "out_of_sync": Sharko
-	// could not look, which is a different fact from "Sharko looked and it
-	// differs". See LastCheckError below for the two-facts shape this
-	// implies (ArgoCD's own sync-state / last-operation-result split).
+	// State is the legacy row word — "in_sync", "out_of_sync", "missing",
+	// "foreign" or "unknown".
+	//
+	// B5: it is now a PROJECTION of SyncState below, not a second
+	// derivation. It used to come from the cluster reconciler's own record,
+	// whose drift comparison covers only Sharko's bare addon-label keys — so
+	// "in_sync" meant "the addon labels match" and said nothing at all about
+	// the credential, which is how a legacy pasted-credential connection
+	// rendered a green "Synced" here while its own page said "Verification
+	// incomplete". The product owner ruled that out: both surfaces derive
+	// from the same canonical semantics, and there is no second vocabulary.
+	//
+	// It stays on the wire because the ?state= filter, the sort rank and
+	// every existing caller read it — and because it is now a pure
+	// projection, the filter, the chips and the counts cannot drift apart
+	// from the canonical answer again. See connectionRowLegacyState.
 	State string `json:"state"`
+
+	// ── The canonical reconciliation answer (B5) ──────────────────────────
+	// Every field below is copied verbatim from the shared canonical core
+	// (connection_canonical.go) via the credential-check store, which
+	// already holds the finished comparison. No derivation happens here and
+	// none may happen in the browser.
+
+	// ManagementMode is sharko_managed, self_managed, legacy_inline or
+	// foreign_owned.
+	ManagementMode string `json:"management_mode"`
+	// ManagedScope is what Sharko OWNS on this connection: full_connection,
+	// addon_labels or none.
+	ManagedScope string `json:"managed_scope"`
+	// SyncState is synced, out_of_sync, blocked or unknown. "synced" is
+	// possible ONLY at VerificationScope "full" — the row builder refuses to
+	// emit any other combination (see applyConnectionRowCanonical).
+	SyncState string `json:"sync_state"`
+	// VerificationScope is how much of what Sharko owns was successfully
+	// compared: full, partial or none. "none" on a row no check has reached
+	// yet — which is the honest answer, not a cheerful one.
+	VerificationScope string `json:"verification_scope"`
+	// ApprovalRequired is true exactly when the drift touches connection
+	// configuration or credential material.
+	ApprovalRequired bool `json:"approval_required"`
+	// Headline is the display word, produced by the server so this row and
+	// the connection page can never phrase the same connection differently.
+	// Rendered verbatim; the browser derives nothing.
+	Headline string `json:"headline"`
+	// Qualifier is the sentence beside the headline when the verification is
+	// narrower than the whole connection, or the connection's data is
+	// managed outside Sharko. Absent when the state needs none.
+	Qualifier string `json:"qualifier,omitempty"`
+	// Health is ArgoCD's OWN answer for this connection — connected,
+	// unavailable or not_checked — mapped through the same function the
+	// connection page uses. It is INDEPENDENT of the git state above:
+	// "Connected" beside "Verification incomplete" is correct, not a
+	// contradiction. Free of charge: it comes off the ArgoCD cluster listing
+	// the list handler already fetched, so this adds no call of any kind.
+	Health string `json:"health"`
 	// Source (S1) names, per row, which store this secret's content is
 	// compared against. A connection secret always follows git — git holds
 	// the addon labels this secret is built from — so this is the constant
@@ -722,7 +771,13 @@ func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []model
 			row.SecretNamespace = ns
 			row.SecretName = c.Name
 		}
-		row.State, row.LastChecked = connectionSecretState(c.LastReconcile)
+		// B5: the row's STATE is the canonical answer (below). The
+		// reconciler's record still supplies the two facts that are its own
+		// and nobody else's: when its last write pass looked at this
+		// cluster, and whether that pass failed.
+		if c.LastReconcile != nil {
+			row.LastChecked = c.LastReconcile.Time
+		}
 		row.LastCheckError = connectionSecretCheckError(c.LastReconcile)
 		if c.LastReconcile != nil {
 			row.ComparedRevision = c.LastReconcile.ComparedRevision
@@ -731,16 +786,32 @@ func (s *Server) buildConnectionSecretRows(ctx context.Context, clusters []model
 			row.FightCount = c.LastReconcile.FightCount
 		}
 		row.SelfHeals = connectionSelfHeals(c, row.ComparedPath, v3SelfHealOn)
-		row.DriftSource = connectionDriftSource(row.State, row.ComparedRevision, row.AppliedRevision)
 
-		// W3-3: the last credential-check outcome, from the shared store
-		// the background loop and the manual check both write. An in-memory
-		// read; a cluster never checked simply has no fields.
+		// W3-3 + B5: the last check's outcome AND its canonical
+		// reconciliation answer, both from the shared store the background
+		// loop and the manual check write. ONE in-memory map read per row —
+		// exactly where the credential-check fields were already read, so
+		// this adds no I/O of any kind: no live Secret read, no git read, no
+		// credentials-provider call, no ArgoCD call.
+		//
+		// A cluster the check loop has not reached yet has no canonical
+		// verdict, and its row says so: "Not checked yet", verification
+		// scope "none". It is NOT back-filled from the reconciler's
+		// addon-label-only record — that record is exactly the second
+		// vocabulary the ruling removed.
+		canonical := connectionCanonicalStateNotChecked(c.UserManagedConnection(), c.CredsSource)
 		if rec, ok := s.connCredChecks.get(c.Name); ok {
 			row.CredentialCheck = rec.Status
 			row.CredentialCheckDetail = rec.Detail
 			row.CredentialCheckedAt = rec.CheckedAt
+			canonical = rec.Canonical
 		}
+		applyConnectionRowCanonical(&row, canonical)
+		// ArgoCD's own health, off the cluster listing this handler already
+		// fetched, through the SAME mapping the connection page uses.
+		row.Health = argoHealthWordFor(c.ConnectionStatus)
+
+		row.DriftSource = connectionDriftSource(row.State, row.ComparedRevision, row.AppliedRevision)
 
 		if rep, ok := repairs.lastConnectionSecretRepair(c.Name); ok {
 			row.LastRepaired = rep.At.UTC().Format(time.RFC3339)
@@ -807,68 +878,71 @@ func connectionDriftSource(state, comparedRevision, appliedRevision string) stri
 	return "cluster"
 }
 
-// connectionSecretState derives the row's honest state + last-checked
-// timestamp from the reconciler's per-cluster record. Every branch here is
-// grounded in a real, already-recorded fact — nothing is guessed:
+// ── B5: the row's state is the canonical answer, projected ─────────────────
+
+// connectionRowLegacyState projects the canonical sync state onto the legacy
+// row word the ?state= filter, the sort rank and the existing UI table read.
 //
-//   - rec == nil: the reconciler has never processed this cluster on this
-//     server instance (fresh startup, no reconciler wired, or a
-//     registration PR that hasn't merged yet) -> "unknown".
-//   - Outcome "skipped" with the exact self-managed "not created yet"
-//     message -> "missing": the reconciler itself observed the secret
-//     doesn't exist.
-//   - Outcome "succeeded" with no label drift -> "in_sync".
-//   - Outcome "succeeded" WITH label drift (self-heal off, or a
-//     self-managed fight in progress) -> "out_of_sync": Sharko compared and
-//     found a real mismatch.
-//   - Outcome "failed" -> "unknown" (P1-B B1, finding #120). A failed check
-//     means Sharko does not know whether the secret matches — that is a
-//     different fact from "Sharko looked and it differs", and wearing
-//     out_of_sync's badge told an ArgoCD-literate reader a real comparison
-//     had happened when it hadn't. LastCheckError (connectionSecretRow)
-//     carries the canned reason alongside this state — see
-//     connectionSecretCheckError.
-//   - Any other "skipped" reason (a git read failure that left labels
-//     untouched, a same-name unlabeled Secret in Adopt territory, etc.) ->
-//     "unknown" — collapsing these into "in sync" or "out of sync" would
-//     overclaim; the reconciler deliberately took no position this tick.
+// It is a PROJECTION, not a derivation. That is the whole point of the
+// product owner's ruling: keeping the old word alive as an independent
+// calculation is what let the fleet render a green "Synced" beside a "Not
+// compared" chip on a connection whose credential was never compared. Now
+// the word can only ever be a restatement of the canonical state, so the
+// chips, the filter and the counts cannot disagree with it.
 //
-// HONEST TRADE-OFF, on purpose: ClusterReconcileRecord holds only the LAST
-// outcome — a cluster whose last SUCCESSFUL check found real drift
-// (out_of_sync), followed by a check that itself FAILED, loses the "it was
-// out of sync" fact the moment the failed record overwrites it. This
-// function does not invent memory to paper over that: state = unknown +
-// LastCheckError's reason is the honest rendering of what Sharko can
-// currently prove, not a guess at what was true before the check failed.
-// Preserving the prior verdict across a failed check would need the record
-// to carry more than one outcome, which is out of this lane's scope.
-func connectionSecretState(rec *models.ClusterLastReconcile) (state, lastChecked string) {
-	if rec == nil {
-		return "unknown", ""
+// The mapping, with the live-Secret case first because it is the more
+// specific fact:
+//
+//   - the live connection Secret is not there at all -> "missing"
+//   - synced      -> "in_sync"
+//   - out_of_sync -> "out_of_sync"
+//   - blocked     -> "foreign" (another tool owns it; the table already
+//     renders that word as "Managed elsewhere" and ranks it as a boundary
+//     worth knowing about rather than damage)
+//   - unknown, and anything unrecognised -> "unknown"
+func connectionRowLegacyState(st connectionCanonicalState) string {
+	if st.LiveSecretMissing {
+		return "missing"
 	}
-	lastChecked = rec.Time
-	switch {
-	// M8 (code review), workaround reason closed by R2-2: this used to
-	// match against RawMessage instead of Message because Message was
-	// unconditionally FailureSentence-mapped by applyLastReconcile
-	// (clusters_reconcile.go) and so no longer carried this exact sentinel
-	// string verbatim for a Skipped record. R2-2 made applyLastReconcile
-	// outcome-gated — a Skipped record's Message is untouched now, same as
-	// RawMessage — so this could match on Message today. Left matching on
-	// RawMessage anyway: it is still correct (RawMessage is unchanged by
-	// R2-2), still the exact record recordReconcile wrote, and switching it
-	// back to Message buys nothing but churn. SelfManagedSecretNotCreatedMessage
-	// is a fixed sentence this package itself writes, never wrapped error
-	// text, so comparing against it directly is safe either way.
-	case rec.Outcome == string(clusterreconciler.OutcomeSkipped) && rec.RawMessage == clusterreconciler.SelfManagedSecretNotCreatedMessage:
-		return "missing", lastChecked
-	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded) && rec.LabelDrift == nil:
-		return "in_sync", lastChecked
-	case rec.Outcome == string(clusterreconciler.OutcomeSucceeded):
-		return "out_of_sync", lastChecked
-	default: // OutcomeFailed and any other "skipped" reason
-		return "unknown", lastChecked
+	switch st.SyncState {
+	case syncStateSynced:
+		return "in_sync"
+	case syncStateOutOfSync:
+		return "out_of_sync"
+	case syncStateBlocked:
+		return "foreign"
+	default:
+		return "unknown"
 	}
+}
+
+// applyConnectionRowCanonical copies the canonical answer onto the row AND
+// fails closed on the one lie this whole round exists to remove.
+//
+// THE GUARD. A connection row may not claim synced — in either vocabulary —
+// unless every field inside the scope Sharko owns was successfully compared
+// and matched. The canonical core already enforces that, so this guard
+// should never fire; it is here because "the fleet says Synced when nothing
+// was verified" is exactly the defect that shipped, and one enforcement
+// point is one edit away from being forgotten. A future regression upstream
+// therefore cannot reproduce it: the row downgrades to unknown / "Not
+// checked yet" instead. TestConnectionRow_SyncedIsStructurallyImpossible...
+// is the break test that proves it.
+func applyConnectionRowCanonical(row *connectionSecretRow, st connectionCanonicalState) {
+	if st.SyncState == syncStateSynced &&
+		(st.VerificationScope != verificationScopeFull || st.ManagedScope == managedScopeNone) {
+		st.SyncState = syncStateUnknown
+		st.Headline = connectionSyncHeadline(st)
+		st.Qualifier = connectionSyncQualifier(st)
+	}
+	row.ManagementMode = st.ManagementMode
+	row.ManagedScope = st.ManagedScope
+	row.SyncState = st.SyncState
+	row.VerificationScope = st.VerificationScope
+	row.ApprovalRequired = st.ApprovalRequired
+	row.Headline = st.Headline
+	row.Qualifier = st.Qualifier
+	row.State = connectionRowLegacyState(st)
 }
 
 // connectionSecretCheckError reports the canned reason (P1-B B1) a

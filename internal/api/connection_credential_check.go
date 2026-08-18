@@ -36,9 +36,23 @@ package api
 //
 // # Nothing derived from a value, ever
 //
-// The store holds a status word, a fixed sentence and a timestamp. No value,
-// no length, no hash, no fragment, no field path — the field-level detail
-// stays on the connection page, behind the same read gate as today.
+// The store holds a status word, a timestamp, the fixed sentences the API
+// already ships, and — since B5 — the canonical reconciliation answer for
+// this connection (mode, owned scope, sync state, verification scope,
+// approval requirement, headline, qualifier). All of it is enum words, one
+// bool and fixed literals. No value, no length, no hash, no fragment, no
+// field path — the field-level detail stays on the connection page, behind
+// the same read gate as today.
+//
+// # One derivation, two surfaces (B5)
+//
+// record() is already handed the entire finished comparison for every
+// managed cluster: on every loop pass, and immediately whenever anyone opens
+// a connection page or clicks Check. So the canonical answer is computed
+// HERE, once, by the same pure function the connection page's response is
+// built from — and the fleet row reads the result instead of deriving a
+// second, addon-label-only verdict of its own. That costs no extra I/O: the
+// mapping is pure, and this file's loop already ran the only reads involved.
 //
 // # Transition-only reporting
 //
@@ -125,8 +139,8 @@ func credentialCheckFromView(view connectionComparisonView) (status, detail stri
 	}
 }
 
-// connectionCredentialCheckRecord is one cluster's last credential-check
-// outcome. Three fields, none of them ever derived from a credential value.
+// connectionCredentialCheckRecord is one cluster's last check outcome. None
+// of it is ever derived from a credential value.
 type connectionCredentialCheckRecord struct {
 	// Status is one of the four credentialCheck* words above.
 	Status string
@@ -136,6 +150,24 @@ type connectionCredentialCheckRecord struct {
 	// produced it, so the store and the connection page can never disagree
 	// about when Sharko looked.
 	CheckedAt string
+	// Canonical (B5) is the FULL canonical reconciliation answer for this
+	// connection — the same struct the connection page's own response is a
+	// projection of, computed by the same pure function from the same
+	// finished comparison. The fleet row reads it verbatim.
+	//
+	// This is what makes "one canonical derivation, shared by both
+	// surfaces" literally true. record() already holds the whole finished
+	// comparison view and used to throw all but three fields of it away;
+	// keeping the mapped answer costs one pure function call and no I/O at
+	// all — no Kubernetes read, no git read, no secrets-backend read, no
+	// ArgoCD call. It is safe to compute here precisely because
+	// connectionCanonicalStateFor needs neither an ArgoCD client nor the
+	// settings store (see connection_canonical.go).
+	//
+	// It carries no value, no length, no hash, no fragment and no field
+	// path: it is status words, enum words, a bool, and the fixed sentences
+	// the API already ships.
+	Canonical connectionCanonicalState
 }
 
 // connectionCredentialCheckStore holds the per-cluster outcomes, guarded by
@@ -179,11 +211,16 @@ func (st *connectionCredentialCheckStore) record(cluster string, view connection
 	}
 	status, detail := credentialCheckFromView(view)
 
+	// The canonical answer, from the same pure function the connection page
+	// uses, over the same finished comparison. Pure — no I/O of any kind.
+	canonical := connectionCanonicalStateFor(view)
+
 	st.mu.Lock()
 	st.records[cluster] = connectionCredentialCheckRecord{
 		Status:    status,
 		Detail:    detail,
 		CheckedAt: view.CheckedAt,
+		Canonical: canonical,
 	}
 	announced := st.driftAnnounced[cluster]
 	var announce, clear bool

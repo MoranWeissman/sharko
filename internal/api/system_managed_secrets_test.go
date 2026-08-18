@@ -82,7 +82,7 @@ func TestHandleGetManagedSecrets_NoConnectionNoReconcilers_Degrades200(t *testin
 	}
 }
 
-func TestHandleGetManagedSecrets_ConnectionSecretRow_InSync(t *testing.T) {
+func TestHandleGetManagedSecrets_ConnectionSecretRow_ReconcilerAloneIsNotAVerdict(t *testing.T) {
 	argo := newStubArgoSrv(t, []map[string]interface{}{
 		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
 	}, http.StatusOK)
@@ -133,9 +133,25 @@ func TestHandleGetManagedSecrets_ConnectionSecretRow_InSync(t *testing.T) {
 	if row.Cluster != "prod-eu" {
 		t.Errorf("cluster = %q, want prod-eu", row.Cluster)
 	}
-	if row.State != "in_sync" {
-		t.Errorf("state = %q, want in_sync", row.State)
+	// B5, and this is the honest consequence stated up front: a completed
+	// reconciler pass is NOT a verdict on this connection. The reconciler
+	// compares only Sharko's bare addon-label keys, so "it succeeded" says
+	// nothing about the credential — and that is precisely how a legacy
+	// pasted-credential connection used to render a green "Synced" here.
+	// With no canonical check recorded for this cluster, the row says so.
+	if row.State != "unknown" {
+		t.Errorf("state = %q, want unknown — a reconciler pass alone is not a comparison", row.State)
 	}
+	if row.SyncState != syncStateUnknown || row.VerificationScope != verificationScopeNone {
+		t.Errorf("sync_state/verification_scope = %q/%q, want unknown/none", row.SyncState, row.VerificationScope)
+	}
+	if row.Headline != headlineNotCheckedYet {
+		t.Errorf("headline = %q, want %q", row.Headline, headlineNotCheckedYet)
+	}
+	// last_checked stays the reconciler's own fact: when its last write pass
+	// looked at this cluster. That is a different question from "when did
+	// Sharko last compare this connection", which credential_checked_at
+	// answers.
 	if row.LastChecked == "" {
 		t.Error("expected last_checked to be set")
 	}
@@ -189,76 +205,82 @@ func TestHandleGetManagedSecrets_ConnectionSecretRow_RepairJoinsFromAudit(t *tes
 	if row.LastRepairedDetail != "secret created" {
 		t.Errorf("last_repaired_detail = %q, want %q", row.LastRepairedDetail, "secret created")
 	}
-	// No reconciler wired in this test, so the row's own state must stay
+	// No check has run for this cluster, so the row's own state must stay
 	// honest ("unknown"), not be inferred from the repair join.
 	if row.State != "unknown" {
-		t.Errorf("state = %q, want unknown (no clusterRecon wired)", row.State)
+		t.Errorf("state = %q, want unknown (no check recorded)", row.State)
 	}
 }
 
-// TestConnectionSecretState_FailedOutcomeIsUnknownNotOutOfSync pins P1-B B1
-// / finding #120: a FAILED check must never wear "out_of_sync"'s badge —
-// out_of_sync claims Sharko compared and found a real mismatch, and a
-// failed check means Sharko does not know. Table-driven over every branch
-// connectionSecretState's doc comment describes.
-func TestConnectionSecretState_FailedOutcomeIsUnknownNotOutOfSync(t *testing.T) {
+// TestConnectionRowLegacyState_IsAProjectionNeverASecondDerivation replaces
+// the old TestConnectionSecretState_* table. That function derived the row's
+// word from the cluster reconciler's own record, whose drift comparison
+// covers ONLY Sharko's bare addon-label keys — which is exactly how a legacy
+// pasted-credential connection came to render a green "Synced" here while
+// its own page said "Verification incomplete". The derivation is gone
+// (product owner's B5 ruling: one canonical semantics, no second
+// vocabulary), so the test that pinned it is gone with it.
+//
+// What survives is the concern behind it, now pinned on the projection: a
+// check that could not finish reads "unknown", NEVER "out_of_sync". Sharko
+// not knowing is a different fact from Sharko having looked and found a
+// mismatch.
+func TestConnectionRowLegacyState_IsAProjectionNeverASecondDerivation(t *testing.T) {
 	cases := []struct {
 		name string
-		rec  *models.ClusterLastReconcile
+		st   connectionCanonicalState
 		want string
 	}{
-		{"nil record", nil, "unknown"},
 		{
-			"self-managed secret not created yet -> missing",
-			&models.ClusterLastReconcile{
-				Outcome: string(clusterreconciler.OutcomeSkipped),
-				// M8 (code review): connectionSecretState now matches on
-				// RawMessage, not Message — Message is the
-				// FailureSentence-mapped, safe-for-a-browser text
-				// (applyLastReconcile), which no longer carries this exact
-				// sentinel string. RawMessage is what applyLastReconcile
-				// actually populates from the reconciler's own unmapped
-				// Message, so that's what the fixture sets here.
-				RawMessage: clusterreconciler.SelfManagedSecretNotCreatedMessage,
-			},
-			"missing",
+			"never checked -> unknown",
+			connectionCanonicalState{SyncState: syncStateUnknown, VerificationScope: verificationScopeNone},
+			"unknown",
 		},
 		{
-			"succeeded, no drift -> in_sync",
-			&models.ClusterLastReconcile{Outcome: string(clusterreconciler.OutcomeSucceeded)},
+			"check failed -> unknown, NEVER out_of_sync",
+			connectionCanonicalState{SyncState: syncStateUnknown, VerificationScope: verificationScopeNone, CheckedAt: "t"},
+			"unknown",
+		},
+		{
+			"verification incomplete (legacy inline, clean) -> unknown, never in_sync",
+			connectionCanonicalState{ManagementMode: managementModeLegacyInline, ManagedScope: managedScopeAddonLabels, SyncState: syncStateUnknown, VerificationScope: verificationScopePartial, CheckedAt: "t"},
+			"unknown",
+		},
+		{
+			"EKS clean, credential content not compared -> unknown, never in_sync",
+			connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateUnknown, VerificationScope: verificationScopePartial, CheckedAt: "t"},
+			"unknown",
+		},
+		{
+			"fully compared and matching -> in_sync",
+			connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateSynced, VerificationScope: verificationScopeFull, CheckedAt: "t"},
 			"in_sync",
 		},
 		{
-			"succeeded WITH drift -> out_of_sync (a real comparison found a mismatch)",
-			&models.ClusterLastReconcile{
-				Outcome:    string(clusterreconciler.OutcomeSucceeded),
-				LabelDrift: &models.ClusterLastReconcileLabelDrift{Changed: []string{"datadog"}},
-			},
+			"self-managed, every owned label compared and matching -> in_sync",
+			connectionCanonicalState{ManagementMode: managementModeSelfManaged, ManagedScope: managedScopeAddonLabels, SyncState: syncStateSynced, VerificationScope: verificationScopeFull, CheckedAt: "t"},
+			"in_sync",
+		},
+		{
+			"a real reported difference -> out_of_sync",
+			connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateOutOfSync, VerificationScope: verificationScopeFull, CheckedAt: "t"},
 			"out_of_sync",
 		},
 		{
-			"failed -> unknown, NEVER out_of_sync (P1-B B1 / #120)",
-			&models.ClusterLastReconcile{
-				Outcome: string(clusterreconciler.OutcomeFailed),
-				Message: "reconciler pass aborted: git read failed: dial tcp: i/o timeout",
-			},
-			"unknown",
+			"another tool owns it -> foreign (the table renders \"Managed elsewhere\")",
+			connectionCanonicalState{ManagementMode: managementModeForeignOwned, ManagedScope: managedScopeNone, SyncState: syncStateBlocked, VerificationScope: verificationScopeNone, CheckedAt: "t"},
+			"foreign",
 		},
 		{
-			"other skipped reason -> unknown",
-			&models.ClusterLastReconcile{
-				Outcome: string(clusterreconciler.OutcomeSkipped),
-				Message: clusterreconciler.UnlabeledSecretExistsMessage,
-			},
-			"unknown",
+			"no live Secret at all -> missing, whatever else the state says",
+			connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateOutOfSync, VerificationScope: verificationScopeNone, CheckedAt: "t", LiveSecretMissing: true},
+			"missing",
 		},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _ := connectionSecretState(tc.rec)
-			if got != tc.want {
-				t.Errorf("connectionSecretState(%+v) state = %q, want %q", tc.rec, got, tc.want)
+			if got := connectionRowLegacyState(tc.st); got != tc.want {
+				t.Errorf("connectionRowLegacyState = %q, want %q", got, tc.want)
 			}
 		})
 	}
