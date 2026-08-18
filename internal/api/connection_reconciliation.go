@@ -242,6 +242,15 @@ type connectionReconciliationSync struct {
 	// LastSuccessfulApplication is the live Secret's sharko.dev/written-at
 	// provenance annotation. ABSENT when unknown.
 	LastSuccessfulApplication string `json:"last_successful_application,omitempty"`
+	// Headline is the display word for this state, named by scope — the
+	// SERVER's answer, so the fleet list and this page can never phrase the
+	// same connection differently (B5). The browser renders it verbatim and
+	// derives nothing. See connection_canonical.go.
+	Headline string `json:"headline"`
+	// Qualifier is the sentence beside the headline when the verification is
+	// narrower than the full connection, or when the connection's data is
+	// managed outside Sharko. Absent when the state needs none.
+	Qualifier string `json:"qualifier,omitempty"`
 }
 
 // connectionReconciliationHealth is ArgoCD's own connection health —
@@ -404,16 +413,15 @@ func (s *Server) argoConnectionHealth(parent context.Context, cluster string) (s
 	if err != nil {
 		return healthStateNotChecked, ""
 	}
-	switch status {
-	case "Successful":
-		return healthStateConnected, ""
-	case "Failed":
-		return healthStateUnavailable, msg
-	default:
-		// "Unknown", "" — ArgoCD has not probed this cluster (it never
-		// probes a cluster with no application scheduled on it).
-		return healthStateNotChecked, ""
+	// argoHealthWordFor is the SHARED mapping (connection_canonical.go) — the
+	// fleet row maps ArgoCD's same connection-state string through the same
+	// function, so the two surfaces cannot disagree about one cluster's
+	// health. Only a failed connection carries ArgoCD's own message.
+	state = argoHealthWordFor(status)
+	if state == healthStateUnavailable {
+		return state, msg
 	}
+	return state, ""
 }
 
 // connectionReconciliationFacts is everything the builder is allowed to look
@@ -435,13 +443,18 @@ type connectionReconciliationFacts struct {
 // deliberately not in the API).
 func buildConnectionReconciliationView(f connectionReconciliationFacts) connectionReconciliationView {
 	v := f.view
-	mode := managementModeFor(v)
+	// ONE derivation, shared with the fleet row (B5). Everything about mode,
+	// scope, sync state and the display words comes from the canonical core;
+	// this endpoint only adds the facts the fleet row does not carry (the
+	// git/provenance identity, the conditions, ArgoCD health, and the plan).
+	canon := connectionCanonicalStateFor(v)
+	mode := canon.ManagementMode
 	drift := groupConnectionDrift(v)
 
 	out := connectionReconciliationView{
 		Cluster:        v.Cluster,
 		ManagementMode: mode,
-		ManagedScope:   managedScopeFor(mode),
+		ManagedScope:   canon.ManagedScope,
 		ModeStatement:  modeStatementFor(mode),
 		Definition: connectionReconciliationDefinition{
 			File:                 v.ComparedPath,
@@ -455,23 +468,25 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 		ValuesNeverReturned: true,
 	}
 
-	// The plan is built FIRST: whether the repair door is actually offered
-	// decides which sentences sync and the conditions are allowed to use —
-	// the generic "…through the repair action" wording may only ever appear
-	// next to plan.action: repair_connection.
+	// The plan is the one part of the response the canonical core cannot
+	// compute: it is the only place the self-heal setting is allowed to
+	// matter, and it only ever chooses between plan.Automatic's sentence and
+	// the sync_addon_labels door. It can neither produce nor withdraw
+	// repair_connection — repairConnectionOffered is that whole rule — which
+	// is exactly why the canonical sync block above needs neither the
+	// setting nor this plan.
 	out.Plan = buildReconciliationPlan(v, mode, drift, f.selfHealOn)
-	out.Sync = buildReconciliationSync(v, mode, drift, out.Plan)
-	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, f.healthState)
-
-	// THE INVARIANT, enforced last and fail-closed: synced is only ever
-	// shipped at full verification scope. This guard should never fire — the
-	// two paths that produce synced both set full — but a false "synced"
-	// headline is the one lie this whole feature exists to prevent, so the
-	// rule does not depend on every future edit remembering it.
-	if out.Sync.State == syncStateSynced && out.Sync.VerificationScope != verificationScopeFull {
-		out.Sync.State = syncStateUnknown
-		out.Sync.Reason = reasonInvariantFailClosed
+	out.Sync = connectionReconciliationSync{
+		State:                     canon.SyncState,
+		VerificationScope:         canon.VerificationScope,
+		ApprovalRequired:          canon.ApprovalRequired,
+		Reason:                    canon.Reason,
+		CheckedAt:                 canon.CheckedAt,
+		LastSuccessfulApplication: v.liveWrittenAt,
+		Headline:                  canon.Headline,
+		Qualifier:                 canon.Qualifier,
 	}
+	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, f.healthState)
 	return out
 }
 
@@ -591,9 +606,15 @@ func outOfSyncApprovalReason(v connectionComparisonView, mode string, repairOffe
 }
 
 // buildReconciliationSync derives the sync block. The mapping is the
-// page-state matrix v3, row by row. The plan is an input because the
-// approval sentences depend on whether the repair door is actually offered.
-func buildReconciliationSync(v connectionComparisonView, mode string, drift connectionReconciliationDrift, plan connectionReconciliationPlan) connectionReconciliationSync {
+// page-state matrix v3/v4, row by row.
+//
+// repairOffered is an input because the approval sentences depend on whether
+// the repair door is actually offered — a generic "…through the repair
+// action" sentence must never sit next to a withheld door. It is a bool and
+// not the whole plan on purpose: the plan also depends on the self-heal
+// setting, and this block must provably not (see connection_canonical.go).
+// repairConnectionOffered is the single answer both callers use.
+func buildReconciliationSync(v connectionComparisonView, mode string, drift connectionReconciliationDrift, repairOffered bool) connectionReconciliationSync {
 	sync := connectionReconciliationSync{
 		// CheckedAt copies the comparison's own timestamp — a string, never a
 		// Go time, so a zero time cannot be fabricated (the W3-6 rule).
@@ -602,7 +623,6 @@ func buildReconciliationSync(v connectionComparisonView, mode string, drift conn
 	}
 	approval := len(drift.ConnectionConfiguration) > 0 || len(drift.CredentialMaterial) > 0
 	sync.ApprovalRequired = approval
-	repairOffered := plan.Action == planActionRepairConnection
 
 	switch connectioncompare.Status(v.Status) {
 	case connectioncompare.StatusCheckFailed:
@@ -829,7 +849,7 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 			// the explanation of the absence instead (the comparison's own
 			// sentence when it has one — the R3-8 withdrawal, the
 			// unknown-source sentences — else the fixed fallback).
-			if v.RepairAvailable && connectioncompare.RepairScope(v.RepairScope) == connectioncompare.RepairScopeFullConnection {
+			if repairConnectionOffered(v, mode, drift) {
 				p.Action = planActionRepairConnection
 				p.ActionScopes = []string{"metadata.labels", "data.name", "data.server", "data.config"}
 				p.ReviewedCommit = v.ComparedCommit
@@ -856,7 +876,7 @@ func buildReconciliationPlan(v connectionComparisonView, mode string, drift conn
 		// prove this is right, but I can make it right"; one token, on the
 		// write only). Only a full-connection repair the comparison itself
 		// offers qualifies.
-		if v.RepairAvailable && connectioncompare.RepairScope(v.RepairScope) == connectioncompare.RepairScopeFullConnection {
+		if repairConnectionOffered(v, mode, drift) {
 			p.Action = planActionRepairConnection
 			p.ActionScopes = []string{"metadata.labels", "data.name", "data.server", "data.config"}
 			p.ReviewedCommit = v.ComparedCommit

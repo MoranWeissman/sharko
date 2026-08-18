@@ -1062,3 +1062,284 @@ func TestConnectionReconciliation_EKSPath_ZeroMintAndNoLeak(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================================
+// B5 — ONE derivation. The endpoint is a projection of the canonical core,
+// and the display words come from the server.
+// ============================================================================
+
+// TestConnectionReconciliation_SyncBlockIsExactlyTheCanonicalCore proves the
+// endpoint derives NOTHING of its own about sync state. Across the same wide
+// grid the invariant sweep uses, every canonical field on the response is
+// field-for-field what connectionCanonicalStateFor produced — which is also
+// exactly what the fleet row reads. Two surfaces, one answer, structurally.
+//
+// It also re-proves, by construction, the two independence claims the
+// canonical core's doc comment makes: the same canonical answer comes back
+// with the self-heal setting on and off, and with every ArgoCD health word.
+func TestConnectionReconciliation_SyncBlockIsExactlyTheCanonicalCore(t *testing.T) {
+	statuses := []connectioncompare.Status{
+		connectioncompare.StatusSynced, connectioncompare.StatusOutOfSync,
+		connectioncompare.StatusMissing, connectioncompare.StatusCheckFailed,
+		connectioncompare.StatusOwnershipConflict, connectioncompare.StatusLimited,
+		connectioncompare.Status(""),
+	}
+	scopes := []connectioncompare.Scope{
+		connectioncompare.ScopeFull, connectioncompare.ScopeLimited,
+		connectioncompare.ScopeAddonLabelsOnly, connectioncompare.ScopeOwnershipConflict,
+	}
+	modes := []connectioncompare.Mode{
+		connectioncompare.ModeBackendStoredCredentials, connectioncompare.ModeEKSToken,
+		connectioncompare.ModeInlineKubeconfig, connectioncompare.ModeSelfManaged,
+		connectioncompare.ModeForeignOwned, connectioncompare.ModeUnknownSource,
+		connectioncompare.Mode(""),
+	}
+	diffSets := [][]connectionComparisonDifference{
+		nil,
+		{reconSafeDiff("metadata.labels[datadog]")},
+		{reconSafeDiff("data.server")},
+		{reconSensitiveDiff()},
+	}
+	healths := []string{healthStateConnected, healthStateUnavailable, healthStateNotChecked}
+
+	checked := 0
+	for _, status := range statuses {
+		for _, scope := range scopes {
+			for _, mode := range modes {
+				for _, diffs := range diffSets {
+					for _, notChecked := range [][]connectionComparisonNotChecked{nil, {{Path: "data.config", Reason: "r"}}} {
+						v := reconView(func(cv *connectionComparisonView) {
+							cv.Status = string(status)
+							cv.Scope = string(scope)
+							cv.OwnershipMode = string(mode)
+							cv.Differences = diffs
+							cv.NotChecked = notChecked
+							cv.LimitReason = "a limit sentence"
+							cv.FailureReason = "a failure sentence"
+						})
+						canon := connectionCanonicalStateFor(v)
+						for _, selfHeal := range []bool{false, true} {
+							for _, health := range healths {
+								out := buildConnectionReconciliationView(connectionReconciliationFacts{
+									view: v, healthState: health, selfHealOn: selfHeal,
+								})
+								checked++
+								if out.ManagementMode != canon.ManagementMode ||
+									out.ManagedScope != canon.ManagedScope ||
+									out.Sync.State != canon.SyncState ||
+									out.Sync.VerificationScope != canon.VerificationScope ||
+									out.Sync.ApprovalRequired != canon.ApprovalRequired ||
+									out.Sync.Reason != canon.Reason ||
+									out.Sync.Headline != canon.Headline ||
+									out.Sync.Qualifier != canon.Qualifier {
+									t.Fatalf("the endpoint derived its own answer instead of the canonical one\n endpoint: mode=%q scope=%q state=%q verification=%q approval=%v reason=%q headline=%q qualifier=%q\ncanonical: mode=%q scope=%q state=%q verification=%q approval=%v reason=%q headline=%q qualifier=%q\n(status=%q compareScope=%q ownership=%q selfHeal=%v health=%q)",
+										out.ManagementMode, out.ManagedScope, out.Sync.State, out.Sync.VerificationScope,
+										out.Sync.ApprovalRequired, out.Sync.Reason, out.Sync.Headline, out.Sync.Qualifier,
+										canon.ManagementMode, canon.ManagedScope, canon.SyncState, canon.VerificationScope,
+										canon.ApprovalRequired, canon.Reason, canon.Headline, canon.Qualifier,
+										status, scope, mode, selfHeal, health)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if checked < 1000 {
+		t.Fatalf("the grid shrank to %d combinations — this projection proof lost coverage", checked)
+	}
+}
+
+// TestConnectionReconciliation_HeadlineWordsExact pins every display word by
+// EXACT equality against a literal written here. The project lesson is that a
+// wrong sentence survived four review rounds behind a != "" assertion, so
+// these are character-for-character, and the words the product owner banned
+// are proven unproducible.
+func TestConnectionReconciliation_HeadlineWordsExact(t *testing.T) {
+	cases := []struct {
+		name         string
+		state        connectionCanonicalState
+		wantHeadline string
+		wantQualif   string
+	}{
+		{
+			name:         "sharko-managed clean",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateSynced, VerificationScope: verificationScopeFull, CheckedAt: "t"},
+			wantHeadline: "Connection synced",
+		},
+		{
+			name:         "self-managed clean — never bare Synced, never Connection synced",
+			state:        connectionCanonicalState{ManagementMode: managementModeSelfManaged, ManagedScope: managedScopeAddonLabels, SyncState: syncStateSynced, VerificationScope: verificationScopeFull, CheckedAt: "t"},
+			wantHeadline: "Addon labels synced",
+			wantQualif:   "Connection data managed outside Sharko",
+		},
+		{
+			name:         "legacy inline clean",
+			state:        connectionCanonicalState{ManagementMode: managementModeLegacyInline, ManagedScope: managedScopeAddonLabels, SyncState: syncStateUnknown, VerificationScope: verificationScopePartial, CheckedAt: "t"},
+			wantHeadline: "Verification incomplete",
+			wantQualif:   qualifierLegacyInline,
+		},
+		{
+			name:         "foreign owned",
+			state:        connectionCanonicalState{ManagementMode: managementModeForeignOwned, ManagedScope: managedScopeNone, SyncState: syncStateBlocked, VerificationScope: verificationScopeNone, CheckedAt: "t"},
+			wantHeadline: "Blocked",
+		},
+		{
+			name:         "out of sync needing approval",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateOutOfSync, VerificationScope: verificationScopeFull, ApprovalRequired: true, CheckedAt: "t"},
+			wantHeadline: "Out of sync — approval required",
+		},
+		{
+			name:         "self-managed labels drifted",
+			state:        connectionCanonicalState{ManagementMode: managementModeSelfManaged, ManagedScope: managedScopeAddonLabels, SyncState: syncStateOutOfSync, VerificationScope: verificationScopeFull, CheckedAt: "t"},
+			wantHeadline: "Addon labels out of sync",
+			wantQualif:   "Connection data managed outside Sharko",
+		},
+		{
+			name:         "legacy inline, live Secret gone",
+			state:        connectionCanonicalState{ManagementMode: managementModeLegacyInline, ManagedScope: managedScopeAddonLabels, SyncState: syncStateOutOfSync, VerificationScope: verificationScopeNone, CheckedAt: "t", LiveSecretMissing: true},
+			wantHeadline: "Out of sync — cannot be restored from Git",
+			wantQualif:   qualifierLegacyInline,
+		},
+		{
+			name:         "EKS clean — partial, and the qualifier is not said twice",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateUnknown, VerificationScope: verificationScopePartial, CheckedAt: "t"},
+			wantHeadline: "Configuration matches; credential content not compared",
+		},
+		{
+			name:         "check failed",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateUnknown, VerificationScope: verificationScopeNone, CheckedAt: "t"},
+			wantHeadline: "Unknown — check failed",
+		},
+		{
+			name:         "never checked",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateUnknown, VerificationScope: verificationScopeNone},
+			wantHeadline: "Not checked yet",
+		},
+		{
+			name:         "sharko-managed out of sync, labels only",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateOutOfSync, VerificationScope: verificationScopeFull, CheckedAt: "t"},
+			wantHeadline: "Out of sync",
+		},
+		{
+			name:         "sharko-managed partial, out of sync — the credential qualifier rides",
+			state:        connectionCanonicalState{ManagementMode: managementModeSharkoManaged, ManagedScope: managedScopeFullConnection, SyncState: syncStateOutOfSync, VerificationScope: verificationScopePartial, ApprovalRequired: true, CheckedAt: "t"},
+			wantHeadline: "Out of sync — approval required",
+			wantQualif:   "Credential content not compared",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectionSyncHeadline(tc.state); got != tc.wantHeadline {
+				t.Errorf("headline = %q, want %q", got, tc.wantHeadline)
+			}
+			if got := connectionSyncQualifier(tc.state); got != tc.wantQualif {
+				t.Errorf("qualifier = %q, want %q", got, tc.wantQualif)
+			}
+		})
+	}
+}
+
+// TestConnectionReconciliation_BareSyncedIsUnproducible drives the whole
+// matrix grid and proves the banned words can never come out of the shared
+// derivation: bare "Synced" for anything, and "Connection synced" for a
+// connection whose data Sharko does not manage.
+func TestConnectionReconciliation_BareSyncedIsUnproducible(t *testing.T) {
+	modes := []connectioncompare.Mode{
+		connectioncompare.ModeBackendStoredCredentials, connectioncompare.ModeEKSToken,
+		connectioncompare.ModeInlineKubeconfig, connectioncompare.ModeSelfManaged,
+		connectioncompare.ModeAdopted, connectioncompare.ModeForeignOwned,
+		connectioncompare.ModeUnknownSource, connectioncompare.Mode(""),
+	}
+	statuses := []connectioncompare.Status{
+		connectioncompare.StatusSynced, connectioncompare.StatusLimited,
+		connectioncompare.StatusOutOfSync, connectioncompare.StatusMissing,
+		connectioncompare.StatusCheckFailed, connectioncompare.StatusOwnershipConflict,
+	}
+	scopes := []connectioncompare.Scope{
+		connectioncompare.ScopeFull, connectioncompare.ScopeLimited, connectioncompare.ScopeAddonLabelsOnly,
+	}
+	for _, mode := range modes {
+		for _, status := range statuses {
+			for _, scope := range scopes {
+				canon := connectionCanonicalStateFor(reconView(func(v *connectionComparisonView) {
+					v.OwnershipMode = string(mode)
+					v.Status = string(status)
+					v.Scope = string(scope)
+					v.LimitReason = "a limit sentence"
+					v.FailureReason = "a failure sentence"
+				}))
+				if canon.Headline == "Synced" {
+					t.Fatalf("bare \"Synced\" rendered for mode=%q status=%q scope=%q", mode, status, scope)
+				}
+				if canon.ManagementMode != managementModeSharkoManaged && canon.Headline == headlineConnectionSynced {
+					t.Fatalf("%q claimed \"Connection synced\" for mode=%q status=%q scope=%q", canon.ManagementMode, mode, status, scope)
+				}
+				if canon.SyncState == syncStateSynced && canon.VerificationScope != verificationScopeFull {
+					t.Fatalf("INVARIANT VIOLATED in the canonical core: synced at %q (mode=%q status=%q scope=%q)", canon.VerificationScope, mode, status, scope)
+				}
+			}
+		}
+	}
+}
+
+// TestConnectionReconciliation_ResponseKeySet pins the endpoint's wire shape.
+// Story 1's fields must all still be there, byte-for-byte the same names, and
+// the corrective round adds exactly two: sync.headline and sync.qualifier.
+func TestConnectionReconciliation_ResponseKeySet(t *testing.T) {
+	live := expectedLiveSecretForFixture(t)
+	live.Data["config"] = []byte("a-rotated-live-config-that-differs")
+	live.Annotations = map[string]string{
+		clusterreconciler.AnnotationRevision:  reconTestCommit,
+		clusterreconciler.AnnotationWrittenAt: "2026-08-18T09:00:00Z",
+	}
+	_, router, _ := comparisonFixture(t, backendManagedYAML, live, comparisonFakeVault{})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, reconciliationReq(comparisonCluster))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	wantTop := []string{
+		"cluster", "management_mode", "managed_scope", "mode_statement",
+		"definition", "sync", "health", "conditions", "drift", "plan",
+		"values_never_returned",
+	}
+	assertExactKeys(t, "response", raw, wantTop)
+
+	var sync map[string]json.RawMessage
+	if err := json.Unmarshal(raw["sync"], &sync); err != nil {
+		t.Fatalf("decoding sync: %v", err)
+	}
+	// checked_at and last_successful_application are present here because
+	// this fixture ran a real check against a stamped Secret; qualifier is
+	// absent on this row (full scope, sharko-managed) and that is the
+	// omitempty contract.
+	assertExactKeys(t, "sync", sync, []string{
+		"state", "verification_scope", "approval_required", "reason",
+		"checked_at", "last_successful_application", "headline",
+	})
+}
+
+func assertExactKeys(t *testing.T, what string, got map[string]json.RawMessage, want []string) {
+	t.Helper()
+	allowed := make(map[string]bool, len(want))
+	for _, k := range want {
+		allowed[k] = true
+	}
+	for k := range got {
+		if !allowed[k] {
+			t.Errorf("%s grew an unexpected key %q", what, k)
+		}
+	}
+	for _, k := range want {
+		if _, ok := got[k]; !ok {
+			t.Errorf("%s lost the key %q", what, k)
+		}
+	}
+}
