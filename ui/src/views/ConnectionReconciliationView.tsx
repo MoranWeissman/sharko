@@ -33,6 +33,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Lock,
   OctagonX,
   RefreshCw,
   RotateCcw,
@@ -97,6 +98,16 @@ const REDACTED_TEXT = '<redacted>'
 /** What stays untouched whenever anything on this page writes — a scope statement, not a promise of any automatic fix. */
 export const PLAN_UNTOUCHED_SENTENCE = 'Foreign labels, other annotations and other data keys are never touched.'
 
+/**
+ * B7: the three labels the plan's sentences render under. They are HEADINGS
+ * over the server's own text — the browser never rewrites, merges or
+ * paraphrases what the server returned, it only says which of the three
+ * kinds each returned sentence is.
+ */
+export const PLAN_LABEL_AUTOMATIC = 'Automatic'
+export const PLAN_LABEL_REQUIRES_APPROVAL = 'Requires approval'
+export const PLAN_LABEL_PRESERVED = 'Preserved'
+
 /** The documented migration path for a legacy inline credential (Story 4 publishes the page at this stable path). */
 export const MIGRATE_CREDENTIALS_DOC_PATH = '/operator/migrate-inline-credentials/'
 // The site serves under /en/latest/ (readthedocs language/version prefix) —
@@ -125,52 +136,25 @@ const CONDITION_LABELS: Record<string, string> = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Display mapping — page-state matrix v3, row by row. Pure functions,
-// exported for the matrix tests.
+// Display mapping. There is NO headline or qualifier mapping here anymore.
+//
+// B5, the product owner's ruling: "The fleet and detail page must derive
+// their state from the same canonical reconciliation semantics. Do not
+// maintain a second legacy vocabulary or duplicate status derivation in the
+// browser."
+//
+// reconSyncHeadline and reconSyncQualifier used to live right here and
+// compute the page's leading words from sync.state, management_mode and the
+// conditions array. They are DELETED. The same words are now produced once,
+// server-side (internal/api/connection_canonical.go), and arrive as
+// sync.headline and sync.qualifier — which the fleet row renders too, so the
+// two surfaces cannot phrase one connection differently. This page renders
+// them verbatim.
+//
+// The HEADLINE_* / QUALIFIER_* constants above survive as the PINNED
+// expectations the tests assert against; nothing in this file selects
+// between them.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function liveSecretMissing(view: ConnectionReconciliation): boolean {
-  return view.conditions.some((c) => c.id === 'live_secret' && c.status === 'blocked')
-}
-
-/** The sync headline — the page's leading word, scope-named per matrix v3. */
-export function reconSyncHeadline(view: ConnectionReconciliation): string {
-  const s = view.sync
-  switch (s.state) {
-    case 'blocked':
-      return HEADLINE_BLOCKED
-    case 'synced':
-      // The server only ever sends synced at full verification of the owned
-      // scope; managed_scope names which scope that is.
-      return view.management_mode === 'self_managed' ? HEADLINE_ADDON_LABELS_SYNCED : HEADLINE_CONNECTION_SYNCED
-    case 'out_of_sync':
-      if (view.management_mode === 'legacy_inline' && liveSecretMissing(view)) return HEADLINE_OUT_OF_SYNC_CANNOT_RESTORE
-      if (s.approval_required) return HEADLINE_OUT_OF_SYNC_APPROVAL
-      if (view.management_mode === 'self_managed') return HEADLINE_ADDON_LABELS_OUT_OF_SYNC
-      return HEADLINE_OUT_OF_SYNC
-    default: {
-      // unknown — four honest shades, split by what the server recorded.
-      if (!s.checked_at) return HEADLINE_NOT_CHECKED_YET
-      if (s.verification_scope === 'none') return HEADLINE_UNKNOWN_CHECK_FAILED
-      if (view.management_mode === 'legacy_inline') return HEADLINE_VERIFICATION_INCOMPLETE
-      // Sharko-managed, checked, partial: everything compared matched, the
-      // credential content could not be (EKS, an unreadable backend).
-      return HEADLINE_EKS_PARTIAL
-    }
-  }
-}
-
-/** The scope qualifier beside the headline — rendered whenever the verification is narrower than the full connection. */
-export function reconSyncQualifier(view: ConnectionReconciliation): string | null {
-  if (view.management_mode === 'legacy_inline') return QUALIFIER_LEGACY_INLINE
-  if (view.management_mode === 'self_managed') return QUALIFIER_SELF_MANAGED
-  if (view.sync.verification_scope === 'partial' || view.sync.verification_scope === 'labels_only') {
-    // Already the headline's own words on the clean-EKS row — don't say it twice.
-    if (reconSyncHeadline(view) === HEADLINE_EKS_PARTIAL) return null
-    return QUALIFIER_CREDENTIAL_NOT_COMPARED
-  }
-  return null
-}
 
 /**
  * Which condition an offered action renders beside (the section it
@@ -262,10 +246,45 @@ function ActionButton({
   )
 }
 
-function conditionIcon(status: string) {
+/**
+ * B6: the approval condition is a POLICY GATE, not a failed health check —
+ * nothing is broken, Sharko is simply waiting for a person to approve. It
+ * gets the lock, in the amber "waiting on you" family, and never a red
+ * failure icon. Every other condition keeps the three-way mapping.
+ */
+function conditionIcon(id: string, status: string) {
+  if (id === 'approval') return <Lock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden="true" />
   if (status === 'ok') return <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-500" aria-hidden="true" />
   if (status === 'blocked') return <OctagonX className="h-4 w-4 shrink-0 text-red-600 dark:text-red-500" aria-hidden="true" />
   return <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-500" aria-hidden="true" />
+}
+
+/**
+ * B6: one condition card. Attention, blocked and approval conditions render
+ * through this, expanded; routine successes never do — they fold into the
+ * one compact summary line instead.
+ */
+function ConditionCard({ cond, action }: { cond: { id: string; status: string; detail: string }; action?: ReactNode }) {
+  return (
+    <div
+      data-testid={`recon-condition-${cond.id}`}
+      data-condition-status={cond.status}
+      className={`flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card p-2.5 ${
+        cond.status === 'ok' ? '' : 'ring-1 ring-amber-300 dark:ring-amber-700'
+      }`}
+    >
+      <div className="flex min-w-0 items-start gap-2">
+        {conditionIcon(cond.id, cond.status)}
+        <div className="min-w-0">
+          <span className="text-sm font-medium text-[#0a2a4a] dark:text-gray-200">
+            {CONDITION_LABELS[cond.id] ?? cond.id.replace(/_/g, ' ')}
+          </span>
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">{cond.detail}</p>
+        </div>
+      </div>
+      {action}
+    </div>
+  )
 }
 
 function DriftTable({
@@ -447,8 +466,10 @@ export function ConnectionReconciliationView({
 
   if (!view) return null
 
-  const headline = reconSyncHeadline(view)
-  const qualifier = reconSyncQualifier(view)
+  // B5: rendered VERBATIM. Both strings are produced by the one server-side
+  // derivation the fleet row reads too — the browser selects nothing.
+  const headline = view.sync.headline
+  const qualifier = view.sync.qualifier
   const checkFailed = view.sync.state === 'unknown' && view.sync.verification_scope === 'none' && Boolean(view.sync.checked_at)
   const isEKS = view.definition.credential_source_type === CREDS_SOURCE_EKS_TOKEN
   const repairLabel = isEKS ? ACTION_REFRESH_EKS_CONNECTION : ACTION_REPAIR_CONNECTION
@@ -511,8 +532,21 @@ export function ConnectionReconciliationView({
     !syncActionInDrift &&
     (targetConditionId === null || !view.conditions.some((c) => c.id === targetConditionId))
 
+  // ── B6: the condition hierarchy ────────────────────────────────────────
+  //
+  // The captured screens showed four routine successes — Git definition,
+  // credential reference, ownership, live Secret — each taking a full-width
+  // card, so the operator scrolled past all of them to reach the actual
+  // differences. That is the text wall the product owner rejected.
+  //
+  // The split: a condition renders as its own expanded card when it needs
+  // attention (warning, blocked, or the approval gate), OR when it is the
+  // one condition the offered action hangs off — a repair button must not
+  // disappear into a collapsed summary just because the condition it
+  // resolves happens to read "ok". Everything else folds into one line.
+  const attentionConditions = view.conditions.filter((c) => c.status !== 'ok' || c.id === targetConditionId)
+  const routineConditions = view.conditions.filter((c) => c.status === 'ok' && c.id !== targetConditionId)
   const allConditionsOK = view.conditions.every((c) => c.status === 'ok')
-  const conditionsCompact = allConditionsOK && !conditionsExpanded && targetConditionId === null
 
   const hasDrift =
     view.drift.connection_configuration.length > 0 ||
@@ -624,23 +658,19 @@ export function ConnectionReconciliationView({
         </p>
       </div>
 
-      {/* ── 3. Conditions — compact when all is routine, cards when not ──── */}
-      <div data-testid="recon-conditions">
-        {conditionsCompact ? (
-          <button
-            type="button"
-            onClick={() => setConditionsExpanded(true)}
-            aria-expanded={false}
-            data-testid="recon-conditions-compact"
-            className="inline-flex items-center gap-1.5 text-sm text-[#2a5a7a] hover:underline dark:text-gray-400"
-          >
-            <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-500" aria-hidden="true" />
-            All {view.conditions.length} checks passed.
-            <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        ) : (
-          <div className="space-y-2">
-            {allConditionsOK && (
+      {/* ── 3. Conditions (B6) — what needs attention first, expanded; the
+             routine successes folded into one line the reader can open ── */}
+      <div className="space-y-2" data-testid="recon-conditions">
+        {attentionConditions.map((cond) => (
+          <ConditionCard
+            key={cond.id}
+            cond={cond}
+            action={cond.id === targetConditionId ? actionButtonFor(view.plan.action) : undefined}
+          />
+        ))}
+        {routineConditions.length > 0 &&
+          (conditionsExpanded ? (
+            <>
               <button
                 type="button"
                 onClick={() => setConditionsExpanded(false)}
@@ -648,32 +678,27 @@ export function ConnectionReconciliationView({
                 data-testid="recon-conditions-collapse"
                 className="inline-flex items-center gap-1.5 text-sm text-[#2a5a7a] hover:underline dark:text-gray-400"
               >
-                All {view.conditions.length} checks passed.
+                <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-500" aria-hidden="true" />
+                {allConditionsOK ? `All ${routineConditions.length} checks passed.` : `${routineConditions.length} checks passed.`}
                 <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
-            )}
-            {view.conditions.map((cond) => (
-              <div
-                key={cond.id}
-                data-testid={`recon-condition-${cond.id}`}
-                className={`flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card p-2.5 ${
-                  cond.status === 'ok' ? '' : 'ring-1 ring-amber-300 dark:ring-amber-700'
-                }`}
-              >
-                <div className="flex min-w-0 items-start gap-2">
-                  {conditionIcon(cond.status)}
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium text-[#0a2a4a] dark:text-gray-200">
-                      {CONDITION_LABELS[cond.id] ?? cond.id.replace(/_/g, ' ')}
-                    </span>
-                    <p className="text-sm text-[#2a5a7a] dark:text-gray-400">{cond.detail}</p>
-                  </div>
-                </div>
-                {cond.id === targetConditionId && actionButtonFor(view.plan.action)}
-              </div>
-            ))}
-          </div>
-        )}
+              {routineConditions.map((cond) => (
+                <ConditionCard key={cond.id} cond={cond} />
+              ))}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConditionsExpanded(true)}
+              aria-expanded={false}
+              data-testid="recon-conditions-compact"
+              className="inline-flex items-center gap-1.5 text-sm text-[#2a5a7a] hover:underline dark:text-gray-400"
+            >
+              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-500" aria-hidden="true" />
+              {allConditionsOK ? `All ${routineConditions.length} checks passed.` : `${routineConditions.length} checks passed.`}
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          ))}
       </div>
 
       {/* ── 4. Drift, grouped by managed domain ──────────────────────────── */}
@@ -727,23 +752,43 @@ export function ConnectionReconciliationView({
         </div>
       )}
 
-      {/* ── 5. Reconciliation plan — the server's sentences, verbatim ────── */}
+      {/* ── 5. Reconciliation plan (B7) — the server's sentences, verbatim,
+             under labels that let a reader scan instead of read a block.
+             The browser adds the STRUCTURE and nothing else: it never
+             rewrites, merges or paraphrases a returned sentence. ──────── */}
       {hasPlanContent && (
-        <div className="space-y-1.5 rounded-md border border-border bg-card p-3" data-testid="recon-plan">
+        <div className="space-y-2 rounded-md border border-border bg-card p-3" data-testid="recon-plan">
           <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">What happens next</h3>
-          {view.plan.automatic && (
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-automatic">
-              {view.plan.automatic}
-            </p>
-          )}
-          {view.plan.requires_approval && (
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-approval">
-              {view.plan.requires_approval}
-            </p>
-          )}
-          <p className="text-xs text-[#3a6a8a] dark:text-gray-500" data-testid="recon-plan-untouched">
-            {PLAN_UNTOUCHED_SENTENCE}
-          </p>
+          <dl className="space-y-2">
+            {view.plan.automatic && (
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+                <dt className="shrink-0 text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] sm:w-40 dark:text-gray-500" data-testid="recon-plan-automatic-label">
+                  {PLAN_LABEL_AUTOMATIC}
+                </dt>
+                <dd className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-automatic">
+                  {view.plan.automatic}
+                </dd>
+              </div>
+            )}
+            {view.plan.requires_approval && (
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+                <dt className="shrink-0 text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] sm:w-40 dark:text-gray-500" data-testid="recon-plan-approval-label">
+                  {PLAN_LABEL_REQUIRES_APPROVAL}
+                </dt>
+                <dd className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-approval">
+                  {view.plan.requires_approval}
+                </dd>
+              </div>
+            )}
+            <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-3">
+              <dt className="shrink-0 text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] sm:w-40 dark:text-gray-500" data-testid="recon-plan-preserved-label">
+                {PLAN_LABEL_PRESERVED}
+              </dt>
+              <dd className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-plan-untouched">
+                {PLAN_UNTOUCHED_SENTENCE}
+              </dd>
+            </div>
+          </dl>
           {actionInPlanSection && <div data-testid="recon-plan-action">{actionButtonFor(view.plan.action)}</div>}
         </div>
       )}
@@ -818,11 +863,18 @@ export function ConnectionReconciliationView({
                     <TimeChip iso={item.timestamp} />
                   </span>
                 </div>
+                {/* Ruling (f): all three parts now come from the ENTRY. The
+                    title is chosen by the event NAME (failure paths have
+                    their own names, so a past-tense title can never sit
+                    beside a failure outcome), the outcome is the recorded
+                    one, and "No changes made" renders only when the entry
+                    itself says changes: 'none' — a read-only check renders
+                    nothing there rather than claiming it made no changes. */}
                 <p className="mt-1 text-[#2a5a7a] dark:text-gray-400">
                   {item.actor}
                   {item.door && <> · via {item.door}</>}
                   {item.outcome && <> · {item.outcome}</>}
-                  {item.readOnly && <> · {NO_CHANGES_MADE}</>}
+                  {item.noChangesMade && <> · {NO_CHANGES_MADE}</>}
                 </p>
               </div>
             ))}

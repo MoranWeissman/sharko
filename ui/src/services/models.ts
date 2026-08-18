@@ -142,11 +142,46 @@ export interface ConnectionSecretRow {
   cluster: string
   secret_namespace?: string
   secret_name?: string
-  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'. A FAILED
-  // check (P1-B) renders as 'unknown', never 'out_of_sync' — Sharko could
-  // not look, which is a different fact from "Sharko looked and it
-  // differs". See last_check_error below.
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'foreign' | 'unknown'.
+  //
+  // B5: this is a PROJECTION of sync_state below, computed on the server —
+  // it is NOT a second answer the browser may re-derive from. It exists
+  // because the chips, the ?state= filter and the sort rank read it; since
+  // it is a projection, they cannot drift apart from the canonical answer.
+  // A FAILED check (P1-B) renders as 'unknown', never 'out_of_sync' —
+  // Sharko could not look, which is a different fact from "Sharko looked
+  // and it differs". See last_check_error below.
   state: string
+  // ── The canonical reconciliation answer (B5) ──────────────────────────
+  // Produced by ONE server-side derivation (internal/api/
+  // connection_canonical.go) shared with the connection page, so the fleet
+  // and the detail page can never phrase the same connection differently.
+  // The browser renders these; it derives nothing from them.
+  //
+  // Absent on a server that predates B5 — every field below is optional for
+  // that reason alone, never because the browser may invent a fallback.
+  management_mode?: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  // What Sharko OWNS on this connection.
+  managed_scope?: 'full_connection' | 'addon_labels' | 'none'
+  // The canonical git state. 'synced' arrives ONLY with
+  // verification_scope 'full' — the server refuses any other combination.
+  sync_state?: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  // How much of what Sharko owns was successfully compared.
+  verification_scope?: 'full' | 'partial' | 'none'
+  // True exactly when the drift touches connection configuration or
+  // credential material.
+  approval_required?: boolean
+  // The display word for this row's git state — rendered VERBATIM. The
+  // browser has no headline table of its own.
+  headline?: string
+  // The sentence beside the headline when the verification is narrower than
+  // the whole connection, or the connection's data is managed outside
+  // Sharko. Absent when the state needs none.
+  qualifier?: string
+  // ArgoCD's OWN answer for this connection, INDEPENDENT of the git state
+  // above: "Connected" beside "Verification incomplete" is correct, not a
+  // contradiction.
+  health?: 'connected' | 'unavailable' | 'not_checked'
   // source (S1) says, per row, which store this secret's content is
   // compared against. Always 'git' for a connection secret — git holds
   // the addon labels this secret is built from.
@@ -733,8 +768,19 @@ export interface ConnectionReconciliationDefinition {
 
 export interface ConnectionReconciliationSync {
   state: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
-  verification_scope: 'full' | 'partial' | 'labels_only' | 'none'
+  // Ruling (d), 2026-08-19: 'labels_only' is gone from the enum. It was
+  // declared server-side and never produced by any handler path, so
+  // publishing it advertised a wire value that could not arrive.
+  verification_scope: 'full' | 'partial' | 'none'
   approval_required: boolean
+  /**
+   * The display word for this connection's git state, produced by the SAME
+   * server function that feeds the fleet row (B5). Rendered VERBATIM — the
+   * browser owns no headline table and derives nothing.
+   */
+  headline: string
+  /** The scope sentence beside the headline. Absent when the state needs none. */
+  qualifier?: string
   reason?: string
   /** RFC3339 — ABSENT when no check has run, never a zero time. */
   checked_at?: string
@@ -1666,6 +1712,20 @@ export interface AuditEntry {
   source: string
   result: string
   duration_ms: number
+  /**
+   * Whether this entry's operation ACTUALLY changed anything (ruling f).
+   * The truth travels on the entry now; before this the browser invented it
+   * from a static read-only flag in its own title table, so it could never
+   * agree with reality.
+   *
+   *  - 'not_applicable' — a read-only check. It neither changed anything
+   *    nor failed to, so a reader must render NOTHING, never "no changes".
+   *  - 'none'           — an action ran and deliberately wrote nothing.
+   *    This is the ONE case where "No changes made" is a true thing to say.
+   *  - 'applied'        — something really changed.
+   *  - absent           — a writer that predates the field. Render nothing.
+   */
+  changes?: 'not_applicable' | 'none' | 'applied'
   error?: string
   request_id?: string
   detail?: string

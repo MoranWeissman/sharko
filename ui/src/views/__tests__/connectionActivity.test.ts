@@ -1,21 +1,39 @@
 // connectionActivity — the mapping table behind "Recent activity since
-// Sharko started" (Story 3, ruling 6). The rules pinned here:
-//   - only mapped lifecycle events pass through; reads and unmapped events
-//     are dropped, never rendered as raw identifiers;
+// Sharko started" (Story 3, ruling 6), rewritten for RULING (f).
+//
+// The rules pinned here:
+//   - only mapped lifecycle events pass through; reads are dropped, never
+//     rendered as raw identifiers;
 //   - every mapped event has a plain-English title;
 //   - the reconciler's own entries name the background reconciler, a
 //     person's entries keep their username;
-//   - the drift-noticing events are read-only ("No changes made");
-//   - the feed caps at five entries.
+//   - the feed caps at five entries;
+//
+// and the ruling's own rules, which are the reason this file grew a rule
+// engine instead of a list of expected strings:
+//
+//   - "title, outcome and change result must NEVER contradict each other" —
+//     driven over every (event × outcome × changes) combination the server
+//     can actually write, checked against the SAME six kinds the Go rule
+//     engine uses (internal/api/lifecycle_event_semantics_test.go);
+//   - "No changes made" comes from the ENTRY (changes === 'none') and from
+//     nowhere else. A read-only check renders nothing there;
+//   - an unmapped event name is caught LOUDLY. The allowlist has no
+//     fallback, so a server-side rename turns a lifecycle event into
+//     silence that looks exactly like "nothing happened" — and ruling (f)
+//     renamed and added nine names at once.
 
 import { describe, it, expect } from 'vitest'
 import type { AuditEntry } from '@/services/models'
 import {
   ACTIVITY_EVENT_TITLES,
   ACTIVITY_FEED_LIMIT,
+  ACTIVITY_IGNORED_EVENTS,
   BACKGROUND_RECONCILER_ACTOR,
   mapActivityEntries,
   RECENT_ACTIVITY_LABEL,
+  unmappedActivityEvents,
+  type ActivityEventKind,
 } from '@/views/connectionActivity'
 
 function entry(event: string, overrides: Partial<AuditEntry> = {}): AuditEntry {
@@ -34,6 +52,36 @@ function entry(event: string, overrides: Partial<AuditEntry> = {}): AuditEntry {
   }
 }
 
+/**
+ * The complete list of connection-lifecycle event names the SERVER writes,
+ * copied from lifecycleEventCatalog in
+ * internal/api/lifecycle_event_semantics_test.go plus cluster_taken_over
+ * (the takeover handler's own event). This is the list the feed must be able
+ * to name — anything here that the table does not know is a feed entry that
+ * has silently gone missing.
+ */
+const SERVER_LIFECYCLE_EVENTS = [
+  'cluster_secret_create',
+  'cluster_secret_create_failed',
+  'cluster_secret_delete',
+  'cluster_secret_delete_failed',
+  'cluster_secret_user_label_sync',
+  'cluster_secret_user_label_sync_failed',
+  'cluster_secret_managed_self_heal',
+  'cluster_secret_managed_self_heal_failed',
+  'cluster_connection_repair',
+  'cluster_connection_repair_requested',
+  'cluster_connection_repair_refused',
+  'cluster_connection_repair_failed',
+  'connection_credential_drift_detected',
+  'connection_credential_drift_cleared',
+  'connection_credential_check_failed',
+  'connection_credential_check_recovered',
+  'cluster_registered',
+  'cluster_adopted',
+  'cluster_taken_over',
+]
+
 describe('the honest label', () => {
   it('is exactly "Recent activity since Sharko started"', () => {
     expect(RECENT_ACTIVITY_LABEL).toBe('Recent activity since Sharko started')
@@ -41,25 +89,12 @@ describe('the honest label', () => {
 })
 
 describe('the mapping table', () => {
-  it('maps every lifecycle event to a human title, none of which is a raw identifier', () => {
-    const expected: Record<string, string> = {
-      cluster_secret_create: 'Connection Secret created',
-      cluster_secret_delete: 'Connection Secret deleted',
-      cluster_secret_managed_self_heal: 'Addon labels self-healed',
-      cluster_secret_user_label_sync: 'Addon labels synced',
-      cluster_connection_repair: 'Connection repaired',
-      cluster_connection_repair_requested: 'Connection repair requested',
-      connection_credential_drift_detected: 'Credential drift noticed',
-      connection_credential_drift_cleared: 'Credential drift cleared',
-      cluster_registered: 'Cluster registered',
-      cluster_adopted: 'Cluster adopted',
-      cluster_taken_over: 'Connection taken over',
-    }
-    expect(Object.keys(ACTIVITY_EVENT_TITLES).sort()).toEqual(Object.keys(expected).sort())
-    for (const [event, title] of Object.entries(expected)) {
-      expect(ACTIVITY_EVENT_TITLES[event].title).toBe(title)
+  it('gives every lifecycle event a human title, none of which is a raw identifier', () => {
+    for (const [event, mapping] of Object.entries(ACTIVITY_EVENT_TITLES)) {
+      expect(mapping.title.length).toBeGreaterThan(0)
       // A title never contains an underscore — the raw-id giveaway.
-      expect(ACTIVITY_EVENT_TITLES[event].title).not.toMatch(/_/)
+      expect(mapping.title, `${event} renders a raw-looking title`).not.toMatch(/_/)
+      expect(mapping.title).not.toBe(event)
     }
   })
 
@@ -68,12 +103,233 @@ describe('the mapping table', () => {
     expect(ACTIVITY_EVENT_TITLES['cluster_connection_secret_check_triggered']).toBeUndefined()
   })
 
-  it('marks the drift episodes read-only and the writes not', () => {
-    expect(ACTIVITY_EVENT_TITLES['connection_credential_drift_detected'].readOnly).toBe(true)
-    expect(ACTIVITY_EVENT_TITLES['connection_credential_drift_cleared'].readOnly).toBe(true)
-    expect(ACTIVITY_EVENT_TITLES['cluster_connection_repair'].readOnly).toBeUndefined()
-    expect(ACTIVITY_EVENT_TITLES['cluster_secret_create'].readOnly).toBeUndefined()
+  /**
+   * Ruling (f), the browser half of "a genuinely failed check must have a
+   * failure-shaped title". The server gave the failure paths their own event
+   * names precisely so the feed could name them honestly; this proves the
+   * feed took the offer.
+   */
+  it('gives every "…_failed" / "…_refused" event a title that reads as a failure on its own', () => {
+    const failureWords = /(could not|failed|refused|did not)/i
+    for (const [event, mapping] of Object.entries(ACTIVITY_EVENT_TITLES)) {
+      if (!/_(failed|refused)$/.test(event)) continue
+      expect(mapping.title, `${event} has a title that does not read as a failure: "${mapping.title}"`).toMatch(failureWords)
+    }
   })
+
+  it('never gives a SUCCESS event a failure-shaped title', () => {
+    const failureWords = /(could not|failed|refused|did not)/i
+    for (const [event, mapping] of Object.entries(ACTIVITY_EVENT_TITLES)) {
+      if (mapping.kind !== 'completed_write') continue
+      expect(mapping.title, `${event} is a completed write with a failure-shaped title`).not.toMatch(failureWords)
+    }
+  })
+
+  it('classifies drift detection as a read-only check, not a failure — the check succeeded, the drift supplies the warning', () => {
+    expect(ACTIVITY_EVENT_TITLES['connection_credential_drift_detected'].kind).toBe('read_only')
+    expect(ACTIVITY_EVENT_TITLES['connection_credential_drift_cleared'].kind).toBe('read_only')
+    expect(ACTIVITY_EVENT_TITLES['connection_credential_check_recovered'].kind).toBe('read_only')
+    // Only the check that genuinely did not finish is failure-shaped.
+    expect(ACTIVITY_EVENT_TITLES['connection_credential_check_failed'].kind).toBe('failure_shaped')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The unmapped-event guard — the one that would have caught this round's
+// rename before the feed went quiet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('unmapped events are caught loudly, never dropped silently', () => {
+  it('names every server lifecycle event the feed would drop', () => {
+    const missing = unmappedActivityEvents(SERVER_LIFECYCLE_EVENTS)
+    expect(
+      missing,
+      `these server events would render NOTHING in the feed — add them to ACTIVITY_EVENT_TITLES: ${missing.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it('reports a renamed event rather than staying quiet about it', () => {
+    // The shape of the failure this guard exists for: the server renames
+    // cluster_secret_create to something else and nobody updates the table.
+    expect(unmappedActivityEvents(['cluster_secret_create_v2'])).toEqual(['cluster_secret_create_v2'])
+  })
+
+  it('does not flag the events the feed deliberately ignores', () => {
+    expect(unmappedActivityEvents(ACTIVITY_IGNORED_EVENTS)).toEqual([])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The table the ruling asked for: every (event × outcome × changes) the
+// writers can produce, and the assertion that the RENDERED line never
+// contradicts itself.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The rendered line, exactly as ConnectionReconciliationView composes it:
+ * "<title> · <outcome>[ · No changes made]".
+ */
+function renderedLine(e: AuditEntry): string {
+  const [item] = mapActivityEntries([e])
+  const parts = [item.title]
+  if (item.outcome) parts.push(item.outcome)
+  if (item.noChangesMade) parts.push('No changes made')
+  return parts.join(' · ')
+}
+
+/**
+ * The rules, from the product owner's sentences. Returns every violation in
+ * the rendered line, so a failure names what is wrong rather than just "not
+ * equal".
+ */
+function contradictions(e: AuditEntry): string[] {
+  const mapping = ACTIVITY_EVENT_TITLES[e.event]
+  if (!mapping) return [`${e.event} is not in the feed's table`]
+  const bad: string[] = []
+  const line = renderedLine(e)
+  const kind: ActivityEventKind = mapping.kind
+  const failureShapedTitle = /(could not|failed|refused|did not)/i.test(mapping.title)
+
+  // "a successful repair must not retain a failure title" / "a genuinely
+  // failed check must have a failure-shaped title" — the same rule, both
+  // ends.
+  //
+  // A completed write and a completed check are both claims that something
+  // RAN TO COMPLETION, so neither may carry a non-success outcome: the
+  // server gave those paths their own failure-shaped event names precisely
+  // so they would not have to. Fan-out (batch) titles are exempt — they name
+  // the operation, not a landed write, and "Cluster adopted · failure" when
+  // every item failed is honest. request_scoped is exempt for the same
+  // reason: "somebody asked for this" makes no claim about the outcome.
+  if (e.result === 'success' && failureShapedTitle) {
+    bad.push(`"${line}" — a success wearing a failure title`)
+  }
+  if (e.result !== 'success' && (kind === 'completed_write' || kind === 'read_only')) {
+    bad.push(
+      `"${line}" — a title claiming the work ran to completion, beside outcome "${e.result}"` +
+        ` (the server has a failure-shaped event name for this path — use it)`,
+    )
+  }
+  if (e.result === 'success' && kind === 'failure_shaped') {
+    bad.push(`"${line}" — a failure-shaped title recorded as a success`)
+  }
+
+  // "a completed write says whether it wrote" — never not_applicable.
+  if (kind === 'completed_write' && e.changes === 'not_applicable') {
+    bad.push(`"${line}" — a completed write claiming the change question does not apply to it`)
+  }
+  // A read-only check neither changed anything nor failed to.
+  if (kind === 'read_only' && e.changes !== undefined && e.changes !== 'not_applicable') {
+    bad.push(`"${line}" — a read-only check reporting changes "${e.changes}"`)
+  }
+
+  // '"No changes made" is an action result, not proof the check failed.'
+  if (/No changes made/.test(line)) {
+    if (e.changes !== 'none') {
+      bad.push(`"${line}" — says no changes were made from something other than the entry's own changes field`)
+    }
+    if (kind === 'read_only') {
+      bad.push(`"${line}" — a read-only check claiming it made no changes; it was never going to`)
+    }
+  }
+  if (e.changes === 'none' && !/No changes made/.test(line)) {
+    bad.push(`"${line}" — the entry says nothing changed and the line hides it`)
+  }
+  if (e.changes === 'applied' && /No changes made/.test(line)) {
+    bad.push(`"${line}" — something really changed and the line denies it`)
+  }
+  return bad
+}
+
+describe('every producible (event × outcome × changes) row renders a line that does not contradict itself', () => {
+  const rows: { what: string; entry: AuditEntry }[] = [
+    // ── The reconciler's Secret lifecycle ──────────────────────────────
+    { what: 'a Secret really was created', entry: entry('cluster_secret_create', { level: 'info', result: 'success', changes: 'applied' }) },
+    { what: 'the create threw — no Secret exists (C1)', entry: entry('cluster_secret_create_failed', { level: 'error', result: 'failure', changes: 'none' }) },
+    { what: 'a Secret really was deleted', entry: entry('cluster_secret_delete', { level: 'info', result: 'success', changes: 'applied' }) },
+    { what: 'the delete threw (C7)', entry: entry('cluster_secret_delete_failed', { level: 'error', result: 'failure', changes: 'none' }) },
+    { what: "the guest's addon labels really were synced", entry: entry('cluster_secret_user_label_sync', { level: 'info', result: 'success', changes: 'applied' }) },
+    { what: 'the guest label sync threw (C7)', entry: entry('cluster_secret_user_label_sync_failed', { level: 'error', result: 'failure', changes: 'none' }) },
+    { what: 'self-heal converged the labels', entry: entry('cluster_secret_managed_self_heal', { level: 'info', result: 'success', changes: 'applied' }) },
+    { what: 'self-heal threw before writing (C6)', entry: entry('cluster_secret_managed_self_heal_failed', { level: 'error', result: 'failure', changes: 'none' }) },
+    {
+      what: 'self-heal WROTE but did not converge — the subtle one (C6)',
+      entry: entry('cluster_secret_managed_self_heal_failed', { level: 'error', result: 'failure', changes: 'applied' }),
+    },
+
+    // ── Repair ─────────────────────────────────────────────────────────
+    { what: 'the repair rewrote fields', entry: entry('cluster_connection_repair', { level: 'info', result: 'success', changes: 'applied' }) },
+    {
+      what: 'the repair ran and nothing needed changing (C3) — the ONE true "No changes made"',
+      entry: entry('cluster_connection_repair', { level: 'info', result: 'success', changes: 'none' }),
+    },
+    { what: 'the repair threw', entry: entry('cluster_connection_repair_failed', { level: 'error', result: 'failure', changes: 'none' }) },
+    { what: 'somebody asked for a repair', entry: entry('cluster_connection_repair_requested', { level: 'info', result: 'success' }) },
+    { what: 'the repair was refused (C4/C5)', entry: entry('cluster_connection_repair_refused', { level: 'warn', result: 'rejected', changes: 'none' }) },
+
+    // ── The background credential check (C2, the primary target) ───────
+    {
+      what: 'drift DETECTED — a check that SUCCEEDED and found something',
+      entry: entry('connection_credential_drift_detected', { level: 'warn', result: 'success', changes: 'not_applicable' }),
+    },
+    { what: 'drift cleared', entry: entry('connection_credential_drift_cleared', { level: 'info', result: 'success', changes: 'not_applicable' }) },
+    { what: 'the check itself did not finish', entry: entry('connection_credential_check_failed', { level: 'error', result: 'failure', changes: 'not_applicable' }) },
+    { what: 'the check completes again', entry: entry('connection_credential_check_recovered', { level: 'info', result: 'success', changes: 'not_applicable' }) },
+
+    // ── Fan-out endpoints (C8/C9) ──────────────────────────────────────
+    { what: 'every adoption succeeded', entry: entry('cluster_adopted', { level: 'info', result: 'success', changes: 'applied' }) },
+    { what: 'some adoptions failed', entry: entry('cluster_adopted', { level: 'warn', result: 'partial', changes: 'applied' }) },
+    { what: 'EVERY adoption failed', entry: entry('cluster_adopted', { level: 'error', result: 'failure', changes: 'none' }) },
+    { what: 'every registration succeeded', entry: entry('cluster_registered', { level: 'info', result: 'success', changes: 'applied' }) },
+    { what: 'EVERY registration failed', entry: entry('cluster_registered', { level: 'error', result: 'failure', changes: 'none' }) },
+    { what: 'the connection was taken over', entry: entry('cluster_taken_over', { level: 'info', result: 'success', changes: 'applied' }) },
+
+    // ── Writers that predate the changes field ─────────────────────────
+    { what: 'an old writer that never set changes', entry: entry('cluster_connection_repair', { level: 'info', result: 'success' }) },
+  ]
+
+  for (const row of rows) {
+    it(row.what, () => {
+      expect(contradictions(row.entry)).toEqual([])
+    })
+  }
+
+  /**
+   * The negatives: shapes the server can no longer produce. If the feed ever
+   * stops catching them, the rule engine above has gone blind.
+   */
+  const negatives: { what: string; entry: AuditEntry }[] = [
+    {
+      what: 'C2 restored — drift detection recorded as a failure',
+      entry: entry('connection_credential_drift_detected', { level: 'error', result: 'failure', changes: 'not_applicable' }),
+    },
+    {
+      what: 'C1 restored — the past-tense create title beside a failure outcome',
+      entry: entry('cluster_secret_create', { level: 'error', result: 'failure', changes: 'none' }),
+    },
+    {
+      what: 'a "…_failed" event recorded as a success',
+      entry: entry('cluster_secret_create_failed', { level: 'info', result: 'success', changes: 'none' }),
+    },
+    {
+      what: 'C3 mirrored — a completed write that will not say whether it wrote',
+      entry: entry('cluster_connection_repair', { level: 'info', result: 'success', changes: 'not_applicable' }),
+    },
+    {
+      what: 'a read-only check claiming it deliberately wrote nothing — it was never going to write',
+      entry: entry('connection_credential_drift_cleared', { level: 'info', result: 'success', changes: 'none' }),
+    },
+    {
+      what: 'a refusal recorded as a success',
+      entry: entry('cluster_connection_repair_refused', { level: 'warn', result: 'success', changes: 'none' }),
+    },
+  ]
+
+  for (const row of negatives) {
+    it(`NEGATIVE: ${row.what} — the suite must reject it`, () => {
+      expect(contradictions(row.entry).length).toBeGreaterThan(0)
+    })
+  }
 })
 
 describe('mapActivityEntries', () => {
@@ -105,15 +361,25 @@ describe('mapActivityEntries', () => {
     expect(items[2].actor).toBe('moran')
   })
 
-  it('carries door, outcome and readOnly through', () => {
+  it('takes "no changes made" from the ENTRY, never from the event kind', () => {
     const items = mapActivityEntries([
-      entry('connection_credential_drift_cleared', { user: 'sharko', source: '', result: 'success' }),
-      entry('cluster_connection_repair', { source: 'ui', result: 'success' }),
+      // A read-only check: nothing to say about changes.
+      entry('connection_credential_drift_cleared', { user: 'sharko', source: '', changes: 'not_applicable' }),
+      // A repair that ran and wrote nothing: the one true case.
+      entry('cluster_connection_repair', { source: 'ui', result: 'success', changes: 'none' }),
+      // A repair that wrote.
+      entry('cluster_secret_create', { source: 'ui', result: 'success', changes: 'applied' }),
     ])
-    expect(items[0].readOnly).toBe(true)
+    expect(items[0].noChangesMade).toBe(false)
     expect(items[0].door).toBeUndefined()
-    expect(items[1].readOnly).toBe(false)
+    expect(items[1].noChangesMade).toBe(true)
     expect(items[1].door).toBe('ui')
     expect(items[1].outcome).toBe('success')
+    expect(items[2].noChangesMade).toBe(false)
+  })
+
+  it('an entry with no changes field says nothing about changes', () => {
+    const [item] = mapActivityEntries([entry('cluster_connection_repair')])
+    expect(item.noChangesMade).toBe(false)
   })
 })

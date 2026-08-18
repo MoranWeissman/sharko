@@ -11,8 +11,8 @@
 //    promise of its own — the old "Sharko will fix this on the next pass"
 //    is banned;
 //  - the replaced page's wording is banned by name: the teaching block
-//    heading and body, "Needs attention", "does not match what Sharko
-//    intends";
+//    heading and body, "Needs attention", and (ruling b) the whole banned
+//    fragment about what Sharko means to do — Git defines the connection;
 //  - sensitive drift renders the fixed "<redacted>" on both sides;
 //  - Recent activity shows lifecycle events with human titles only — a raw
 //    event id (secret_resource_read included) never renders;
@@ -43,6 +43,10 @@ import {
   QUALIFIER_SELF_MANAGED,
   MIGRATE_CREDENTIALS_DOC_URL,
   RECONCILIATION_NEEDS_OPERATOR,
+  PLAN_LABEL_AUTOMATIC,
+  PLAN_LABEL_REQUIRES_APPROVAL,
+  PLAN_LABEL_PRESERVED,
+  PLAN_UNTOUCHED_SENTENCE,
 } from '@/views/ConnectionReconciliationView'
 import { RECENT_ACTIVITY_LABEL, ACTIVITY_EMPTY_SENTENCE, ACTIVITY_FETCH_LIMIT, NO_CHANGES_MADE } from '@/views/connectionActivity'
 
@@ -129,7 +133,7 @@ const S = {
   condLiveOK: 'The live connection Secret was found.',
   condLiveMissing: 'This cluster has no live connection Secret.',
   condCompFull: 'Every field Sharko owns was compared.',
-  condCompDrift: 'At least one compared field does not match what Sharko intends.',
+  condCompDrift: 'At least one compared field differs from the Git-defined connection.',
   condArgoOK: 'ArgoCD reports this connection as working.',
   condApproval: "Applying this change needs an admin's approval through the repair action.",
 }
@@ -160,6 +164,12 @@ function makeView(overrides: Partial<ConnectionReconciliation> = {}): Connection
       state: 'synced',
       verification_scope: 'full',
       approval_required: false,
+      // B5: headline and qualifier now arrive FROM THE SERVER — the page
+      // renders them verbatim and selects nothing. Every fixture below
+      // states the exact strings the canonical core would send for that
+      // row, so a test that changes the state without changing the words
+      // is asserting a response the server cannot produce.
+      headline: HEADLINE_CONNECTION_SYNCED,
       checked_at: '2026-08-18T10:00:00Z',
       last_successful_application: '2026-08-18T09:00:00Z',
     },
@@ -194,10 +204,14 @@ async function waitForView() {
 
 /**
  * Every render must be free of the replaced page's wording — checked after
- * each matrix row. The old page's REPEATED verdict sentences are banned by
- * their exact text (the server's single itemized comparison condition — "At
- * least one compared field does not match what Sharko intends." — is a
- * different, Story-1-pinned sentence and appears at most once).
+ * each matrix row.
+ *
+ * RULING (b), 2026-08-19: the FRAGMENT "Sharko intends" is banned outright,
+ * anywhere on the page. The old list banned two complete verdict SENTENCES,
+ * which is precisely how the phrase survived in five Go files at once — a
+ * fragment that travelled across files was invisible to every one of them.
+ * The ruled replacement, where a full sentence is needed, is exactly:
+ * "At least one compared field differs from the Git-defined connection."
  */
 function expectNoBannedWording() {
   expect(screen.queryByText(/How Sharko manages this connection/)).toBeNull()
@@ -207,6 +221,9 @@ function expectNoBannedWording() {
   expect(screen.queryByText(/Sharko will fix this on the next pass/)).toBeNull()
   expect(screen.queryByText(/This connection does not match what Sharko intends\./)).toBeNull()
   expect(screen.queryByText(/This connection matches what Sharko intends/)).toBeNull()
+  // The bare fragment, over the whole rendered page — not one sentence in
+  // one place.
+  expect(screen.getByTestId('recon-view').textContent ?? '').not.toMatch(/sharko intends/i)
 }
 
 beforeEach(() => {
@@ -240,7 +257,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
     renderView(
       makeView({
         definition: { file: 'managed-clusters.yaml', branch: 'main', desired_revision: FULL_SHA, credential_source_type: 'eks-token' },
-        sync: { state: 'unknown', verification_scope: 'partial', approval_required: false, reason: S.eksLimit, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_EKS_PARTIAL, state: 'unknown', verification_scope: 'partial', approval_required: false, reason: S.eksLimit, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'attention', detail: S.eksLimit },
@@ -270,7 +287,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
     mockRepairConnection.mockResolvedValue({ message: 'Repaired.', comparison: {} })
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC_APPROVAL, state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'ok', detail: S.condCredOK },
@@ -326,7 +343,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 4 — v4 addon-label drift: "Out of sync", the SERVER\'s automatic sentence verbatim, no buttons', async () => {
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: S.labelsOnly, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC, state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: S.labelsOnly, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'ok', detail: S.condCredOK },
@@ -358,7 +375,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
     const onRequestSync = vi.fn()
     mockGetConnectionReconciliation.mockResolvedValue(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: S.labelsOnly, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC, state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: S.labelsOnly, checked_at: '2026-08-18T10:00:00Z' },
         drift: {
           connection_configuration: [],
           credential_material: [],
@@ -390,7 +407,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 6 — credential rotation: sensitive drift renders the fixed <redacted> on BOTH sides, and never any value or length', async () => {
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC_APPROVAL, state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'ok', detail: S.condCredOK },
@@ -429,7 +446,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 7 — mixed drift: both groups listed; the label half may carry the automatic sentence, the credential half only the approval one', async () => {
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC_APPROVAL, state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'ownership', status: 'ok', detail: S.condOwnOK },
@@ -465,7 +482,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 8 — provider unavailable: "Unknown — check failed" with the server\'s failure sentence; no repair door', async () => {
     renderView(
       makeView({
-        sync: { state: 'unknown', verification_scope: 'none', approval_required: false, reason: S.checkFail, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_UNKNOWN_CHECK_FAILED, state: 'unknown', verification_scope: 'none', approval_required: false, reason: S.checkFail, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'blocked', detail: S.checkFail },
@@ -488,7 +505,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
         management_mode: 'foreign_owned',
         managed_scope: 'none',
         mode_statement: S.modeForeign,
-        sync: { state: 'blocked', verification_scope: 'none', approval_required: false, reason: S.modeForeign, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_BLOCKED, state: 'blocked', verification_scope: 'none', approval_required: false, reason: S.modeForeign, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'ownership', status: 'blocked', detail: S.modeForeign },
           { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
@@ -508,7 +525,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 10 — live Secret missing, durable source: "Out of sync" and the server\'s create-next-pass sentence verbatim', async () => {
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'none', approval_required: false, reason: S.missingDurable, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC, state: 'out_of_sync', verification_scope: 'none', approval_required: false, reason: S.missingDurable, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'ok', detail: S.condCredOK },
@@ -534,7 +551,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
         managed_scope: 'addon_labels',
         mode_statement: S.modeLegacy,
         definition: { file: 'managed-clusters.yaml', branch: 'main', desired_revision: FULL_SHA, credential_source_type: 'inline-kubeconfig' },
-        sync: { state: 'out_of_sync', verification_scope: 'none', approval_required: false, reason: S.missingLegacy, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC_CANNOT_RESTORE, qualifier: QUALIFIER_LEGACY_INLINE, state: 'out_of_sync', verification_scope: 'none', approval_required: false, reason: S.missingLegacy, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'blocked', detail: S.modeLegacy },
@@ -566,7 +583,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
         managed_scope: 'addon_labels',
         mode_statement: S.modeLegacy,
         definition: { file: 'managed-clusters.yaml', branch: 'main', desired_revision: FULL_SHA, credential_source_type: 'inline-kubeconfig' },
-        sync: { state: 'unknown', verification_scope: 'partial', approval_required: false, reason: S.modeLegacy, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_VERIFICATION_INCOMPLETE, qualifier: QUALIFIER_LEGACY_INLINE, state: 'unknown', verification_scope: 'partial', approval_required: false, reason: S.modeLegacy, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'credential_reference', status: 'blocked', detail: S.modeLegacy },
@@ -595,7 +612,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
         management_mode: 'self_managed',
         managed_scope: 'addon_labels',
         mode_statement: S.modeSelf,
-        sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_ADDON_LABELS_SYNCED, qualifier: QUALIFIER_SELF_MANAGED, state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'ownership', status: 'ok', detail: S.condOwnGuest },
           { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
@@ -618,7 +635,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
         management_mode: 'self_managed',
         managed_scope: 'addon_labels',
         mode_statement: S.modeSelf,
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: S.labelsOnly, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_ADDON_LABELS_OUT_OF_SYNC, qualifier: QUALIFIER_SELF_MANAGED, state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: S.labelsOnly, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'ownership', status: 'ok', detail: S.condOwnGuest },
           { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
@@ -643,7 +660,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 15 — never checked: "Not checked yet", the check button says "Check now", and no zero time renders as a real run', async () => {
     renderView(
       makeView({
-        sync: { state: 'unknown', verification_scope: 'none', approval_required: false },
+        sync: { headline: HEADLINE_NOT_CHECKED_YET, state: 'unknown', verification_scope: 'none', approval_required: false },
         health: { state: 'not_checked' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
@@ -665,7 +682,7 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
   it('row 16 — check failed: "Unknown — check failed", and the mode statement is NOT presented (F7)', async () => {
     renderView(
       makeView({
-        sync: { state: 'unknown', verification_scope: 'none', approval_required: false, reason: S.checkFail, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_UNKNOWN_CHECK_FAILED, state: 'unknown', verification_scope: 'none', approval_required: false, reason: S.checkFail, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'comparison', status: 'blocked', detail: S.checkFail },
           { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
@@ -722,7 +739,7 @@ describe('role gates', () => {
   it('an operator never sees the repair button even when the plan offers it — the endpoint is admin-only', async () => {
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC_APPROVAL, state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'approval', status: 'blocked', detail: S.condApproval },
@@ -747,7 +764,7 @@ describe('role gates', () => {
       management_mode: 'foreign_owned',
       managed_scope: 'none',
       mode_statement: S.modeForeign,
-      sync: { state: 'blocked', verification_scope: 'none', approval_required: false, reason: S.modeForeign, checked_at: '2026-08-18T10:00:00Z' },
+      sync: { headline: HEADLINE_BLOCKED, state: 'blocked', verification_scope: 'none', approval_required: false, reason: S.modeForeign, checked_at: '2026-08-18T10:00:00Z' },
       conditions: [
         { id: 'ownership', status: 'blocked', detail: S.modeForeign },
         { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
@@ -786,7 +803,7 @@ describe('role gates', () => {
     mockRepairConnection.mockRejectedValue(new (ApiError as unknown as new (s: number, b: { error?: string }, f: string) => Error)(409, { error: 'The branch moved. Nothing changed. Run the check again.' }, 'conflict'))
     renderView(
       makeView({
-        sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
+        sync: { headline: HEADLINE_OUT_OF_SYNC_APPROVAL, state: 'out_of_sync', verification_scope: 'full', approval_required: true, reason: S.approvalRequired, checked_at: '2026-08-18T10:00:00Z' },
         conditions: [
           { id: 'git_definition', status: 'ok', detail: S.condGitOK },
           { id: 'approval', status: 'blocked', detail: S.condApproval },
@@ -866,20 +883,32 @@ function auditEntry(event: string, overrides: Partial<AuditEntry> = {}): AuditEn
 }
 
 describe('Recent activity since Sharko started', () => {
-  it('carries the exact honest label, human titles, actor, door, outcome — and "No changes made" on read-only lifecycle events', async () => {
+  it('carries the exact honest label, human titles, actor, door, outcome — and "No changes made" ONLY where the entry says so (ruling f)', async () => {
     renderView(makeView(), 'admin', [
-      auditEntry('cluster_connection_repair'),
-      auditEntry('connection_credential_drift_detected', { user: 'sharko', source: '' }),
-      auditEntry('cluster_registered'),
+      // The ONE case where "No changes made" is true: a repair that ran and
+      // deliberately wrote nothing.
+      auditEntry('cluster_connection_repair', { changes: 'none' }),
+      // A read-only check. It neither changed anything nor failed to, so it
+      // says NOTHING about changes — this used to claim "No changes made"
+      // from a static flag in the browser's own table.
+      auditEntry('connection_credential_drift_detected', { user: 'sharko', source: '', level: 'warn', changes: 'not_applicable' }),
+      auditEntry('cluster_registered', { changes: 'applied' }),
     ])
     await waitForView()
     expect(screen.getByTestId('recon-activity-label').textContent).toBe(RECENT_ACTIVITY_LABEL)
-    expect(screen.getByTestId('recon-activity-entry-0').textContent).toContain('Connection repaired')
+    const repair = screen.getByTestId('recon-activity-entry-0')
+    expect(repair.textContent).toContain('Connection repaired')
+    expect(repair.textContent).toContain(NO_CHANGES_MADE)
     const drift = screen.getByTestId('recon-activity-entry-1')
     expect(drift.textContent).toContain('Credential drift noticed')
     expect(drift.textContent).toContain('Background reconciler')
-    expect(drift.textContent).toContain(NO_CHANGES_MADE)
-    expect(screen.getByTestId('recon-activity-entry-2').textContent).toContain('Cluster registered')
+    // Successfully detecting drift is a SUCCESSFUL check with an attention
+    // result — never a failure, and never a claim about changes.
+    expect(drift.textContent).toContain('success')
+    expect(drift.textContent).not.toContain(NO_CHANGES_MADE)
+    const registered = screen.getByTestId('recon-activity-entry-2')
+    expect(registered.textContent).toContain('Cluster registered')
+    expect(registered.textContent).not.toContain(NO_CHANGES_MADE)
     // The separate audit-log link stays.
     const link = screen.getByTestId('recon-view-audit-log')
     expect(link.textContent).toBe('View audit log')
@@ -959,5 +988,229 @@ describe('demo mode', () => {
     await waitForView()
     expect(screen.getByTestId('recon-sync-headline').textContent).toBe(HEADLINE_CONNECTION_SYNCED)
     expect(screen.getByTestId('recon-mode-statement').textContent).toBe(S.modeSharko)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B6 — the condition hierarchy. Routine successes fold into ONE line; only
+// what needs attention takes a card.
+//
+// The captured screens showed four routine successes — Git definition,
+// credential reference, ownership, live Secret — each taking a full-width
+// card, so the operator scrolled past all of them to reach the actual
+// differences. That is the text wall the product owner rejected in the first
+// place.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A drifted connection: two conditions need attention, four are routine. */
+function driftedWithRoutineSuccesses(): ConnectionReconciliation {
+  return makeView({
+    sync: {
+      state: 'out_of_sync',
+      verification_scope: 'full',
+      approval_required: true,
+      headline: HEADLINE_OUT_OF_SYNC_APPROVAL,
+      reason: S.approvalRequired,
+      checked_at: '2026-08-18T10:00:00Z',
+    },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: S.condGitOK },
+      { id: 'credential_reference', status: 'ok', detail: S.condCredOK },
+      { id: 'ownership', status: 'ok', detail: S.condOwnOK },
+      { id: 'live_secret', status: 'ok', detail: S.condLiveOK },
+      { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
+      { id: 'comparison', status: 'attention', detail: S.condCompDrift },
+      { id: 'approval', status: 'blocked', detail: S.condApproval },
+    ],
+    drift: {
+      connection_configuration: [{ path: 'data.server', status: 'different', expected: 'https://new', live: 'https://old' }],
+      credential_material: [],
+      addon_labels: [],
+      not_checked: [],
+    },
+    plan: {
+      action: 'repair_connection',
+      action_scopes: ['data.server'],
+      reviewed_commit: FULL_SHA,
+      requires_approval: S.planApproval,
+    },
+  })
+}
+
+describe('B6 — routine successes collapse, attention conditions stay expanded', () => {
+  it('a drifted connection shows the attention conditions as cards and folds the routine successes into one line', async () => {
+    renderView(driftedWithRoutineSuccesses())
+    await waitForView()
+
+    // The two that need attention are expanded, with their sentences visible.
+    expect(screen.getByTestId('recon-condition-comparison')).toBeTruthy()
+    expect(screen.getByTestId('recon-condition-comparison').textContent).toContain(S.condCompDrift)
+    expect(screen.getByTestId('recon-condition-approval')).toBeTruthy()
+    expect(screen.getByTestId('recon-condition-approval').textContent).toContain(S.condApproval)
+
+    // The routine four are NOT cards — they are one compact summary.
+    expect(screen.queryByTestId('recon-condition-git_definition')).toBeNull()
+    expect(screen.queryByTestId('recon-condition-credential_reference')).toBeNull()
+    expect(screen.queryByTestId('recon-condition-ownership')).toBeNull()
+    expect(screen.queryByTestId('recon-condition-live_secret')).toBeNull()
+    expect(screen.queryByTestId('recon-condition-argocd_connection')).toBeNull()
+    const compact = screen.getByTestId('recon-conditions-compact')
+    expect(compact.textContent).toContain('5 checks passed.')
+    expect(compact.getAttribute('aria-expanded')).toBe('false')
+    // And the routine sentences are genuinely off screen until asked for.
+    expect(screen.queryByText(S.condGitOK)).toBeNull()
+  })
+
+  it('the routine evidence is one click away, and folds back', async () => {
+    renderView(driftedWithRoutineSuccesses())
+    await waitForView()
+    fireEvent.click(screen.getByTestId('recon-conditions-compact'))
+    expect(screen.getByTestId('recon-condition-git_definition').textContent).toContain(S.condGitOK)
+    expect(screen.getByTestId('recon-condition-ownership')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('recon-conditions-collapse'))
+    expect(screen.queryByTestId('recon-condition-git_definition')).toBeNull()
+  })
+
+  it('a healthy connection is ONE compact summary, not a stack of green cards', async () => {
+    renderView(makeView())
+    await waitForView()
+    const compact = screen.getByTestId('recon-conditions-compact')
+    expect(compact.textContent).toContain('All 6 checks passed.')
+    for (const id of ['git_definition', 'credential_reference', 'ownership', 'live_secret', 'comparison', 'argocd_connection']) {
+      expect(screen.queryByTestId(`recon-condition-${id}`)).toBeNull()
+    }
+  })
+
+  it('the condition an offered action hangs off stays expanded even when it reads "ok"', async () => {
+    // Clean EKS: repair is offered by policy and hangs off the comparison
+    // condition. A button must never disappear into a collapsed summary.
+    renderView(
+      makeView({
+        definition: { file: 'managed-clusters.yaml', branch: 'main', desired_revision: FULL_SHA, credential_source_type: 'eks-token' },
+        sync: {
+          state: 'unknown',
+          verification_scope: 'partial',
+          approval_required: false,
+          headline: HEADLINE_EKS_PARTIAL,
+          reason: S.eksLimit,
+          checked_at: '2026-08-18T10:00:00Z',
+        },
+        conditions: okConditions,
+        plan: { action: 'repair_connection', action_scopes: ['data.config'], reviewed_commit: FULL_SHA },
+      }),
+    )
+    await waitForView()
+    const comparison = screen.getByTestId('recon-condition-comparison')
+    expect(within(comparison).getByTestId('recon-action-repair')).toBeTruthy()
+    // The other five still fold away.
+    expect(screen.getByTestId('recon-conditions-compact').textContent).toContain('5 checks passed.')
+  })
+
+  it('the Approval condition is a policy gate — a lock, never a red failure icon', async () => {
+    renderView(driftedWithRoutineSuccesses())
+    await waitForView()
+    const approval = screen.getByTestId('recon-condition-approval')
+    // It arrives from the server as `blocked`, which everywhere else means a
+    // red failure mark. Nothing is broken here — Sharko is waiting for a
+    // person — so it renders amber with a lock.
+    expect(approval.getAttribute('data-condition-status')).toBe('blocked')
+    const icon = approval.querySelector('svg')
+    expect(icon?.getAttribute('class') ?? '').toContain('amber')
+    expect(icon?.getAttribute('class') ?? '').not.toContain('red')
+    // The repair door stays attached to it.
+    expect(within(approval).getByTestId('recon-action-repair')).toBeTruthy()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B7 — the plan is scannable, and still the server's own sentences
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('B7 — the action plan renders under explicit labels', () => {
+  it('labels each returned sentence Automatic / Requires approval / Preserved, without rewriting one word of it', async () => {
+    renderView(
+      makeView({
+        sync: {
+          state: 'out_of_sync',
+          verification_scope: 'full',
+          approval_required: true,
+          headline: HEADLINE_OUT_OF_SYNC_APPROVAL,
+          reason: S.approvalRequired,
+          checked_at: '2026-08-18T10:00:00Z',
+        },
+        conditions: [
+          { id: 'comparison', status: 'attention', detail: S.condCompDrift },
+          { id: 'approval', status: 'blocked', detail: S.condApproval },
+        ],
+        drift: {
+          connection_configuration: [],
+          credential_material: [],
+          addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+          not_checked: [],
+        },
+        plan: {
+          action: 'repair_connection',
+          action_scopes: ['metadata.labels'],
+          reviewed_commit: FULL_SHA,
+          automatic: S.planAutoLabels,
+          requires_approval: S.planApproval,
+        },
+      }),
+    )
+    await waitForView()
+    expect(screen.getByTestId('recon-plan-automatic-label').textContent).toBe(PLAN_LABEL_AUTOMATIC)
+    expect(screen.getByTestId('recon-plan-approval-label').textContent).toBe(PLAN_LABEL_REQUIRES_APPROVAL)
+    expect(screen.getByTestId('recon-plan-preserved-label').textContent).toBe(PLAN_LABEL_PRESERVED)
+    // VERBATIM — character for character, no merge and no paraphrase.
+    expect(screen.getByTestId('recon-plan-automatic').textContent).toBe(S.planAutoLabels)
+    expect(screen.getByTestId('recon-plan-approval').textContent).toBe(S.planApproval)
+    expect(screen.getByTestId('recon-plan-untouched').textContent).toBe(PLAN_UNTOUCHED_SENTENCE)
+  })
+
+  it('RULING (a): self-managed label drift promises the automatic re-apply and offers NO manual door', async () => {
+    const onRequestSync = vi.fn()
+    mockGetConnectionReconciliation.mockResolvedValue(
+      makeView({
+        management_mode: 'self_managed',
+        managed_scope: 'addon_labels',
+        mode_statement: S.modeSelf,
+        sync: {
+          state: 'out_of_sync',
+          verification_scope: 'full',
+          approval_required: false,
+          headline: HEADLINE_ADDON_LABELS_OUT_OF_SYNC,
+          qualifier: QUALIFIER_SELF_MANAGED,
+          reason: S.labelsOnly,
+          checked_at: '2026-08-18T10:00:00Z',
+        },
+        conditions: [
+          { id: 'ownership', status: 'ok', detail: S.condOwnGuest },
+          { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
+        ],
+        drift: {
+          connection_configuration: [],
+          credential_material: [],
+          addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+          not_checked: [],
+        },
+        // The server's own plan for this row after ruling (a): a promise, no action.
+        plan: { action: 'none', action_scopes: [], automatic: S.planAutoLabels },
+      }),
+    )
+    mockFetchAuditLog.mockResolvedValue({ entries: [] })
+    render(
+      <AuthContext.Provider value={authFor('admin')}>
+        <MemoryRouter>
+          <ConnectionReconciliationView cluster="spoke-eu" onRequestSync={onRequestSync} onChanged={vi.fn()} />
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+    await waitForView()
+    expect(screen.getByTestId('recon-plan-automatic').textContent).toBe(S.planAutoLabels)
+    expect(screen.getByTestId('recon-plan-automatic-label').textContent).toBe(PLAN_LABEL_AUTOMATIC)
+    // No manual action for work the reconciler performs on every pass.
+    expect(screen.queryByTestId('recon-action-sync')).toBeNull()
+    expect(screen.queryByTestId('recon-action-repair')).toBeNull()
+    expect(screen.queryByText('Sync addon labels')).toBeNull()
   })
 })
