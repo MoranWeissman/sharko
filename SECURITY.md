@@ -92,16 +92,16 @@ Out of scope:
 
 ## Supported Versions
 
-**No version of Sharko is supported for production use right now.**
+**Sharko v4.0.0 is a technical preview. Do not use Sharko in production.**
 
-`v3.0.0` is retired. It is unsafe and unsupported — **do not install it.**
-`v4` is being built on `main` and has not shipped yet. Wait for `v4`.
+Install only published `v4.0.0`-or-later artifacts. `v3.0.0` and every
+earlier tag remain retired and unsupported — **do not install them.**
 
 | Version | Supported for security fixes |
 | ------- | ----------------------------- |
 | `v3.0.x` | No — retired. Unsafe and unsupported, do not install it. |
 | `v2.x` and earlier | No. They have the same flaw as `v3.0.0`, so do not fall back to them either. |
-| `v4` (being built on `main`, not released) | Fixes land on `main` and ship in `v4.0.0` |
+| `v4.0.0` and later | Yes — the currently supported technical preview line |
 
 ### Why v3.0.0 is retired
 
@@ -119,8 +119,9 @@ network traffic could have read the token.
 your Git token, and your cluster kubeconfigs. Those travel over
 different connections and this flaw did not touch them.
 
-**What to do:** do not install `v3.0.0`. Wait for `v4`. There is no
-patch release for the `v3` line.
+**What to do:** do not install `v3.0.0` or any earlier tag — they remain
+retired and unsupported. Install only published `v4.0.0`-or-later
+artifacts. There is no patch release for the `v3` line.
 
 If you did run `v3.0.0` against an `https://` ArgoCD server, treat that
 ArgoCD token as possibly exposed.

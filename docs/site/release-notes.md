@@ -20,8 +20,9 @@ recent release is the first thing readers see.
 (released 2026-07-21) and will become **v4.0.0** once the maintainer decides
 it's ready — this entry is written ahead of the tag so nothing gets lost.
 
-`v3.0.0` is retired and unsafe — do not install it, wait for `v4`. See the
-[v3.0.0 entry](#v300-first-public-release) below.
+**Sharko v4.0.0 is a technical preview. Install only published `v4.0.0`-or-later
+artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
+in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
 
 ### Breaking changes
 
@@ -320,9 +321,10 @@ right now" state instead of being bounced back to first-time setup.
 
 ## v3.0.0 — First public release
 
-!!! danger "Retired — do not install v3.0.0"
-    `v3.0.0` is unsafe and unsupported. There is no patch for the `v3` line —
-    wait for `v4`. What went wrong and what to do:
+!!! danger "v3.0.0 is retired and unsupported"
+    `v3.0.0` and every earlier tag are unsafe, retired, and unsupported.
+    Install only published `v4.0.0`-or-later artifacts. What went wrong and
+    what to do:
     [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
 
 **Status:** released 2026-07-21 — retired, unsafe, unsupported.

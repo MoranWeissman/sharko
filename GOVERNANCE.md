@@ -11,9 +11,10 @@ Benevolent Dictator For Now (BDFL). The BDFL has final say on
 technical direction, scope, release timing, and maintainer additions.
 
 Sharko reached production GA with `v2.0.0` (2026-06-03). The `v3.0.0`
-tag has since been retired as unsafe — there is no release to install
-right now (see [SECURITY.md](SECURITY.md)) — and `v4` is in development
-on `main`. This model is intentional and appropriate for the project's
+tag has since been retired as unsafe and unsupported. Sharko v4.0.0 is
+a technical preview built on `main` — install only published
+`v4.0.0`-or-later artifacts (see [SECURITY.md](SECURITY.md)). This model
+is intentional and appropriate for the project's
 current stage:
 
 - The contributor community is still small, with a single maintainer

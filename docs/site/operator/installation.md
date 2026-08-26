@@ -2,9 +2,10 @@
 
 This guide is for platform engineers and cluster operators installing Sharko in a production environment.
 
-!!! danger "Don't install yet — there is no release to install"
-    The published chart still installs `v3.0.0`, which is retired and unsafe.
-    Do not install it. There is no patch for the `v3` line — wait for `v4`.
+!!! danger "Sharko v4.0.0 is a technical preview — do not use Sharko in production"
+    Install only published `v4.0.0`-or-later artifacts. The published chart
+    still installs `v3.0.0`, which remains retired and unsupported — do not
+    install it. There is no patch for the `v3` line.
     See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
 
 ## Prerequisites

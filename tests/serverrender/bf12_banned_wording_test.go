@@ -86,6 +86,19 @@ var bannedWordings = []string{
 	strings.Join([]string{"anything", "before", "an"}, " "),
 	strings.Join([]string{"the", "same", "rule", "as", "internal/credsafe"}, " "),
 	strings.Join([]string{"is", "the", "day", "a", "test", "fails"}, " "),
+	// BANNERS-V4, 2026-08-26. The pre-release banners across README.md,
+	// SECURITY.md, GOVERNANCE.md and the docs/site install pages all told the
+	// reader to hold off — "don't install yet", "wait for v4", "no release to
+	// install" — some of it wrapped in a markdown admonition title, some of it
+	// inside a backtick around `v4`. The product owner ruled that meaning out:
+	// the reader must be told what to do (install only published v4.0.0+
+	// artifacts, v3 and earlier stay retired, not for production), never to
+	// wait. These four are the phrases that actually shipped, banned so a
+	// future edit cannot bring the "hold off" framing back under a new banner.
+	strings.Join([]string{"don't", "install", "yet"}, " "),
+	strings.Join([]string{"do", "not", "install", "yet"}, " "),
+	strings.Join([]string{"wait", "for", "v4"}, " "),
+	strings.Join([]string{"no", "release", "to", "install"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart
@@ -96,14 +109,24 @@ var wordingSweptExtensions = map[string]bool{
 }
 
 // wordingSweptRoots are the trees an operator's copy of one of these sentences
-// could live in.
-var wordingSweptRoots = []string{"docs", "charts", "templates", "README.md"}
+// could live in. SECURITY.md and GOVERNANCE.md were added by BANNERS-V4: both
+// carried the retired install-banner wording and neither is under docs/ or
+// named README.md, so the walk would have missed them.
+var wordingSweptRoots = []string{"docs", "charts", "templates", "README.md", "SECURITY.md", "GOVERNANCE.md"}
 
 // commentMarkers are the characters a line of prose can start with when it is
 // sitting inside a comment or a list. They are dropped before the words are
 // read, because a sentence wrapped inside a YAML comment has a "#" in the
 // middle of it and is the same sentence.
 const commentMarkers = "#/*->"
+
+// wordEdgeTrim is the set of markdown and punctuation characters trimmed from
+// each word's edges before it is compared. BANNERS-V4 added this: the real
+// banned sentences wrote `v4` inside backticks and ended with a period —
+// "wait for `v4`." — so a word-for-word phrase match needs "v4" to reach the
+// comparison as "v4", not "`v4`.". Trimming only the edges (never the middle)
+// is what keeps "don't" and "internal/credsafe" intact.
+const wordEdgeTrim = "`*.,:;!?()[]{}\"'"
 
 // flatFile is one file read as a single run of lowercase words, with a record
 // of which line each word came from.
@@ -125,6 +148,13 @@ func flattenForWording(body string) flatFile {
 	for i, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimLeft(strings.TrimSpace(line), commentMarkers)
 		for _, word := range strings.Fields(trimmed) {
+			// BANNERS-V4: trim markdown/punctuation off the word's edges
+			// (never the middle) so "`v4`." compares as "v4" and a banned
+			// phrase written with markdown around it still matches.
+			word = strings.Trim(word, wordEdgeTrim)
+			if word == "" {
+				continue
+			}
 			if b.Len() > 0 {
 				b.WriteByte(' ')
 			}
