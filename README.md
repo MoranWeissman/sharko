@@ -82,7 +82,7 @@ Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `a
 
 ## Quick Start (Production)
 
-> **Sharko v4.0.0 is a technical preview. Do not use Sharko in production.** Install only published `v4.0.0`-or-later artifacts — any chart version below `v4.0.0` installs the retired, unsupported `v3` line. See [SECURITY.md](SECURITY.md#why-v300-is-retired).
+> **Sharko v4.0.0 is a technical preview. Do not use Sharko in production.** Install only published `v4.0.0`-or-later artifacts. Do not install any Sharko chart version below `v4.0.0` — all earlier release lines are retired and unsupported. See [SECURITY.md](SECURITY.md#why-v300-is-retired).
 
 ### 1. Install Sharko
 

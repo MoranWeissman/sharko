@@ -109,6 +109,15 @@ var bannedWordings = []string{
 	strings.Join([]string{"chart", "still", "installs"}, " "),
 	strings.Join([]string{"written", "ahead", "of", "the", "tag"}, " "),
 	strings.Join([]string{"not", "tagged", "yet"}, " "),
+	// TAGPREP-DOCS amendment, 2026-08-26. The first commit's replacement
+	// sentence — "any chart version below v4.0.0 installs the retired,
+	// unsupported v3 line" — was itself wrong: a v2 chart installs the v2
+	// line, not the v3 line. The product owner ruled it out even though the
+	// safety advice (don't install below v4.0.0) was right. Replaced with a
+	// version-line-agnostic sentence: "do not install any Sharko chart
+	// version below v4.0.0, all earlier release lines are retired and
+	// unsupported."
+	strings.Join([]string{"installs", "the", "retired", "unsupported", "v3", "line"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart
