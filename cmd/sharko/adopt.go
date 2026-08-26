@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/fanout"
 	"github.com/spf13/cobra"
 )
 
@@ -70,11 +71,8 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 			return printAPIError(respBody, status)
 		}
 
-		if !dryRun {
-			fmt.Println("done")
-		}
-
 		var result struct {
+			Outcome fanout.Outcome `json:"outcome"`
 			Results []struct {
 				Name         string `json:"name"`
 				Status       string `json:"status"`
@@ -94,10 +92,41 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 			} `json:"results"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
+			if !dryRun {
+				fmt.Println("no readable answer")
+			}
 			return fmt.Errorf("invalid response: %w", err)
 		}
 
+		// One count, made from the per-cluster answers, drives the word
+		// printed at the end of the progress line, the summary, the review
+		// warning and the exit code. Recounted here rather than read off
+		// result.Outcome so an older server that does not send it is still
+		// reported truthfully.
+		statuses := make([]string, 0, len(result.Results))
+		for _, cr := range result.Results {
+			statuses = append(statuses, cr.Status)
+		}
+		outcome := fanout.Count(statuses)
+
+		// "done" used to be printed the moment the HTTP call came back, so an
+		// adoption in which every cluster failed still said "done" — and the
+		// endpoint answers 200 for exactly that case, so nothing else
+		// contradicted it either.
+		if !dryRun {
+			if outcome.EverythingCompleted() {
+				fmt.Println("done")
+			} else {
+				fmt.Println("not all clusters finished")
+			}
+		}
+
 		fmt.Println()
+		if !dryRun {
+			fmt.Print(outcome.SummaryLine(adoptOperation))
+			fmt.Print(outcome.ReviewWarning())
+			fmt.Println()
+		}
 		for _, cr := range result.Results {
 			switch cr.Status {
 			case "success":
@@ -138,6 +167,20 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 			}
 		}
 
-		return nil
+		// A dry run adopts nothing, so there is no completion to confirm and
+		// nothing for an exit code to warn about: previewing successfully is
+		// a success.
+		if dryRun {
+			return nil
+		}
+
+		// The command used to return nil here whatever came back, so
+		// `sharko adopt` exited 0 for an adoption in which every cluster
+		// failed. Exit 0 now means every cluster completed.
+		return outcome.ExitError(adoptOperation)
 	},
 }
+
+// adoptOperation names what `sharko adopt` attempted, for the summary line
+// and the exit message.
+const adoptOperation = "Adoption"

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/MoranWeissman/sharko/internal/fanout"
 )
 
 func init() {
@@ -107,8 +109,6 @@ var addClusterCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Println("done")
-
 		var result struct {
 			Status  string `json:"status"`
 			Cluster struct {
@@ -132,14 +132,27 @@ var addClusterCmd = &cobra.Command{
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
+			fmt.Println("no readable answer")
 			return fmt.Errorf("invalid response: %w", err)
 		}
 
-		isPartial := result.Status == "partial" || status == 207
+		// One count decides the word that finishes the progress line, the
+		// headline, the review warning and the exit code, so they cannot
+		// tell four different stories. It is the same decision
+		// `sharko add-clusters` takes — one cluster is a fan-out of one.
+		outcome := fanout.SingleStatus(result.Status, status == 207)
+
+		// "done" used to be printed the moment the HTTP call came back, so a
+		// registration that stopped part-way said "done" and then said the
+		// opposite two lines later.
+		fmt.Println(outcome.ProgressWord())
 
 		fmt.Println()
-		if isPartial {
-			fmt.Println("Cluster registered with warnings (partial success).")
+		if outcome.Completed() {
+			fmt.Println("Cluster registered:")
+		} else {
+			fmt.Print(outcome.TroubleHeadline(addClusterOperation, name))
+			fmt.Print(outcome.ReviewWarning())
 			if result.FailedStep != "" {
 				fmt.Printf("  Failed step: %s\n", result.FailedStep)
 			}
@@ -149,8 +162,6 @@ var addClusterCmd = &cobra.Command{
 			for _, fs := range result.FailedSecrets {
 				fmt.Printf("  Secret failed: %s — %s\n", fs.Name, fs.Error)
 			}
-		} else {
-			fmt.Println("Cluster registered:")
 		}
 
 		if result.Cluster.Server != "" {
@@ -179,9 +190,22 @@ var addClusterCmd = &cobra.Command{
 			fmt.Printf("  Note:    %s\n", result.Message)
 		}
 
-		return nil
+		// The command used to return nil whatever came back, so a
+		// registration that stopped half-way — pull request merged, ArgoCD
+		// connection swapped, Secrets landed — exited 0 and a wrapping
+		// script was told it had completed.
+		return outcome.ExitError(addClusterOperation, name)
 	},
 }
+
+// The five single-cluster operations, named for the headline, the review
+// warning and the exit message. Short noun phrases: they are read as the
+// subject of a sentence.
+const (
+	addClusterOperation    = "Cluster registration"
+	removeClusterOperation = "Cluster removal"
+	updateClusterOperation = "The addon update"
+)
 
 var removeClusterCmd = &cobra.Command{
 	Use:   "remove-cluster <name>",
@@ -227,8 +251,6 @@ connection stays), or "none" (only the fleet-record entry).`,
 			return printAPIError(respBody, status)
 		}
 
-		fmt.Println("done")
-
 		var result struct {
 			Status     string `json:"status"`
 			FailedStep string `json:"failed_step"`
@@ -236,27 +258,34 @@ connection stays), or "none" (only the fleet-record entry).`,
 			Message    string `json:"message"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
+			fmt.Println("no readable answer")
 			return fmt.Errorf("invalid response: %w", err)
 		}
 
-		isPartial := result.Status == "partial" || status == 207
+		// The same one decision as everywhere else. This endpoint answers
+		// 200 with a body that says "failed" when the Git commit did not go
+		// through, and the command printed "Cluster prod-eu removed." over
+		// the top of that and exited 0.
+		outcome := fanout.SingleStatus(result.Status, status == 207)
+		fmt.Println(outcome.ProgressWord())
 
-		if isPartial {
-			fmt.Println("Cluster removed with warnings (partial success).")
+		if outcome.Completed() {
+			fmt.Printf("Cluster %s removed.\n", name)
+		} else {
+			fmt.Print(outcome.TroubleHeadline(removeClusterOperation, name))
+			fmt.Print(outcome.ReviewWarning())
 			if result.FailedStep != "" {
 				fmt.Printf("  Failed step: %s\n", result.FailedStep)
 			}
 			if result.Error != "" {
 				fmt.Printf("  Error: %s\n", result.Error)
 			}
-		} else {
-			fmt.Printf("Cluster %s removed.\n", name)
 		}
 		if result.Message != "" {
 			fmt.Printf("  %s\n", result.Message)
 		}
 
-		return nil
+		return outcome.ExitError(removeClusterOperation, name)
 	},
 }
 
@@ -310,28 +339,29 @@ var updateClusterCmd = &cobra.Command{
 			return printAPIError(respBody, status)
 		}
 
-		fmt.Println("done")
-
 		var result struct {
 			Status  string `json:"status"`
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
+			fmt.Println("no readable answer")
 			return fmt.Errorf("invalid response: %w", err)
 		}
 
-		isPartial := result.Status == "partial" || status == 207
+		outcome := fanout.SingleStatus(result.Status, status == 207)
+		fmt.Println(outcome.ProgressWord())
 
-		if isPartial {
-			fmt.Println("Update completed with warnings (partial success).")
-		} else {
+		if outcome.Completed() {
 			fmt.Printf("Cluster %s updated.\n", name)
+		} else {
+			fmt.Print(outcome.TroubleHeadline(updateClusterOperation, name))
+			fmt.Print(outcome.ReviewWarning())
 		}
 		if result.Message != "" {
 			fmt.Printf("  %s\n", result.Message)
 		}
 
-		return nil
+		return outcome.ExitError(updateClusterOperation, name)
 	},
 }
 

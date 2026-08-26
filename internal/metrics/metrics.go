@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -56,28 +57,70 @@ var (
 		Help: "Addon version (gauge with version label)",
 	}, []string{"cluster", "addon", "version"})
 
-	CatalogEntriesCount = promauto.NewGauge(prometheus.GaugeOpts{
+	// CatalogEntriesCount is how many addons the org has approved — the
+	// number of entries in catalog.yaml on the base branch, as of the last
+	// time Sharko read that file.
+	//
+	// It is a knownOnlyGauge, not a plain gauge, and that is the whole
+	// point of it (B5). A plain gauge publishes 0 from process start, so a
+	// server that has not yet read the file — or has no Git connection at
+	// all — reports "your org has approved nothing" as if it were a
+	// measurement. It is not; it is the absence of one. This collector
+	// stays silent until SetCatalogEntries is called, exactly as a
+	// labelled collector with no children does.
+	//
+	// A measured zero IS published: a repo with no catalog.yaml has
+	// genuinely approved nothing, and that is worth graphing.
+	CatalogEntriesCount = mustRegisterKnownOnlyGauge(prometheus.GaugeOpts{
 		Name: "sharko_catalog_entries_count",
-		Help: "Total addons in catalog",
+		Help: "Number of addons in the org's approved catalog (catalog.yaml), as of the last read; absent until Sharko has read it once",
 	})
 )
 
+// SetCatalogEntries records how many addons the org's approved catalog
+// holds. Call this ONLY where the live catalog.yaml on the base branch has
+// just been read — never from a preview, a candidate body being validated
+// before a pull request, or a migration, because those are proposals and
+// not the state of the repo.
+//
+// The single caller today is loadOrgCatalog in
+// internal/api/catalog_org.go, which is the one funnel every API read of
+// the live approved catalog goes through, and which the background
+// freshness scheduler also drives on its own timer.
+func SetCatalogEntries(n int) {
+	CatalogEntriesCount.Set(float64(n))
+}
+
+// ForgetCatalogEntriesForTest puts the catalog gauge back to "never
+// measured", so a test can prove it publishes nothing before Sharko has
+// read anything. Test-only; production code never calls it.
+func ForgetCatalogEntriesForTest() { CatalogEntriesCount.forgetForTest() }
+
 // Catalog sources metrics (v1.23 Subsystem A — third-party catalog fetch loop).
-// The fetcher (internal/catalog/sources) emits these per configured URL.
+// The fetcher (internal/catalog/sources) emits these per fetch attempt.
+//
+// The `url` label is ALWAYS the single fixed word "redacted" — never the
+// address the operator wrote, and never anything computed from it. GET
+// /metrics needs no login, and a private catalog is addressed by writing a
+// token into the address's own path, where no grammar can spot it — so the
+// configured address is sensitive because of what it is, not what a check
+// finds in it. Every configured source therefore shares that one label, and
+// their numbers add up together on one line. Each Help string below repeats
+// that, because it is what an operator reads on a dashboard.
 var (
 	CatalogSourceFetchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sharko_catalog_source_fetch_total",
-		Help: "Third-party catalog fetch attempts by source URL and outcome (ok|stale|failed)",
+		Help: "Third-party catalog fetch attempts by outcome (ok|stale|failed). The url label is always the fixed word \"redacted\" — a configured source address is never published — so every configured source is counted together on that one line, and the count is the true total across all of them.",
 	}, []string{"url", "status"})
 
 	CatalogSourceLastSuccess = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "sharko_catalog_source_last_success_timestamp",
-		Help: "Unix timestamp of last successful fetch per third-party catalog source URL",
+		Help: "Unix timestamp of the last successful third-party catalog fetch. The url label is always the fixed word \"redacted\" — a configured source address is never published — so every configured source shares that one line, and it shows whichever of them succeeded most recently.",
 	}, []string{"url"})
 
 	CatalogSourceEntries = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "sharko_catalog_source_entries",
-		Help: "Number of entries in the current snapshot of a third-party catalog source URL",
+		Help: "Number of entries in the most recently written third-party catalog snapshot. The url label is always the fixed word \"redacted\" — a configured source address is never published — so every configured source shares that one line, and it shows the most recent one written, not a total.",
 	}, []string{"url"})
 )
 
@@ -198,13 +241,30 @@ var (
 		Name: "sharko_pr_tracked",
 		Help: "Count of tracked PRs by status",
 	}, []string{"status"})
-
-	PRMergeDuration = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name:    "sharko_pr_merge_duration_seconds",
-		Help:    "Time from PR creation to merge",
-		Buckets: []float64{10, 30, 60, 120, 300, 600, 1800, 3600},
-	})
 )
+
+// sharko_pr_merge_duration_seconds used to be declared here, and nothing
+// ever observed into it. It was removed in B5 rather than wired up,
+// because Sharko does not hold the two timestamps that histogram claims
+// to measure.
+//
+// The start is fine: prtracker.PRInfo.CreatedAt is when Sharko opened the
+// pull request. The end is not. The only merge signal Sharko has is
+// GitProvider.GetPullRequestStatus (internal/gitprovider/provider.go),
+// which returns the word "merged" and no timestamp, observed by a poll
+// loop running every 30s by default (SHARKO_PR_POLL_INTERVAL). So the
+// only end time available is "when the tracker next looked", which is up
+// to a full poll interval late and arbitrarily later than that if the
+// server was down.
+//
+// On a histogram whose first bucket was 10 seconds, and with auto-merge
+// turned on — where most Sharko pull requests merge in under a second —
+// that would have put nearly every merge in a bucket it did not belong
+// in. A wrong number on a graph is worse than no number, so there is no
+// number. Wiring this back needs a real merged-at timestamp from the Git
+// provider first; ListPullRequests already surfaces one
+// (gitprovider.PullRequest.ClosedAt, filled from GitHub's merged_at), so
+// the honest version of this metric starts there, not here.
 
 // HTTP metrics
 var (
@@ -227,11 +287,53 @@ var (
 		Help: "Login attempts by outcome",
 	}, []string{"result"})
 
-	ActiveSessions = promauto.NewGauge(prometheus.GaugeOpts{
+	// ActiveSessions is how many human logins are valid right now.
+	//
+	// It is a GaugeFunc, counted at scrape time, not a gauge somebody
+	// remembers to Set (B5). Sessions do not only appear and disappear on
+	// login and logout — they also just run out, 24 hours after the login,
+	// and the sweep that removes them from the map only runs once an hour.
+	// A gauge written on login and logout would therefore report people as
+	// still signed in for up to an hour after their session had died.
+	// Counting at scrape time, with the expiry checked per entry, cannot
+	// drift.
+	//
+	// Before a source is registered this reports 0, and 0 is the truth
+	// then: the session map lives in the HTTP router, so a process with no
+	// router has nobody signed in to count.
+	ActiveSessions = promauto.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "sharko_active_sessions",
-		Help: "Current session count",
-	})
+		Help: "Number of human login sessions that are valid right now (expired ones are not counted, whether or not they have been swept yet)",
+	}, activeSessionsValue)
 )
+
+// activeSessionsSource is set once, by the HTTP router, to a function that
+// counts the sessions that have not expired. Stored through a mutex rather
+// than read directly because the /metrics scrape and NewRouter are on
+// different goroutines.
+var (
+	activeSessionsMu     sync.RWMutex
+	activeSessionsSource func() int
+)
+
+// SetActiveSessionsSource tells the sharko_active_sessions gauge where to
+// count from. internal/api's NewRouter is the only caller — that is the
+// package the session map lives in.
+func SetActiveSessionsSource(fn func() int) {
+	activeSessionsMu.Lock()
+	activeSessionsSource = fn
+	activeSessionsMu.Unlock()
+}
+
+func activeSessionsValue() float64 {
+	activeSessionsMu.RLock()
+	fn := activeSessionsSource
+	activeSessionsMu.RUnlock()
+	if fn == nil {
+		return 0
+	}
+	return float64(fn())
+}
 
 // Catalog / OpenSSF Scorecard metrics (v1.21).
 var (
@@ -249,7 +351,18 @@ var (
 // AI annotate metrics. Outcome label is one of:
 //
 //	"ok", "not_configured", "empty_input", "oversize", "secret_blocked",
-//	"timeout", "llm_error", "parse_error", "opted_out", "disabled".
+//	"timeout", "llm_error", "parse_error".
+//
+// THAT LIST IS EXACTLY WHAT THE WRITER CAN EMIT, AND IT USED TO BE WRONG.
+// The comment and the Help string below both named "opted_out" and
+// "disabled" as outcomes. Neither is ever written: the only writer is
+// recordAnnotate (internal/orchestrator/ai_annotate.go), and every value it
+// can be handed is in the list above. A Help string is the contract an
+// operator writes an alert rule against, so naming a label value nothing
+// emits is a promise the product cannot keep — an alert on
+// outcome="disabled" would sit green forever. The docs branch corrected the
+// published page and correctly left this file alone; this is the code half.
+// "empty_input", which IS emitted, was missing from the Help string too.
 //
 // Operators use these to spot LLM cost runaway (high call rate),
 // LLM-provider degradation (rising "timeout" / "llm_error" rate), or
@@ -258,7 +371,7 @@ var (
 var (
 	AIAnnotateTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "sharko_ai_annotate_total",
-		Help: "AI annotate calls by outcome (ok, not_configured, oversize, secret_blocked, timeout, llm_error, parse_error, opted_out, disabled)",
+		Help: "AI annotate calls by outcome (ok, not_configured, empty_input, oversize, secret_blocked, timeout, llm_error, parse_error)",
 	}, []string{"outcome"})
 
 	AIAnnotateLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{

@@ -71,7 +71,7 @@ internal/operations/     Async operation session store (heartbeat-keep-alive)
 internal/verify/         Two-stage connectivity verification + ErrorCode classifier
 internal/observations/   5-state cluster status (Unknown/Connected/Verified/Operational/Unreachable)
 internal/diagnose/       IAM diagnostic tool — RBAC checks + copy-paste YAML fixes
-internal/metrics/        Prometheus metrics (20 across 6 categories) + HTTP middleware
+internal/metrics/        Prometheus metrics (44 families: 32 promauto + 12 SLO) + HTTP middleware
 internal/catalog/        Embedded + third-party catalog merge (embedded-wins)
 internal/catalog/sources/    Third-party fetcher + snapshot store + merger (interface to verifier)
 internal/catalog/signing/    cosign-keyless verifier + trust-policy loader (sigstore-go)

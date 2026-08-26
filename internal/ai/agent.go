@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
@@ -309,7 +310,23 @@ func (a *Agent) Chat(ctx context.Context, userMessage string, callerRole authz.R
 			log.Info("agent tool call", "tool", tc.Function.Name)
 			result, err := a.executor.ExecuteTool(ctx, tc.Function.Name, tc.Function.Arguments, callerRole)
 			if err != nil {
-				result = fmt.Sprintf("Error executing %s: %v", tc.Function.Name, err)
+				// B14: this ONE line is where every tool failure becomes a
+				// message appended to the conversation and posted to the
+				// configured model provider — a third party, over the
+				// network. `%v` on the raw error put the chart repository's
+				// access token in that post, because the tools dial chart
+				// repos and Git hosts and Go's *url.Error keeps a token
+				// written in the username position of the address.
+				//
+				// There are twenty-six `return "", err` sites in tools.go
+				// feeding this line. Fixing them one by one would protect
+				// the twenty-six that exist and nothing added later, so the
+				// boundary is here instead. credsafe.SafeToolFailure takes
+				// an error and nothing else — there is no parameter an
+				// error's words could travel through — and it still tells
+				// the model that the step failed and roughly what kind of
+				// failure it was, from Go type names only.
+				result = fmt.Sprintf("Error executing %s: %s", tc.Function.Name, credsafe.SafeToolFailure(err))
 			}
 
 			// Add tool response — format depends on provider
@@ -376,13 +393,16 @@ func (a *Agent) callOllamaChat(ctx context.Context) (*ChatResponse, error) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", a.client.config.OllamaURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the ollama chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.client.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ollama chat request failed: %w", err)
+		return nil, fmt.Errorf("the ollama chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -425,7 +445,9 @@ func (a *Agent) callClaudeChat(ctx context.Context) (*ChatResponse, error) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the claude chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", a.client.config.APIKey)
@@ -433,7 +455,8 @@ func (a *Agent) callClaudeChat(ctx context.Context) (*ChatResponse, error) {
 
 	resp, err := a.client.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("claude chat request failed: %w", err)
+		return nil, fmt.Errorf("the claude chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -498,14 +521,17 @@ func (a *Agent) callOpenAIChat(ctx context.Context) (*ChatResponse, error) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the openai chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.client.config.APIKey)
 
 	resp, err := a.client.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openai chat request failed: %w", err)
+		return nil, fmt.Errorf("the openai chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -583,7 +609,9 @@ func (a *Agent) callCustomOpenAIChat(ctx context.Context) (*ChatResponse, error)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the custom-openai chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	authHeader, authValue := a.client.customOpenAIAuthHeader()
@@ -591,7 +619,8 @@ func (a *Agent) callCustomOpenAIChat(ctx context.Context) (*ChatResponse, error)
 
 	resp, err := a.client.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("custom-openai chat request failed: %w", err)
+		return nil, fmt.Errorf("the custom-openai chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -819,14 +848,17 @@ func (a *Agent) callGeminiChat(ctx context.Context) (*ChatResponse, error) {
 	apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", model)
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the gemini chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", a.client.config.APIKey)
 
 	resp, err := a.client.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini chat request failed: %w", err)
+		return nil, fmt.Errorf("the gemini chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 

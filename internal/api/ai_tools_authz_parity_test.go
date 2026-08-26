@@ -98,7 +98,7 @@ func collectAllRESTActions(t *testing.T) map[string]bool {
 	}
 
 	actions := map[string]bool{}
-	for handler := range collectMutatingHandlers(pkg) {
+	for handler := range collectMutatingHandlers(t) {
 		for _, action := range collectAuthzActions(pkg, handler) {
 			actions[action] = true
 		}

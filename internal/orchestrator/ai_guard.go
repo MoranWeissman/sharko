@@ -69,12 +69,34 @@ var secretPatterns = []SecretPattern{
 	{Name: "API key / token / password assignment", Pattern: regexp.MustCompile(`(?i)(api[_-]?key|api[_-]?token|password|secret|bearer|credential|access[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9+/=_\-]{16,}["']?`)},
 }
 
-// SecretMatch describes one redacted hit from the scanner. `Pattern` is
-// the human-readable name from the SecretPattern; `Field` is the YAML
-// dotted path or line excerpt that matched (with the actual value
-// redacted to `***`). Surface this to the UI so the maintainer can find
-// the offending field without the secret leaking through the audit log
-// or the toast.
+// SecretFieldUnavailable is what SecretMatch.Field says when the matching
+// line has no plain `key: value` shape to read a field name off — a PEM
+// marker, a bare token on a line of its own, a line whose key position is
+// itself secret-looking. It is a fixed sentence: it is the same text for
+// every such line, so it can carry nothing about what was on that line.
+// The line number in the same SecretMatch is what points the maintainer at
+// the right place.
+const SecretFieldUnavailable = "(a secret-like value on this line; no plain field name to show — open the file at this line number)"
+
+// secretValueMask is the fixed marker that stands in for a discarded
+// value. It never grows or shrinks with the value, because a mask whose
+// width tracks the secret's length is itself a disclosure.
+const secretValueMask = "***"
+
+// safeFieldKeyPattern is the shape a field name must have before it is
+// allowed into a refusal message: an ordinary configuration key, the sort
+// of thing a chart author types by hand. Anything else — spaces, quotes,
+// punctuation that does not belong in a key, or a key longer than any real
+// one — is not a field name we are willing to repeat back.
+var safeFieldKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.\-]{0,63}$`)
+
+// SecretMatch describes one hit from the scanner. `Pattern` is the
+// human-readable name from the SecretPattern. `Field` is EITHER a
+// structurally parsed field name followed by the fixed mask
+// (`password: ***`) OR the fixed SecretFieldUnavailable sentence — it
+// never carries any part of the value, of any length, in any encoding.
+// Surface this to the UI so the maintainer can find the offending field
+// without the secret leaking through the audit log or the toast.
 type SecretMatch struct {
 	Pattern string `json:"pattern"`
 	Field   string `json:"field"`
@@ -116,7 +138,7 @@ func ScanForSecrets(valuesYAML []byte) []SecretMatch {
 			if !sp.Pattern.MatchString(line) {
 				continue
 			}
-			field := redactedField(line, sp.Pattern)
+			field := redactedField(line)
 			k := key{pat: sp.Name, field: field}
 			if _, dup := seen[k]; dup {
 				continue
@@ -132,26 +154,100 @@ func ScanForSecrets(valuesYAML []byte) []SecretMatch {
 	return hits
 }
 
-// redactedField returns a short, secret-free description of the matched
-// line. We strip leading whitespace and any leading `# ` comment marker,
-// then mask the matched substring with `***`. If the line is "key: VALUE"
-// we keep the key for context. The output is bounded at 80 chars so the
-// audit log doesn't get a wall of text.
-func redactedField(line string, pat *regexp.Regexp) string {
-	// Strip leading indentation and any single comment marker so the
-	// field name remains readable.
+// redactedField returns a short description of the matched line that
+// carries none of the value.
+//
+// The rule is: once a line has been classified as carrying a secret, the
+// WHOLE value is thrown away — not the part some regex happened to match.
+// Masking only the matched run is what used to leak here: the assignment
+// pattern's value class stops at the first character outside
+// [A-Za-z0-9+/=_-], so a value with a dot, a bang, a dollar or a space in
+// it had everything after that character copied out verbatim.
+//
+// So nothing is built out of the line's own bytes. There are exactly two
+// possible answers:
+//
+//   - the line parses as a plain `key: value` (or `key = value`) and the
+//     key is an ordinary configuration key that is not itself secret-
+//     looking — then the answer is that key plus the fixed mask, e.g.
+//     `password: ***`. The separator is always written back as `: `, so
+//     the text does not vary with what was typed;
+//   - anything else — then the answer is the fixed SecretFieldUnavailable
+//     sentence, which says nothing at all about the line.
+//
+// Either way the SecretMatch carries the line number, so the maintainer
+// can always go and look.
+func redactedField(line string) string {
+	// Strip leading indentation, a single comment marker, and a YAML list
+	// dash, so an ordinary field name is still readable underneath.
 	trimmed := strings.TrimSpace(line)
-	trimmed = strings.TrimPrefix(trimmed, "#")
-	trimmed = strings.TrimSpace(trimmed)
+	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 
-	// Replace the matched text with `***` so we never echo the secret
-	// back through the API response or audit log.
-	masked := pat.ReplaceAllString(trimmed, "***")
-
-	if len(masked) > 80 {
-		masked = masked[:77] + "..."
+	key, ok := safeFieldKey(trimmed)
+	if !ok {
+		return SecretFieldUnavailable
 	}
-	return masked
+	return key + ": " + secretValueMask
+}
+
+// safeFieldKey pulls a field name off the front of a line, and only hands
+// it back when it is safe to repeat.
+//
+// Safe means all of these:
+//
+//   - there is a `:` or `=` separator, and something before it. Everything
+//     from the separator onwards is the value and is never looked at again;
+//   - what is before the separator is an ordinary configuration key by
+//     shape (safeFieldKeyPattern), optionally wrapped in one pair of
+//     quotes;
+//   - the key does not itself match any of the guard's own patterns. A
+//     line like `AKIAIOSFODNN7EXAMPLE: something` has the secret in the key
+//     position, and repeating "the field name" there would repeat the
+//     secret.
+//
+// Note that the pattern which fired for this line is deliberately not
+// consulted. The assignment pattern's match spans the key as well as the
+// value, so asking "did the match reach into the key?" would reject every
+// ordinary `password: …` line; and reasoning from where a regex happened
+// to land is exactly the habit that produced the original leak.
+//
+// What this does NOT promise: a key that is opaque but matches none of the
+// guard's patterns — a base64 blob sitting in the key position — is still
+// repeated back. That is by definition something the guard has never
+// classified as secret anywhere, so it is not a value being disclosed; it
+// is the name of a setting. The promise here is only, and exactly, about
+// the value: everything from the separator on is dropped whole.
+func safeFieldKey(trimmed string) (string, bool) {
+	sep := strings.IndexAny(trimmed, ":=")
+	if sep <= 0 {
+		return "", false
+	}
+	key := strings.TrimSpace(trimmed[:sep])
+	key = trimQuotePair(key)
+	if !safeFieldKeyPattern.MatchString(key) {
+		return "", false
+	}
+	for _, sp := range secretPatterns {
+		if sp.Pattern.MatchString(key) {
+			return "", false
+		}
+	}
+	return key, true
+}
+
+// trimQuotePair removes one matching pair of surrounding quotes, so a
+// quoted YAML key still reads as a field name. An unbalanced quote is left
+// alone, which then fails the key-shape check — the safe outcome.
+func trimQuotePair(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+	first, last := s[0], s[len(s)-1]
+	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // SecretLeakError is the typed error returned by AnnotateValues when the

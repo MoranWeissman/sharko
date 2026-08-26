@@ -60,7 +60,12 @@
 #   EKS_TEST_HUB_KUBECONFIG      default: ${TMPDIR:-/tmp}/<hub-name>.kubeconfig
 #   SHARKO_EKS_TEST_ROLE_NAME    default: sharko-eks-live-test-role
 #   SHARKO_EKS_HUB_ROLE_NAME     default: sharko-eks-live-hub-role
-#   EKS_TEST_SHARKO_IMAGE_TAG    default: v2.3.0  (ghcr image tag for the hub)
+#   EKS_TEST_SHARKO_IMAGE_TAG    REQUIRED by hub-up/env-up. No default — the
+#                                ghcr image tag of the Sharko build to install
+#                                on the hub. Name the exact candidate you are
+#                                testing; the image must already exist in the
+#                                registry, this script never builds or
+#                                publishes one.
 #   EKS_TEST_HUB_SHARKO_PORT     default: 8090  (local port-forward to hub Sharko;
 #                                distinct from the kind dev env's 8080)
 #   EKS_TEST_HUB_ARGOCD_PORT     default: 18090 (local port-forward to hub ArgoCD)
@@ -100,7 +105,10 @@ HUB_NAMESPACE="sharko"
 HUB_LOCAL_PORT="${EKS_TEST_HUB_SHARKO_PORT:-8090}"
 HUB_ARGOCD_LOCAL_PORT="${EKS_TEST_HUB_ARGOCD_PORT:-18090}"
 SHARKO_IMAGE_REPO="${EKS_TEST_SHARKO_IMAGE_REPO:-ghcr.io/moranweissman/sharko}"
-SHARKO_IMAGE_TAG="${EKS_TEST_SHARKO_IMAGE_TAG:-v2.3.0}"
+# No default on purpose. A default here decides for the operator which build
+# lands on a real EKS cluster, and goes stale the moment it is not looked at.
+# hub-up / env-up refuse to start without it — see require_image_tag().
+SHARKO_IMAGE_TAG="${EKS_TEST_SHARKO_IMAGE_TAG:-}"
 PODINFO_VERSION="${EKS_TEST_PODINFO_VERSION:-6.7.1}"
 HUB_HOST="http://localhost:${HUB_LOCAL_PORT}"
 HUB_CONNECTION_NAME="eks-live-hub"
@@ -339,6 +347,25 @@ require_hub_env() {
         echo "       (The local kind Sharko stores its copy AES-256-GCM-encrypted in" >&2
         echo "       the sharko-connections Secret, so there is no kubectl one-liner" >&2
         echo "       to extract it from there — use the gh CLI or your own PAT.)" >&2
+        ok=1
+    fi
+    return $ok
+}
+
+# require_image_tag: hub-up/env-up refuse to start without an explicitly named
+# Sharko image tag. It only checks that a value was GIVEN — it never validates
+# the tag's shape or compares it to a version, so deliberately installing an
+# older build (a migration test) still works.
+require_image_tag() {
+    local ok=0
+    if [ -z "${SHARKO_IMAGE_TAG:-}" ]; then
+        log_fail "EKS_TEST_SHARKO_IMAGE_TAG is not set."
+        echo "       This script installs Sharko onto a real EKS cluster, so it will" >&2
+        echo "       not guess which build to run. Name the exact candidate image tag" >&2
+        echo "       you are testing:" >&2
+        echo "         export EKS_TEST_SHARKO_IMAGE_TAG=<candidate-image-tag>" >&2
+        echo "       The image must already exist in the configured image" >&2
+        echo "       repository — this script never builds or publishes one." >&2
         ok=1
     fi
     return $ok
@@ -1956,7 +1983,7 @@ builds the full hub on it:
      Sharko AND ArgoCD's controller/server/appset service accounts —
      ZERO AWS keys are stored anywhere in the hub
   4. ArgoCD (same pinned manifest as sharko-dev.sh)
-  5. Sharko from charts/sharko with image ${SHARKO_IMAGE_REPO}:${SHARKO_IMAGE_TAG}
+  5. Sharko from charts/sharko with image ${SHARKO_IMAGE_REPO}:${SHARKO_IMAGE_TAG:-<candidate-image-tag>}
      (imagePullSecret auto-created from 'gh auth token' ONLY if the GHCR
      package is not anonymously pullable)
   6. ArgoCD API token mint + one Sharko connection via API:
@@ -1970,7 +1997,9 @@ memory 2+2 GB, which crowds ArgoCD's application-controller; one t3.medium
 keeps everything co-located. Override with EKS_TEST_HUB_NODE_TYPE.
 
 Required env: SHARKO_EKS_TEST_ACCOUNT_ID, SHARKO_GITHUB_TOKEN,
-SHARKO_GITOPS_REPO_URL (see the top-of-file header).
+SHARKO_GITOPS_REPO_URL, EKS_TEST_SHARKO_IMAGE_TAG (see the top-of-file
+header). EKS_TEST_SHARKO_IMAGE_TAG has no default — name the exact
+candidate image tag; it must already exist in ${SHARKO_IMAGE_REPO}.
 
 Flags:
   --yes      skip the "this costs money" confirmation prompt
@@ -1993,6 +2022,7 @@ EOF
     done
 
     hub_preflight_tools || return 1
+    require_image_tag || return 1
     account_guard || return 1
     require_hub_env || return 1
 
@@ -2542,7 +2572,11 @@ part) and the env costs ~\$0.26/hr while it runs. Run '$0 env-down' the
 moment you are done — nothing auto-expires.
 
 Required env: SHARKO_EKS_TEST_ACCOUNT_ID, SHARKO_GITHUB_TOKEN,
-SHARKO_GITOPS_REPO_URL.
+SHARKO_GITOPS_REPO_URL, EKS_TEST_SHARKO_IMAGE_TAG. The last one has no
+default — name the exact candidate image tag you are testing:
+  export EKS_TEST_SHARKO_IMAGE_TAG=<candidate-image-tag>
+It must already exist in ${SHARKO_IMAGE_REPO}; this script never builds
+or publishes an image.
 
 Flags:
   --yes     skip every confirmation prompt (true one-click)
@@ -2557,6 +2591,7 @@ EOF
     done
 
     hub_preflight_tools || return 1
+    require_image_tag || return 1
     account_guard || return 1
     require_hub_env || return 1
 
@@ -2886,6 +2921,11 @@ ${BOLD}Required env vars${RESET}
                                 no default
   SHARKO_GITHUB_TOKEN          REQUIRED by hub-up/env-up (gitops repo token)
   SHARKO_GITOPS_REPO_URL       REQUIRED by hub-up/env-up (gitops repo URL)
+  EKS_TEST_SHARKO_IMAGE_TAG    REQUIRED by hub-up/env-up — no default. The
+                                ghcr image tag to install on the hub. It must
+                                already exist in ${SHARKO_IMAGE_REPO}; this
+                                script never builds or publishes an image.
+                                currently: ${SHARKO_IMAGE_TAG:-<candidate-image-tag>}
 
 ${BOLD}Configuration${RESET} (env vars; defaults shown)
   EKS_TEST_CLUSTER_NAME       ${CLUSTER_NAME}
@@ -2897,7 +2937,6 @@ ${BOLD}Configuration${RESET} (env vars; defaults shown)
   EKS_TEST_HUB_KUBECONFIG     ${HUB_KUBECONFIG_PATH}
   SHARKO_EKS_TEST_ROLE_NAME   ${ROLE_NAME}
   SHARKO_EKS_HUB_ROLE_NAME    ${HUB_ROLE_NAME}
-  EKS_TEST_SHARKO_IMAGE_TAG   ${SHARKO_IMAGE_TAG}
   EKS_TEST_HUB_SHARKO_PORT    ${HUB_LOCAL_PORT}
   EKS_TEST_HUB_ARGOCD_PORT    ${HUB_ARGOCD_LOCAL_PORT}
   EKS_TEST_PODINFO_VERSION    ${PODINFO_VERSION}

@@ -188,7 +188,18 @@ func MergeConnectionFromEnv(conn *models.Connection) bool {
 	setString(&conn.Git.Repository, envConnGitRepository, &changed)
 
 	// --- ArgocdConfig (non-secret; Token preserved) ---
-	setString(&conn.Argocd.ServerURL, envConnArgocdServerURL, &changed)
+	//
+	// The server address goes through the same one rule the API save door
+	// uses. A Git-declared address is committed to the operator's GitOps repo
+	// and rendered into the Deployment's environment, so a credential written
+	// into it is a credential in Git — the worst place of the three. A
+	// declared address that carries one is refused and the runtime value
+	// stays; boot is never failed over it, because a connection that already
+	// works must keep working. The name of the variable is named so the
+	// operator can find it; its value never is.
+	if declaredArgocdServerURLIsSafe() {
+		setString(&conn.Argocd.ServerURL, envConnArgocdServerURL, &changed)
+	}
 	setString(&conn.Argocd.Namespace, envConnArgocdNamespace, &changed)
 	if v, declared := desiredBoolFromEnv(envConnArgocdInsecure); declared && conn.Argocd.Insecure != v {
 		conn.Argocd.Insecure = v
@@ -277,4 +288,20 @@ func ReconcileConnectionFromEnv(store Store) (bool, error) {
 	slog.Info("connection reconciled toward git-declared env values (git wins on non-secret fields)",
 		"connection", activeName)
 	return true, nil
+}
+
+// declaredArgocdServerURLIsSafe reports whether the Git-declared ArgoCD server
+// address may be applied. It asks models.ValidateArgocdServerURL — the same
+// single rule the API save door asks — so the two doors cannot drift apart.
+func declaredArgocdServerURLIsSafe() bool {
+	raw, declared := desiredStringFromEnv(envConnArgocdServerURL)
+	if !declared {
+		return true
+	}
+	if err := models.ValidateArgocdServerURL(raw); err != nil {
+		slog.Warn("the declared ArgoCD server address has sign-in details written into it, so it was not applied; the saved address is unchanged",
+			"env", envConnArgocdServerURL)
+		return false
+	}
+	return true
 }

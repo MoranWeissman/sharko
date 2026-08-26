@@ -71,6 +71,33 @@ var ErrNotFound = errors.New("credentials not found at the configured source")
 // region, and which step failed — found by the request id.
 const Message = "Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed."
 
+// SecretValueMessage is the second fixed sentence: the same protection, for
+// the other thing a secrets backend is asked for.
+//
+// # Why there are two sentences and not one
+//
+// Message says "this cluster's sign-in details". That is the right sentence
+// for GetCredentials — the kubeconfig Sharko needs to talk to a cluster — and
+// the WRONG sentence for GetSecretValue, which fetches an addon's secret
+// value and has nothing to do with signing in to anything. One sentence
+// covering both would have had to drop the half that tells the operator which
+// category of thing to go and look at, and a message that says only
+// "something failed" trades one defect for another.
+//
+// This does NOT reopen the channel Message's comment closes. The rule there is
+// that the sentence must not vary with the CAUSE — otherwise a caller learns
+// about the credential by watching which sentence comes back. These two vary
+// with the OPERATION Sharko was performing, which the caller already knows
+// because it is the call it just made. Within each operation the sentence is
+// still invariant: every AWS, Kubernetes, Azure or GCP failure on a value
+// fetch produces exactly this string.
+const SecretValueMessage = "Sharko could not read this addon's secret value from the configured secrets store. The server log for this request id says which step failed."
+
+// Mark and MarkSecretValue both answer yes to Is. A caller asking "did this
+// come from a credentials backend?" gets the same answer for both, so every
+// existing check, guard and boundary keeps working unchanged; only the
+// sentence differs.
+
 // Mark tags err as having come from a credentials backend.
 //
 // The returned error's Error() is the fixed safe sentence — Message — and
@@ -97,14 +124,72 @@ const Message = "Sharko could not read this cluster's sign-in details from the c
 // So Mark wraps again unless err is itself the wrapper. The boundary gets the
 // last word, the chain underneath is untouched, and Mark(Mark(x)) is still
 // Mark(x).
-func Mark(err error) error {
+//
+// What the re-wrap does NOT do is change which sentence the error carries: if a
+// mark already exists anywhere below, its sentence travels onto the new
+// wrapper. See markWith — that is what stops one boundary relabelling another
+// boundary's failure.
+func Mark(err error) error { return markWith(err, Message) }
+
+// MarkSecretValue tags err as having come from a secrets backend on an addon
+// SECRET-VALUE read — GetSecretValue, not GetCredentials.
+//
+// Everything Mark's comment says applies here word for word; the only
+// difference is which fixed sentence the wrapper's Error() returns. See
+// SecretValueMessage for why the two are not one.
+//
+// Marking an already-marked error keeps the sentence the FIRST boundary chose,
+// wherever in the chain that mark sits — so a caller cannot relabel somebody
+// else's failure by wrapping it again. See markWith for how that is done
+// without giving up the "one fixed sentence, no prefixes" property.
+func MarkSecretValue(err error) error { return markWith(err, SecretValueMessage) }
+
+// markWith is the one implementation behind both marks. Nothing outside this
+// package can reach it, so the set of sentences that can ever come out of a
+// marked error is exactly the two constants declared above.
+//
+// # Two rules, and why neither can be dropped for the other
+//
+// Rule 1 — THE BOUNDARY GETS THE LAST WORD. If err is not already the wrapper
+// itself, markWith wraps again, so the error leaving the boundary reads as the
+// one fixed sentence and nothing else. Mark's own comment explains why: a mark
+// is usually put on deep, and Sharko's own prefixes ("listing argocd cluster
+// secrets in namespace %q: %w") get wrapped around it on the way out. Skipping
+// the wrap whenever a mark existed anywhere below would let those prefixes
+// through, and "the same sentence for every failure" is what stops the sentence
+// being a channel back to the cause.
+//
+// Rule 2 — THE FIRST BOUNDARY TO SPEAK CHOOSES THE SENTENCE. Which of the two
+// sentences is right is a fact about where the error came from, not about who
+// happened to wrap it last. So if a mark already exists ANYWHERE in the chain,
+// its sentence is the one that goes on the new wrapper.
+//
+// The bug this fixes: the check used to be a type assertion on the outermost
+// error only, while findMarked walks the whole chain. MarkSecretValue(Mark(x))
+// was correctly a no-op, but one ordinary %w wrap in between —
+// MarkSecretValue(fmt.Errorf("...: %w", Mark(x))) — relabelled a cluster
+// sign-in failure as an addon secret-value failure. No credential text could
+// escape either way (both outcomes are one of the two package constants), but
+// the operator was pointed at the wrong thing, which is the whole reason the
+// two sentences were split in the first place.
+//
+// Guarding on findMarked alone would have been the simpler edit and would have
+// broken rule 1: the wrapper would have been returned unwrapped, prefixes and
+// all. Both rules hold here.
+func markWith(err error, sentence string) error {
 	if err == nil {
 		return nil
 	}
 	if _, alreadyOutermost := err.(*marked); alreadyOutermost {
 		return err
 	}
-	return &marked{cause: err}
+	// A mark deeper in the chain already answered "which sentence" — keep its
+	// answer and wrap it in a fresh outermost mark so Error() is that sentence
+	// on its own.
+	if deeper := findMarked(err); deeper != nil {
+		sentence = deeper.sentence
+	}
+	return &marked{cause: err, sentence: sentence}
 }
 
 // MarkNotFound tags err as "the credentials are simply not there".
@@ -156,9 +241,17 @@ func IsNotFound(err error) bool {
 // braces rather than the only guard. Keep calling it at boundaries: it is what
 // makes the intent readable, and it covers the case where a git error WRAPS a
 // credentials error, whose own outer words would otherwise come through.
+// Which of the two sentences comes back is decided by the wrapper that is
+// actually on the error, not by guessing: findMarked returns it and the
+// sentence is read off it. A credentials-marked error with no wrapper found
+// (impossible today — Is is only ever true because a wrapper put the marker
+// there) falls back to Message rather than to raw text.
 func Sentence(err error) string {
 	if err == nil {
 		return ""
+	}
+	if found := findMarked(err); found != nil {
+		return found.sentence
 	}
 	if Is(err) {
 		return Message
@@ -219,17 +312,23 @@ func findMarked(err error) *marked {
 	return nil
 }
 
-// marked is Mark's wrapper.
+// marked is the wrapper behind both Mark and MarkSecretValue.
 //
 // Error() says the fixed safe sentence. Unwrap returns TWO errors: the real
 // cause, so errors.Is / errors.As keep reaching everything underneath, and the
 // marker, so Is answers yes. Go's errors package walks both branches of a
 // multi-error Unwrap.
+//
+// sentence is UNEXPORTED and is only ever set by markWith, which is itself
+// unexported. So the sentence on a marked error is always one of the two
+// package constants — no caller can put its own words, let alone a backend's
+// words, into the thing Error() returns.
 type marked struct {
-	cause error
+	cause    error
+	sentence string
 }
 
-func (m *marked) Error() string { return Message }
+func (m *marked) Error() string { return m.sentence }
 
 func (m *marked) Unwrap() []error { return []error{m.cause, ErrCredentialProvider} }
 

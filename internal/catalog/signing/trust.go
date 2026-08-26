@@ -171,13 +171,17 @@ func LoadTrustPolicyFromEnv() (sources.TrustPolicy, error) {
 			continue
 		}
 		if !strings.HasPrefix(p, "^") || !strings.HasSuffix(p, "$") {
+			// BF1: the pattern used to be formatted into the MESSAGE as
+			// well as passed as an attribute. A log message goes to the
+			// collector exactly as assembled — the redaction sink rewrites
+			// attributes and never touches the message — so an operator's
+			// own SHARKO_CATALOG_TRUSTED_IDENTITIES text was reaching the
+			// log by the one route nothing inspects. It is still reported,
+			// once, as the attribute it always also was.
 			logger.Warn(
-				fmt.Sprintf(
-					"trust policy pattern is not fully anchored — '%s'. "+
-						"cosign-style identity matching is regexp.MatchString (substring); "+
-						"add ^ and $ unless substring matching is intentional",
-					p,
-				),
+				"trust policy pattern is not fully anchored. "+
+					"cosign-style identity matching is regexp.MatchString (substring); "+
+					"add ^ and $ unless substring matching is intentional",
 				"pattern", p,
 			)
 		}

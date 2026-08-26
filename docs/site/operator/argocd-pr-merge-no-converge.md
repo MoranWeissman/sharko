@@ -382,21 +382,23 @@ change you intended to keep:
 
 ## Prevention
 
-- **Monitoring — alert on the audit-trail break.** Add a Prometheus
-  rule that watches for `pr_merged` events without a corresponding
-  `cluster_secret_create` within 90 seconds:
+- **Monitoring — alert on the audit-trail break.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch: a rule
+  that watches for `pr_merged` events without a corresponding
+  `cluster_secret_create` within 90 seconds —
 
-  ```promql
+  ```
   sum(rate(sharko_audit_events_total{event="pr_merged"}[5m]))
     -
   sum(rate(sharko_audit_events_total{event="cluster_secret_create",result="success"}[5m]))
   > 0
   ```
 
-  When non-zero for >90s, page. Catches both the reconciler-side and
-  ArgoCD-side cases. Wiring requires Sharko to emit
-  `sharko_audit_events_total` as a Counter labeled by `event` and
-  `result` — a P1 follow-up in V2-3.x.
+  — paging when it stays non-zero for more than 90 seconds. It would
+  catch both the reconciler-side and ArgoCD-side cases. Wiring requires
+  Sharko to emit `sharko_audit_events_total` as a Counter labelled by
+  `event` and `result`, a P1 follow-up in V2-3.x.
 
 - **Gating — startup RBAC probe.** Sharko at startup should call
   `kubectl auth can-i create secrets -n <argocd-ns>` against its own
@@ -409,10 +411,12 @@ change you intended to keep:
   it within 1s. Catches the "wiring broken" cause before any
   PR-merge happens.
 
-- **Scheduled work — quarterly chaos drill.** Inject a 1-minute pause
-  in the reconciler's `pollOnce` (e.g.
-  `SHARKO_RECONCILER_TEST_PAUSE_MS=60000`) in staging. Verify the
-  monitoring alert fires. Verify the operator can follow this runbook
+- **Scheduled work — quarterly chaos drill.** Simulate a stalled
+  reconciler in staging. There is no pause hook in the shipped binary and
+  no environment variable that adds one, so either run a staging build
+  with a deliberate sleep in `pollOnce`, or cut the reconciler off from
+  Git (point the connection at an unreachable host) so ticks run and
+  never converge. Verify the monitoring alert fires. Verify the operator can follow this runbook
   to diagnose and mitigate. Trains the procedure before a real
   incident.
 

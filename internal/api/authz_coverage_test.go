@@ -5,10 +5,11 @@ package api
 //
 // Mirrors audit_coverage_test.go / tier_coverage_test.go in approach (same
 // collectMutatingHandlers seam, defined once in audit_coverage_test.go):
-//  1. Parse the internal/api package AST.
-//  2. Find every mux.HandleFunc("POST|PUT|PATCH|DELETE ...", srv.handleXXX)
-//     route registered in router.go (collectMutatingHandlers already walks
-//     func-literal wrappers too, e.g. the rate-limited /auth/login route).
+//  1. Parse the internal/api package AST (for the handler bodies).
+//  2. Ask the ROUTER for every route it registered under
+//     POST/PUT/PATCH/DELETE (collectMutatingHandlers → routeInventory). It is
+//     the router's own registration record, not a source pattern, so a route
+//     registered through a helper is inventoried like any other (B16).
 //  3. For each handler's func body, find every call to
 //     authz.RequireWithResponse(w, r, "<action>") or authz.Require(r, "<action>")
 //     and extract the literal action string(s).
@@ -48,11 +49,11 @@ import (
 var authzAllowlist = map[string]string{
 	// Auth bootstrap — these routes exist so a caller CAN establish a role in
 	// the first place; gating them on a role would be circular.
-	"handleLogin":           "unauthenticated by design — this IS the auth entry point; rate-limited separately",
-	"handleLogout":          "any authenticated session may end itself; no role distinction meaningful",
-	"handleStaleLoginRoute": "stale dead-route 404 stub, not a real action (see router.go comment)",
-	"handleHashPassword":    "utility endpoint, only reachable when auth is disabled (no roles exist yet)",
-	"handleUpdatePassword":  "self-service: changes the caller's OWN password, identity-scoped not role-scoped",
+	"handleLoginRateLimited": "the registered login route: applies the per-IP rate limit, then handleLogin. Unauthenticated by design — this IS the auth entry point",
+	"handleLogout":           "any authenticated session may end itself; no role distinction meaningful",
+	"handleStaleLoginRoute":  "stale dead-route 404 stub, not a real action (see router.go comment)",
+	"handleHashPassword":     "utility endpoint, only reachable when auth is disabled (no roles exist yet)",
+	"handleUpdatePassword":   "self-service: changes the caller's OWN password, identity-scoped not role-scoped",
 
 	// Webhooks — authenticated via HMAC signature, not a user role.
 	"handleGitWebhook": "HMAC-SHA256 signature verified inside the handler; no user role applies",
@@ -105,7 +106,7 @@ func TestAuthzCoverage(t *testing.T) {
 	// Reuse the same route-inventory seam audit_coverage_test.go and
 	// tier_coverage_test.go already rely on — this is the "enumerate every
 	// registered mutating route" mechanism for the whole package.
-	mutatingHandlers := collectMutatingHandlers(pkg)
+	mutatingHandlers := collectMutatingHandlers(t)
 
 	var noGate []string              // handler has zero authz.Require*/RequireWithResponse call
 	var unmappedAction []string      // handler's action literal is not a key in ActionRequirements

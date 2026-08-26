@@ -212,7 +212,7 @@ Verify, in order:
 
 ```sh
 NS=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_SECRETS_NAMESPACE")].value}')
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_NAMESPACE")].value}')
 SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}')
 
@@ -531,16 +531,18 @@ For Mitigation step 5 (provider type switch):
 
 ## Prevention
 
-- **Monitoring — health-probe-based alert.** Add a Prometheus rule
-  that scrapes `/api/v1/health` periodically and alerts when
-  `providers.<active>.reachable == false` for > 60s:
+- **Monitoring — health-probe-based alert.** Sharko does not export this
+  metric today. The alert below is a design sketch for a future release,
+  not something you can deploy now. The sketch: a rule that scrapes
+  `/api/v1/health` periodically and alerts when
+  `providers.<active>.reachable == false` for more than 60 seconds —
 
-  ```promql
+  ```
   sharko_provider_reachable{provider="aws-sm"} == 0
   ```
 
-  Wiring requires Sharko to emit a per-provider reachability metric
-  — a V2-3.x follow-up.
+  — which requires Sharko to emit a per-provider reachability metric
+  first, a V2-3.x follow-up.
 
 - **Gating — startup IRSA probe.** Sharko at startup should call
   `aws sts get-caller-identity` once and refuse to start if it fails.

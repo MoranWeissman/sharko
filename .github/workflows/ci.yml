@@ -24,6 +24,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The published-metrics contract check (internal/metrics/contract_test.go)
+      # renders charts/sharko with helm so it can read the shipped alerting
+      # rules — the consumer an operator is most likely to deploy verbatim.
+      # It t.Fatals when helm is missing rather than skipping, so helm is
+      # installed here on purpose instead of relying on whatever the runner
+      # image happens to ship.
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
       - name: Build
         run: go build ./...
 
@@ -35,7 +46,7 @@ jobs:
       # pass under -race with zero data races reported (worth re-checking
       # if this job ever gets flaky — a flaky race report is usually real).
       - name: Test with coverage (race detector on)
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
 
       # Pinned (story 152.H) — an unpinned tool install is a supply-chain
       # hole and makes CI results irreproducible. Bump deliberately, not
@@ -105,8 +116,9 @@ jobs:
 
       - name: Check for diff
         run: |
+          git add --intent-to-add docs/swagger/
           if ! git diff --exit-code docs/swagger/; then
-            echo "Swagger docs are out of date. Run 'swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal' and commit the result."
+            echo "Swagger docs are out of date or missing. Run 'swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal' and commit the result."
             exit 1
           fi
 
@@ -133,9 +145,137 @@ jobs:
 
       - name: Check for diff
         run: |
+          git add --intent-to-add ui/src/generated/provider-types.ts
           if ! git diff --exit-code -- ui/src/generated/provider-types.ts; then
-            echo "ui/src/generated/provider-types.ts is out of date."
+            echo "ui/src/generated/provider-types.ts is out of date or missing."
             echo "Run 'make generate-provider-types' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the server-owned message catalog.
+  # cmd/gen-connection-sentences imports internal/api and reads
+  # api.ConnectionSentences AND api.ConnectionFailureMessages AT RUNTIME (it
+  # parses no Go source — several sentences are aliased across a package
+  # boundary, and a parser sees an identifier where a sentence should be). It
+  # writes ui/src/generated/connection-sentences.ts, which the connection page
+  # renders BY IDENTIFIER, so no server-authored sentence is ever typed into
+  # browser code. Edit a sentence in Go without regenerating and this job fails
+  # the PR. Mirrors the swagger-check + provider-types-up-to-date shape.
+  #
+  # It covers BOTH catalogs deliberately: the second one (story P2c) is the
+  # parameterized connection-test failure family, whose finished sentences go
+  # into the same generated file. One generator, one output path, one gate —
+  # a second job here would only be a second thing to forget.
+  #
+  # THE `git add --intent-to-add` IS LOAD-BEARING, in this job and in every
+  # sibling drift job. `git diff --exit-code` does not see an
+  # UNTRACKED file, so if the generated file is missing from the commit the
+  # generator recreates it, git reports no diff, and the job passes green
+  # having checked nothing at all. Intent-to-add makes a missing generated
+  # file show up as a diff, which is the honest answer: a generated file that
+  # is not committed IS out of date. (Story P2b closed the same hole in all
+  # four sibling drift jobs, so this is no longer the odd one out — the line is
+  # kept here because this is where the reasoning is written down.)
+  connection-sentences-up-to-date:
+    name: Connection Sentences Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate connection sentences
+        run: make generate-connection-sentences
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/connection-sentences.ts
+          if ! git diff --exit-code -- ui/src/generated/connection-sentences.ts; then
+            echo "ui/src/generated/connection-sentences.ts is out of date or missing."
+            echo "Run 'make generate-connection-sentences' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the notification identifiers.
+  # cmd/gen-notification-codes imports internal/notifications and reads
+  # notifications.DeclaredCodes() AT RUNTIME (it parses no Go source — what it
+  # needs is a slice of strings that IS a runtime value). It writes
+  # ui/src/generated/notification-codes.ts, which the notification bell routes
+  # on, so no identifier is ever typed into browser code. Declare a code in Go
+  # without regenerating and this job fails the PR.
+  #
+  # Why this is separate from connection-sentences-up-to-date: that one carries
+  # SENTENCES for the connection page, this one carries IDENTIFIERS for the
+  # bell. The product owner's ruling is precisely that those two must not be
+  # confused, and one file holding both would invite exactly that.
+  #
+  # The `git add --intent-to-add` is load-bearing here for the same reason it
+  # is in every sibling job — see the note above connection-sentences.
+  notification-codes-up-to-date:
+    name: Notification Codes Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate notification codes
+        run: make generate-notification-codes
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/notification-codes.ts
+          if ! git diff --exit-code -- ui/src/generated/notification-codes.ts; then
+            echo "ui/src/generated/notification-codes.ts is out of date or missing."
+            echo "Run 'make generate-notification-codes' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the connection-lifecycle audit event names.
+  # cmd/gen-lifecycle-events imports internal/lifecycleevents and reads
+  # lifecycleevents.Declared() AT RUNTIME (it parses no Go source). It writes
+  # ui/src/generated/lifecycle-events.ts, which the connection page's activity
+  # feed keys its title table on, so no event name is typed into browser code.
+  # Rename an event in Go without regenerating and this job fails the PR.
+  #
+  # Why this gate exists at all: the feed renders lifecycle events by name from
+  # a table with NO fallback, so a rename turned a visible event into silence —
+  # and enough of them empty the feed out, leaving a supported page stating as a
+  # fact that nothing was recorded when things did happen. The browser's copy of
+  # the list was hand-written, and so was the copy its own test compared it
+  # against, so nothing in the tree noticed a rename.
+  #
+  # The `git add --intent-to-add` is load-bearing here for the same reason it
+  # is in every sibling job — see the note above connection-sentences.
+  lifecycle-events-up-to-date:
+    name: Lifecycle Events Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate lifecycle events
+        run: make generate-lifecycle-events
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/lifecycle-events.ts
+          if ! git diff --exit-code -- ui/src/generated/lifecycle-events.ts; then
+            echo "ui/src/generated/lifecycle-events.ts is out of date or missing."
+            echo "Run 'make generate-lifecycle-events' and commit the result."
             exit 1
           fi
 
@@ -144,9 +284,9 @@ jobs:
   # (internal/models.ManagedClustersSpec + internal/config.AddonCatalogSpec)
   # via invopop/jsonschema and writes the same bytes to TWO locations:
   #   docs/schemas/managed-clusters.v1.json     (human-facing copy)
-  #   docs/schemas/addon-catalog.v1.json        (human-facing copy)
+  #   docs/schemas/addons-catalog.v1.json        (human-facing copy)
   #   internal/schema/managed-clusters.v1.json  (embed source)
-  #   internal/schema/addon-catalog.v1.json     (embed source)
+  #   internal/schema/addons-catalog.v1.json     (embed source)
   #
   # The internal/schema/ copies exist because the runtime validator
   # (internal/schema/validator.go) loads schemas via go:embed and Go's
@@ -172,8 +312,9 @@ jobs:
 
       - name: Check for diff
         run: |
-          if ! git diff --exit-code -- docs/schemas/ internal/schema/managed-clusters.v1.json internal/schema/addon-catalog.v1.json; then
-            echo "docs/schemas/ or internal/schema/*.v1.json is out of date."
+          git add --intent-to-add docs/schemas/ internal/schema/managed-clusters.v1.json internal/schema/addons-catalog.v1.json
+          if ! git diff --exit-code -- docs/schemas/ internal/schema/managed-clusters.v1.json internal/schema/addons-catalog.v1.json; then
+            echo "docs/schemas/ or internal/schema/*.v1.json is out of date or missing."
             echo "Run 'make generate-schemas' and commit the result (both locations are written from the same source)."
             exit 1
           fi
@@ -201,8 +342,9 @@ jobs:
 
       - name: Check for diff
         run: |
+          git add --intent-to-add internal/engineversion/generated.go
           if ! git diff --exit-code -- internal/engineversion/generated.go; then
-            echo "internal/engineversion/generated.go is out of date."
+            echo "internal/engineversion/generated.go is out of date or missing."
             echo "Run 'make generate-engine-version' and commit the result."
             exit 1
           fi
@@ -682,6 +824,9 @@ jobs:
               "ui-build-test",             # build/lint/unit-test quality gate
               "swagger-check",             # generated-docs drift gate
               "provider-types-up-to-date", # generated-code drift gate
+              "connection-sentences-up-to-date", # generated-code drift gate
+              "notification-codes-up-to-date", # generated-code drift gate
+              "lifecycle-events-up-to-date", # generated-code drift gate
               "schemas-up-to-date",        # generated-schema drift gate
               "engine-version-up-to-date", # generated-code drift gate
               "validate-sharko-config",    # YAML schema validation (PR-only)

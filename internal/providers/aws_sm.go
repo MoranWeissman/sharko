@@ -102,7 +102,17 @@ func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path str
 		SecretId: aws.String(path),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", path, err)
+		// THE TRUSTED BOUNDARY. Everything above this line is Sharko's own
+		// words; err is the AWS SDK's, and an SDK error can carry a
+		// presigned URL, a token fragment or whatever a credential chain put
+		// into its text. credsafe.MarkSecretValue makes this error's
+		// Error() the one fixed sentence, so a caller that forgets to ask
+		// still cannot leak it — the same boundary GetCredentials has had
+		// since credsafe existed, applied to the other thing this provider
+		// hands out. The refusals above are deliberately NOT marked: they
+		// are Sharko-authored, name only the path and the configured
+		// prefix, and are shown verbatim at every door on purpose.
+		return nil, credsafe.MarkSecretValue(fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", path, err))
 	}
 	if output.SecretString != nil {
 		value := []byte(*output.SecretString)
@@ -310,10 +320,12 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 // It runs the same two-step lookup GetCredentials does (prefix first, then the
 // exact name) so a cluster found by one is found by the other, and then it
 // STOPS at the payload. On the structured-EKS branch that means it reports the
-// server and the CA bundle and sets CredentialMintedPerFetch — it does NOT go
-// on to buildFromStructured, which is where the STS token mint lives. On the
-// raw-kubeconfig branch there is nothing to mint, so the stored credential is
-// reported as it stands.
+// server and the CA bundle and sets CredentialMintedPerFetch — the stored
+// payload holds no credential, only what would be needed to create one, and
+// this method does NOT go on to buildFromStructured, which is where the STS
+// token gets created. On the raw-kubeconfig branch the payload holds a fixed
+// credential already, so it is reported as it stands and nothing is created
+// there either.
 //
 // This is the method the read-only connection comparison uses. GetCredentials
 // stays exactly as it was for every caller that needs credentials that work.

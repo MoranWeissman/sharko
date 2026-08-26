@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // ErrClusterNotInGit is what SyncCluster returns when the named cluster is
@@ -50,9 +52,17 @@ func (r *Reconciler) syncWork(ctx context.Context, w secretWork) (ItemOutcome, e
 	stats := &ReconcileStats{}
 	outcome, syncErr := r.reconcileSecret(ctx, stats, w.clusterName, w.credLookup, w.addon, w.push)
 
+	// credsafe.Sentence, not syncErr.Error(). This is the third writer of
+	// ItemRecord.Error and it was the only one that skipped it — the periodic
+	// pass (reconcile, "safeText") and the check path (checkWork's credentials
+	// branch) both went through credsafe already. An inconsistency between
+	// three writers of one field in one package is an oversight, not a
+	// decision, so this one now matches. A credentials or secrets-backend
+	// error becomes the fixed sentence; every other error keeps its full text,
+	// which is what the API layer's stage-matching still reads.
 	errMsg := ""
 	if syncErr != nil {
-		errMsg = syncErr.Error()
+		errMsg = credsafe.Sentence(syncErr)
 	}
 
 	key := ItemKey{Cluster: w.clusterName, Addon: w.addon}

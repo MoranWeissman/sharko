@@ -5,6 +5,13 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "sharko.labels" . | nindent 4 }}
+{{- /*
+  BF11. Refuse the credential-bearing forms of every operator-set address the
+  chart writes into the Pod as a plain environment value. values.yaml calls
+  those fields NON-SECRET; this is what makes that true rather than a promise.
+  See sharko.validateAddresses in _helpers.tpl.
+*/}}
+{{- include "sharko.validateAddresses" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -17,6 +24,18 @@ spec:
       labels:
         {{- include "sharko.selectorLabels" . | nindent 8 }}
     spec:
+      {{- /*
+        Kubernetes gives every Pod a set of environment variables named
+        after each Service in the namespace, in the old Docker-link
+        format. Sharko's own Service is called sharko, so this Pod would
+        be handed SHARKO_PORT=tcp://<clusterIP>:80 along with about nine
+        more SHARKO_* names — none of them written by an operator, one of
+        them colliding head-on with Sharko's own former port setting.
+        The field defaults to true, so it has to be set here explicitly.
+        Operators who run their own manifests instead of this chart must
+        set it too: see docs/site/operator/configuration.md#listen-port.
+      */}}
+      enableServiceLinks: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -33,7 +52,7 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
-            - name: SHARKO_PORT
+            - name: SHARKO_HTTP_PORT
               value: "8080"
             - name: SHARKO_STATIC_DIR
               value: "/app/static"
@@ -63,8 +82,35 @@ spec:
                   name: {{ $existingBootstrapSecret.name | quote }}
                   key: {{ default "password" $existingBootstrapSecret.key | quote }}
             {{- else if and $bootstrap.password (ne $bootstrap.password "") }}
+            {{- /*
+              BF11. An inline bootstrapAdmin.password used to be written here
+              as a literal `value:`. A Deployment is not a Secret — anyone who
+              can read Deployments in the namespace, and every `helm get
+              manifest`, every rendered-manifest GitOps repository and every
+              `kubectl describe pod`, then had the password in front of them.
+              So the chart puts the plaintext in its own Secret under the key
+              named below and the Pod reads it from there. The value is written
+              in ONE place and referenced here; it is never duplicated into the
+              Pod template.
+
+              The key is admin.bootstrapPassword, NOT admin.password.
+              admin.password holds a bcrypt hash, and the Pod needs the
+              plaintext — internal/auth/store.go SeedBootstrapAdminFromEnv
+              hashes it itself. Pointing this reference at admin.password would
+              seed the account with the text of a hash.
+
+              Every branch of secret.yaml that can be reached while
+              bootstrapAdmin.password is set writes admin.bootstrapPassword,
+              including the upgrade branch that preserves an existing Secret.
+              A reference to a key that is not there stops the Pod from
+              starting, so the two files have to stay in step; the guard
+              tests/serverrender/bootstrap_password_test.go pins that.
+            */}}
             - name: SHARKO_BOOTSTRAP_ADMIN_PASSWORD
-              value: {{ $bootstrap.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sharko.secretName" . | quote }}
+                  key: {{ include "sharko.bootstrapPasswordKey" . | quote }}
             {{- end }}
             {{- /*
               V124-6.3 / BUG-023: surface bootstrapAdmin.writeInitialSecret as

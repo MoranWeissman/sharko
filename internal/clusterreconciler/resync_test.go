@@ -83,7 +83,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 		// A resync must never consult the self-heal setting — panic if it
@@ -191,7 +191,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})
@@ -247,7 +247,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})
@@ -298,7 +298,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})
@@ -338,7 +338,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})
@@ -413,7 +413,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})
@@ -496,7 +496,7 @@ spec:
 	r := New(Deps{
 		GitProvider: func() gitprovider.GitProvider { return &gp },
 		ArgoClient:  client,
-		Vault:       &fakeVault{},
+		Vault:       staticVault(&fakeVault{}),
 		AuditFn:     func(audit.Entry) {},
 		Namespace:   "argocd",
 	})

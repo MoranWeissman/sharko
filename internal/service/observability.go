@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -125,9 +126,14 @@ func (s *ObservabilityService) getOverviewUncached(ctx context.Context, ac *argo
 		addonApps = append(addonApps, app)
 	}
 
+	// B10: this map is KEYED by ArgoCD's health word, so the key is as much
+	// a response value as any string field — the leak sweep found it there.
+	// Keying by the allow-listed word keeps every chart counting the same
+	// buckets and puts anything Sharko does not know into one honest
+	// "unrecognised" bucket instead of echoing it.
 	healthSummary := make(map[string]int)
 	for _, app := range addonApps {
-		h := app.HealthStatus
+		h := credsafe.SafeHealthStatus(app.HealthStatus)
 		if h == "" {
 			h = "Unknown"
 		}
@@ -176,12 +182,15 @@ func (s *ObservabilityService) getOverviewUncached(ctx context.Context, ac *argo
 
 		// Per-cluster health
 		ch := models.AddonClusterHealth{
-			ClusterName:   clusterName,
-			Health:        app.HealthStatus,
+			ClusterName: clusterName,
+			// B10: an ArgoCD status word is echoed only when it is one
+			// Sharko knows — same allow-list the cluster-comparison
+			// response uses.
+			Health:        credsafe.SafeHealthStatus(app.HealthStatus),
 			HealthSince:   app.HealthLastTransition,
 			ReconciledAt:  app.ReconciledAt,
 			ResourceCount: len(app.Resources),
-			Resources:     app.Resources,
+			Resources:     safeAppResources(app),
 		}
 
 		for _, r := range app.Resources {
@@ -312,7 +321,9 @@ func (s *ObservabilityService) buildAddonGroups(apps []models.ArgocdApplication,
 
 		group.TotalApps++
 
-		health := app.HealthStatus
+		// B10: same as ControlPlaneInfo.HealthSummary above — a map key is
+		// a response value.
+		health := credsafe.SafeHealthStatus(app.HealthStatus)
 		if health == "" {
 			health = "Unknown"
 		}
@@ -333,10 +344,14 @@ func (s *ObservabilityService) buildAddonGroups(apps []models.ArgocdApplication,
 		}
 
 		child := models.ChildAppHealth{
-			AppName:         app.Name,
-			ClusterName:     clusterName,
+			AppName:     app.Name,
+			ClusterName: clusterName,
+			// B10: both status words go through internal/credsafe's
+			// allow-lists on their way onto the response, the same way the
+			// cluster-comparison response's do. `health` went through
+			// SafeHealthStatus above already, on its way into HealthCounts.
 			Health:          health,
-			SyncStatus:      app.SyncStatus,
+			SyncStatus:      credsafe.SafeSyncStatus(app.SyncStatus),
 			ReconciledAt:    app.ReconciledAt,
 			ResourceSummary: rs,
 		}
@@ -451,6 +466,45 @@ func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addo
 		return true, "No resource requests/limits configured in global values"
 	}
 	return false, ""
+}
+
+// safeAppResources is the copy of an ArgoCD application's resource list that
+// is allowed onto the observability overview response (B10).
+//
+// models.AddonClusterHealth.Resources used to be app.Resources itself, so
+// every models.AppResource.Message — the text ArgoCD's health assessment wrote
+// about one Kubernetes object — travelled on an ordinary 200, for every
+// resource of every addon on every cluster, every time the page was opened.
+// Nothing had to go wrong first.
+//
+// What comes back instead still identifies the resource completely: group,
+// kind, namespace and name are Kubernetes object names, which are RFC 1123
+// characters and cannot hold a userinfo section. The two status words go
+// through internal/credsafe's allow-lists, and the message becomes Sharko's
+// own fixed sentence — but only when ArgoCD actually wrote one, so a clean
+// resource stays clean.
+func safeAppResources(app models.ArgocdApplication) []models.AppResource {
+	if len(app.Resources) == 0 {
+		return nil
+	}
+	out := make([]models.AppResource, 0, len(app.Resources))
+	for _, r := range app.Resources {
+		out = append(out, models.AppResource{
+			Group:     r.Group,
+			Kind:      r.Kind,
+			Namespace: r.Namespace,
+			Name:      r.Name,
+			Status:    credsafe.SafeSyncStatus(r.Status),
+			Health:    credsafe.SafeHealthStatus(r.Health),
+			Message: credsafe.SafeReportedDetail(r.Message != "",
+				credsafe.ArgocdResourceMessage, credsafe.OperationFacts{
+					SyncStatus:   r.Status,
+					HealthStatus: r.Health,
+					RepoURL:      app.SourceRepoURL,
+				}),
+		})
+	}
+	return out
 }
 
 // buildRecentSyncs builds the recent-syncs feed from full app details,

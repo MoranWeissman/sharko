@@ -1,5 +1,193 @@
 basePath: /api/v1
 definitions:
+  github_com_MoranWeissman_sharko_internal_audit.AttributionMode:
+    enum:
+    - service
+    - per_user
+    - co_author
+    type: string
+    x-enum-varnames:
+    - AttributionService
+    - AttributionPerUser
+    - AttributionCoAuthor
+  github_com_MoranWeissman_sharko_internal_audit.Entry:
+    properties:
+      action:
+        description: register, remove, update, test
+        type: string
+      attribution_mode:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.AttributionMode'
+        description: how the resulting Git commit was attributed
+      changes:
+        description: |-
+          Changes says whether this entry's operation ACTUALLY changed anything.
+
+          WHY IT EXISTS (ruling f, 2026-08-19). The activity feed rendered
+          "<title> · <outcome> · No changes made" with all three coming from
+          different places and nothing reconciling them — the third part was
+          invented in the browser from a static read-only flag in a title table,
+          so it could never agree with reality. It said "No changes made" on
+          operations that wrote, and stayed silent on the one case where it was
+          true. A surface cannot render the truth it was never told, so the
+          truth now travels on the entry.
+
+          WHY A STRING ENUM AND NOT A BOOL. A bool has no way to say "this
+          question does not apply". A read-only check neither changed anything
+          nor failed to change anything, and forcing it to answer false is
+          exactly the lie being removed. A *bool could carry three states but
+          nil is ambiguous between "not applicable" and "nobody set it", and a
+          pointer on a struct that is reflected over, serialized and stored is a
+          footgun for one bit of information. A string enum states the case
+          plainly, serializes as itself, and can grow a value later without
+          changing the type.
+
+          The four cases:
+            ""                 unset — a writer that has not been updated, or a
+                               stored entry from before this field existed. The
+                               reader must render nothing, never "no changes".
+            ChangesNotApplicable  read-only. Nothing was going to change.
+            ChangesNone           an action ran and deliberately changed nothing.
+            ChangesApplied        something really changed.
+            ChangesMayBeApplied   an action stopped halfway with nothing rolled
+                               back, so changes may be out there and we cannot
+                               say for certain either way.
+
+          Add normalizes an unrecognized value to "" so an uninterpretable word
+          can never reach a reader; the writer-coverage test is what catches the
+          writer that produced it.
+
+          The swaggertype/enums tags are what put this field, and its three
+          values, into the published OpenAPI spec. GET /audit used to declare
+          map[string]interface{}, so the field was real on the wire and invisible
+          in the contract — a client author reading the spec had no way to learn
+          it exists. TestAuditSwagger_ChangesFieldIsInTheSpec fails if that
+          regresses.
+        enum:
+        - not_applicable
+        - none
+        - applied
+        - may_be_applied
+        type: string
+      detail:
+        description: semantic detail set by handlers via Enrich
+        type: string
+      duration_ms:
+        type: integer
+      error:
+        description: |-
+          Error is what a person reads about the failure, and it is NOT settable
+          by the code that creates the entry.
+
+          SafeText's only field is unexported and package audit exports no
+          constructor, so no other package can build a non-zero one. Add rebuilds
+          this field from Reason on every entry, from a fixed catalog, before
+          anything is stored or streamed. There is no parameter, field or flag
+          through which a backend's own words can reach an audit record.
+
+          WHY IT USED TO BE A STRING. Call sites wrote err.Error() here and set a
+          bool called CredentialFailure to tell Add whether that text was
+          dangerous. Add believed the bool. Sixteen of the seventeen sites
+          computed it with credsafe.Is on a live error, so the audit log was safe
+          exactly as far as every upstream author had remembered to mark their
+          errors — and the two ArgoCD sites in internal/remediation recorded an
+          error nothing marks, so they were guaranteed to store raw text. Safety
+          that depends on a caller-supplied flag is not safety; it is a list of
+          sites somebody has to keep correct forever.
+
+          See reason.go for the whole design.
+        type: string
+      event:
+        description: cluster_registered, pr_created, etc.
+        type: string
+      id:
+        type: string
+      level:
+        description: info, warn, error
+        type: string
+      reason:
+        description: |-
+          Reason is WHAT KIND of thing went wrong, as a closed enum.
+
+          It replaces the free-text error channel. A caller says the category —
+          usually as Classify(err), sometimes as a constant where the call site
+          knows better than any classifier could — and Add turns that category
+          into the catalog sentence in Error.
+
+          An enum cannot carry a secret. The worst a wrong or missing Reason can
+          do is pick a less useful sentence; it can never leak, which is the whole
+          point of moving from a bool-plus-text to a category. Add blanks a value
+          that is not in the catalog, so an invented reason reaches no reader.
+
+          Empty means "not a failure, or nobody said" — which is the right
+          answer for the entries that record an outcome rather than an error (a
+          PR closed without merging, a refused login, a deliberate skip). There
+          is deliberately NO guard forcing every failure-result entry to name a
+          reason, because those nine entries have no error to classify and
+          inventing a category for them would be a worse lie than saying
+          nothing.
+        enum:
+        - credentials_source
+        - secret_value_source
+        - not_found
+        - permission_denied
+        - conflict
+        - invalid_data
+        - unreachable
+        - tls
+        - timed_out
+        - canceled
+        - not_converged
+        - upstream_failure
+        - unspecified
+        type: string
+      request_id:
+        type: string
+      resource:
+        description: cluster:prod-eu, addon:cert-manager
+        type: string
+      result:
+        description: success, failure, partial
+        type: string
+      source:
+        description: ui, cli, api, reconciler, webhook
+        type: string
+      tier:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.Tier'
+        description: attribution tier of the endpoint
+      timestamp:
+        type: string
+      user:
+        description: username or "system"
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_audit.Tier:
+    enum:
+    - tier1
+    - tier2
+    - personal
+    - auth
+    - webhook
+    type: string
+    x-enum-comments:
+      Tier1: operational
+      Tier2: configuration
+      TierAuth: login/logout/hash (no git write)
+      TierPersonal: self-service on own profile (no git write)
+      TierWebhook: inbound webhook (no user identity)
+    x-enum-descriptions:
+    - operational
+    - configuration
+    - self-service on own profile (no git write)
+    - login/logout/hash (no git write)
+    - inbound webhook (no user identity)
+    x-enum-varnames:
+    - Tier1
+    - Tier2
+    - TierPersonal
+    - TierAuth
+    - TierWebhook
   github_com_MoranWeissman_sharko_internal_auth.APIToken:
     properties:
       created_at:
@@ -244,6 +432,23 @@ definitions:
         type: string
       superseded_by:
         type: string
+      unsupported_fields:
+        description: |-
+          UnsupportedFields names fields whose value is filled in but which
+          Sharko will not use, so the entry is unusable for a reason that is
+          not "somebody left it blank". Today there is one such reason: a
+          repository address written with sign-in details inside it, which the
+          technical preview does not support.
+
+          Only the field PATH appears here. The value never does — not the
+          value, not a piece of it, not its length, not a mask of it.
+
+          It sets Deployable false, which is the flag the write paths already
+          check, so an entry in this state cannot be enabled on a cluster and
+          cannot be carried through a migration.
+        items:
+          type: string
+        type: array
       verified:
         type: boolean
       version:
@@ -334,8 +539,12 @@ definitions:
         type: string
       source:
         description: |-
-          Source is the origin of the entry — "embedded" for the binary-shipped
-          catalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).
+          Source is the origin of the entry. Inside the process it is
+          "embedded" for the binary-shipped catalog, or the full third-party
+          catalog URL (from SHARKO_CATALOG_URLS) — but the raw URL never
+          reaches an API response: the merge bridge in internal/api replaces
+          it with the fixed word "redacted" before serialization, because a
+          configured source address can carry an auth token in its own path.
           Computed at load/merge time — NOT persisted in YAML. The `yaml:"-"` tag
           is mandatory: without it, a malicious third-party YAML could set
           `source: embedded` and masquerade as curated. Stateless per NFR §2.7 —
@@ -494,6 +703,30 @@ definitions:
       permission:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_fanout.Outcome:
+    properties:
+      completed:
+        description: Completed is how many items finished every step.
+        type: integer
+      failed:
+        description: |-
+          Failed is how many failed outright — nothing landed for them at all.
+          This is NOT the same number as the older top-level `failed` field on
+          the batch response, which counts every item that did not fully
+          succeed, partials included.
+        type: integer
+      partly_completed:
+        description: PartlyCompleted is how many stopped halfway with nothing rolled
+          back.
+        type: integer
+      total:
+        type: integer
+      unrecognized:
+        description: |-
+          Unrecognized is how many came back with a status this build does not
+          know. Normally zero.
+        type: integer
+    type: object
   github_com_MoranWeissman_sharko_internal_models.AddonCatalogItem:
     properties:
       addon_name:
@@ -613,6 +846,29 @@ definitions:
         type: string
       token:
         type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.AvailableVersion:
+    properties:
+      app_version:
+        type: string
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.AvailableVersionsResponse:
+    properties:
+      addon_name:
+        type: string
+      chart:
+        type: string
+      current_version:
+        description: catalog default version
+        type: string
+      repo_url:
+        type: string
+      versions:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AvailableVersion'
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_models.ClusterAddonsAddonSettings:
     properties:
@@ -870,6 +1126,81 @@ definitions:
           the best upgrade path.
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_notifications.Code:
+    enum:
+    - git_connection_broken
+    - argocd_repo_broken
+    - argocd_auth_failed
+    - argocd_unreachable
+    - argocd_forbidden
+    - addon_upgrade_available
+    - addon_major_update
+    - addon_version_drift
+    type: string
+    x-enum-varnames:
+    - CodeGitConnectionBroken
+    - CodeArgoRepoBroken
+    - CodeArgoAuthFailed
+    - CodeArgoUnreachable
+    - CodeArgoForbidden
+    - CodeAddonUpgradeAvailable
+    - CodeAddonMajorUpdate
+    - CodeAddonVersionDrift
+  github_com_MoranWeissman_sharko_internal_notifications.Notification:
+    properties:
+      code:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_notifications.Code'
+      description:
+        type: string
+      id:
+        type: string
+      read:
+        type: boolean
+      reason:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_notifications.Reason'
+      schema:
+        type: integer
+      timestamp:
+        type: string
+      title:
+        type: string
+      type:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_notifications.NotificationType'
+    type: object
+  github_com_MoranWeissman_sharko_internal_notifications.NotificationType:
+    enum:
+    - upgrade
+    - security
+    - drift
+    - connection
+    type: string
+    x-enum-varnames:
+    - TypeUpgrade
+    - TypeSecurity
+    - TypeDrift
+    - TypeConnection
+  github_com_MoranWeissman_sharko_internal_notifications.Reason:
+    enum:
+    - unreachable
+    - tls
+    - timed_out
+    - credentials
+    - permission_denied
+    - not_found
+    - not_synced
+    - upstream_failure
+    - unspecified
+    type: string
+    x-enum-varnames:
+    - ReasonUnreachable
+    - ReasonTLS
+    - ReasonTimeout
+    - ReasonCredentials
+    - ReasonPermission
+    - ReasonNotFound
+    - ReasonNotSynced
+    - ReasonUpstream
+    - ReasonUnspecified
   github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest:
     properties:
       additional_sources:
@@ -1063,10 +1394,63 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult:
     properties:
+      outcome:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_fanout.Outcome'
+        description: |-
+          Outcome is the accurate trio: how many clusters fully completed, how
+          many stopped part-way, and how many failed outright. This response
+          used to carry NO aggregate counts at all — a client had to walk
+          results[] and classify each status itself to find out whether the
+          adoption had worked, and HTTP 200 told it nothing, because an
+          adoption in which every cluster failed also answers 200.
+
+          Counted from results[].status by fanout.Count, the same function the
+          audit trail, the printed summary and the CLI's exit code read.
       results:
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult'
         type: array
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.BatchResult:
+    properties:
+      failed:
+        description: |-
+          Failed has always meant "did not fully succeed" on the wire — hard
+          failures AND partials. POST /api/v1/clusters/batch is a stable
+          endpoint and the HTTP status code is derived from this field, so its
+          meaning is deliberately left alone. Read HardFailed for the count of
+          clusters where genuinely nothing landed.
+        type: integer
+      outcome:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_fanout.Outcome'
+        description: |-
+          Outcome is the accurate trio the wire never used to carry: how many
+          clusters fully completed, how many stopped part-way, and how many
+          failed outright with nothing landed. The older counters above are
+          untouched — `failed` still means "did not fully succeed" and still
+          decides the HTTP status — so a client that reads them keeps working,
+          and a client that wants the truth about outright failures no longer
+          has to do arithmetic to get it.
+
+          Counted from results[].status by fanout.Count, which is the same
+          function the audit trail, the printed summary and the CLI's exit code
+          read. One count, four surfaces, no disagreement.
+      partial:
+        description: |-
+          Partial is how many of Failed were partials — clusters that changed
+          something real before stopping. It is a SUBSET of Failed, not a
+          separate bucket, so Succeeded + Failed still equals Total.
+        type: integer
+      results:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterResult'
+        type: array
+      succeeded:
+        type: integer
+      total:
+        type: integer
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.CatalogAddonInput:
     properties:
@@ -1101,6 +1485,19 @@ definitions:
       settings:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_config.AddonSettings'
       version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.ClusterResult:
+    properties:
+      addons:
+        additionalProperties:
+          type: boolean
+        type: object
+      name:
+        type: string
+      server:
+        type: string
+      server_version:
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest:
@@ -1643,6 +2040,67 @@ definitions:
       secret_path:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterResult:
+    properties:
+      adopted:
+        description: true if cluster was already in ArgoCD
+        type: boolean
+      argocd_secret_error:
+        description: ArgoSecretError holds the error message if the ArgoCD secret
+          step failed (non-fatal).
+        type: string
+      argocd_secret_status:
+        description: |-
+          ArgoCD cluster secret outcome. Set by the API handler after calling Manager.Ensure().
+          Possible values: "created", "adopted", "updated", "skipped", "error".
+        type: string
+      cluster:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.ClusterResult'
+      completed_steps:
+        items:
+          type: string
+        type: array
+      dry_run:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+        description: DryRun holds the preview result when dry_run=true. No side effects
+          occur.
+      error:
+        type: string
+      failed_secrets:
+        description: secrets that failed to create
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SecretError'
+        type: array
+      failed_step:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      message:
+        type: string
+      secrets_created:
+        description: names of created secrets
+        items:
+          type: string
+        type: array
+      status:
+        description: '"success" or "partial"'
+        type: string
+      verification:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
+        description: Verification holds the Stage1 connectivity verification result
+          (if run).
+      warnings:
+        description: |-
+          Warnings holds plain-English advisories that do NOT fail the
+          operation — e.g. a self-managed connection's ArgoCD cluster Secret
+          turning out to be rendered by another ArgoCD Application
+          (V2-cleanup-89.5). Empty/omitted when there is nothing to warn about.
+        items:
+          type: string
+        type: array
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest:
     properties:
       auto_merge:
@@ -1715,6 +2173,29 @@ definitions:
         description: State is one of the HandoffState* constants above.
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.SafeSecretMessage:
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.SecretError:
+    properties:
+      addon:
+        type: string
+      code:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SecretFailureCode'
+      error:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SafeSecretMessage'
+      key:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.SecretFailureCode:
+    enum:
+    - SECRET_FETCH_FAILED
+    - SECRET_WRITE_FAILED
+    type: string
+    x-enum-varnames:
+    - SecretFailureFetch
+    - SecretFailureWrite
   github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch:
     properties:
       field:
@@ -1927,6 +2408,23 @@ definitions:
         description: '"pass", "fail", "skipped"'
         type: string
     type: object
+  internal_api.AttentionItem:
+    properties:
+      addon_name:
+        type: string
+      app_name:
+        type: string
+      cluster:
+        type: string
+      error:
+        type: string
+      error_type:
+        type: string
+      health:
+        type: string
+      sync:
+        type: string
+    type: object
   internal_api.CreateTokenRequest:
     properties:
       expires_in_days:
@@ -2056,6 +2554,8 @@ definitions:
     type: object
   internal_api.InitStatusResponse:
     properties:
+      bootstrap_app_resolved:
+        type: boolean
       detail:
         type: string
       format:
@@ -2126,6 +2626,20 @@ definitions:
           rewriting the repository.
         type: boolean
     type: object
+  internal_api.NotificationListResponse:
+    properties:
+      notifications:
+        description: |-
+          Notifications is the requested page, newest first. Route on each
+          item's `code`; `title` and `description` are text to show a person and
+          may be reworded in any release.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_notifications.Notification'
+        type: array
+      unread_count:
+        description: UnreadCount counts every unread notification, not just this page.
+        type: integer
+    type: object
   internal_api.PRItem:
     properties:
       addon:
@@ -2163,6 +2677,28 @@ definitions:
         items:
           $ref: '#/definitions/internal_api.PRItem'
         type: array
+    type: object
+  internal_api.ReconcileStatusResponse:
+    properties:
+      checked:
+        type: integer
+      created:
+        type: integer
+      deleted:
+        type: integer
+      duration:
+        type: string
+      errors:
+        type: integer
+      last_run:
+        description: |-
+          LastRun is RFC3339, omitted (not null, not the Go zero time) when no
+          reconcile run has completed yet.
+        type: string
+      skipped:
+        type: integer
+      updated:
+        type: integer
     type: object
   internal_api.RenewTokenRequest:
     properties:
@@ -2473,13 +3009,16 @@ definitions:
     properties:
       allow_inline_credentials:
         description: |-
-          AllowInlineCredentials is true (the default) when the "Paste a
-          kubeconfig" registration path is available. An admin sets this to
-          false to forbid inline credential paste install-wide — registration
-          requests that actually supply inline kubeconfig bytes are then
-          rejected with a 403; connection-only registrations are unaffected.
-          Sharko has no user RBAC today (single admin login); when V2.x scoped
-          RBAC lands this is expected to become a per-role permission.
+          AllowInlineCredentials is false by default: legacy inline credentials
+          (a kubeconfig pasted at registration) exist only in the live ArgoCD
+          Secret and cannot be restored from Git, so new registrations should
+          point at a supported credentials provider instead. An admin may set
+          this to true to allow legacy inline registrations install-wide.
+          Registration requests that actually supply inline kubeconfig bytes
+          while it is off are rejected with a 403; connection-only registrations
+          and EXISTING inline clusters are unaffected. Sharko has no user RBAC
+          today (single admin login); when V2.x scoped RBAC lands this is
+          expected to become a per-role permission.
         type: boolean
       managed_by_git:
         description: |-
@@ -2507,6 +3046,20 @@ definitions:
         type: integer
       pr_url:
         type: string
+    type: object
+  internal_api.auditLogResponse:
+    properties:
+      count:
+        description: |-
+          Count is len(Entries) — how many entries this response carries, NOT
+          how many exist. The ring buffer holds a bounded window and the query
+          applies a limit.
+        type: integer
+      entries:
+        description: Entries are the matching audit entries, newest first.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.Entry'
+        type: array
     type: object
   internal_api.catalogFreshnessResponse:
     properties:
@@ -2619,7 +3172,9 @@ definitions:
       url:
         description: |-
           URL is either the literal string "embedded" (for the binary-shipped
-          curated catalog) or the full third-party URL from SHARKO_CATALOG_URLS.
+          curated catalog) or the fixed word "redacted" for every configured
+          third-party source. The configured address never appears here in
+          any form.
         type: string
       verified:
         description: |-
@@ -2689,6 +3244,31 @@ definitions:
         items:
           $ref: '#/definitions/internal_api.catalogVersionEntry'
         type: array
+    type: object
+  internal_api.connectionCheckStatusView:
+    properties:
+      interval_seconds:
+        description: |-
+          IntervalSeconds is the loop's cadence, 0 when no loop is scheduled at
+          all on this server.
+        type: integer
+      last_attempt:
+        description: |-
+          LastAttempt is RFC3339 of the last pass the loop tried, absent when it
+          has never tried one. ABSENT, never a zero time — the W3-6 rule.
+        type: string
+      reason:
+        description: |-
+          Reason is the plain sentence for why checks are not running. Empty
+          exactly when Running is true.
+        type: string
+      running:
+        description: |-
+          Running is true only when the last attempted pass really checked the
+          fleet. It is deliberately not "a loop object exists": a loop that skips
+          every pass because git is down is not running checks, whatever its
+          goroutine is doing.
+        type: boolean
     type: object
   internal_api.connectionComparisonDifference:
     properties:
@@ -2810,6 +3390,287 @@ definitions:
           visible to anyone reading the API, not only to anyone reading this file.
         type: boolean
     type: object
+  internal_api.connectionReconciliationCondition:
+    properties:
+      detail:
+        type: string
+      id:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.connectionReconciliationDefinition:
+    properties:
+      applied_revision:
+        description: |-
+          AppliedRevision is the commit the last successful write of this Secret
+          was built from — the live Secret's sharko.dev/revision provenance
+          annotation, the durable copy. Empty when the Secret is missing or was
+          never stamped.
+        type: string
+      branch:
+        description: Branch is the configured git branch.
+        type: string
+      credential_source_type:
+        description: |-
+          CredentialSourceType is a KIND (secret-kubeconfig, eks-token,
+          inline-kubeconfig), never a path into a store and never a value.
+        type: string
+      desired_revision:
+        description: |-
+          DesiredRevision is the branch head commit every file in this check was
+          read at. Empty when the git provider cannot name one — an empty value
+          says "Sharko does not know", never a guessed or stale commit.
+        type: string
+      file:
+        description: File is the git file the definition was read from.
+        type: string
+    type: object
+  internal_api.connectionReconciliationDrift:
+    properties:
+      addon_labels:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationDriftEntry'
+        type: array
+      connection_configuration:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationDriftEntry'
+        type: array
+      credential_material:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationSensitiveDriftEntry'
+        type: array
+      not_checked:
+        items:
+          $ref: '#/definitions/internal_api.connectionComparisonNotChecked'
+        type: array
+    type: object
+  internal_api.connectionReconciliationDriftEntry:
+    properties:
+      expected:
+        type: string
+      live:
+        type: string
+      path:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_api.connectionReconciliationHealth:
+    properties:
+      message:
+        description: |-
+          Message is ArgoCD's own failure text — the same text the cluster pages
+          already show today. Never a Go error and never provider SDK text from
+          Sharko's side.
+        type: string
+      state:
+        description: |-
+          State is connected, unavailable, not_checked or unknown. "unknown" is
+          the B13 answer for a self-managed connection whose Secret does not
+          exist: there is no connection for ArgoCD to have an opinion about, so
+          "not checked yet" would invite a person to wait for a probe of
+          nothing. It never overwrites a real probe result.
+        type: string
+    type: object
+  internal_api.connectionReconciliationPlan:
+    properties:
+      action:
+        description: |-
+          Action is the one explicit action this state permits: none,
+          repair_connection, sync_addon_labels, take_over or migrate_credentials.
+        type: string
+      action_scopes:
+        description: |-
+          ActionScopes is exactly the non-sensitive field scopes the action would
+          change. Empty when the action changes nothing.
+        items:
+          type: string
+        type: array
+      automatic:
+        description: |-
+          Automatic is a fixed sentence for something that genuinely happens by
+          itself, without anyone asking. Absent when nothing will.
+        type: string
+      requires_approval:
+        description: |-
+          RequiresApproval is a fixed sentence naming the approval-gated half.
+          Absent when nothing needs approval.
+        type: string
+      reviewed_commit:
+        description: |-
+          ReviewedCommit is the commit a repair must echo back (the existing
+          R3-4 rule) — set only when Action is repair_connection.
+        type: string
+    type: object
+  internal_api.connectionReconciliationSensitiveDriftEntry:
+    properties:
+      path:
+        type: string
+      sensitive:
+        type: boolean
+      status:
+        type: string
+    type: object
+  internal_api.connectionReconciliationSync:
+    properties:
+      approval_required:
+        description: |-
+          ApprovalRequired is true exactly when the drift touches connection
+          configuration or credential material — the halves Sharko never changes
+          by itself.
+        type: boolean
+      checked_at:
+        description: |-
+          CheckedAt is when this check ran, RFC3339. ABSENT when no check has
+          run — never Go's zero time (the W3-6 rule).
+        type: string
+      headline:
+        description: |-
+          Headline is the display word for this state, named by scope — the
+          SERVER's answer, so the fleet list and this page can never phrase the
+          same connection differently (B5). The browser renders it verbatim and
+          derives nothing. See connection_canonical.go.
+        type: string
+      last_successful_application:
+        description: |-
+          LastSuccessfulApplication is the live Secret's sharko.dev/written-at
+          provenance annotation. ABSENT when unknown.
+        type: string
+      qualifier:
+        description: |-
+          Qualifier is the sentence beside the headline when the verification is
+          narrower than the full connection, or when the connection's data is
+          managed outside Sharko. Absent when the state needs none.
+        type: string
+      reason:
+        description: Reason is a fixed sentence explaining a state that is not clean.
+        type: string
+      state:
+        description: |-
+          State is synced, out_of_sync, blocked or unknown. synced is produced
+          ONLY when VerificationScope is full — enforced in the builder.
+        type: string
+      verification_scope:
+        description: |-
+          VerificationScope is how much of what Sharko OWNS was successfully
+          compared: full, partial or none.
+        type: string
+    type: object
+  internal_api.connectionReconciliationView:
+    properties:
+      cluster:
+        type: string
+      conditions:
+        items:
+          $ref: '#/definitions/internal_api.connectionReconciliationCondition'
+        type: array
+      definition:
+        $ref: '#/definitions/internal_api.connectionReconciliationDefinition'
+      drift:
+        $ref: '#/definitions/internal_api.connectionReconciliationDrift'
+      health:
+        $ref: '#/definitions/internal_api.connectionReconciliationHealth'
+      managed_scope:
+        description: |-
+          ManagedScope is what Sharko OWNS on this connection: full_connection,
+          addon_labels, or none. For legacy_inline it is addon_labels — the exact
+          limited scope the code can actually rebuild without the live Secret.
+        type: string
+      management_mode:
+        description: |-
+          ManagementMode is sharko_managed, self_managed, legacy_inline or
+          foreign_owned.
+        type: string
+      mode_statement:
+        description: ModeStatement is the product-approved sentence for the mode.
+        type: string
+      plan:
+        $ref: '#/definitions/internal_api.connectionReconciliationPlan'
+      sync:
+        $ref: '#/definitions/internal_api.connectionReconciliationSync'
+      values_never_returned:
+        description: ValuesNeverReturned is always true — the promise, visible on
+          the wire.
+        type: boolean
+    type: object
+  internal_api.connectionRepairView:
+    properties:
+      branch:
+        description: |-
+          Branch is the configured git branch. Sharko never discovers a default
+          branch.
+        type: string
+      cluster:
+        description: Cluster is the cluster this answer is about.
+        type: string
+      comparison:
+        allOf:
+        - $ref: '#/definitions/internal_api.connectionComparisonView'
+        description: |-
+          Comparison is the FRESH comparison re-run after the repair, so the caller
+          sees what the repair achieved rather than being told "done" and having to
+          ask. Same sanitized shape the read-only endpoint returns: a sensitive
+          field carries a path, a status and sensitive true, with no expected value
+          and no live value present at all.
+      fields_repaired:
+        description: |-
+          FieldsRepaired are the owned field paths that changed, sorted. PATHS
+          only — data.config appears by name when the credential blob was
+          rewritten, and its contents appear nowhere in this response or anywhere
+          else.
+        items:
+          type: string
+        type: array
+      label_diff:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff'
+        description: |-
+          LabelDiff reports the addon-label changes for a labels-only repair, the
+          same shape POST /resync reports.
+      message:
+        description: Message is one plain sentence about what happened.
+        type: string
+      preserved_foreign_data_keys:
+        type: integer
+      preserved_foreign_labels:
+        description: |-
+          PreservedForeignLabels and PreservedForeignDataKeys count what the repair
+          deliberately left alone. Counts, not names: naming somebody else's keys
+          would be reporting on their data.
+        type: integer
+      repaired:
+        description: |-
+          Repaired is true when Sharko actually changed something. False with a
+          successful response means the connection already matched the
+          Git-defined connection — worth saying plainly rather than implying a
+          fix happened.
+        type: boolean
+      repaired_at:
+        description: RepairedAt is when the repair ran, RFC3339.
+        type: string
+      repaired_at_commit:
+        description: |-
+          RepairedAtCommit is the commit this repair was built from and verified
+          against. Always set on a successful repair — a repair with an unknown
+          commit is refused rather than performed (see the revision guard).
+        type: string
+      scope_applied:
+        description: |-
+          ScopeApplied is what this repair was allowed to touch: full_connection or
+          addon_labels_only. It comes from the mode policy, never from the request.
+        type: string
+      self_heal_unchanged:
+        description: |-
+          SelfHealUnchanged is always true. Repair does not read the self-heal
+          setting as a precondition, does not write it, and does not depend on it.
+          It is in the body so the promise is visible to anyone reading the API.
+        type: boolean
+      values_never_returned:
+        description: ValuesNeverReturned is always true, same promise the comparison
+          makes.
+        type: boolean
+    type: object
   internal_api.connectionSecretRow:
     properties:
       applied_revision:
@@ -2818,6 +3679,11 @@ definitions:
           WRITE to this cluster's secret was built from — empty until this
           server instance has ever successfully written it.
         type: string
+      approval_required:
+        description: |-
+          ApprovalRequired is true exactly when the drift touches connection
+          configuration or credential material.
+        type: boolean
       cluster:
         type: string
       compared_path:
@@ -2832,6 +3698,27 @@ definitions:
           git provider cannot say — never a guessed or stale value. The UI
           shows the first 7 characters on the row/panel and the full value on
           hover.
+        type: string
+      credential_check:
+        description: |-
+          CredentialCheck (W3-3) is this connection's last read-only
+          credential-check outcome: "drifted", "clear", "not_compared" or
+          "check_failed". The check compares the connection against its
+          configured credentials source and never writes anything — drift here
+          never self-heals; repair is an admin's deliberate click on the
+          connection page. Empty when no check (background or manual) has run
+          for this cluster on this server instance.
+        type: string
+      credential_check_detail:
+        description: |-
+          CredentialCheckDetail is the fixed sentence for that outcome — the
+          drift notice, the comparison's own limited-scope sentence, or its
+          safe classified failure sentence. Never a value, a length, a hash, a
+          fragment or a field path; the field-level detail stays on the
+          connection page. Empty for "clear".
+        type: string
+      credential_checked_at:
+        description: CredentialCheckedAt is when that check ran, RFC3339.
         type: string
       drift_source:
         description: |-
@@ -2851,6 +3738,25 @@ definitions:
           (including every Sharko-managed, non-self-managed cluster, which has
           no fight concept). The UI shows a quiet row warning at 3 or more.
         type: integer
+      headline:
+        description: |-
+          Headline is the display word, produced by the server so this row and
+          the connection page can never phrase the same connection differently.
+          Rendered verbatim; the browser derives nothing.
+        type: string
+      health:
+        description: |-
+          Health is ArgoCD's OWN answer for this connection — connected,
+          unavailable, not_checked or unknown — mapped through the same two
+          functions the connection page uses. "unknown" is the B13 answer for a
+          self-managed connection whose Secret does not exist: there is no
+          connection for ArgoCD to have an opinion about, so "not checked yet"
+          would invite a person to wait for a probe of nothing.
+          It is INDEPENDENT of the git state above:
+          "Connected" beside "Verification incomplete" is correct, not a
+          contradiction. Free of charge: it comes off the ArgoCD cluster listing
+          the list handler already fetched, so this adds no call of any kind.
+        type: string
       last_check_error:
         description: |-
           LastCheckError (P1-B B1) is a safe, canned sentence describing why the
@@ -2878,6 +3784,22 @@ definitions:
         type: string
       last_repaired_detail:
         type: string
+      managed_scope:
+        description: |-
+          ManagedScope is what Sharko OWNS on this connection: full_connection,
+          addon_labels or none.
+        type: string
+      management_mode:
+        description: |-
+          ManagementMode is sharko_managed, self_managed, legacy_inline or
+          foreign_owned.
+        type: string
+      qualifier:
+        description: |-
+          Qualifier is the sentence beside the headline when the verification is
+          narrower than the whole connection, or the connection's data is
+          managed outside Sharko. Absent when the state needs none.
+        type: string
       secret_name:
         type: string
       secret_namespace:
@@ -2900,12 +3822,34 @@ definitions:
         type: string
       state:
         description: |-
-          State is one of "in_sync", "out_of_sync", "missing", or "unknown" —
-          see connectionSecretState for exactly how each is derived. A FAILED
-          check (P1-B B1) renders as "unknown", never "out_of_sync": Sharko
-          could not look, which is a different fact from "Sharko looked and it
-          differs". See LastCheckError below for the two-facts shape this
-          implies (ArgoCD's own sync-state / last-operation-result split).
+          State is the legacy row word — "in_sync", "out_of_sync", "missing",
+          "foreign" or "unknown".
+
+          B5: it is now a PROJECTION of SyncState below, not a second
+          derivation. It used to come from the cluster reconciler's own record,
+          whose drift comparison covers only Sharko's bare addon-label keys — so
+          "in_sync" meant "the addon labels match" and said nothing at all about
+          the credential, which is how a legacy pasted-credential connection
+          rendered a green "Synced" here while its own page said "Verification
+          incomplete". The product owner ruled that out: both surfaces derive
+          from the same canonical semantics, and there is no second vocabulary.
+
+          It stays on the wire because the ?state= filter, the sort rank and
+          every existing caller read it — and because it is now a pure
+          projection, the filter, the chips and the counts cannot drift apart
+          from the canonical answer again. See connectionRowLegacyState.
+        type: string
+      sync_state:
+        description: |-
+          SyncState is synced, out_of_sync, blocked or unknown. "synced" is
+          possible ONLY at VerificationScope "full" — the row builder refuses to
+          emit any other combination (see applyConnectionRowCanonical).
+        type: string
+      verification_scope:
+        description: |-
+          VerificationScope is how much of what Sharko owns was successfully
+          compared: full, partial or none. "none" on a row no check has reached
+          yet — which is the honest answer, not a cheerful one.
         type: string
     type: object
   internal_api.doctorCheck:
@@ -3024,18 +3968,8 @@ definitions:
     properties:
       commits:
         items:
-          properties:
-            id:
-              type: string
-            message:
-              type: string
           type: object
         type: array
-      pusher:
-        properties:
-          name:
-            type: string
-        type: object
       ref:
         type: string
     type: object
@@ -3169,6 +4103,22 @@ definitions:
         items:
           $ref: '#/definitions/internal_api.addonValuesSecretRow'
         type: array
+      background_connection_checks:
+        allOf:
+        - $ref: '#/definitions/internal_api.connectionCheckStatusView'
+        description: |-
+          BackgroundConnectionChecks (B13 item 6) says whether the background
+          connection check is really running on this server, and when it is not,
+          why — in one plain sentence.
+
+          IT EXISTS BECAUSE "NOT CHECKED YET" HAD NO EXPLANATION. Every
+          connection row's headline comes from the last check. When the loop
+          cannot run, no row has a check, so every row reads "Not checked yet",
+          the synced count is zero, and nothing anywhere said why. Worst case is
+          an out-of-cluster server, where cmd/sharko/serve.go never schedules the
+          loop at all: the whole page reads that way permanently and looks like a
+          fleet Sharko has not got round to rather than a server that does not do
+          this. One field, read from in-memory state, no call of any kind.
       cluster_connection_secrets:
         items:
           $ref: '#/definitions/internal_api.connectionSecretRow'
@@ -3747,7 +4697,7 @@ paths:
         returns a dry-run impact report. On a repo in the v4 layout this returns 409
         with code `repo_layout` — the approved list lives in catalog.yaml there, and
         it is edited through a pull request (POST /api/v1/catalog/addons, or by hand
-        in git).
+        in Git).
       parameters:
       - description: Addon name
         in: path
@@ -4807,6 +5757,7 @@ paths:
       description: |-
         Returns recent audit log entries (webhook pushes, cluster registrations, secret reconciliations, init runs).
         Entries are ordered newest-first. Supports filtering by user, action, source, result, cluster, and time range.
+        Each entry carries a "changes" field saying whether the operation actually changed anything: "applied" (something was written), "none" (it ran and deliberately wrote nothing) or "not_applicable" (a read-only check, which neither changed anything nor failed to). The field is absent on entries recorded before it existed, and an absent value means "not stated" — never "no changes made".
       parameters:
       - description: Filter by user
         in: query
@@ -4816,7 +5767,7 @@ paths:
         in: query
         name: action
         type: string
-      - description: Filter by source (api, webhook, reconciler, etc.)
+      - description: Filter by source (\
         in: query
         name: source
         type: string
@@ -4842,8 +5793,7 @@ paths:
         "200":
           description: Audit log entries
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.auditLogResponse'
         "401":
           description: Unauthorized
           schema:
@@ -4859,13 +5809,14 @@ paths:
       description: |-
         Opens a Server-Sent Events stream that pushes each new audit entry as it is recorded.
         The connection stays open until the client disconnects.
+        Each SSE "data:" line is one JSON audit entry with exactly the shape below — the same shape GET /audit returns in its entries array, "changes" field included.
       produces:
       - text/event-stream
       responses:
         "200":
-          description: SSE stream of audit entries
+          description: One JSON audit entry per SSE data line
           schema:
-            type: string
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.Entry'
         "401":
           description: Unauthorized
           schema:
@@ -5014,7 +5965,7 @@ paths:
       - auth
   /catalog/addons:
     get:
-      description: 'Returns the contents of catalog.yaml in your git repo — the addons
+      description: 'Returns the contents of catalog.yaml in your Git repo — the addons
         this org allows on its clusters, and nothing else. The list Sharko ships is
         NOT included: it lives on GET /marketplace/addons as discovery only. Each
         entry is self-contained (chart, chart repo, version, namespace, settings,
@@ -5051,7 +6002,7 @@ paths:
       - application/json
       description: |-
         Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element `addons` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (`enable_on_cluster` set — one pull request touching catalog.yaml and cluster-addons/<name>.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES `yes: true`, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set `from_marketplace: true` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave `version` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code `version_required` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.
-        Every 4xx body carries a machine-readable `code` next to the plain-English `error`, so a client branches on the code and never on the message text. Codes: `invalid_request` (400); `cluster_not_found` (404); `repo_layout` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of `confirmation_required`, `empty_catalog_file`, `not_in_marketplace`, `version_required`, `incomplete_entry` (with a `problems` array naming each missing piece), `not_in_catalog`, or `validation_failed` (also with `problems`). A 502 means a genuine upstream/git failure and carries no code.
+        Every 4xx body carries a machine-readable `code` next to the plain-English `error`, so a client branches on the code and never on the message text. Codes: `invalid_request` (400); `cluster_not_found` (404); `repo_layout` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of `confirmation_required`, `empty_catalog_file`, `not_in_marketplace`, `version_required`, `incomplete_entry` (with a `problems` array naming each missing piece), `not_in_catalog`, or `validation_failed` (also with `problems`). A 502 means a genuine upstream/Git failure and carries no code.
       parameters:
       - description: Addons to add
         in: body
@@ -5810,7 +6761,7 @@ paths:
       - application/json
       description: |-
         Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster.
-        On a v4 repo, the addon selections are written to cluster-addons/{name}.yaml (every addon named in the request must already be in catalog.yaml) in one pull request — PR-only, the cluster reconciler applies the resulting labels to the ArgoCD cluster Secret from git once it merges. secret_path is written to the v4 root managed-clusters.yaml instead of the v3 configuration/managed-clusters.yaml.
+        On a v4 repo, the addon selections are written to cluster-addons/{name}.yaml (every addon named in the request must already be in catalog.yaml) in one pull request — PR-only, Sharko applies the resulting labels to the ArgoCD cluster Secret from Git once it merges. secret_path is written to the v4 root managed-clusters.yaml instead of the v3 configuration/managed-clusters.yaml.
       parameters:
       - description: Cluster name
         in: path
@@ -6328,17 +7279,20 @@ paths:
   /clusters/{name}/connection-comparison:
     get:
       description: 'Read-only. Works out what the named cluster''s ArgoCD connection
-        Secret should look like — from git plus, where one exists, an independently
-        stored copy of the cluster''s sign-in details — and compares it with the connection
-        that is actually there. Writes nothing. The answer says how much of the connection
-        could honestly be checked: a cluster whose sign-in details only exist inside
-        the connection itself, or whose record does not say where they are kept, is
-        reported with a narrower scope rather than being compared against itself.
-        Sign-in details are compared in memory and neither side is ever returned:
-        a sensitive field comes back with its path, one of same/different/missing/unexpected,
-        and sensitive true, with no expected value and no live value present at all.
-        The request identifies a cluster and nothing else — no candidate value, no
-        expected manifest, no hash, no backend path, no namespace.'
+        Secret should look like — the connection Git defines, with credential values
+        resolved, where one exists, from the cluster''s configured credentials source
+        held outside the connection — and compares it with the connection that is
+        actually there. For an EKS cluster that source is the cluster''s own details
+        rather than a reusable sign-in credential, and the check creates no sign-in
+        tokens. Writes nothing. The answer says how much of the connection could honestly
+        be checked: a cluster whose sign-in details only exist inside the connection
+        itself, or whose record does not say where they are kept, is reported with
+        a narrower scope rather than being compared against itself. Sign-in details
+        are compared in memory and neither side is ever returned: a sensitive field
+        comes back with its path, one of same/different/missing/unexpected, and sensitive
+        true, with no expected value and no live value present at all. The request
+        identifies a cluster and nothing else — no candidate value, no expected manifest,
+        no hash, no backend path, no namespace.'
       parameters:
       - description: Cluster name
         in: path
@@ -6368,7 +7322,7 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: This cluster is not in the git-managed cluster list
+          description: This cluster is not in the Git-managed cluster list
           schema:
             additionalProperties: true
             type: object
@@ -6379,7 +7333,159 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Compare a cluster's ArgoCD connection with what Sharko intends
+      summary: Compare a cluster's ArgoCD connection with the Git-defined connection
+      tags:
+      - clusters
+  /clusters/{name}/connection-reconciliation:
+    get:
+      description: 'Read-only. Answers, for one cluster connection: which Git definition
+        is desired and which is applied, whether the live connection matches it and
+        how much of that Sharko could honestly verify, whether ArgoCD can use the
+        connection, why convergence is blocked, what happens automatically, and which
+        single explicit action is permitted. Runs the same shared read-only comparison
+        the connection-comparison endpoint runs — writes nothing, creates no sign-in
+        tokens on any path — and joins facts Sharko already holds: ArgoCD''s own connection
+        health, the live Secret''s provenance annotations, and the server''s self-heal
+        policy. sync.state is "synced" only when verification_scope is "full" — a
+        connection whose credential content could not be compared is never reported
+        as synced. Sensitive drift entries carry the field path, a status word and
+        sensitive true, and nothing else: no value, no length, no hash, no fragment,
+        on either side.'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The reconciliation view
+          schema:
+            $ref: '#/definitions/internal_api.connectionReconciliationView'
+        "400":
+          description: Cluster name is required
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires operator role or higher
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: This cluster is not in the Git-managed cluster list
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko is missing something it needs to run the check
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: The reconciliation view of a cluster's ArgoCD connection
+      tags:
+      - clusters
+  /clusters/{name}/connection-repair:
+    post:
+      consumes:
+      - application/json
+      description: 'Rewrites the parts of this cluster''s ArgoCD connection Secret
+        that Sharko owns so they match the connection Git defines at the configured
+        branch, with credential values resolved, where one exists, from the cluster''s
+        configured credentials source held outside the connection. For an EKS cluster
+        that source is the cluster''s own details rather than a reusable sign-in credential,
+        and the write creates exactly one short-lived sign-in token from it — the
+        read-only check creates none. What it is allowed to touch depends on the kind
+        of connection: a connection Sharko owns whose credentials it can read independently
+        gets the whole connection rewritten; a connection Sharko is only a guest on
+        gets its addon labels re-applied and nothing else; a connection another tool
+        owns is refused. The configured credentials source is re-read from the secrets
+        backend and never read back out of the connection being repaired. The update
+        happens in place — never a delete and recreate — and Sharko re-checks who
+        owns the connection immediately before writing, refusing if anything else
+        has taken it over. Foreign labels, foreign annotations, unrelated data keys
+        and labels a takeover carried over all survive untouched. Git is never written.
+        The self-heal setting is neither read nor changed. Requires the commit the
+        caller reviewed; if the branch has moved since, the repair is refused so what
+        was reviewed is what gets written. The response carries a fresh comparison
+        so the caller can see what the repair achieved. No value is ever returned:
+        a sensitive field comes back with its path, one of same/different/missing/unexpected,
+        and sensitive true. The request identifies a cluster and the commit that was
+        reviewed — no caller-supplied value, manifest or hash of one is ever accepted.'
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: The commit the caller reviewed, from the connection check's compared_commit
+        in: query
+        name: reviewed_commit
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The repair result plus a fresh comparison
+          schema:
+            $ref: '#/definitions/internal_api.connectionRepairView'
+        "400":
+          description: Cluster name or reviewed commit is missing
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden — requires admin role
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: This cluster is not in the Git-managed cluster list, or it
+            has no ArgoCD connection to repair — nothing was written
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: The Git branch moved since the caller reviewed it, or the connection
+            changed underneath — nothing was written
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: This kind of connection cannot be repaired, or is not Sharko's
+            to change
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Sharko could not read what the connection should be, so it
+            changed nothing
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Sharko is missing something it needs to run the repair
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Repair a cluster's ArgoCD connection to match the Git-defined connection
       tags:
       - clusters
   /clusters/{name}/diagnose:
@@ -6501,7 +7607,7 @@ paths:
     delete:
       description: Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml
         entry and no open registration PR. Refuses to delete a cluster that is genuinely
-        managed (in git), pending (has an open register PR), or NOT owned by Sharko
+        managed (in Git), pending (has an open register PR), or NOT owned by Sharko
         (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned
         Secrets are Adopt territory.
       parameters:
@@ -6628,7 +7734,7 @@ paths:
   /clusters/{name}/reconcile:
     post:
       description: |-
-        Asks the cluster-secret reconciler to CHECK right now instead of waiting for its periodic pass: it reads git, reads the live ArgoCD cluster secrets, compares them, and records what it found. Nothing is created, changed or deleted.
+        Runs the cluster-connection check right now instead of waiting for the next automatic one: it reads Git, reads the live ArgoCD cluster secrets, compares them, and records what it found. Nothing is created, changed or deleted.
         This check covers every cluster, not only the one named in the path — see the 202 response message.
         To actually apply what a check found, use POST /clusters/{name}/resync.
         Returns 202 as soon as the check is accepted — the check itself runs asynchronously.
@@ -6663,13 +7769,14 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Reconciler not running on this server
+          description: The part of Sharko that manages cluster connections is not
+            running on this server
           schema:
             additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Check cluster connection secrets against git
+      summary: Check cluster connection secrets against Git
       tags:
       - clusters
   /clusters/{name}/refresh:
@@ -6723,7 +7830,7 @@ paths:
   /clusters/{name}/resync:
     post:
       description: |-
-        Re-applies Sharko's own addon-label keys onto this cluster's ArgoCD cluster Secret ONCE, to match git.
+        Re-applies Sharko's own addon-label keys onto this cluster's ArgoCD cluster Secret ONCE, to match Git.
         Regardless of the managed_cluster_self_heal setting, and without reading or changing it.
         Touches only Sharko's own addon-label keys — never foreign labels, Secret Data, or annotations.
         Reports the label diff this resync applied (added / removed / changed / unchanged).
@@ -6741,7 +7848,7 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterResyncResponse'
         "400":
-          description: Cluster has no entry in the git-managed cluster list
+          description: Cluster has no entry in the Git-managed cluster list
           schema:
             additionalProperties: true
             type: object
@@ -6761,13 +7868,14 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Reconciler not running on this server
+          description: The part of Sharko that manages cluster connections is not
+            running on this server
           schema:
             additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Re-sync one cluster's addon labels to match git (one time)
+      summary: Re-sync one cluster's addon labels to match Git (one time)
       tags:
       - clusters
   /clusters/{name}/secret/resource:
@@ -6869,8 +7977,8 @@ paths:
   /clusters/{name}/secrets/refresh:
     post:
       description: 'Delivers every addon-values secret the GIT CATALOG defines for
-        this cluster, right now, through the same git-backed engine the periodic reconciler
-        runs (task #152). What to deliver — backend paths, destination namespaces,
+        this cluster, right now, through the same Git-backed engine the automatic
+        delivery uses (task #152). What to deliver — backend paths, destination namespaces,
         Secret names, key lists — comes exclusively from Git; any request body is
         ignored entirely. Pass ?addon= to narrow the push to one addon, which must
         already be defined in Git for this cluster or the call is refused.'
@@ -6919,7 +8027,8 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Secrets reconciler not configured
+          description: The part of Sharko that delivers addon secrets is not running
+            on this server
           schema:
             additionalProperties: true
             type: object
@@ -7285,6 +8394,7 @@ paths:
         Adopts one or more existing ArgoCD clusters under Sharko management.
         Phase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.
         On a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.
+        CLIENTS MUST INSPECT THE RESPONSE BODY. HTTP 200 does NOT mean every cluster was adopted: an adoption in which every single cluster failed also answers 200, and so does one in which every cluster stopped part-way. Read `outcome` — `completed`, `partly_completed` and `failed` — and treat anything other than `completed == total` as work that did not finish. A `partly_completed` cluster was NOT rolled back, so real changes may already be in Git and on the cluster.
       parameters:
       - description: Adoption request
         in: body
@@ -7296,11 +8406,12 @@ paths:
       - application/json
       responses:
         "200":
-          description: Adoption results (may include dry_run)
+          description: Adoption processed. Read outcome/results — 200 does NOT mean
+            every cluster was adopted.
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult'
         "207":
-          description: Partial success — some clusters failed
+          description: Some clusters were adopted and some failed outright. Read outcome/results.
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult'
         "400":
@@ -7369,7 +8480,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Registers multiple clusters in a single operation
+      description: |-
+        Registers multiple clusters in a single operation.
+        CLIENTS MUST INSPECT THE RESPONSE BODY. The HTTP status says whether Sharko accepted and processed the batch, not what happened to the individual clusters. Read `outcome` — `completed`, `partly_completed` and `failed` — and treat anything other than `completed == total` as work that did not finish. The older top-level `failed` counter has a different, deliberately unchanged meaning: it counts every cluster that did not FULLY succeed, partials included, and it is what the 207 is derived from. A `partly_completed` cluster was NOT rolled back, so real changes may already be in Git and on the cluster.
       parameters:
       - description: Batch registration request with clusters array
         in: body
@@ -7382,15 +8495,14 @@ paths:
       - application/json
       responses:
         "200":
-          description: All clusters registered
+          description: Batch processed. Read outcome/results — a 200 only means Sharko
+            accepted and processed the request.
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.BatchResult'
         "207":
-          description: Partial success
+          description: At least one cluster did not fully succeed. Read outcome/results.
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.BatchResult'
         "400":
           description: Bad request
           schema:
@@ -7529,10 +8641,10 @@ paths:
       consumes:
       - application/json
       description: Updates an existing connection configuration; empty token fields
-        retain their saved values. A request whose git or argocd block carries none
-        of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only
-        save) is treated as not touching that section — the stored git/argocd config
-        is kept as-is instead of being overwritten with empty values.
+        retain their saved values. A request whose `git` or `argocd` block carries
+        none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only
+        save) is treated as not touching that section — the stored `git`/`argocd`
+        config is kept as-is instead of being overwritten with empty values.
       parameters:
       - description: Connection name
         in: path
@@ -7711,8 +8823,9 @@ paths:
         "200":
           description: Attention items
           schema:
-            additionalProperties: true
-            type: object
+            items:
+              $ref: '#/definitions/internal_api.AttentionItem'
+            type: array
         "500":
           description: Internal error
           schema:
@@ -8119,16 +9232,16 @@ paths:
         when the file is present but the ArgoCD bootstrap reports Sync=Unknown because
         ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot
         fix), "partial" when the file is present but the ArgoCD bootstrap is missing
-        or genuinely degraded (detail carries the ArgoCD diagnostic), and "unknown"
-        when the file is present but Sharko could not determine the bootstrap application's
-        health at all (the ArgoCD read failed for a reason that is neither a permission
-        problem nor an invalid token, or no ArgoCD connection is configured) — this
-        state never claims the bootstrap is missing or degraded, only that Sharko
-        could not check. When state is "partial", repairable is true only if the bootstrap
-        application was simply never created (POST /init can repair it with no PR)
-        and false if it already exists but is degraded (re-init cannot fix a live
-        app). Performs no writes and creates no operation session. Requires an active
-        Git connection.
+        or genuinely degraded (detail names the application and its sync/health status),
+        and "unknown" when the file is present but Sharko could not determine the
+        bootstrap application's health at all (the ArgoCD read failed for a reason
+        that is neither a permission problem nor an invalid token, or no ArgoCD connection
+        is configured) — this state never claims the bootstrap is missing or degraded,
+        only that Sharko could not check. When state is "partial", repairable is true
+        only if the bootstrap application was simply never created (POST /init can
+        repair it with no PR) and false if it already exists but is degraded (re-init
+        cannot fix a live app). Performs no writes and creates no operation session.
+        Requires an active Git connection.
       produces:
       - application/json
       responses:
@@ -8142,9 +9255,11 @@ paths:
             additionalProperties: true
             type: object
         "502":
-          description: No active Git connection. A missing or broken ArgoCD connection
-            does NOT 502 here — it surfaces as state \"unknown\" in a 200 response,
-            since the Git-side probe can still run.
+          description: No usable Git connection. The message is one fixed Sharko sentence
+            pointing at Settings — never the underlying error's own text, which can
+            carry the repository token. A missing or broken ArgoCD connection does
+            NOT 502 here — it surfaces as state \"unknown\" in a 200 response, since
+            the Git-side probe can still run.
           schema:
             additionalProperties: true
             type: object
@@ -8339,9 +9454,15 @@ paths:
       - application/json
       responses:
         "200":
-          description: Sorted chart versions for the addon
+          description: Sorted chart versions for the addon. `repo` and `no_data_reason`
+            carry the chart repository address with any embedded credential removed.
           schema:
             $ref: '#/definitions/internal_api.catalogVersionsResponse'
+        "403":
+          description: Forbidden — requires catalog.freshness.read
+          schema:
+            additionalProperties: true
+            type: object
         "404":
           description: Addon not found in curated catalog
           schema:
@@ -8507,10 +9628,13 @@ paths:
   /marketplace/sources:
     get:
       description: 'Returns one record per catalog source — the embedded binary catalog
-        (url="embedded", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS.
-        Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or
-        null), entry_count, verified (cosign-verified), and optional issuer when verified.
-        Read-only; requires authentication.'
+        (url="embedded", always first) plus one row per configured third-party source
+        from SHARKO_CATALOG_URLS. A third-party row''s url is always the fixed word
+        "redacted" — the configured address is never returned, because the documented
+        private-catalog form carries an auth token inside the address itself. Per-source
+        fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count,
+        verified (cosign-verified), and optional issuer when verified. Read-only;
+        requires authentication.'
       produces:
       - application/json
       responses:
@@ -8536,8 +9660,10 @@ paths:
         without waiting for the next cadence tick. Returns the refreshed list in the
         same shape as GET /catalog/sources. The embedded catalog is always included
         as a pseudo-source. Requires authentication AND admin role — classified Tier
-        2 and audit-logged; the audit Detail carries the list of attempted URLs and
-        their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher
+        2 and audit-logged; the audit Detail carries how many sources were attempted
+        and a count per outcome (ok|stale|failed), never the configured addresses
+        — a catalog source address can carry an auth token inside it and is never
+        written to any record. The endpoint is a no-op in embedded-only mode (no fetcher
         wired) and returns just the embedded record.
       produces:
       - application/json
@@ -8710,15 +9836,18 @@ paths:
       - migration
   /notifications:
     get:
-      description: Returns recent notifications (upgrades, drift, security)
+      description: |-
+        Returns recent notifications (upgrades, drift, security, connection health).
+        Each notification carries a stable `code` — that is the field to branch on.
+        `title` and `description` are display text and may be reworded in any release,
+        so matching on their wording will break.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.NotificationListResponse'
         "401":
           description: Unauthorized
           schema:
@@ -9190,7 +10319,9 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: No active Git connection
+          description: No usable Git connection. The message is one fixed Sharko sentence
+            pointing at Settings — never the underlying error's own text, which can
+            carry the repository token (B1).
           schema:
             additionalProperties: true
             type: object
@@ -9258,7 +10389,8 @@ paths:
               type: string
             type: object
         "503":
-          description: Secrets reconciler not configured
+          description: The part of Sharko that delivers addon secrets is not running
+            on this server
           schema:
             additionalProperties:
               type: string
@@ -9289,7 +10421,8 @@ paths:
               type: string
             type: object
         "503":
-          description: Secrets reconciler not configured
+          description: The part of Sharko that delivers addon secrets is not running
+            on this server
           schema:
             additionalProperties:
               type: string
@@ -9305,14 +10438,15 @@ paths:
         Returns statistics from the most recent secret reconciliation run,
         including counts of checked, created, updated, deleted, and skipped secrets,
         error count, duration, and the timestamp of the last run.
+        last_run is omitted entirely when no reconcile run has completed yet — never
+        Go's zero time, never a fabricated timestamp.
       produces:
       - application/json
       responses:
         "200":
           description: Reconciliation stats
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.ReconcileStatusResponse'
         "401":
           description: Unauthorized
           schema:
@@ -9320,7 +10454,8 @@ paths:
               type: string
             type: object
         "503":
-          description: Secrets reconciler not configured
+          description: The part of Sharko that delivers addon secrets is not running
+            on this server
           schema:
             additionalProperties:
               type: string
@@ -9398,8 +10533,12 @@ paths:
       - system
   /settings/allow-inline-credentials:
     get:
-      description: Returns whether the "Paste a kubeconfig" registration path is enabled
-        server-wide (V2-cleanup-89.6, default true)
+      description: 'Returns whether legacy inline credentials (a kubeconfig pasted
+        at registration) are allowed server-wide. Default false: an inline credential
+        exists only in the live ArgoCD Secret and cannot be restored from Git, so
+        new registrations should point at a supported credentials provider (a Kubernetes
+        Secret or AWS Secrets Manager). Existing inline clusters keep working regardless
+        of this setting.'
       produces:
       - application/json
       responses:
@@ -9414,14 +10553,15 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Get allow-inline-credentials setting
+      summary: Get the allow-legacy-inline-credentials setting
       tags:
       - system
     put:
       consumes:
       - application/json
-      description: Sets whether the "Paste a kubeconfig" registration path is enabled
-        server-wide (V2-cleanup-89.6). Admin only.
+      description: Sets whether legacy inline credentials (a kubeconfig pasted at
+        registration) are allowed server-wide. Off by default; enabling it is the
+        explicit legacy escape hatch. Admin only.
       parameters:
       - description: Desired setting
         in: body
@@ -9458,13 +10598,13 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Set allow-inline-credentials setting
+      summary: Set the allow-legacy-inline-credentials setting
       tags:
       - system
   /settings/managed-cluster-self-heal:
     get:
-      description: Returns whether the reconciler re-applies git-desired labels to
-        drifted Sharko-managed clusters (V3 G3, default false — drift detection only)
+      description: Returns whether Sharko re-applies the labels Git declares to drifted
+        Sharko-managed clusters (V3 G3, default false — drift is recorded only)
       produces:
       - application/json
       responses:
@@ -9485,7 +10625,7 @@ paths:
     put:
       consumes:
       - application/json
-      description: Sets whether the reconciler re-applies git-desired labels to drifted
+      description: Sets whether Sharko re-applies the labels Git declares to drifted
         Sharko-managed clusters (V3 G3). Admin only.
       parameters:
       - description: Desired setting
@@ -9610,8 +10750,8 @@ paths:
     get:
       description: Aggregates cluster-connection secrets (the ArgoCD cluster Secret
         per managed cluster) and addon-values secrets (pushed into remote clusters),
-        plus each reconciler engine's cadence, last run, and last error. Built entirely
-        from data already read for the cluster list and the two reconcilers' in-memory
+        plus each delivery engine's cadence, last run, and last error. Built entirely
+        from data already read for the cluster list and the two engines' in-memory
         stats — no per-row Kubernetes call. A fact the server cannot currently determine
         is left empty/unknown rather than approximated. The response also carries
         a merged, worst-state-first `rows` array (both kinds flattened onto one shape,
@@ -9638,7 +10778,7 @@ paths:
         in: query
         name: kind
         type: string
-      - description: 'Rows filter: exact source match (e.g. git, AWS Secrets Manager)'
+      - description: 'Rows filter: exact source match (e.g. `git`, AWS Secrets Manager)'
         in: query
         name: source
         type: string
@@ -9881,12 +11021,17 @@ paths:
       - application/json
       responses:
         "200":
-          description: Available versions
+          description: Available versions. repo_url carries the chart repository address
+            with any embedded credential removed.
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AvailableVersionsResponse'
+        "400":
+          description: Bad request
           schema:
             additionalProperties: true
             type: object
-        "400":
-          description: Bad request
+        "403":
+          description: Forbidden — requires addon.list
           schema:
             additionalProperties: true
             type: object
@@ -10445,13 +11590,15 @@ paths:
       consumes:
       - application/json
       description: |-
-        Receives GitHub push event webhooks. Verifies HMAC-SHA256 signature
-        when SHARKO_WEBHOOK_SECRET is set, then triggers a cache refresh on
-        pushes to the configured base branch.
+        Receives GitHub push event webhooks. A request is accepted only when it
+        carries an HMAC-SHA256 signature matching the shared secret an operator
+        configured. With no shared secret configured the endpoint refuses every
+        request. An accepted push to the configured base branch triggers a refresh.
       parameters:
-      - description: GitHub HMAC-SHA256 signature
+      - description: HMAC-SHA256 signature of the request body
         in: header
         name: X-Hub-Signature-256
+        required: true
         type: string
       - description: GitHub event type (push, ping, etc.)
         in: header
@@ -10478,7 +11625,7 @@ paths:
               type: string
             type: object
         "401":
-          description: Invalid signature
+          description: Request refused
           schema:
             additionalProperties:
               type: string

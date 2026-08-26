@@ -107,9 +107,11 @@ What an operator sees when this fires:
 - **`kubectl get pods -n argocd`** shows healthy ArgoCD; the failure
   is Sharko-internal. ArgoCD doesn't surface a "Sharko isn't
   reconciling" signal of its own.
-- **No specific Prometheus alert fires today.** A V2-4.x follow-up
-  is to expose `sharko_reconciler_ticks_skipped_total{reason="..."}`
-  and alert on >0 over 5 minutes.
+- **No specific Prometheus alert fires today.** Sharko does not export
+  this metric today. The alert below is a design sketch for a future
+  release, not something you can deploy now. The sketch: expose
+  `sharko_reconciler_ticks_skipped_total{reason="..."}` and alert on
+  more than 0 over 5 minutes.
 
 If the symptom is **per-cluster errors** in the reconciler log
 (some clusters succeed, others fail), this isn't the runbook — the
@@ -137,7 +139,7 @@ deployment surface:
 
 | Warn message | Dependency | Comes from |
 |---|---|---|
-| `no GitProvider getter configured` | Active git provider | Connection config: a configured Git connection ("active" connection) |
+| `no GitProvider getter configured` | Active Git provider | Connection config: a configured Git connection ("active" connection) |
 | `no ArgoClient (k8s clientset) configured` | Kubernetes clientset for the `argocd` namespace | Server initialization at `cmd/sharko/serve.go`; `rest.InClusterConfig()` |
 | `no Vault (cluster-credentials provider) configured` | Cluster-credentials provider (AWS-SM, K8s Secrets, etc.) | `internal/providers/` initialization from Helm values |
 
@@ -153,7 +155,7 @@ The last 3 lines tell you which precondition is firing.
 
 **For "no GitProvider getter configured":**
 
-The reconciler reads the active git provider from `connSvc`. If no
+The reconciler reads the active Git provider from `connSvc`. If no
 Git connection is configured (or all configured connections are
 disabled), this trips. Check:
 

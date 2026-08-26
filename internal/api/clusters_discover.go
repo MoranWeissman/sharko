@@ -53,7 +53,7 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	// production (same underlying *argocd.Client).
 	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
@@ -83,7 +83,13 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 			s.emitWarning(events.ReasonArgoCDUnreachable,
 				"Host ArgoCD is unreachable: Sharko could not list clusters from the ArgoCD API.")
 		}
-		writeError(w, http.StatusBadGateway, "failed to list ArgoCD clusters: "+err.Error())
+		// PUBLIC BOUNDARY. This used to append err.Error(), which on a
+		// transport failure is a *url.Error carrying the full ArgoCD base
+		// URL — while the event three lines up was already careful to carry
+		// "no token or URL". Same sentinel classification, now used for the
+		// response sentence too.
+		slog.Error("[cluster-discover] listing ArgoCD clusters failed", "step", "list-argocd-clusters")
+		writeError(w, http.StatusBadGateway, argoListFailureSentence(argoReadClusters, err))
 		return
 	}
 
@@ -112,6 +118,24 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 type testClusterRequest struct {
 	Deep bool `json:"deep"`
 }
+
+// verifyStageCredentials is the `stage` this endpoint reports when fetching
+// the cluster's sign-in details failed, before anything was asked of the
+// cluster itself.
+//
+// IT IS A WIRE VALUE THE BROWSER ROUTES ON, so it is named here rather than
+// typed inline. The adopt dialog keeps a cluster selected and adoptable when
+// it sees this stage, because a failed credential lookup is the normal case
+// for adoption (internal/orchestrator/adopt.go) and nothing is known against
+// a cluster that was never contacted. It used to work that out by searching
+// ErrorMessage for words like "not found" — and once a credentials-backend
+// failure started carrying one fixed sentence, that search matched nothing
+// and the contract silently stopped working.
+//
+// Both halves are pinned to a written-out literal:
+// TestTestCluster_CredentialFailureStageIsPinned here, and
+// VERIFY_STAGE_CREDENTIALS in ui/src/services/api.ts.
+const verifyStageCredentials = "credentials"
 
 // testClusterResponse wraps verify.Result with top-level fields so the UI can
 // read error details without drilling into a nested "result" object.
@@ -233,7 +257,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", safeMsg)
 		result := verify.Result{
 			Success:      false,
-			Stage:        "credentials",
+			Stage:        verifyStageCredentials,
 			ErrorCode:    "ERR_AUTH",
 			ErrorMessage: safeMsg,
 			Steps: []verify.Step{
@@ -284,15 +308,24 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
 	if err != nil {
 		// PUBLIC BOUNDARY. The client is built FROM the credential material, so
-		// the parse error can quote part of it. ErrorCode still comes from
-		// verify.ClassifyError, which reads the real error to pick one of a
-		// fixed set of codes and echoes nothing.
-		safeMsg := "failed to build client: " + credsafe.Sentence(err)
-		slog.Error("[cluster-test] failed", "name", name, "step", "build-client", "error", safeMsg)
+		// the parse error can quote part of it.
+		//
+		// The response says the catalog sentence for the classified code, the
+		// same wording Stage 1 would use for the same code — a person should
+		// not be able to tell from the message whether the check failed while
+		// building the client or while talking to the cluster.
+		//
+		// The cause still reaches the server log, and credsafe.Sentence swaps
+		// in the fixed sentence when the error came from the credentials
+		// backend.
+		code := verify.ClassifyError(err)
+		safeMsg := verify.FriendlyMessage(code).String()
+		slog.Error("[cluster-test] failed", "name", name, "step", "build-client",
+			"code", code, "diagnostic", credsafe.Sentence(err))
 		result := verify.Result{
 			Success:      false,
 			Stage:        "client",
-			ErrorCode:    verify.ClassifyError(err),
+			ErrorCode:    code,
 			ErrorMessage: safeMsg,
 			Steps: []verify.Step{
 				{Name: "Fetch credentials", Status: "pass"},
@@ -320,7 +353,11 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	if result.Success {
 		slog.Info("[cluster-test] Stage 1 passed", "name", name, "version", result.ServerVersion)
 	} else {
-		slog.Error("[cluster-test] Stage 1 failed", "name", name, "error", result.ErrorMessage)
+		// ErrorMessage is the catalog sentence now, which would make every
+		// failure of a given code log identically. Diagnostic() is the real
+		// cause — this log line is the one place it is meant to appear.
+		slog.Error("[cluster-test] Stage 1 failed", "name", name,
+			"code", result.ErrorCode, "diagnostic", result.Diagnostic())
 		// V3 E1: surface the connectivity-test failure as a k8s Warning event.
 		// The message names the cluster and the verify error CODE (an
 		// enum like ERR_NETWORK / ERR_RBAC), never the raw error string —

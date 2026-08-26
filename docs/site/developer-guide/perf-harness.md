@@ -87,7 +87,7 @@ Per-cluster enable / disable + global upgrade cycle.
 |-------|----------|
 | `enable_dry_run` | `POST /api/v1/clusters/{c}/addons/{a}` with `dry_run=true` — the per-cluster enable preview round-trip. |
 | `disable_dry_run` | `DELETE /api/v1/clusters/{c}/addons/{a}` with `dry_run=true` — the per-cluster disable preview round-trip. |
-| `upgrade_global` | `POST /api/v1/addons/{a}/upgrade` — live catalog rewrite + PR open path. Touches the catalog YAML in git; no remote ArgoCD call. |
+| `upgrade_global` | `POST /api/v1/addons/{a}/upgrade` — live catalog rewrite + PR open path. Touches the catalog YAML in Git; no remote ArgoCD call. |
 
 ### 3. `catalog_scan`
 
@@ -105,7 +105,7 @@ Aggregated dashboard reads.
 
 | Phase | Brackets |
 |-------|----------|
-| `pull_requests` | `GET /api/v1/dashboard/pull-requests` — active-PR list via the git provider. |
+| `pull_requests` | `GET /api/v1/dashboard/pull-requests` — active-PR list via the Git provider. |
 | `fleet_status` | `GET /api/v1/observability/fleet-status` — aggregated cluster + addon view; resilient handler reports availability as flags. |
 | `repo_status` | `GET /api/v1/observability/repo-status` — bootstrap state; resilient handler reports state without hard-failing on a fresh repo. |
 

@@ -64,10 +64,11 @@ The locked design choice is that any chart shipping real secrets in `values.yaml
 Prometheus metrics for AI annotation:
 
 ```
-# Total calls by outcome.
+# Total calls by outcome. These eight are every value the running
+# server writes (internal/orchestrator/ai_annotate.go).
 sharko_ai_annotate_total{outcome="ok"}
 sharko_ai_annotate_total{outcome="not_configured"}
-sharko_ai_annotate_total{outcome="opted_out"}
+sharko_ai_annotate_total{outcome="empty_input"}
 sharko_ai_annotate_total{outcome="oversize"}
 sharko_ai_annotate_total{outcome="secret_blocked"}
 sharko_ai_annotate_total{outcome="timeout"}
@@ -79,6 +80,8 @@ sharko_ai_annotate_latency_seconds_bucket{outcome="ok"}
 sharko_ai_annotate_latency_seconds_count{outcome="ok"}
 sharko_ai_annotate_latency_seconds_sum{outcome="ok"}
 ```
+
+The metric's own help text in `internal/metrics/metrics.go` also names `opted_out` and `disabled`. Nothing in Sharko ever writes either one, so do not write an alert that expects them. If you see them in the help text and not in your data, that is the help text being out of date, not your scrape being broken.
 
 ### Suggested alerts
 

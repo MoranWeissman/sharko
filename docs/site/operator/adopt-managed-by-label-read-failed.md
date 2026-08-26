@@ -95,9 +95,11 @@ What an operator sees when this fires:
   will see "drift" on its next reconcile and might fight Sharko for
   the label — an operator-visible symptom downstream (typically
   hours after the adopt, when the other tool runs).
-- **No specific Prometheus alert fires today.** A V2-4.x follow-up
-  is to surface `sharko_adopt_label_read_failed_total` and alert on
-  >0 per day.
+- **No specific Prometheus alert fires today.** Sharko does not export
+  this metric today. The alert below is a design sketch for a future
+  release, not something you can deploy now. The sketch: surface
+  `sharko_adopt_label_read_failed_total` and alert on more than 0 per
+  day. Until that is built, the log line is the only signal.
 
 If the symptom is **the adopt-flow returning `status: "failed"`**
 with `"is managed by <tool>, not sharko — cannot adopt"`, that's the

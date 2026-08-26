@@ -1,6 +1,7 @@
 package signing
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // --- Log-recorder helper (V123-2.6) ------------------------------------------
@@ -714,17 +716,71 @@ func TestFetchBundle_BodyTooLarge(t *testing.T) {
 	}
 }
 
-// TestUrlFingerprint_Empty — the empty-URL branch returns an empty
-// fingerprint (avoids logging a hash of "" which would always be the
-// same value). Tiny coverage gain but the contract IS load-bearing —
-// the loader uses urlFingerprint("") to skip logging when no URL is
-// available.
-func TestUrlFingerprint_Empty(t *testing.T) {
-	if got := urlFingerprint(""); got != "" {
-		t.Errorf("urlFingerprint(\"\") = %q, want empty", got)
+// TestVerificationFailureLogCarriesNoSidecarCredential replaces the old
+// TestUrlFingerprint_Empty. That test pinned a 10-character SHA-256 prefix
+// of the sidecar address as the value this package logs. That value was
+// ruled out: it is the same every time for the same address, so publishing
+// it lets someone with a list of candidate tokens work out which one Sharko
+// is using. A later version still logged the address itself when the URL
+// grammar could vouch it carried no credential — that allowance was
+// withdrawn too, because the documented private-catalog shape hides the
+// token in the address's own path, where no grammar can spot it.
+//
+// The source field is now the fixed word for every address, and logFailure
+// does not even take the address any more — the compiler, not this test, is
+// what stops a future call site handing it in. What is left to check live:
+// the line is really written, its source field really is the fixed word and
+// nothing else, and the reason text arrives.
+//
+// The test reads a real captured log sink, and it proves it can see a
+// planted line before it claims anything about what the line carries.
+func TestVerificationFailureLogCarriesNoSidecarCredential(t *testing.T) {
+	const sentinel = "bf14-signing-log-positive-control"
+
+	var sink bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// Positive control first. A sink that cannot show a line it was just
+	// handed proves nothing by staying quiet later.
+	log.Info("planted so this probe can prove it sees log lines", "marker", sentinel)
+	if !strings.Contains(sink.String(), sentinel) {
+		t.Fatalf("POSITIVE CONTROL FAILED | a line written straight to the captured sink did not come back out of it, so this probe cannot tell a logged credential from a quiet run")
 	}
-	if got := urlFingerprint("https://example.com/x.bundle"); len(got) != 10 {
-		t.Errorf("urlFingerprint produced %d chars, want 10", len(got))
+
+	v := NewVerifier(nil, WithLogger(log))
+	v.logFailure("synthetic reason for the test")
+
+	out := sink.String()
+	if !strings.Contains(out, "catalog signature verification failed") {
+		t.Fatalf("NOT EXERCISED | the sink holds no verification-failure line, so nothing below would prove anything. Sink held:\n%s", out)
+	}
+	if !strings.Contains(out, `"source":"`+credsafe.RedactedSourceLabel+`"`) {
+		t.Errorf("the failure line did not log source=%q — the fixed word is the only value that field may carry. Sink held:\n%s", credsafe.RedactedSourceLabel, out)
+	}
+	if !strings.Contains(out, "synthetic reason for the test") {
+		t.Errorf("the failure line lost its reason — the reason is the part the operator acts on. Sink held:\n%s", out)
+	}
+
+	// Two failure lines are identical whatever addresses were in play,
+	// because no address is in play: the function cannot receive one. Two
+	// separate sinks, same call, byte-identical lines (minus timestamp).
+	line := func() string {
+		var b bytes.Buffer
+		vv := NewVerifier(nil, WithLogger(slog.New(slog.NewJSONHandler(&b, nil))))
+		vv.logFailure("synthetic reason for the test")
+		s := b.String()
+		if i := strings.Index(s, `"level"`); i > 0 {
+			s = s[i:]
+		}
+		return s
+	}
+	first := line()
+	second := line()
+	if first == "" || second == "" {
+		t.Fatalf("NOT EXERCISED | one of the two runs logged nothing, so comparing them proves nothing")
+	}
+	if first != second {
+		t.Errorf("DIFFERENT | two identical failures logged different lines.\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
 

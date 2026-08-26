@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/engineversion"
 )
 
@@ -138,7 +139,26 @@ func probeManifestAt(ctx context.Context, baseURL, repoPath, version, chartForEr
 func doManifestRequest(ctx context.Context, client *http.Client, manifestURL, bearerToken string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		return nil, err
+		// manifestURL is built from the registry address the operator
+		// configured, so it is the operator's own saved value and it can
+		// carry a credential. Go hands back a *url.Error here and that
+		// type prints the address it was given, with nothing masked at
+		// all on the build path — not even the password half it hides
+		// once a dial has started.
+		//
+		// This error does not stay inside the probe: probeManifestAt
+		// hands it to chartRegistryUnreachableError, that sentence is
+		// returned by CollectBootstrapFiles, and internal/api/init.go
+		// puts its text straight into the init operation the browser
+		// polls. So the whole address would land on a person's screen.
+		//
+		// The error is therefore described and never wrapped. The reason
+		// comes from credsafe.PlainFailureReason, which is built from
+		// error types and sentinels and never reads a message, so this
+		// line stays safe whatever any address check upstream does or
+		// stops doing.
+		return nil, fmt.Errorf("the manifest request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	// Accept every manifest media type a Helm OCI chart or its index might
 	// be served as — we only care whether the registry has an entry at
@@ -152,7 +172,16 @@ func doManifestRequest(ctx context.Context, client *http.Client, manifestURL, be
 	if bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
-	return client.Do(req)
+	// The same rule as the build above. This used to be a bare
+	// `return client.Do(req)`, which handed the transport's own
+	// *url.Error to the caller untouched — address included — and travelled
+	// the same way to the init operation the browser polls.
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("the manifest request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
+	}
+	return resp, nil
 }
 
 // fetchAnonymousToken implements the OCI/Docker Registry v2 anonymous
@@ -181,13 +210,20 @@ func fetchAnonymousToken(ctx context.Context, client *http.Client, challenge str
 	}
 	tokenURL.RawQuery = q.Encode()
 
+	// The token address comes from the registry's own WWW-Authenticate
+	// challenge, so it is not the operator's value — but it is somebody
+	// else's, it reaches the same init operation a person reads, and the
+	// rule is the same either way: describe the failure, never repeat the
+	// address it was given.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL.String(), nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("the token request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("the token request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

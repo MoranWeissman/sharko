@@ -178,11 +178,45 @@ inventory so the budget stays bounded. New high-cardinality labels
 
 Sharko's `/metrics` endpoint also exposes the historical metric families
 registered via `promauto` in `internal/metrics/metrics.go` (cluster
-status, addon health, reconciler runs, API request counters, auth, AI,
-catalog signing, Scorecard, etc.). The V2-3 SLO surfaces are composed
-on top via `prometheus.Gatherers{prometheus.DefaultGatherer,
+status, addon health, reconciler runs, catalog source fetching, API
+request counters, auth, AI, Scorecard, etc.). The V2-3 SLO surfaces are
+composed on top via `prometheus.Gatherers{prometheus.DefaultGatherer,
 metrics.SLORegistry()}` so a single scrape returns both.
 
-Legacy metric names predate the OTEL-aligned V2-3 naming scheme. They
-are kept stable for operators relying on existing dashboards; new SLO
+Legacy metric names predate the OTEL-aligned V2-3 naming scheme. New SLO
 work follows the V2-3 scheme exclusively.
+
+### Ten of these are registered but never written
+
+Do not build anything on these ten. They are declared in
+`internal/metrics/metrics.go`, so they are part of the registry, but no
+code anywhere in Sharko ever sets a value on them:
+
+`sharko_cluster_count`, `sharko_cluster_status`,
+`sharko_cluster_last_verified_timestamp`,
+`sharko_cluster_last_test_duration_seconds`,
+`sharko_cluster_test_failures_total`, `sharko_addon_sync_status`,
+`sharko_addon_health`, `sharko_addon_version`, `sharko_pr_tracked`,
+`sharko_auth_login_total`.
+
+All ten carry labels, and a labelled Prometheus collector with no
+children emits nothing at all, so they are simply absent from a scrape.
+A query against them returns no data — which is the honest answer for
+something nobody measures.
+
+There used to be three worse than absent. `sharko_active_sessions`,
+`sharko_catalog_entries_count` and a pull-request merge-duration
+histogram carried no labels, so Prometheus published all three on every
+scrape at zero whether or not anything had written them, and an operator
+reading `sharko_active_sessions 0` on a server people were logged into
+read it as a fact about the server. It was not. The first two now carry
+real numbers. The merge-duration histogram was deleted instead: Sharko
+only learns that a pull request merged when its tracker next polls, so
+the only end time it could measure was "when we noticed", which is not
+the same thing as when the merge happened. See
+[Metrics](metrics.md#everything-else-sharko-exports).
+
+Whether the remaining ten get wired up or deleted is an open product
+decision. Until it is made, this page is the warning, and
+`internal/metrics/contract_writers_test.go` is the guard that keeps the
+list from drifting.

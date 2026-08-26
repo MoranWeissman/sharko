@@ -10,6 +10,29 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
+// secretsEngineNotRunning is the 503 a person reads on every endpoint that
+// needs the addon-values engine and does not have it. It is shared by
+// secrets_reconcile.go and cluster_secrets.go so a person hears one story.
+//
+// The old text was the bare "secrets reconciler not configured" — the
+// component's own name, in four places. The wire code beside it in
+// cluster_secrets.go stays "secrets_reconciler_not_configured": that is an
+// identifier a caller matches on, not a sentence anybody reads.
+// secretsEngineNotConfiguredCode is the machine-readable half of that 503.
+// It keeps the component's name on purpose: a caller matches on this string,
+// and changing it breaks every client that switches on it. It is a wire value,
+// not a sentence, which is the same distinction the Git guard draws with its
+// delimited-token rule.
+const secretsEngineNotConfiguredCode = "secrets_reconciler_not_configured"
+
+const secretsEngineNotRunning = "The part of Sharko that delivers addon secrets to your clusters is not running on this server."
+
+// secretsEngineNotRunningHint is the "what to do about it" line that travels
+// with the 503 above. It also used to write Git in lowercase, and the Git
+// guard could not see it: the guard reads a string as prose only when it opens
+// with a capital letter, and this one opened with "configure".
+const secretsEngineNotRunningHint = "Configure a secrets backend under Settings → Connections, or POST /api/v1/connections/ with the backend config. The engine that reads addon secrets from Git starts once a backend is configured."
+
 // handleTriggerReconcile godoc
 //
 // @Summary Trigger secret reconciliation
@@ -20,14 +43,14 @@ import (
 // @Security BearerAuth
 // @Success 202 {object} map[string]string "Reconcile triggered"
 // @Failure 401 {object} map[string]string "Unauthorized"
-// @Failure 503 {object} map[string]string "Secrets reconciler not configured"
+// @Failure 503 {object} map[string]string "The part of Sharko that delivers addon secrets is not running on this server"
 // @Router /secrets/reconcile [post]
 func (s *Server) handleTriggerReconcile(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "reconciler.trigger") {
 		return
 	}
 	if s.secretReconciler == nil {
-		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
+		writeError(w, http.StatusServiceUnavailable, secretsEngineNotRunning)
 		return
 	}
 	s.secretReconciler.Trigger()
@@ -55,7 +78,7 @@ func (s *Server) handleTriggerReconcile(w http.ResponseWriter, r *http.Request) 
 // @Failure 401 {object} map[string]string "Unauthorized"
 // @Failure 403 {object} map[string]string "Forbidden — requires operator role or higher"
 // @Failure 409 {object} map[string]string "The addon-values engine is switched off — nothing to check"
-// @Failure 503 {object} map[string]string "Secrets reconciler not configured"
+// @Failure 503 {object} map[string]string "The part of Sharko that delivers addon secrets is not running on this server"
 // @Router /secrets/check [post]
 //
 // handleCheckSecrets handles POST /api/v1/secrets/check.
@@ -69,7 +92,7 @@ func (s *Server) handleCheckSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.secretReconciler == nil {
-		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
+		writeError(w, http.StatusServiceUnavailable, secretsEngineNotRunning)
 		return
 	}
 
@@ -109,24 +132,57 @@ func (s *Server) handleCheckSecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking every addon-values secret — nothing is written"})
 }
 
+// ReconcileStatusResponse is the public shape of GET /secrets/status. It maps
+// internal/secrets.ReconcileStats field-for-field, except LastRun: the
+// internal struct always carries a time.Time (Go's zero value —
+// "0001-01-01T00:00:00Z" — before any run has completed), but that zero time
+// must never reach a caller. LastRun here is a plain RFC3339 string, omitted
+// entirely when no reconcile run has completed yet.
+type ReconcileStatusResponse struct {
+	Checked  int    `json:"checked"`
+	Created  int    `json:"created"`
+	Updated  int    `json:"updated"`
+	Deleted  int    `json:"deleted"`
+	Skipped  int    `json:"skipped"`
+	Errors   int    `json:"errors"`
+	Duration string `json:"duration"`
+	// LastRun is RFC3339, omitted (not null, not the Go zero time) when no
+	// reconcile run has completed yet.
+	LastRun string `json:"last_run,omitempty"`
+}
+
 // handleReconcileStatus godoc
 //
 // @Summary Get secret reconciliation status
 // @Description Returns statistics from the most recent secret reconciliation run,
 // @Description including counts of checked, created, updated, deleted, and skipped secrets,
 // @Description error count, duration, and the timestamp of the last run.
+// @Description last_run is omitted entirely when no reconcile run has completed yet — never
+// @Description Go's zero time, never a fabricated timestamp.
 // @Tags secrets
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{} "Reconciliation stats"
+// @Success 200 {object} ReconcileStatusResponse "Reconciliation stats"
 // @Failure 401 {object} map[string]string "Unauthorized"
-// @Failure 503 {object} map[string]string "Secrets reconciler not configured"
+// @Failure 503 {object} map[string]string "The part of Sharko that delivers addon secrets is not running on this server"
 // @Router /secrets/status [get]
 func (s *Server) handleReconcileStatus(w http.ResponseWriter, r *http.Request) {
 	if s.secretReconciler == nil {
-		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
+		writeError(w, http.StatusServiceUnavailable, secretsEngineNotRunning)
 		return
 	}
 	stats := s.secretReconciler.GetStats()
-	writeJSON(w, http.StatusOK, stats)
+	resp := ReconcileStatusResponse{
+		Checked:  stats.Checked,
+		Created:  stats.Created,
+		Updated:  stats.Updated,
+		Deleted:  stats.Deleted,
+		Skipped:  stats.Skipped,
+		Errors:   stats.Errors,
+		Duration: stats.Duration,
+	}
+	if !stats.LastRun.IsZero() {
+		resp.LastRun = stats.LastRun.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

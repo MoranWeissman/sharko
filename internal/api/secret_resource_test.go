@@ -388,8 +388,8 @@ func TestSecretResource_ShowsLabelsInFull(t *testing.T) {
 			Name:      "prod-eu",
 			Namespace: "argocd",
 			Labels: map[string]string{
-				"datadog":                      "enabled",
-				"cert-manager":                 "enabled",
+				"datadog":                        "enabled",
+				"cert-manager":                   "enabled",
 				clusterreconciler.LabelManagedBy: clusterreconciler.LabelValueSharko,
 			},
 		},

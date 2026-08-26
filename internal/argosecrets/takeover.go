@@ -318,6 +318,24 @@ func (m *Manager) repairPreservedLabelsRecord(ctx context.Context, existing *cor
 		return nil, nil
 	}
 
+	// THERE MUST HAVE BEEN A PREVIOUS OWNER. This repair only makes sense on
+	// a connection that came from somewhere else — the older adopt path, or
+	// an earlier takeover. Sharko stamps the adopted marker on exactly those
+	// and on nothing it set up itself, so the marker is the proof.
+	//
+	// On a connection Sharko created there was no previous owner, so every
+	// label on it is Sharko's own. Recording them as "the previous owner's"
+	// would be wrong twice over: the converger then refuses to converge them
+	// (see the preserved-key skip in SyncManagedClusterLabels), and the
+	// connection check leaves them out of the comparison — Git could say an
+	// addon is on, the cluster could say it is off, and nothing would ever
+	// notice. The classifier cannot spot this on its own: a v3 addon label is
+	// written as the bare addon name, which is indistinguishable by shape
+	// from a foreign label like "env".
+	if !IsAdopted(existing.Annotations) {
+		return nil, nil
+	}
+
 	legacy := map[string]string{}
 	for k, v := range existing.Labels {
 		if legacyKeyFn(k) {

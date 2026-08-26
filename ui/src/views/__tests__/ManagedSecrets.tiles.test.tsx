@@ -51,9 +51,40 @@ const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockFetchAuditLog = vi.fn()
 
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
+
 vi.mock('@/services/api', () => ({
-  api: { getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args) },
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  api: {
+    getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: () => Promise.resolve({
+      cluster: 'prod-eu',
+      management_mode: 'sharko_managed',
+      managed_scope: 'full_connection',
+      mode_statement: CONNECTION_SENTENCES.modeStatementSharkoManaged,
+      definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+      sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-13T12:00:00Z' },
+      health: { state: 'connected' },
+      conditions: [
+        { id: 'git_definition', status: 'ok', detail: CONNECTION_SENTENCES.condGitDefinitionOK },
+        { id: 'argocd_connection', status: 'ok', detail: CONNECTION_SENTENCES.condArgoCDConnected },
+      ],
+      drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+      plan: { action: 'none', action_scopes: [] },
+      values_never_returned: true,
+    }),
+  },
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   triggerSecretsReconcile: vi.fn(),

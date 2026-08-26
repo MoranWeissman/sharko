@@ -90,8 +90,16 @@ const syncFailingResponse = {
       argocd_deployed: true,
       argocd_health_status: 'Healthy',
       status: 'sync_failing',
-      argocd_operation_message: 'one or more tasks failed: CRD name too long — keda.sh/....',
-      issues: ['one or more synchronization tasks completed unsuccessfully'],
+      // B8: what the server sends now. It used to be ArgoCD's own
+      // operationState.message, and this file's assertion below demanded that
+      // text reach the AI prompt verbatim — which is how a repository access
+      // token would have reached the assistant.
+      argocd_operation_message:
+        "ArgoCD could not finish syncing this addon. Sharko does not repeat ArgoCD's own message here: " +
+        'that message quotes whatever ArgoCD was working on, which includes the repository address ' +
+        'with its access token inside it. Open this application in ArgoCD to read the full error. ' +
+        '(phase=Failed sync=OutOfSync health=Healthy repo=https://github.example/sharko-org/addons.git)',
+      issues: ['ArgoCD could not finish syncing this addon — open it in ArgoCD for the full error.'],
     },
     {
       addon_name: 'cert-manager',
@@ -227,7 +235,16 @@ describe('V2-cleanup-39: Ask AI button on sync_failing rows', () => {
     expect(typeof detail.nonce).toBe('string');
     expect(detail.message).toContain('keda');
     expect(detail.message).toContain('prod-eu');
-    expect(detail.message).toContain('CRD name too long');
+    // B8 inversion. This used to be
+    //   expect(detail.message).toContain('CRD name too long')
+    // — a substring that existed only in argocd_operation_message, pinning the
+    // Ask-AI prompt to the unmodified field value. ArgoCD's own message quotes
+    // the repository with its access token inside it, and the assistant's
+    // prompt is a user-facing surface, so that assertion was holding a leak in
+    // place. The prompt still carries the field; the field is now Sharko's own
+    // sentence.
+    expect(detail.message).not.toContain('CRD name too long');
+    expect(detail.message).toContain('Open this application in ArgoCD to read the full error.');
   });
 });
 

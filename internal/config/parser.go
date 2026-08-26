@@ -317,6 +317,14 @@ func MarshalAddonCatalog(metadataName string, entries []models.AddonCatalogEntry
 		entries = []models.AddonCatalogEntry{}
 	}
 
+	// A repository address that carries sign-in details never reaches Git.
+	// This is the last point before the bytes exist, and every v3 catalog
+	// writer ends here — see internal/config/catalog_repo_url.go for why the
+	// refusal is whole-file rather than per-entry.
+	if err := checkV3CatalogRepoURLs(entries); err != nil {
+		return nil, err
+	}
+
 	doc := schema.Envelope[AddonCatalogV3Spec]{
 		APIVersion: schema.APIVersion,
 		Kind:       schema.KindAddonCatalog,

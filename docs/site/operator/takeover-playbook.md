@@ -178,6 +178,24 @@ them off. Please do not edit it or delete it by hand. If it does go
 missing, run the takeover again on that cluster: Sharko sees the note is
 gone, writes it back, and changes nothing else.
 
+Two things worth knowing about that re-run:
+
+- It only writes the note back on a connection that came from somewhere
+  else — one Sharko adopted or took over. On a connection Sharko set up
+  itself there was no previous owner, so there is nothing to write down,
+  and a re-run leaves the note absent on purpose. This matters because a
+  v3-era addon label is written as the plain addon name (`datadog`),
+  which looks exactly like somebody else's label (`env`) — writing those
+  into the note would freeze Sharko's own addon labels as "hands off".
+- If a label ends up named in the note **and** Git declares the same
+  label, the two disagree about who owns that key. Sharko keeps its
+  promise and leaves the label alone, which means it neither compares
+  that label nor changes it — so the connection page lists it under
+  **Not checked** and stops short of saying the connection is synced.
+  That is Sharko telling you the truth rather than a warning you can
+  ignore. Fixing it means deciding who owns the key: either take the
+  label out of the note, or stop declaring it in Git.
+
 ### The ordering, and why
 
 The new secret has to keep the same name as the old one, and two secrets

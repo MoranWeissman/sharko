@@ -2,7 +2,11 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The Warn log
+> **Verified:** Updated 2026-08-25 for BF14 revision 2 (the `source`
+> log field and the API `url` field are now always the fixed word
+> `redacted`, and the `err` field is rewritten by the log pipeline);
+> log-line and API shapes verified against the test suite on that
+> date. Originally authored 2026-06-01 against `main` HEAD. The Warn log
 > line `"catalog source fetch failed"` is verified against
 > `internal/catalog/sources/fetcher.go:681`, which fires when either
 > `f.httpGetPinned(ctx, rawURL, pinnedIPs)` (the runtime-SSRF-guarded
@@ -41,19 +45,21 @@ What an operator sees when this fires:
   (`internal/catalog/sources/fetcher.go:681`):
 
   ```
-  {"time":"...","level":"WARN","msg":"catalog source fetch failed","source_fp":"<8-char-fingerprint>","err":"Get \"https://example.com/catalog.yaml\": dial tcp: lookup example.com on 10.96.0.10:53: no such host"}
+  {"time":"...","level":"WARN","msg":"catalog source fetch failed","source":"redacted","err":"dns chain=*url.Error > *net.OpError > *net.DNSError"}
   ```
 
-  Common error shapes:
+  The `source` field is always the fixed word `redacted` — the
+  configured address is never written to a log in any form. The `err`
+  field is rewritten by the log pipeline before it is stored: an
+  error's own words routinely quote the address, so what you see is a
+  fixed description built from the error's Go types. Common shapes:
 
   ```
-  Get "https://...": dial tcp ...: connect: connection refused
-  Get "https://...": x509: certificate signed by unknown authority
-  Get "https://...": context deadline exceeded
-  Get "https://...": EOF
-  unexpected status code 503
-  unexpected status code 404
-  response body too large (exceeded N bytes)
+  connection-refused chain=*url.Error > *net.OpError > ...   (nothing listening / wrong port)
+  dns chain=*url.Error > *net.OpError > *net.DNSError        (hostname does not resolve)
+  timeout deadline-exceeded chain=*url.Error > ...           (the fetch ran out of time)
+  unclassified chain=*url.Error > ...                        (TLS and other transport failures)
+  http 503 / http 404                                        (the server answered with an error status)
   ```
 
 - **The fetcher status report flips the source to `failed`**:
@@ -67,7 +73,8 @@ What an operator sees when this fires:
 
   ```json
   [
-    {"url":"https://example.com/catalog.yaml","status":"failed","last_error":"Get \"https://example.com/catalog.yaml\": dial tcp: ..."}
+    {"url":"embedded","status":"ok","last_fetched":null,"entry_count":142,"verified":true},
+    {"url":"redacted","status":"failed","last_fetched":null,"entry_count":0,"verified":false}
   ]
   ```
 
@@ -113,7 +120,7 @@ third confirms the SSRF guard is not silently in the loop.
 ```sh
 curl -sS http://sharko/api/v1/catalog/sources \
   -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.[] | select(.status=="failed") | {url, source_fp, last_error}'
+  | jq '.[] | select(.status=="failed") | {url, status, last_fetched}'
 ```
 
 The `last_error` field is the full error string from the failed
@@ -230,7 +237,7 @@ confuse the two. Confirm:
 ```sh
 kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
   | jq -c 'select(.msg | test("catalog source"; "i"))' \
-  | jq -c '{time, msg, source_fp, err}'
+  | jq -c '{time, msg, source, err}'
 ```
 
 If the SSRF-guard line is the one firing, jump to
@@ -376,12 +383,14 @@ author to investigate their serving performance).
 
 ## Prevention
 
-- **Monitoring — per-source uptime alert.** A V2-3.x follow-up metric
-  `sharko_catalog_source_fetch_failures_total{source_fp,
+- **Monitoring — per-source uptime alert.** Sharko does not export this
+  metric today. The alert below is a design sketch for a future release,
+  not something you can deploy now. The sketch:
+  `sharko_catalog_source_fetch_failures_total{url,
   failure_class}` with classes (`dns`, `tcp`, `tls`, `timeout`,
-  `http_5xx`, `body_oversize`) would let operators alert on sustained
-  per-source failure. Today, monitoring is via the
-  `/api/v1/catalog/sources` poll loop.
+  `http_5xx`, `body_oversize`), alerting on sustained per-source
+  failure. Today, monitoring is via the `/api/v1/catalog/sources` poll
+  loop.
 
 - **Gating — pre-deploy connectivity test.** A Helm post-install hook
   that fetches each configured catalog source URL and fails the

@@ -91,45 +91,69 @@ func TestHint(t *testing.T) {
 	}
 }
 
-func TestFriendlyMessage_AuthIncludesHintAndRawCause(t *testing.T) {
-	raw := "the server has asked for the client to provide credentials"
-	r := Result{
-		Success:      false,
-		ErrorCode:    ERR_AUTH,
-		ErrorMessage: raw,
-	}
-	msg := FriendlyMessage(r)
+// These two tests used to assert the OPPOSITE — that FriendlyMessage
+// "preserves the raw cause for diagnosis". That was the leak, pinned by a test
+// and written down as the design in the doc comment above the function. The
+// product owner's ruling retired it: no raw provider, credential-store, Git,
+// Kubernetes or internal error text may be part of a user-facing message.
+//
+// They are kept rather than deleted, inverted, so the old behaviour cannot
+// come back quietly.
 
-	// Actionable hint is present.
+func TestFriendlyMessage_IsActionableAndCarriesNoRawCause(t *testing.T) {
+	msg := FriendlyMessage(ERR_AUTH).String()
+
+	// Still actionable — this is the counterweight. A safe message that
+	// said nothing useful would trade one defect for another.
 	if !strings.Contains(msg, "HTTP 401") || !strings.Contains(msg, "regenerate") {
-		t.Errorf("friendly message missing actionable ERR_AUTH hint: %q", msg)
+		t.Errorf("the ERR_AUTH sentence stopped being actionable: %q", msg)
 	}
-	// Raw cause is preserved for diagnosis.
-	if !strings.Contains(msg, raw) {
-		t.Errorf("friendly message dropped the raw cause %q: got %q", raw, msg)
+
+	// FriendlyMessage now takes only an ErrorCode, so there is no parameter
+	// for raw text to arrive through — this asserts the RESULT of that.
+	for _, raw := range []string{
+		"the server has asked for the client to provide credentials",
+		"dial tcp 10.0.0.1:6443",
+		"x509: certificate signed by unknown authority",
+	} {
+		if strings.Contains(msg, raw) {
+			t.Errorf("the ERR_AUTH sentence carries raw error text %q: %q", raw, msg)
+		}
 	}
-	// error review package 2: the bracketed machine token no longer leads
-	// the sentence — a code has no business in front of a plain-English
-	// message. Callers that need the code read r.ErrorCode directly.
-	if strings.Contains(msg, "[ERR_AUTH]") || strings.HasPrefix(msg, "[") {
+
+	// error review package 2: no bracketed machine token leading a sentence
+	// meant for a person. Callers that need the code read Result.ErrorCode.
+	if strings.HasPrefix(msg, "[") {
 		t.Errorf("friendly message must not carry a bracketed code prefix: %q", msg)
 	}
 }
 
-func TestFriendlyMessage_NoHintKeepsRawCause(t *testing.T) {
-	raw := "dial tcp 10.0.0.1:6443: connection refused"
-	r := Result{
-		Success:      false,
-		ErrorCode:    ERR_NETWORK,
-		ErrorMessage: raw,
+func TestFriendlyMessage_EveryCodeIsAWholeActionableSentence(t *testing.T) {
+	// Every code, including the ones with no Hint() entry, must still get a
+	// complete sentence. ERR_NETWORK is the one that used to return the bare
+	// raw cause with no hint at all.
+	for _, code := range allDeclaredErrorCodes(t) {
+		msg := FriendlyMessage(code).String()
+		if msg == "" {
+			t.Errorf("%s renders an empty message", code)
+			continue
+		}
+		if !strings.HasSuffix(msg, ".") {
+			t.Errorf("%s does not render a whole sentence (no full stop): %q", code, msg)
+		}
+		// "which category of thing to go and look at" — every sentence has
+		// to tell the operator to do or check something.
+		if !strings.Contains(msg, "Check") && !strings.Contains(msg, "Grant") &&
+			!strings.Contains(msg, "Wait") && !strings.Contains(msg, "server log") &&
+			!strings.Contains(msg, "regenerate") {
+			t.Errorf("%s says what broke but not what to look at: %q", code, msg)
+		}
 	}
-	msg := FriendlyMessage(r)
 
-	if !strings.Contains(msg, raw) {
-		t.Errorf("friendly message dropped the raw cause %q: got %q", raw, msg)
-	}
-	if strings.Contains(msg, " — ") {
-		t.Errorf("did not expect a hint suffix for ERR_NETWORK: %q", msg)
+	// An unrecognised code must not render blank — stage 2 emits
+	// ERR_NOT_IMPLEMENTED, which is not in the const block.
+	if got := FriendlyMessage(ErrorCode("ERR_NOT_IMPLEMENTED")).String(); got != safeSentences[ERR_UNKNOWN] {
+		t.Errorf("an unknown code must fall back to the ERR_UNKNOWN sentence, got %q", got)
 	}
 }
 

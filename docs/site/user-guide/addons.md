@@ -16,7 +16,7 @@ Adding to the catalog and enabling on a cluster are two separate operations, but
 
 ## Default Addons
 
-When you register or adopt a cluster without specifying which addons to enable, Sharko can auto-enable a set of **default addons**. The source of truth for default addons is a git file in your GitOps repository:
+When you register or adopt a cluster without specifying which addons to enable, Sharko can auto-enable a set of **default addons**. The source of truth for default addons is a Git file in your GitOps repository:
 
 ```
 configuration/default-addons.yaml
@@ -51,7 +51,7 @@ The API endpoints for default addons are:
 
 ### Backward Compatibility
 
-If you upgrade to this version and don't yet have `configuration/default-addons.yaml` in your repo, Sharko continues to use the existing default-addons setting from your connection configuration. The git file takes over once present, but nothing forces you to create it immediately.
+If you upgrade to this version and don't yet have `configuration/default-addons.yaml` in your repo, Sharko continues to use the existing default-addons setting from your connection configuration. The Git file takes over once present, but nothing forces you to create it immediately.
 
 ### Design Note — Sharko is a GitOps agent
 
@@ -97,12 +97,42 @@ Flags:
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--chart` | Yes | Helm chart name |
-| `--repo` | Yes | Helm repository URL |
+| `--repo` | Yes | Helm repository URL — must be credential-free (see below) |
 | `--version` | Yes | Helm chart version to track |
 | `--namespace` | No | Target namespace (defaults to addon name) |
 | `--values` | No | Path to a values YAML file to use as the base |
 
 Via UI: **Addons → Add Addon**, fill in the form.
+
+### The chart repository address must be credential-free
+
+Sharko will not accept a chart repository address with a sign-in written into
+it — `https://a-token@charts.example/org/charts` and the like. The address ends
+up in a YAML file in your Git repository, and Git keeps history for good, so a
+token written there is a token you have published.
+
+The rule is:
+
+> Catalog repository URLs in the technical preview must be ones Sharko can
+> read in full: a host, an optional port, and an optional path. User
+> information in the address, a query string, and a fragment are all refused,
+> and so is an address Sharko cannot read. Use a credential-free base URL.
+
+It is checked on the shape of the address, not on whether the text looks
+secret, so an ordinary `?ref=main` is refused too. Take the query string off.
+
+An address Sharko cannot read at all is refused as well — a port that is not a
+number, say. A scheme is optional, and an `@` in the path is fine, so
+`charts.example/org/charts` and `https://charts.example/org/charts@v1` are both
+accepted.
+
+Sharko refuses; it never quietly saves a cleaned-up version of what you typed.
+Chart repositories that need a sign-in are not supported in this preview —
+see [Technical Preview](../technical-preview.md) and
+[Security](../operator/security.md).
+
+**Already committed a token?** Revoke or rotate it, and remove it from your
+Git history — editing the current file leaves it one `git log -p` away.
 
 The command creates a PR that adds the addon's directory structure to your Git repo.
 
@@ -164,14 +194,14 @@ which namespace — is a separate step, covered next.
 
 ### How Reconciliation Works
 
-The secrets reconciler runs continuously in the background:
+Addon-secret syncing runs continuously in the background:
 
-1. Every 5 minutes (default), Sharko re-fetches all declared secrets from the provider
+1. On a timer — `SHARKO_SECRET_RECONCILE_INTERVAL`, `5m` unless you change it — Sharko re-fetches all declared secrets from the provider
 2. It computes a SHA-256 hash of each value and compares it to the last known hash
 3. If a value changed, Sharko updates the Kubernetes Secret on the affected remote clusters
 4. ArgoCD is configured to ignore these secrets (resource exclusion), so it never deletes them
 
-The 5-minute timer is a backstop, not the only way in: merging a pull request that enables an addon also wakes the reconciler right away, so a newly-enabled addon's secret does not sit waiting for the next tick.
+That timer is a backstop, not the only way in: merging a pull request that enables an addon also wakes the sync right away, so a newly-enabled addon's secret does not sit waiting for the next check.
 
 All Sharko-managed secrets are labeled `app.kubernetes.io/managed-by: sharko`.
 

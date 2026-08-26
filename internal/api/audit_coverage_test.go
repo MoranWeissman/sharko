@@ -4,11 +4,17 @@ package api
 // audit.Enrich( in its body.
 //
 // The test:
-//  1. Reads all *.go files in internal/api/ (skipping test files).
-//  2. Finds every mux.HandleFunc("POST|PUT|PATCH|DELETE ...", srv.handleXXX) route.
+//  1. Asks the ROUTER what it registered (routeInventory, route_registry.go) —
+//     not the source for a literal mux.HandleFunc call. Reading source read one
+//     spelling of registering a route; a route registered through a helper was
+//     invisible to this guard and to its authz and tier siblings (B16).
+//  2. Keeps the handlers registered for POST/PUT/PATCH/DELETE.
 //  3. Locates func (s *Server) handleXXX in the package files.
 //  4. Checks that the function body contains audit.Enrich(.
 //  5. Handlers in the allowlist are skipped.
+//
+// collectMutatingHandlers below is the shared route-inventory seam all three
+// coverage guards use.
 
 import (
 	"go/ast"
@@ -25,8 +31,11 @@ import (
 var auditAllowlist = map[string]string{
 	// Auth — emits fine-grained login/login_failed/logout via s.auditLog.Add;
 	// middleware skips these paths explicitly so there is no double-emission.
-	"handleLogin":  "emits login / login_failed directly; middleware skips /auth/login",
-	"handleLogout": "emits logout directly; middleware skips /auth/logout",
+	// handleLoginRateLimited is the registered handler; it applies the per-IP
+	// limit and delegates to handleLogin, which does the emitting. Both are
+	// named so the reason survives whichever one a future route points at.
+	"handleLoginRateLimited": "rate-limit wrapper around handleLogin, which emits login / login_failed directly; middleware skips /auth/login",
+	"handleLogout":           "emits logout directly; middleware skips /auth/logout",
 
 	// Stale dead-route stub (V124-6.1 / BUG-021) — returns 404 with a hint
 	// pointing at /auth/login. Not a real action; middleware skips /api/v1/login.
@@ -46,7 +55,7 @@ var auditAllowlist = map[string]string{
 	"handleAgentChat": "potentially high-frequency; skip per design decision",
 
 	// Webhooks — emits webhook_received with HMAC context; middleware skips this path.
-	"handleGitWebhook": "emits webhook_received directly; middleware skips /webhooks/git",
+	"handleGitWebhook": "emits a push entry directly; middleware skips /webhooks/git",
 
 	// Read-like POSTs — these are queries/analysis that don't mutate state.
 	"handleGetAISummary": "read-only analysis endpoint; POST because it accepts a large body",
@@ -93,7 +102,7 @@ func TestAuditCoverage(t *testing.T) {
 	}
 
 	// Step 1: collect handler names registered for mutating methods.
-	mutatingHandlers := collectMutatingHandlers(pkg)
+	mutatingHandlers := collectMutatingHandlers(t)
 
 	// Step 2: for each handler, verify audit.Enrich presence.
 	var missing []string
@@ -117,81 +126,28 @@ func TestAuditCoverage(t *testing.T) {
 	}
 }
 
-// collectMutatingHandlers scans AST for mux.HandleFunc calls and extracts
-// handler names for POST/PUT/PATCH/DELETE routes.
-func collectMutatingHandlers(pkg *ast.Package) map[string]struct{} {
+// collectMutatingHandlers returns the name of every handler the router
+// registered for a mutating HTTP method.
+//
+// It runs the real registration path and reads back what it registered, so a
+// route reached through a helper, a loop, or a handler held in a variable is
+// counted exactly like an inline one. A route that does not go through the
+// registrar is not served at all — see route_registry.go.
+func collectMutatingHandlers(t *testing.T) map[string]struct{} {
+	t.Helper()
 	handlers := make(map[string]struct{})
-
-	for _, file := range pkg.Files {
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-
-			// Match mux.HandleFunc(...)
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "HandleFunc" {
-				return true
-			}
-			if len(call.Args) < 2 {
-				return true
-			}
-
-			// First arg is the pattern, e.g. "POST /api/v1/clusters"
-			lit, ok := call.Args[0].(*ast.BasicLit)
-			if !ok {
-				return true
-			}
-			pattern := strings.Trim(lit.Value, `"`)
-			parts := strings.Fields(pattern)
-			if len(parts) < 2 {
-				return true
-			}
-			method := parts[0]
-			if !mutatingMethods[method] {
-				return true
-			}
-
-			// Second arg is srv.handleXXX — extract the handler name.
-			handlerExpr := call.Args[1]
-			handlerName := extractHandlerName(handlerExpr)
-			if handlerName != "" {
-				handlers[handlerName] = struct{}{}
-			}
-			return true
-		})
+	for _, route := range routeInventory() {
+		if !mutatingMethods[route.Method] {
+			continue
+		}
+		if route.Anonymous {
+			// route_registry_guard_test.go fails on this separately and by
+			// name; skipping here keeps THIS guard's message about audit.
+			continue
+		}
+		handlers[route.HandlerName] = struct{}{}
 	}
 	return handlers
-}
-
-// extractHandlerName extracts the function name from a selector expression like
-// srv.handleXXX, or from a func literal wrapping a direct call.
-func extractHandlerName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.SelectorExpr:
-		// srv.handleXXX
-		return e.Sel.Name
-	case *ast.FuncLit:
-		// Inline func literal — scan for inner handleXXX call
-		var found string
-		ast.Inspect(e.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-				name := sel.Sel.Name
-				if strings.HasPrefix(name, "handle") {
-					found = name
-					return false
-				}
-			}
-			return true
-		})
-		return found
-	}
-	return ""
 }
 
 // handlerHasEnrich checks whether the function body for handlerName contains

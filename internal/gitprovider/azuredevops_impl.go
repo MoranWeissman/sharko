@@ -59,12 +59,18 @@ func (a *AzureDevOpsProvider) GetFileContent(_ context.Context, filePath, ref st
 		return []byte(item.Content), nil
 	}
 
-	// Debug: log first 200 chars of the response to understand the format
-	preview := string(body)
-	if len(preview) > 200 {
-		preview = preview[:200]
-	}
-	slog.Info("azure devops file response debug", "path", filePath, "size", len(body), "preview", preview)
+	// The first 200 characters of the raw response used to be logged here as
+	// a "debug" line, at Info level, on EVERY file read that did not come
+	// back in the JSON shape above (B9). That is the contents of a file in
+	// the operator's GitOps repository going into the log — a values file, a
+	// managed-clusters file, or an Azure DevOps error payload that quotes the
+	// repository address with its access token inside it. Nothing had to fail
+	// for it to run.
+	//
+	// The shape of the answer is what that line was really trying to report,
+	// and the size says that without saying any of the content.
+	slog.Info("azure devops file response was not the expected JSON shape",
+		"path", filePath, "ref", ref, "size", len(body))
 
 	return body, nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"k8s.io/client-go/kubernetes"
@@ -92,10 +93,38 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 			log.Info("[secrets] fetching secret value", "addon", def.AddonName, "key", key, "path", providerPath)
 			val, fetchErr := o.secretFetcher.GetSecretValue(ctx, providerPath)
 			if fetchErr != nil {
-				result.Failed = append(result.Failed, SecretError{
-					Name:  def.SecretName,
-					Error: fmt.Sprintf("fetching key %q from %q: %v", key, providerPath, fetchErr),
-				})
+				// PUBLIC BOUNDARY. This used to be
+				// fmt.Sprintf("fetching key %q from %q: %v", key, providerPath, fetchErr)
+				// — the secrets backend's own words plus the location of the
+				// secret inside it, on a field that rides out as
+				// `failed_secrets` in the API response and gets printed by
+				// `sharko cluster register`.
+				//
+				// The catalog sentence says which step failed and names the
+				// addon and key, both of which come from Sharko's catalog in
+				// Git. The backend's words and the path go to the log line
+				// below and stop there.
+				//
+				// The log line carries NO error text at all, and that is
+				// positional classification rather than type-based, for the
+				// reason internal/api/connection_repair.go:989 writes down
+				// after this exact mechanism leaked once: everything reaching
+				// this branch is a secrets-backend failure BY CONSTRUCTION,
+				// because the only call above it is GetSecretValue. Asking
+				// credsafe.Is instead would come back false for any backend
+				// that does not mark its own errors — a stub, an
+				// unimplemented backend, a future one — and put its raw text
+				// straight into the log. Where we are is stronger evidence
+				// than what the error turned out to be, and it cannot be
+				// wrong.
+				//
+				// The step, addon, key and path are enough to find the
+				// matching entry in the secrets backend's own log, which is
+				// where the backend's words belong.
+				log.Error("[secrets] fetching secret value failed",
+					"step", "fetch-secret-value",
+					"addon", def.AddonName, "key", key, "path", providerPath)
+				result.Failed = append(result.Failed, newSecretFetchFailure(def, key))
 				fetchFailed = true
 				break
 			}
@@ -116,11 +145,14 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		// very next 5-minute tick.
 		provenance := remoteclient.ValuesProvenanceAnnotations(def.AddonName, "", time.Now())
 		if err := remoteclient.EnsureSecret(ctx, client, def.Namespace, def.SecretName, data, provenance); err != nil {
-			log.Error("[secrets] failed to create secret, continuing", "addon", def.AddonName, "error", err)
-			result.Failed = append(result.Failed, SecretError{
-				Name:  def.SecretName,
-				Error: fmt.Sprintf("creating secret for addon %s: %v", def.AddonName, err),
-			})
+			// PUBLIC BOUNDARY, same as the fetch branch above. The Kubernetes
+			// API server's own text — which can name the ServiceAccount out
+			// of a 403, the API server host, or whatever an admission webhook
+			// felt like saying — stays in this log line.
+			log.Error("[secrets] failed to create secret, continuing",
+				"addon", def.AddonName, "namespace", def.Namespace, "secret", def.SecretName,
+				"error", credsafe.Sentence(err))
+			result.Failed = append(result.Failed, newSecretWriteFailure(def))
 			continue
 		}
 		result.Created = append(result.Created, def.SecretName)

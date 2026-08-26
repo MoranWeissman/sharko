@@ -161,7 +161,9 @@ Trigger sources:
   2. PR merge     — any tracked pull request merging nudges the reconciler
                     right away, so an addon enabled through Sharko gets its
                     secret without waiting for the next tick
-  3. Webhook      — POST /api/v1/webhooks/git (HMAC-SHA256)
+  3. Webhook      — POST /api/v1/webhooks/git. Refused unless the call is
+                    signed with the shared secret an operator configured;
+                    with no shared secret set, this route is closed
   4. Manual       — POST /api/v1/secrets/reconcile
 ```
 
@@ -227,7 +229,7 @@ Security advisory notifications are raised when an addon has a new **major** ver
 
 ## Audit Log
 
-Every write operation that passes through the API is recorded in the audit log. The audit log provides an immutable trail of who did what and when.
+Every write operation that passes through the API is recorded in the audit log. The in-app feed shows what happened **since Sharko started**: it is held in memory only and empties on every pod restart, and nothing else keeps a copy — see [what Sharko keeps and for how long](../operator/audit-log.md). The durable reconciliation evidence is elsewhere: the Git commits themselves and the applied-revision annotations Sharko stamps on the Secrets it writes.
 
 ```
 HTTP Handler (write operation)
@@ -271,4 +273,4 @@ Sharko never changes your cluster or your Git repo directly — it opens a pull 
 
 This means Sharko's state is always reflected in Git — the addons repo is the source of truth, not the Sharko database.
 
-When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, Sharko also deletes the feature branch immediately after a successful merge (`DeleteBranch`). Branch cleanup is best-effort — a failure is logged but does not affect the operation result.
+When `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`, Sharko also deletes the feature branch immediately after a successful merge (`DeleteBranch`). Branch cleanup is best-effort — a failure is logged but does not affect the operation result.

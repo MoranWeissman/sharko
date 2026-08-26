@@ -45,7 +45,7 @@ func resolvePendingRegistrations(
 		// Defensive: don't 500 the entire /clusters endpoint because the
 		// PR-list call hit a rate limit. Log and degrade to empty.
 		slog.Warn("list_open_prs_for_pending_registrations: degrading to empty",
-			"err", err.Error())
+			"err", err)
 		return out
 	}
 

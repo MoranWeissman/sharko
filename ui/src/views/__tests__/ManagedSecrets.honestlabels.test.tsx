@@ -3,10 +3,15 @@
 // HL-1: the cluster connection action calls resyncClusterLabels, which
 // re-applies ONLY Sharko's own addon label keys — it does not rebuild
 // config, server or name. So on connection rows the action reads
-// "Re-apply addon labels", while addon Secrets keep "Sync" (their value
-// really is delivered from a backend). The word "Repair" is reserved for
-// a later feature that would genuinely rebuild the connection Secret —
-// it must not render anywhere on these pages.
+// "Sync addon labels" (renamed from "Re-apply addon labels" by the Round 3
+// walkthrough ruling, 2026-08-16), while addon Secrets keep "Sync" (their
+// value really is delivered from a backend).
+//
+// Round 3 ruling (2026-08-16) supersedes the old blanket "the word 'Repair'
+// renders nowhere" rule below: the product owner has since named the real
+// repair action "Repair connection", and it does render on these pages when
+// repair is available. The describe block below is rescoped accordingly —
+// see its own comment.
 //
 // HL-2: on the canonical subpages (/secrets/connections, /secrets/addons)
 // the route already says which kind shows — a leftover ?kind= from an old
@@ -15,7 +20,7 @@
 // pre-split filter argued with the route.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ManagedSecrets } from '@/views/ManagedSecrets'
@@ -36,6 +41,9 @@ const adminAuth = {
 }
 
 const mockShowToast = vi.fn()
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -52,12 +60,24 @@ const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockFetchAuditLog = vi.fn()
 const mockDeleteOrphanedSecret = vi.fn()
+const mockGetConnectionReconciliation = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
   },
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   checkAllAddonValuesSecrets: (...args: unknown[]) => mockCheckAllAddonValuesSecrets(...args),
@@ -148,23 +168,55 @@ beforeEach(() => {
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  // Story 2: the connection page consumes the reconciliation endpoint.
+  // This file's fixture is a labels-drifted connection whose one offered
+  // door is Sync addon labels — repair is NOT offered, matching the old
+  // repair_available: false premise.
+  mockGetConnectionReconciliation.mockResolvedValue({
+    cluster: 'prod-eu',
+    management_mode: 'sharko_managed',
+    managed_scope: 'full_connection',
+    mode_statement: CONNECTION_SENTENCES.modeStatementSharkoManaged,
+    definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+    sync: { state: 'out_of_sync', verification_scope: 'full', approval_required: false, reason: CONNECTION_SENTENCES.reasonOutOfSyncLabelsOnly, checked_at: '2026-08-13T12:00:00Z' },
+    health: { state: 'connected' },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: CONNECTION_SENTENCES.condGitDefinitionOK },
+      { id: 'argocd_connection', status: 'ok', detail: CONNECTION_SENTENCES.condArgoCDConnected },
+    ],
+    drift: {
+      connection_configuration: [],
+      credential_material: [],
+      addon_labels: [{ path: 'metadata.labels[datadog]', status: 'missing', expected: 'enabled' }],
+      not_checked: [],
+    },
+    plan: { action: 'sync_addon_labels', action_scopes: ['metadata.labels'] },
+    values_never_returned: true,
+  })
   window.sessionStorage.clear()
 })
 
 describe('HL-1 — the connection action is named for what it does', () => {
-  it('the connection detail page action reads "Re-apply addon labels", and its confirm carries the same name', async () => {
+  it('the connection detail page action reads "Sync addon labels", and its confirm carries the same name', async () => {
     const user = userEvent.setup()
     renderApp(['/secrets/connections/prod-eu'])
 
-    const syncButton = await screen.findByTestId('detail-sync')
-    expect(syncButton).toHaveTextContent('Re-apply addon labels')
+    // Story 2: the action renders beside the addon-assignments drift group
+    // inside the reconciliation view, driven by plan.action.
+    const syncButton = await screen.findByTestId('recon-action-sync')
+    expect(syncButton).toHaveTextContent('Sync addon labels')
     expect(syncButton).not.toHaveTextContent(/^Sync$/)
 
     // The confirm box: real name in the title, real name on the button,
-    // and a description that only promises the labels.
+    // and a description that only promises the labels. Round 3
+    // (2026-08-16) made the confirm button's own text "Sync addon labels"
+    // too — the SAME words as the trigger button, which stays mounted
+    // behind the dialog — so the confirm button is found scoped to the
+    // dialog, not by a page-wide role query.
     await user.click(syncButton)
-    expect(await screen.findByText('Re-apply addon labels on "prod-eu"?')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Re-apply labels$/ })).toBeInTheDocument()
+    expect(await screen.findByText('Sync addon labels on "prod-eu"?')).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('button', { name: /^Sync addon labels$/ })).toBeInTheDocument()
     expect(screen.queryByText(/Sync cluster/)).not.toBeInTheDocument()
   })
 
@@ -176,13 +228,13 @@ describe('HL-1 — the connection action is named for what it does', () => {
     expect(syncButton).not.toHaveTextContent('Re-apply')
   })
 
-  it('the connection row menu action reads "Re-apply addon labels" while the addon row menu keeps "Sync"', async () => {
+  it('the connection row menu action reads "Sync addon labels" while the addon row menu keeps "Sync"', async () => {
     const user = userEvent.setup()
     const conn = renderApp(['/secrets/connections'])
     await screen.findByTestId('secret-row-connection-prod-eu')
 
     await user.click(screen.getByRole('button', { name: 'Actions for prod-eu' }))
-    expect(await screen.findByRole('menuitem', { name: /Re-apply addon labels/ })).toBeInTheDocument()
+    expect(await screen.findByRole('menuitem', { name: /Sync addon labels/ })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /^Sync$/ })).not.toBeInTheDocument()
     await user.keyboard('{Escape}')
     conn.unmount()
@@ -194,15 +246,26 @@ describe('HL-1 — the connection action is named for what it does', () => {
     const labels = items.map((i) => i.textContent ?? '')
     expect(labels.some((t) => t.includes('Sync'))).toBe(true)
     expect(labels.some((t) => t.includes('Re-apply'))).toBe(false)
+    // Round 3 (2026-08-16): the addon row's plain "Sync" menu item must
+    // never read as the connection-only "Sync addon labels" either.
+    expect(labels.some((t) => t.includes('addon labels'))).toBe(false)
   })
 
   it('no connection sentence promises the cluster copy will match Git, and the addon promise still names its store', async () => {
     const conn = renderApp(['/secrets/connections/prod-eu'])
-    const note = await screen.findByTestId('detail-repair-note')
-    expect(note).toHaveTextContent("Re-apply addon labels puts git's addon labels back on this secret.")
-    expect(note).not.toHaveTextContent('match Git')
-    // The "who fixes this" sentence points at the renamed action.
-    expect(screen.getByTestId('detail-self-heals')).toHaveTextContent('Waiting for Re-apply addon labels.')
+    // Story 2: the connection page renders the server's reason verbatim and
+    // computes no promise of its own — no "match Git" claim, no UI-invented
+    // next-pass promise, anywhere on the page.
+    const view = await screen.findByTestId('recon-view')
+    expect(view.textContent ?? '').not.toContain('match Git')
+    // The fragment, not one full wording — the browser's self-heal sentence
+    // has been reworded, and a guard naming only the retired text would pass
+    // for free forever after.
+    expect(view.textContent ?? '').not.toContain('Sharko will fix this')
+    expect(view.textContent ?? '').not.toContain('on the next pass')
+    expect(screen.getByTestId('recon-sync-reason')).toHaveTextContent(
+      CONNECTION_SENTENCES.reasonOutOfSyncLabelsOnly,
+    )
     conn.unmount()
 
     renderApp(['/secrets/addons/prod-eu/datadog'])
@@ -211,10 +274,18 @@ describe('HL-1 — the connection action is named for what it does', () => {
   })
 })
 
-describe('HL-1 / HL-4 — the word "Repair" renders nowhere', () => {
-  // "Repair" is reserved for a later feature that genuinely rebuilds the
-  // connection Secret. If any of these pages ever renders it, this fails.
-  it('never renders "Repair" on the connections inventory, the addons inventory, or the connection detail page', async () => {
+// Round 3 ruling (2026-08-16) supersedes the blanket "Repair renders
+// nowhere" rule this block used to enforce: the product owner has since
+// named the real connection-repair action "Repair connection", and it DOES
+// render on the connection detail page once repair_available is true (see
+// ManagedSecrets.panel.test.tsx's "Connection repair" describe for that
+// coverage). This file's own mock always returns repair_available: false,
+// so what's still true and still worth pinning here is narrower: the
+// addon-labels action never says "Repair" (it's a labels-only action, never
+// a repair), and while repair is genuinely unavailable, no "Repair" text
+// leaks onto the page.
+describe('HL-1 / HL-4 — the addon-labels action never claims to "Repair", and no Repair text renders while repair is unavailable', () => {
+  it('never renders "Repair" on the connections inventory, the addons inventory, or the connection detail page (repair_available: false)', async () => {
     const conn = renderApp(['/secrets/connections'])
     await screen.findByTestId('secret-row-connection-prod-eu')
     expect(screen.queryByText(/Repair/)).not.toBeInTheDocument()
@@ -226,9 +297,12 @@ describe('HL-1 / HL-4 — the word "Repair" renders nowhere', () => {
     addons.unmount()
 
     // The detail page of a BROKEN connection row — the place a "Repair"
-    // label would be most tempting to put.
+    // label would be most tempting to put, and the sync (addon-labels)
+    // action itself must never say it either. The plan here offers only
+    // sync_addon_labels, so no Repair text may exist anywhere.
     renderApp(['/secrets/connections/prod-eu'])
-    await screen.findByTestId('detail-sync')
+    const syncButton = await screen.findByTestId('recon-action-sync')
+    expect(syncButton).not.toHaveTextContent(/Repair/)
     expect(screen.queryByText(/Repair/)).not.toBeInTheDocument()
   })
 })

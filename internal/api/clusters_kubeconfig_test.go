@@ -142,6 +142,10 @@ func TestRegisterCluster_PastedKubeconfig_NoProvider_DerivesInlinePath(t *testin
 	// valid for an inline-kubeconfig registration", which trained callers
 	// to drop the paste and fall into the silent backend/eks-token trap.
 	srv := newIsolatedTestServer(t)
+	// Explicitly enabled: this test pins the DERIVE rule (which path the
+	// paste takes), and the default-off legacy switch would otherwise
+	// refuse before the derivation's outcome is observable.
+	enableLegacyInlineForTest(t, srv)
 	router := NewRouter(srv, nil)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -179,6 +183,8 @@ func TestRegisterCluster_KubeconfigProvider_DoesNotRequireCredProvider(t *testin
 	// active ArgoCD connection) but with a different status code than the
 	// 503 EKS-with-no-provider path returns — that's the contract under test.
 	srv := newIsolatedTestServer(t)
+	// Explicitly enabled, same reason as the derive-path test above.
+	enableLegacyInlineForTest(t, srv)
 	router := NewRouter(srv, nil)
 
 	body, _ := json.Marshal(map[string]interface{}{

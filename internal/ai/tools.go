@@ -10,8 +10,10 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"gopkg.in/yaml.v3"
 )
 
@@ -610,7 +612,11 @@ func (e *ToolExecutor) listAddons(ctx context.Context) (string, error) {
 
 	var sb strings.Builder
 	for _, a := range addons {
-		fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n", a.Name, a.Chart, a.Version, a.RepoURL)
+		// B11: the catalog's repoURL is routinely written with the access
+		// token inside it, and this string is handed to the AI provider and
+		// shown in the assistant's answer.
+		fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n",
+			a.Name, a.Chart, a.Version, credsafe.SafeRepoURL(a.RepoURL))
 	}
 	return sb.String(), nil
 }
@@ -836,7 +842,10 @@ func (e *ToolExecutor) getAddonOnCluster(ctx context.Context, addonName, cluster
 					fmt.Fprintf(&sb, "Last Reconciled: %s\n", app.ReconciledAt)
 				}
 				if app.OperationMessage != "" {
-					fmt.Fprintf(&sb, "Operation Message: %s\n", app.OperationMessage)
+					// Never ArgoCD's own words: that message quotes the
+					// repository it was syncing from, token and all, and this
+					// text becomes the assistant's context (B8).
+					fmt.Fprintf(&sb, "Operation Message: %s\n", safeOperationMessage(app))
 				}
 			} else {
 				fmt.Fprintf(&sb, "ArgoCD Health: unable to fetch (app name tried: %s)\n", appName)
@@ -866,7 +875,7 @@ func (e *ToolExecutor) getUnhealthyAddons(ctx context.Context) (string, error) {
 			fmt.Fprintf(&sb, "- %s: health=%s, sync=%s, cluster=%s\n",
 				app.Name, app.HealthStatus, app.SyncStatus, app.DestinationName)
 			if app.OperationMessage != "" {
-				fmt.Fprintf(&sb, "    message: %s\n", app.OperationMessage)
+				fmt.Fprintf(&sb, "    message: %s\n", safeOperationMessage(&app))
 			}
 		}
 	}
@@ -902,13 +911,16 @@ func (e *ToolExecutor) getArgoCDClusterConnection(ctx context.Context, clusterNa
 	if clusterName == "" {
 		return "Please specify a cluster name.", nil
 	}
-	status, message, err := argocd.NewService(e.ac).GetClusterConnectionInfo(ctx, clusterName)
+	status, _, err := argocd.NewService(e.ac).GetClusterConnectionInfo(ctx, clusterName)
 	if err != nil {
 		return fmt.Sprintf("Error fetching connection info for cluster %q: %v", clusterName, err), nil
 	}
-	result := fmt.Sprintf("ArgoCD connection to %s: Status=%s", clusterName, status)
-	if message != "" {
-		result += fmt.Sprintf(", Message=%s", message)
+	// ArgoCD's connectionMessage is the credentials layer's words quoted in
+	// full; the assistant gets Sharko's own sentence instead (B8).
+	safeStatus := credsafe.SafeConnectionState(status)
+	result := fmt.Sprintf("ArgoCD connection to %s: Status=%s", clusterName, safeStatus)
+	if safeStatus == "Failed" || safeStatus == credsafe.Unrecognised {
+		result += ", Message=" + credsafe.ArgocdClusterConnectionFailureMessage
 	}
 	return result, nil
 }
@@ -1104,7 +1116,9 @@ func (e *ToolExecutor) searchAddons(ctx context.Context, query string) (string, 
 	for _, a := range addons {
 		if strings.Contains(strings.ToLower(a.Name), queryLower) {
 			count++
-			fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n", a.Name, a.Chart, a.Version, a.RepoURL)
+			// B11 — same as listAddons above.
+			fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n",
+				a.Name, a.Chart, a.Version, credsafe.SafeRepoURL(a.RepoURL))
 		}
 	}
 
@@ -1147,10 +1161,14 @@ func (e *ToolExecutor) getAppResources(ctx context.Context, appName, resourceKin
 				continue
 			}
 
+			// B10: the resource tree's health word goes into the
+			// assistant's context, which is a user-facing surface —
+			// whatever goes in comes back out in an answer. Echo it only
+			// when it is a word Sharko knows.
 			health := "N/A"
 			if h, ok := node["health"].(map[string]interface{}); ok {
-				if s, ok := h["status"].(string); ok {
-					health = s
+				if s, ok := h["status"].(string); ok && s != "" {
+					health = credsafe.SafeHealthStatus(s)
 				}
 			}
 
@@ -1176,11 +1194,13 @@ func (e *ToolExecutor) getAppResources(ctx context.Context, appName, resourceKin
 				continue
 			}
 			count++
-			health := r.Health
+			// B10 — same as the resource-tree branch above; the sync word
+			// gets the same treatment.
+			health := credsafe.SafeHealthStatus(r.Health)
 			if health == "" {
 				health = "N/A"
 			}
-			fmt.Fprintf(&sb, "- %s/%s (ns: %s) health=%s sync=%s\n", r.Kind, r.Name, r.Namespace, health, r.Status)
+			fmt.Fprintf(&sb, "- %s/%s (ns: %s) health=%s sync=%s\n", r.Kind, r.Name, r.Namespace, health, credsafe.SafeSyncStatus(r.Status))
 		}
 	}
 
@@ -1245,7 +1265,9 @@ func (e *ToolExecutor) getAppDetails(ctx context.Context, appName string) (strin
 
 	// Source info
 	fmt.Fprintf(&sb, "\nSource:\n")
-	fmt.Fprintf(&sb, "  Repo: %s\n", app.SourceRepoURL)
+	// The repository address ArgoCD holds is routinely written with the access
+	// token inside it, and this text becomes the assistant's context (B7).
+	fmt.Fprintf(&sb, "  Repo: %s\n", credsafe.SafeRepoURL(app.SourceRepoURL))
 	if app.SourceChart != "" {
 		fmt.Fprintf(&sb, "  Chart: %s\n", app.SourceChart)
 	}
@@ -1286,7 +1308,7 @@ func (e *ToolExecutor) getAppDetails(ctx context.Context, appName string) (strin
 			fmt.Fprintf(&sb, "  Finished: %s\n", app.OperationFinishedAt)
 		}
 		if app.OperationMessage != "" {
-			fmt.Fprintf(&sb, "  Message: %s\n", app.OperationMessage)
+			fmt.Fprintf(&sb, "  Message: %s\n", safeOperationMessage(app))
 		}
 	}
 
@@ -1374,4 +1396,25 @@ func (e *ToolExecutor) getReleaseNotes(ctx context.Context, addonName, version s
 		return fmt.Sprintf("Could not fetch release notes: %v", err), nil
 	}
 	return notes, nil
+}
+
+// safeOperationMessage is what the assistant is told about a failing ArgoCD
+// operation (B8).
+//
+// ArgoCD's operationState.message is free-form text written by ArgoCD, Helm,
+// the Kubernetes API server or a Git transport, and it routinely quotes the
+// repository ArgoCD was syncing from — with the access token inside it. The
+// assistant's context is a user-facing surface: whatever goes in comes back out
+// in an answer. So the message itself never travels; Sharko's own sentence does,
+// with the facts internal/credsafe will vouch for.
+func safeOperationMessage(app *models.ArgocdApplication) string {
+	if app == nil {
+		return ""
+	}
+	return credsafe.SafeOperationDetail(credsafe.ArgocdSyncFailureMessage, credsafe.OperationFacts{
+		Phase:        app.OperationPhase,
+		SyncStatus:   app.SyncStatus,
+		HealthStatus: app.HealthStatus,
+		RepoURL:      app.SourceRepoURL,
+	})
 }

@@ -42,7 +42,6 @@ package clusterreconciler
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -61,6 +60,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/lifecycleevents"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -81,6 +81,43 @@ import (
 // request-scoped sink a test can swap for a spy; a promauto counter has no
 // such need and is safe to touch directly in tests too (see
 // internal/metrics/metrics_test.go's own direct-call pattern).
+// Audit event names for this reconciler's cluster-Secret lifecycle.
+//
+// RULING (f), 2026-08-19: title, outcome and change result must never
+// contradict each other. Every event below in the past tense reports work
+// that actually happened; every *_failed event reports work that did not.
+// Before this, a create that threw wrote "Connection Secret created ·
+// failure" — a past-tense claim that no Secret existed to back up — and a
+// self-heal that wrote but did not converge wrote "Addon labels
+// self-healed · failure", where the title, the outcome and reality all
+// disagreed at once.
+//
+// The success names are UNCHANGED on purpose: internal/api's
+// connectionSecretRepairDetail keys off them to decide what counts as a
+// repair, and its doc comment already states the right rule — only
+// Result == "success" entries count. Renaming them would break that join
+// silently.
+//
+// THE VALUES MOVED, THE NAMES DID NOT. These ten used to spell out their own
+// wire values here. They are now the ones internal/lifecycleevents declares,
+// because the browser's activity feed renders these events by name and there
+// had to be one list a generator could read — see that package's doc comment
+// for what the two hand-typed browser copies cost. Every caller in this
+// package keeps referring to them by these names.
+const (
+	EventClusterSecretCreate          = lifecycleevents.ClusterSecretCreate
+	EventClusterSecretDelete          = lifecycleevents.ClusterSecretDelete
+	EventClusterSecretUserLabelSync   = lifecycleevents.ClusterSecretUserLabelSync
+	EventClusterSecretManagedSelfHeal = lifecycleevents.ClusterSecretManagedSelfHeal
+	EventClusterConnectionRepair      = lifecycleevents.ClusterConnectionRepair
+
+	EventClusterSecretCreateFailed          = lifecycleevents.ClusterSecretCreateFailed
+	EventClusterSecretDeleteFailed          = lifecycleevents.ClusterSecretDeleteFailed
+	EventClusterSecretUserLabelSyncFailed   = lifecycleevents.ClusterSecretUserLabelSyncFailed
+	EventClusterSecretManagedSelfHealFailed = lifecycleevents.ClusterSecretManagedSelfHealFailed
+	EventClusterConnectionRepairFailed      = lifecycleevents.ClusterConnectionRepairFailed
+)
+
 const engineClusterConnection = "cluster_connection"
 
 // syntheticTickID returns the canonical "recon-<unix_ts>" correlation ID
@@ -175,6 +212,20 @@ type ArgoClient = kubernetes.Interface
 // existing internal/demo.MockClusterCredentialsProvider (or a one-off mock).
 type Vault = providers.ClusterCredentialsProvider
 
+// vault resolves the currently-active cluster-credentials provider at USE
+// time — nil when no resolver is wired, or when the resolver says no backend
+// is configured right now. Every credential read in this package goes through
+// here; nothing may capture a provider value at construction time. That boot
+// snapshot is exactly how a backend configured through the connections API
+// stayed invisible to the background write and the repair until a restart,
+// while the check path already read the live snapshot (R2-1).
+func (r *Reconciler) vault() Vault {
+	if r.deps.Vault == nil {
+		return nil
+	}
+	return r.deps.Vault()
+}
+
 // Deps holds the reconciler's external dependencies. Constructor-injected so
 // tests can substitute fakes (k8s.io/client-go/kubernetes/fake, gitprovider
 // mocks, audit no-ops). Using a struct (rather than positional args) means
@@ -192,9 +243,17 @@ type Deps struct {
 	// nil-checked by pollOnce in Story 8.1. See ArgoClient interface above.
 	ArgoClient ArgoClient
 
-	// Vault provides per-cluster credentials at reconcile time. Required at
-	// Start time; nil-checked by pollOnce in Story 8.1. See Vault interface.
-	Vault Vault
+	// Vault is a lazy accessor returning the currently-active
+	// cluster-credentials provider, or nil when no backend is configured
+	// right now. Matches the GitProvider idiom above — the provider is
+	// resolved at USE time, never captured at construction, so a secrets
+	// backend configured or swapped through the connections API is seen by
+	// the very next background write and repair with no restart (R2-1; the
+	// old value field froze the boot generation while the check path read
+	// the live snapshot). A nil accessor and an accessor returning nil both
+	// mean "no backend": pollOnce skips the pass, and
+	// ConnectionCredentialSpecForWrite refuses instead of writing.
+	Vault func() Vault
 
 	// AuditFn is called to emit audit events for each reconcile action
 	// (create / update / delete of an ArgoCD cluster Secret). Must be
@@ -343,6 +402,16 @@ type Reconciler struct {
 	// read by every recordReconcile call made during it. See revision.go.
 	passMu       sync.RWMutex
 	passCompared currentPassRevisionState
+
+	// driftNoticeMu guards driftNotice. See connection_drift_notice.go (R3-5 —
+	// so a person learns a connection drifted without opening a page).
+	driftNoticeMu sync.Mutex
+	// driftNotice holds, per cluster, whether a drift notice has already gone
+	// out for the CURRENT episode, so a connection that stays broken for hours
+	// produces one event rather than one every 30 seconds. In memory only,
+	// same non-persisted stance as lastReconcile and fightState: a restart
+	// just means the next pass re-notices.
+	driftNotice map[string]connectionDriftState
 
 	// appliedRevMu guards appliedRevision — the commit the last SUCCESSFUL
 	// WRITE to each cluster's secret was built from (P2-C1's
@@ -562,7 +631,12 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		log.Warn("[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile")
 		return
 	}
-	if r.deps.Vault == nil {
+	// Resolved at pass time, not boot time: a backend configured through the
+	// connections API after startup is seen by the very next pass. This gate
+	// only decides whether the pass runs at all — every per-cluster write
+	// re-resolves inside ConnectionCredentialSpecForWrite, which refuses
+	// (fail closed) if the backend disappears mid-pass.
+	if r.vault() == nil {
 		log.Warn("[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile")
 		return
 	}
@@ -606,16 +680,15 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 				"path", rdErr.Path, "error", rdErr.Err,
 			)
 			r.audit(audit.Entry{
-				Level:             "error",
-				Event:             "cluster_secret_reconcile",
-				User:              "sharko",
-				Action:            "schema_validation",
-				Resource:          fmt.Sprintf("file:%s", rdErr.Path),
-				Source:            "reconciler",
-				Result:            "failure",
-				Error:             rdErr.Err.Error(),
-				CredentialFailure: credsafe.Is(rdErr.Err),
-				RequestID:         logging.RequestID(ctx),
+				Level:     "error",
+				Event:     "cluster_secret_reconcile",
+				User:      "sharko",
+				Action:    "schema_validation",
+				Resource:  fmt.Sprintf("file:%s", rdErr.Path),
+				Source:    "reconciler",
+				Result:    "failure",
+				Reason:    audit.ReasonInvalidData,
+				RequestID: logging.RequestID(ctx),
 			})
 			// M5a — see the git-read-failure branch below for the rationale.
 			r.stampAbortedTick("schema validation failed: " + rdErr.Err.Error())
@@ -624,16 +697,15 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 				"path", rdErr.Path, "branch", r.branch, "error", rdErr.Err,
 			)
 			r.audit(audit.Entry{
-				Level:             "error",
-				Event:             "cluster_secret_reconcile",
-				User:              "sharko",
-				Action:            "git_read",
-				Resource:          fmt.Sprintf("file:%s ref:%s", rdErr.Path, r.branch),
-				Source:            "reconciler",
-				Result:            "failure",
-				Error:             rdErr.Err.Error(),
-				CredentialFailure: credsafe.Is(rdErr.Err),
-				RequestID:         logging.RequestID(ctx),
+				Level:     "error",
+				Event:     "cluster_secret_reconcile",
+				User:      "sharko",
+				Action:    "git_read",
+				Resource:  fmt.Sprintf("file:%s ref:%s", rdErr.Path, r.branch),
+				Source:    "reconciler",
+				Result:    "failure",
+				Reason:    audit.Classify(rdErr.Err),
+				RequestID: logging.RequestID(ctx),
 			})
 			// M5a: this pass never reaches the per-cluster work below, so
 			// every cluster's last-known record would otherwise silently
@@ -864,16 +936,15 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			"namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_reconcile",
-			User:              "sharko",
-			Action:            "list_secrets",
-			Resource:          fmt.Sprintf("namespace:%s", r.namespace),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     "cluster_secret_reconcile",
+			User:      "sharko",
+			Action:    "list_secrets",
+			Resource:  fmt.Sprintf("namespace:%s", r.namespace),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
 		})
 		// P2-D: this abort was previously invisible to stats.Errors, which
 		// left emitSummaryAudit's level/result computation (and, now, this
@@ -937,6 +1008,13 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			continue
 		}
 		if secret := existing[name]; secret != nil {
+			// R3-5: notice a structurally broken or disowned connection while
+			// this pass already has the Secret in hand — no extra API call, no
+			// backend read. Reads only: it records the fact and emits at most
+			// one event per drift episode. The repair stays a separate action
+			// somebody asks for.
+			r.noticeConnectionShapeDrift(ctx, name, secret, false)
+
 			// v4 adds one extra question to "are we in sync?". labelsMatch
 			// is a SUBSET check, which is the right question for v3 (off is
 			// recorded as `<addon>: disabled`, a value change it catches)
@@ -1138,7 +1216,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				"path", v4ClusterFilePath(entry.Name), "branch", r.branch,
 			)
 			r.recordReconcile(entry.Name, OutcomeSkipped,
-				"Sharko couldn't read this cluster's addon assignment file in git this tick, so it left the addon labels on your ArgoCD cluster secret exactly as they are.", nil)
+				AssignmentFileUnreadableTickMessage, nil)
 			continue
 		}
 		r.syncSelfManaged(ctx, entry, v4.labelsFor(entry.Name), stats)
@@ -1378,16 +1456,16 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 			"cluster", entry.Name, "namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_user_label_sync",
-			User:              "sharko",
-			Action:            "sync_labels",
-			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     EventClusterSecretUserLabelSyncFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "sync_labels",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
 		})
 		// M1: this tick's write never landed, so the fight-check baseline
 		// recordFightCheck just advanced (above) is a lie — clear it so the
@@ -1425,7 +1503,8 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 		)
 		r.audit(audit.Entry{
 			Level:     "info",
-			Event:     "cluster_secret_user_label_sync",
+			Event:     EventClusterSecretUserLabelSync,
+			Changes:   audit.ChangesApplied,
 			User:      "sharko",
 			Action:    "sync_labels",
 			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
@@ -1485,16 +1564,15 @@ func (r *Reconciler) syncConnectivityCheckLabel(ctx context.Context, name string
 			"cluster", name, "namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_connectivity_check_sync",
-			User:              "sharko",
-			Action:            "sync_connectivity_check_label",
-			Resource:          fmt.Sprintf("cluster:%s", name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     "cluster_secret_connectivity_check_sync",
+			User:      "sharko",
+			Action:    "sync_connectivity_check_label",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(name, OutcomeFailed,
 			"Sharko couldn't converge the connectivity-check label on this cluster's ArgoCD secret: "+err.Error(), nil)
@@ -1580,19 +1658,19 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			"cluster", name, "namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_managed_self_heal",
-			User:              "sharko",
-			Action:            "self_heal",
-			Resource:          fmt.Sprintf("cluster:%s", name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     EventClusterSecretManagedSelfHealFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "self_heal",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(name, OutcomeFailed,
-			"Sharko couldn't converge git-desired addon labels on this drifted managed-cluster Secret: "+err.Error(), nil)
+			"Sharko couldn't converge Git-desired addon labels on this drifted managed-cluster Secret: "+err.Error(), nil)
 		return
 	}
 	if !res.Found {
@@ -1636,14 +1714,22 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 			"residual_drift", residual, "ownership_lost", ownershipLost,
 		)
 		r.audit(audit.Entry{
-			Level:     "error",
-			Event:     "cluster_secret_managed_self_heal",
-			User:      "sharko",
-			Action:    "self_heal",
-			Resource:  fmt.Sprintf("cluster:%s", name),
-			Source:    "reconciler",
-			Result:    "failure",
-			Error:     msg,
+			Level:    "error",
+			Event:    EventClusterSecretManagedSelfHealFailed,
+			Changes:  audit.ChangesApplied,
+			User:     "sharko",
+			Action:   "self_heal",
+			Resource: fmt.Sprintf("cluster:%s", name),
+			Source:   "reconciler",
+			Result:   "failure",
+			// The 18th Error writer, and the one that set no flag at all —
+			// so the old sanitizer left its text alone by construction. msg
+			// is Sharko's own words, but "it happens to be safe today" is
+			// exactly the reasoning this story removes. The category is
+			// structured now and the two-way distinction msg carried moves
+			// to Detail, which is a literal here and touches no error.
+			Reason:    audit.ReasonNotConverged,
+			Detail:    msg,
 			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(name, OutcomeFailed, msg, residual)
@@ -1657,7 +1743,8 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 		)
 		r.audit(audit.Entry{
 			Level:     "info",
-			Event:     "cluster_secret_managed_self_heal",
+			Event:     EventClusterSecretManagedSelfHeal,
+			Changes:   audit.ChangesApplied,
 			User:      "sharko",
 			Action:    "self_heal",
 			Resource:  fmt.Sprintf("cluster:%s", name),
@@ -1675,7 +1762,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 	}
 	// Verified converged: addon labels exactly match git AND (managed path)
 	// the ownership label survives. drift is genuinely nil.
-	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — git-desired addon labels converged", nil)
+	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — Git-desired addon labels converged", nil)
 }
 
 // applyV4AddonLabels stamps the addon labels derived from
@@ -1932,16 +2019,15 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 			"cluster", name, "namespace", r.namespace, "error", getErr,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_clear_pending",
-			User:              "sharko",
-			Action:            "clear_registration_pending",
-			Resource:          fmt.Sprintf("cluster:%s", name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             getErr.Error(),
-			CredentialFailure: credsafe.Is(getErr),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     "cluster_secret_clear_pending",
+			User:      "sharko",
+			Action:    "clear_registration_pending",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(getErr),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -1988,16 +2074,15 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 			"cluster", name, "namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_clear_pending",
-			User:              "sharko",
-			Action:            "clear_registration_pending",
-			Resource:          fmt.Sprintf("cluster:%s", name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     "cluster_secret_clear_pending",
+			User:      "sharko",
+			Action:    "clear_registration_pending",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -2057,22 +2142,43 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_create",
-			User:              "sharko",
-			Action:            "get_secret",
-			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             getErr.Error(),
-			CredentialFailure: credsafe.Is(getErr),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     EventClusterSecretCreateFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "get_secret",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(getErr),
+			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't check whether an ArgoCD cluster secret already exists for this cluster: "+getErr.Error(), nil)
 		return
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
+		// R3-10: Notice if this connection lost its ownership label. The Get
+		// already happened, the Secret is in hand, and this is about to refuse
+		// — no extra cost, no backend read. The notice does not change whether
+		// the write is refused; this adds awareness, it does not add a repair.
+		//
+		// R3-10 criterion 4: distinguish genuinely-foreign Secrets (another tool
+		// stamped managed-by) from Sharko Secrets that lost the label (no managed-by
+		// or empty). Only notice the latter — reporting another tool's correct Secret
+		// as Sharko's fault would be wrong.
+		managedByValue := existing.Labels[argosecrets.LabelManagedBy]
+		if managedByValue != "" && managedByValue != argosecrets.ManagedByValue {
+			// Another tool owns this — genuinely foreign, not Sharko's drift.
+			// Skip the notice; the Adopt-territory refusal below is correct.
+		} else {
+			// No managed-by label, or managed-by is empty/corrupted. This is a Secret
+			// that SHOULD be Sharko's (it's in managed-clusters.yaml) but lacks the
+			// label. Pass selfManaged=false because this is NOT a deliberately-unlabeled
+			// guest connection — it's a Sharko connection in trouble.
+			r.noticeConnectionShapeDrift(ctx, entry.Name, existing, false)
+		}
+
 		// Adopt territory — do not touch.
 		stats.SkippedUnlabeled++
 		log.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (Adopt territory)",
@@ -2094,14 +2200,15 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		return
 	}
 
-	// Resolve credentials. SecretPath overrides Name for the vault lookup
-	// (shared resolver — V2-cleanup-55.1).
+	// Resolve credentials, through the ONE route a write takes — the same
+	// function an asked-for repair calls (repair_credentials.go). It forwards the
+	// entry's per-cluster roleArn so EKS token minting for a cross-account
+	// cluster assumes the cluster's own role, applies the per-cluster role
+	// precedence, and returns the whole credential half of the spec so both
+	// writers hand buildSecretConfig the same evidence and get the same
+	// connection shape.
 	credKey := entry.CredentialLookupKey()
-	// Forward the entry's per-cluster roleArn (V2-cleanup-62.2) so EKS token
-	// minting for a cross-account cluster assumes the cluster's own role.
-	// Empty roleArn — and any backend without the role capability — is
-	// byte-identical to a plain GetCredentials call.
-	creds, vaultErr := providers.GetCredentialsWithOptionalRole(r.deps.Vault, credKey, entry.RoleARN)
+	credSpec, vaultErr := r.ConnectionCredentialSpecForWrite(entry)
 	if vaultErr != nil {
 		stats.Errors++
 		// The credentials error's own value is not logged. A credentials
@@ -2114,21 +2221,20 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		)
 		r.audit(audit.Entry{
 			Level:    "error",
-			Event:    "cluster_secret_create",
+			Event:    EventClusterSecretCreateFailed,
+			Changes:  audit.ChangesNone,
 			User:     "sharko",
 			Action:   "get_credentials",
 			Resource: fmt.Sprintf("cluster:%s", entry.Name),
 			Source:   "reconciler",
 			Result:   "failure",
-			// Error carries Sharko's own sentence, and the flag carries the
-			// DECISION — credsafe.Is runs HERE, where vaultErr is still a live
-			// typed error, and audit.Add gets the answer rather than the error.
-			// Passing the sentence here as well as the flag means the entry is
-			// safe even if the flag is ever wrong. Detail is deliberately not
-			// set: one answer, one field.
-			Error:             credsafe.Message,
-			CredentialFailure: credsafe.Is(vaultErr),
-			RequestID:         logging.RequestID(ctx),
+			// The CATEGORY travels, and nothing else. Classify runs HERE,
+			// where vaultErr is still a live typed error, and audit.Add turns
+			// the answer into the fixed safe sentence. Detail is deliberately
+			// not set: one answer, one field — and for a credentials reason
+			// the sink drops Detail anyway.
+			Reason:    audit.Classify(vaultErr),
+			RequestID: logging.RequestID(ctx),
 		})
 		// The reconcile record's message is read by the API (it becomes
 		// LastReconcile.Message and the managed-secrets rows), so it gets
@@ -2167,39 +2273,12 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// server setting (V2-cleanup-85.4) — either signal disabling the check
 	// wins.
 	models.ApplyConnectivityCheckLabel(clusterLabels, !r.effectiveDisableConnectivityCheck(ctx))
-	// Per-cluster roleArn from the entry wins over the connection-level
-	// default (V2-cleanup-62.2) — the same identity ArgoCD's argocd-k8s-auth
-	// exec shape must assume for a cross-account cluster. Matches the
-	// DefaultRoleARN doc: "for clusters whose entry does NOT specify one".
-	specRoleARN := entry.RoleARN
-	if specRoleARN == "" {
-		specRoleARN = r.deps.DefaultRoleARN
-	}
-	spec := argosecrets.ClusterSecretSpec{
-		Name:    entry.Name,
-		Server:  creds.Server,
-		Region:  entry.Region,
-		RoleARN: specRoleARN,
-		// Carry ALL the credential material through so buildSecretConfig can
-		// pick the right shape (precedence: cert pair > token > exec,
-		// V2-cleanup-56.1):
-		//   - CertData+KeyData set (client-certificate kubeconfig — kind /
-		//     kubeadm / on-prem): plain-TLS shape. Without this the spec fell
-		//     into the exec branch and ArgoCD ran argocd-k8s-auth against a
-		//     non-AWS cluster — connection Failed forever.
-		//   - Token set (bearer-token kubeconfig): bearerToken shape. Without
-		//     this the exec branch would clobber the good bearer-token Secret
-		//     written at registration.
-		//   - Neither (EKS / IAM clusters): exec shape (RoleARN/Region
-		//     preserved).
-		Token: creds.Token,
-		// EncodeToString(nil) == "" so clusters without a cert pair leave
-		// these fields empty and never take the cert branch.
-		CertData: base64.StdEncoding.EncodeToString(creds.CertData),
-		KeyData:  base64.StdEncoding.EncodeToString(creds.KeyData),
-		CAData:   base64.StdEncoding.EncodeToString(creds.CAData),
-		Labels:   clusterLabels,
-	}
+	// The credential half — server, region, role and every piece of credential
+	// material — came from ConnectionCredentialSpecForWrite above, so the
+	// precedence buildSecretConfig applies (cert pair > token > exec) sees the
+	// same evidence here as it does on a repair. The labels are this pass's own.
+	spec := credSpec
+	spec.Labels = clusterLabels
 
 	// The canonical builder in internal/argosecrets is the ONE place a full
 	// connection Secret is assembled from a spec — the same function
@@ -2225,16 +2304,16 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			"cluster", entry.Name, "error", buildErr,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_create",
-			User:              "sharko",
-			Action:            "build_payload",
-			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             buildErr.Error(),
-			CredentialFailure: credsafe.Is(buildErr),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     EventClusterSecretCreateFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "build_payload",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(buildErr),
+			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't build the ArgoCD cluster secret for this cluster: "+buildErr.Error(), nil)
@@ -2265,16 +2344,16 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			"cluster", entry.Name, "namespace", r.namespace, "error", createErr,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_create",
-			User:              "sharko",
-			Action:            "create",
-			Resource:          fmt.Sprintf("cluster:%s", entry.Name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             createErr.Error(),
-			CredentialFailure: credsafe.Is(createErr),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     EventClusterSecretCreateFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "create",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(createErr),
+			RequestID: logging.RequestID(ctx),
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't create the ArgoCD cluster secret for this cluster: "+createErr.Error(), nil)
@@ -2284,11 +2363,12 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	stats.Created++
 	recordWrite("created")
 	log.Info("[clusterreconciler] cluster Secret created",
-		"cluster", entry.Name, "namespace", r.namespace, "server", creds.Server,
+		"cluster", entry.Name, "namespace", r.namespace, "server", credSpec.Server,
 	)
 	r.audit(audit.Entry{
 		Level:     "info",
-		Event:     "cluster_secret_create",
+		Event:     EventClusterSecretCreate,
+		Changes:   audit.ChangesApplied,
 		User:      "sharko",
 		Action:    "create",
 		Resource:  fmt.Sprintf("cluster:%s", entry.Name),
@@ -2336,16 +2416,16 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 			"cluster", name, "namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:             "error",
-			Event:             "cluster_secret_delete",
-			User:              "sharko",
-			Action:            "delete",
-			Resource:          fmt.Sprintf("cluster:%s", name),
-			Source:            "reconciler",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			RequestID:         logging.RequestID(ctx),
+			Level:     "error",
+			Event:     EventClusterSecretDeleteFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "delete",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
 		})
 		// L10: without this, an orphan Sharko repeatedly fails to delete
 		// would silently keep whatever stale record it had (or none at
@@ -2365,7 +2445,8 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 	)
 	r.audit(audit.Entry{
 		Level:     "info",
-		Event:     "cluster_secret_delete",
+		Event:     EventClusterSecretDelete,
+		Changes:   audit.ChangesApplied,
 		User:      "sharko",
 		Action:    "delete",
 		Resource:  fmt.Sprintf("cluster:%s", name),

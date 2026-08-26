@@ -37,7 +37,7 @@ These event Reasons are actively emitted by the running server.
 | **Remote Cluster Connection Failures** | | | |
 | `ClusterTestFailed` | Warning | Stage1 connectivity test failed | Cluster test operation (`/api/v1/clusters/{name}/test`) when Stage1 connectivity check fails |
 | **Git / PR Failures** | | | |
-| `PROpenFailed` | Warning | Failed to open PR via git provider | Cluster or addon configuration changes where PR open operation failed |
+| `PROpenFailed` | Warning | Failed to open PR via Git provider | Cluster or addon configuration changes where PR open operation failed |
 
 ### Defined But Not Yet Emitted
 

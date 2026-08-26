@@ -2,7 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The Warn log
+> **Verified:** Updated 2026-08-25 (second pass): the example log lines
+> now show what the log pipeline actually writes into the `err` field —
+> a fixed type-derived label, never the schema complaint's own words —
+> verified on that date by rendering real schema failures through the
+> production log handler (`logging.NewHandler`) and by reproducing the
+> complaint locally with `sharko validate-catalog`. Earlier the same
+> day: the `source` log field and the API `url` field are always the
+> fixed word `redacted` (BF14 revision 2); log-line and API shapes
+> verified against the test suite.
+> Originally authored 2026-06-01 against `main` HEAD. The Warn log
 > line `"catalog source schema validation failed"` is verified against
 > `internal/catalog/sources/fetcher.go:708`, where it surfaces when the
 > downstream `catalog.LoadBytesWithSource` /
@@ -44,24 +53,35 @@ What an operator sees when this fires:
   (`internal/catalog/sources/fetcher.go:708`):
 
   ```
-  {"time":"...","level":"WARN","msg":"catalog source schema validation failed","source_fp":"<8-char-fingerprint>","err":"schema validation: catalog: entry #3 (name=\"datadog\"): category \"telemetry\" is not in allowed set"}
+  {"time":"...","level":"WARN","msg":"catalog source schema validation failed","source":"redacted","err":"unclassified chain=*errors.errorString"}
   ```
 
-  Or for required-field misses:
+  Or, when the body would not even unmarshal into the expected shapes:
 
   ```
-  {"time":"...","level":"WARN","msg":"catalog source schema validation failed","source_fp":"<fp>","err":"schema validation: catalog: entry #1 (name=\"\"): name is required"}
+  {"time":"...","level":"WARN","msg":"catalog source schema validation failed","source":"redacted","err":"unclassified chain=*yaml.TypeError"}
   ```
 
-  Or for empty payloads / missing `addons:` root:
+  The `source` field is always the single word `redacted` — the
+  configured address is never written to a log in any form, and
+  nothing about it is worked into the word: a private catalog is
+  addressed by writing a token into the address's own path, and this
+  log has no login in front of it. Work out which source the line is
+  about through the API instead (Diagnosis step 1).
 
-  ```
-  {"time":"...","level":"WARN","msg":"catalog source schema validation failed","source_fp":"<fp>","err":"schema validation: catalog: no entries found under 'addons:'"}
-  ```
-
-  The `source_fp` is a stable 8-character fingerprint of the source
-  URL. Operators correlate the fingerprint with the configured
-  `SHARKO_CATALOG_URLS` list (Diagnosis step 1).
+  The `err` field does NOT carry the schema complaint's own words.
+  The log pipeline replaces every error value's words with a fixed
+  label built from the error's Go types, because an error's words are
+  whatever an upstream library put in them and can quote an address.
+  The schema complaint itself — "category X is not in the allowed
+  set", "name is required", and so on — is derived from the fetched
+  YAML, not from the address, but today it surfaces **nowhere an
+  operator can reach**: not in the log (rewritten as above) and not
+  in the API (the sources endpoint has no error field). To read the
+  actual complaint, fetch the body yourself and run the same
+  validation locally — Diagnosis step 2 shows how, and
+  `sharko validate-catalog` prints the exact complaint the fetcher
+  hit, because it runs the same loader rules.
 
 - **The fetcher status report flips the source to `failed`**:
 
@@ -74,7 +94,8 @@ What an operator sees when this fires:
 
   ```json
   [
-    {"url":"https://example.com/catalog.yaml","status":"failed","last_error":"schema validation: ..."}
+    {"url":"embedded","status":"ok","last_fetched":null,"entry_count":142,"verified":true},
+    {"url":"redacted","status":"failed","last_fetched":null,"entry_count":0,"verified":false}
   ]
   ```
 
@@ -108,40 +129,50 @@ failing one; the second pulls the body for direct inspection; the
 third confirms whether the failure is local-config drift or
 upstream-author error.
 
-### 1. Map the `source_fp` to the configured URL
+### 1. Work out which configured source the line is about
 
-The fingerprint in the log line is a stable 8-character hash of the
-source URL. Get the configured URL list and the per-source status:
+The WARN line never names an address — `source` is always `redacted`.
+Get the per-source status list, which is behind a login:
 
 ```sh
 curl -sS http://sharko/api/v1/catalog/sources \
   -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.[] | {url, source_fp, status, last_error}'
+  | jq '.[] | {url, status, last_fetched, entry_count}'
 ```
 
-The output pairs each source URL with its fingerprint and status. The
-failing source has `status: "failed"` and `last_error` containing the
-schema error message.
+Every third-party row's `url` also reads `redacted`; the failing one
+has `status: "failed"`. The rows follow your configured
+`SHARKO_CATALOG_URLS` addresses sorted alphabetically, so match the
+failing row's position, entry count and last-fetched time against the
+addresses you configured — you hold that list; Sharko will not repeat
+it.
 
 ### 2. Pull the source body and validate locally
 
-Once you have the failing URL, fetch it directly (use the same
+Once you have worked out which configured address the failing row is
+(from your own `SHARKO_CATALOG_URLS` value), fetch it directly (use the same
 Authorization header pattern your source requires; most public
 catalogs are anonymous):
 
 ```sh
-FAILING_URL=<url-from-step-1>
+FAILING_URL=<the address you configured, matched in step 1>
 curl -sS "$FAILING_URL" > /tmp/failing-catalog.yaml
 head -50 /tmp/failing-catalog.yaml
 ```
 
 Then validate against the embedded schema using the Sharko CLI's
 catalog validator (if shipped — falls back to manual schema-diff if
-the CLI subcommand isn't present in your installed version):
+the CLI subcommand isn't present in your installed version). This is
+the step that shows you the actual schema complaint: the validator
+runs the same loader rules as the fetcher and prints the exact error
+— for example `entry #1 (name="datadog"): category "telemetry" is
+not in the allowed set`:
 
 ```sh
-# CLI path (preferred when available):
-sharko validate-config /tmp/failing-catalog.yaml
+# CLI path (preferred when available). Note: validate-CATALOG, not
+# validate-config — validate-config is for enveloped Sharko config
+# files and silently skips a bare `addons:` catalog file.
+sharko validate-catalog /tmp/failing-catalog.yaml
 
 # Manual path (for older versions):
 # Check for: required fields (name, description, chart, repo,
@@ -178,13 +209,15 @@ kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.status.conditions[?(@.type=="Progressing")].lastTransitionTime}'
 
 # Source-status history (when did this source last succeed?):
+# last_fetched is the time of the most recent SUCCESSFUL fetch, or
+# null when the source has never succeeded since process start.
 curl -sS http://sharko/api/v1/catalog/sources \
   -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.[] | {url, last_success_at, last_fetch_at}'
+  | jq '.[] | {url, status, last_fetched, entry_count}'
 ```
 
-If `last_success_at` predates the most recent Sharko upgrade and the
-upstream source has NOT changed (verify via the source's git log or
+If `last_fetched` predates the most recent Sharko upgrade and the
+upstream source has NOT changed (verify via the source's Git log or
 release notes), the failure is Sharko-side schema drift. Mitigation
 step 4 covers the rollback / Helm pin path.
 
@@ -197,9 +230,12 @@ step 4 covers the rollback / Helm pin path.
    doesn't conform to the schema. Schema validation failures are
    per-fetch; the next successful fetch self-heals the status.
 
-   Send the source author the specific error from
-   `last_error` so they don't have to reproduce. The fetcher status
-   API returns the full error in a single field.
+   Send the source author the specific complaint so they don't have
+   to reproduce it. Sharko does not surface the complaint anywhere —
+   not in the log (the `err` field is rewritten to a type label) and
+   not in the sources API (it has no error field) — so get it by
+   running the validator yourself on the fetched body (Diagnosis
+   step 2): `sharko validate-catalog` prints the exact error.
 
    While waiting: the marketplace continues to surface the previous
    snapshot's entries from this source (per
@@ -300,8 +336,9 @@ file because the loader fails on the first invalid entry rather than
 skipping it (intentional — schema-violating entries are unsafe to
 surface as curated content).
 
-Diagnostic signature: `last_error` contains `"category \"X\" is not
-in allowed set"` or `"curated_by \"Y\" is not in allowed set"`.
+Diagnostic signature: running `sharko validate-catalog` on the
+fetched body (Diagnosis step 2) prints `category "X" is not in the
+allowed set` or `curated_by "Y" is not in the allowed set`.
 
 Fix is Mitigation step 1 (upstream fix) or step 3 (drop the source).
 
@@ -312,9 +349,9 @@ that returns `text/html` (404 page, GitHub directory listing, NGINX
 welcome page) parses as YAML to a non-`addons:` document, producing
 the `"no entries found under 'addons:'"` error.
 
-Diagnostic signature: `last_error` contains `"no entries found"` AND
-`curl` on the URL returns `text/html` / `text/plain` with non-YAML
-content.
+Diagnostic signature: running `sharko validate-catalog` on the
+fetched body prints a "no entries" / parse complaint AND `curl` on
+the URL returns `text/html` / `text/plain` with non-YAML content.
 
 Fix is Mitigation step 2 — correct the URL.
 
@@ -349,15 +386,16 @@ Fix: no action — the fetcher self-recovers.
 
 ## Prevention
 
-- **Monitoring — per-source status duration alert.** A V2-3.x
-  follow-up metric `sharko_catalog_source_failed_seconds{source_fp}`
-  would alert when a source has been in `failed` state for >24h
-  (signaling the source author hasn't pushed a fix and you need to
-  notify them). Today, monitoring is via the
-  `/api/v1/catalog/sources` poll loop.
+- **Monitoring — per-source status duration alert.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch:
+  `sharko_catalog_source_failed_seconds{url}`, alerting when a
+  source has been in `failed` state for more than 24h — meaning the
+  source author hasn't pushed a fix and you need to notify them. Today,
+  monitoring is via the `/api/v1/catalog/sources` poll loop.
 
 - **Gating — source author CI catches schema violations upstream.**
-  The standard pattern is: source authors run `sharko validate-config
+  The standard pattern is: source authors run `sharko validate-catalog
   catalog.yaml` in their own CI before publishing. The validator
   catches the same schema errors the fetcher would, before the
   release lands. Publish the validator-as-a-container image so source
@@ -415,7 +453,8 @@ indicates Sharko-side schema drift, email the maintainer:
 `moran.weissman@gmail.com`. Include:
 
 - This runbook URL
-- The list of failing source URLs and their `last_error` values
+- The list of failing source URLs and, for each, the output of
+  `sharko validate-catalog` run on its fetched body (Diagnosis step 2)
 - The Sharko version and the previous version (if a rollback was
   attempted)
 - Whether each source has shipped a release in the last 30 days

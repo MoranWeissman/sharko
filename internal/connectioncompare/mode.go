@@ -41,15 +41,21 @@ const (
 
 	// ModeEKSToken — structured EKS metadata in the secrets backend
 	// (credsSource eks-token), same conditions. The metadata is re-readable,
-	// but the sign-in token is minted fresh on every fetch, so the credential
-	// blob itself can never be compared. Scope is limited for that one
-	// reason; a repair is still offered, because rewriting the connection from
-	// the backend is exactly the fix.
+	// but it is metadata: the configured credentials source stores what is
+	// needed to CREATE a sign-in token, not a token. So there is no credential
+	// on the expected side and nothing to compare the live blob against, and
+	// the scope is limited for that one reason. A repair is still offered,
+	// because rewriting the connection from the backend is exactly the fix —
+	// and a WRITE does create a token, once, at the moment it writes.
+	//
+	// A check creates nothing. The read-only path goes through
+	// providers.StoredConnectionFacts, which stops at the stored payload and
+	// never reaches the token mint.
 	//
 	// The name says token and not exec on purpose. The writer for this source
-	// supplies a minted bearer token, so BuildClusterSecret emits the
-	// bearerToken shape — not an execProviderConfig. Calling this mode "exec"
-	// would describe a shape Sharko does not write here.
+	// supplies a bearer token it creates at write time, so BuildClusterSecret
+	// emits the bearerToken shape — not an execProviderConfig. Calling this
+	// mode "exec" would describe a shape Sharko does not write here.
 	ModeEKSToken Mode = "eks_token"
 
 	// ModeInlineKubeconfig — the cluster was registered with a pasted
@@ -121,17 +127,219 @@ const (
 
 	// LimitReasonSourceNotUnderstood — the record has a credential source and
 	// this version of Sharko does not know what it means.
-	LimitReasonSourceNotUnderstood = "Sharko does not recognise what this cluster's record says about where its credentials are kept, so it will not assume anything. It checks the labels and the plain connection facts only. Check the cluster's entry in git, or update Sharko if the entry was written by a newer version."
+	LimitReasonSourceNotUnderstood = "Sharko does not recognise what this cluster's record says about where its credentials are kept, so it will not assume anything. It checks the labels and the plain connection facts only. Check the cluster's entry in Git, or update Sharko if the entry was written by a newer version."
 
-	// LimitReasonEKSTokenChangesEveryTime is the EKS answer, and it is exact
+	// LimitReasonEKSNoStoredCredential is the EKS answer, and it is exact
 	// wording the product owner signed off character for character. It names
 	// what WAS checked instead of claiming "everything else" — the old sentence
 	// said everything else was checked, which was not true, because a
 	// deliberately empty annotation set and the guest-scope rules mean "the
-	// rest" is a specific list and not all of it. It is pinned by
-	// TestClassify_EKSTokenLimitReasonIsExact so nobody paraphrases it later.
-	LimitReasonEKSTokenChangesEveryTime = "Sharko checked the Secret identity, type, server, and owned labels. It did not compare `data.config`, because the EKS sign-in token changes every time it is created."
+	// rest" is a specific list and not all of it.
+	//
+	// The reason half used to say the sign-in token changes every time it is
+	// created. That reading suggested the check creates a token, which it does
+	// not: the read-only path stops at the stored payload and creates nothing.
+	// The real limit is that there is no stored credential to compare against at
+	// all, and that is what the sentence says now (product owner's wording,
+	// 2026-08-13). It is pinned by TestClassify_EKSTokenLimitReasonIsExact so
+	// nobody paraphrases it later.
+	LimitReasonEKSNoStoredCredential = "Sharko checked the Secret identity, type, server, and owned labels. The backend stores EKS cluster details, not a reusable sign-in credential. Sharko therefore has no stored credential to compare with `data.config`."
 )
+
+// The five sentences for "there is no connection Secret", one per situation.
+//
+// THERE USED TO BE ONE, AND IT PROMISED SOMETHING SHARKO CANNOT DO. Compare
+// answered every missing Secret with "This cluster has no connection Secret
+// yet. The reconciler will create it on its next pass." — unconditionally,
+// whatever mode the connection was in. That is true for a cluster whose
+// credentials live in a backend Sharko can read. It is FALSE for a
+// self-managed connection, where the person maintains the Secret and Sharko
+// deliberately never creates it; false for a legacy pasted-credential
+// connection, whose credential existed only inside the Secret that is now
+// gone; and false for a connection whose credentials source Sharko cannot
+// read, where the create attempt cannot get off the ground. The reconciliation endpoint
+// overrode the sentence per mode, so the connection page read correctly —
+// but the older comparison endpoint shipped the raw sentence, and a person
+// reading it waited for a Secret that was never coming.
+//
+// SecretMissingReason below is the one answer both endpoints now use, so
+// they cannot tell different stories about the same connection. Each
+// sentence is pinned by exact text in
+// TestCompare_MissingSecretSentenceIsModeAware.
+const (
+	// LimitReasonSecretMissingDurable is the ONLY one that promises creation,
+	// and it is only ever produced for a mode whose credentials really can be
+	// rebuilt from the configured source.
+	//
+	// The second half matches the plan sentences on the connection page word
+	// for word in SHAPE — "Sharko automatically <does the thing>." On a
+	// missing Secret the page carries this sentence as sync.reason AND the
+	// plan sentence right beside it, so the two have to read like one voice.
+	// That shape is the product owner's correction of 2026-08-20: the earlier
+	// wording ended with a conversational tail about nobody having to ask,
+	// which was rejected and is now retired in the banned-wording sweep. It
+	// names no machinery and promises no clock (product ruling, 2026-08-19:
+	// information text speaks in the user's terms, and the interval is
+	// operator-settable so any "within N minutes" would be a lie somewhere).
+	// Pinned character for character by
+	// TestCompare_MissingSecretSentenceIsModeAware and by
+	// TestConnectionReconciliation_NewSentencesExact on the API side.
+	LimitReasonSecretMissingDurable = "This cluster has no connection Secret right now. Sharko automatically creates it from Git and the configured credentials source."
+
+	// LimitReasonSecretMissingSelfManaged — the person maintains this
+	// connection. Sharko does not create it, and says so.
+	LimitReasonSecretMissingSelfManaged = "You maintain this cluster's connection Secret yourself and it has not been created yet. Sharko does not create it."
+
+	// LimitReasonSecretMissingLegacyInline — the credential existed only
+	// inside the Secret that is gone, so there is nothing to rebuild from.
+	LimitReasonSecretMissingLegacyInline = "This cluster's connection Secret is gone, and its credential existed only in that Secret — Sharko cannot restore it from Git. Store a fresh credential in a supported credentials provider and move the cluster onto it."
+
+	// LimitReasonSecretMissingUnknownSource — the cluster's record does not
+	// name a credentials source Sharko understands.
+	//
+	// THIS SENTENCE USED TO REFUSE, AND THE REFUSAL WAS NOT TRUE (B3a). It
+	// said Sharko had no credentials source it understands for this cluster
+	// and would therefore build nothing. Sharko's create path never looks at
+	// the recorded source at all: the periodic pass partitions on
+	// connectionManagedBy alone (internal/clusterreconciler/reconciler.go,
+	// reconcileDiff), and createOne resolves credentials through
+	// ConnectionCredentialSpecForWrite, which uses the cluster's lookup key
+	// and its role and nothing else (internal/clusterreconciler/
+	// repair_credentials.go). The identifier CredsSource does not appear in a
+	// single production file in that package. So a cluster whose record has
+	// no source — which is EVERY cluster registered before the field existed,
+	// on every install upgraded from an older Sharko — was told Sharko would
+	// stand still, while Sharko was in fact about to build the connection out
+	// of whatever the credentials backend holds under that cluster's key.
+	//
+	// The honest answer is neither a promise nor a refusal: Sharko does try,
+	// and the try may find nothing, and what the person can do about it is
+	// record a source. The retired refusal is in the tree-wide banned-wording
+	// sweep so it cannot come back.
+	LimitReasonSecretMissingUnknownSource = "This cluster has no connection Secret right now. Sharko still tries to build it from Git and the credentials backend, but this cluster's record does not name a credentials source Sharko understands, so the attempt may not find any credentials to use. Record a supported credentials source for this cluster."
+
+	// LimitReasonSecretMissingBackendUnreadable — the record names a
+	// credentials source Sharko understands, but Sharko cannot read that
+	// backend at the moment, so the reconciler pass that would create the
+	// Secret cannot happen either. Telling this person to wait for the next
+	// pass would send them away to wait for something that never comes.
+	LimitReasonSecretMissingBackendUnreadable = "This cluster has no connection Secret right now. Its credentials are kept in a secrets backend, and Sharko cannot read that backend at the moment, so it cannot create the Secret. Fix the secrets backend connection first, then check again."
+)
+
+// The five scope-limit sentences Classify itself produces.
+//
+// THEY USED TO BE TYPED INLINE, inside the Policy literals in Classify. That
+// put five shipped, user-facing sentences somewhere no catalog and no guard
+// could see them: the message catalog collects CONSTANTS, so a sentence that
+// is not a constant is silently outside it, and the catalog would have looked
+// complete while missing five of the sentences a person actually reads. Two of
+// them were already hand-copied into test fixtures, and one into a browser
+// test — the exact drift this whole contract exists to make impossible.
+//
+// The values are byte-for-byte what Classify returned before. Nothing about
+// the classification changed; only where the words live. (One constant has
+// since been removed outright — see the note directly below.)
+//
+// A FOREIGN-OWNED CONNECTION HAS NO LIMIT SENTENCE, and that is deliberate.
+// There used to be one here. It said another tool owns the connection and told
+// the reader to take it over first — and every surface that shows a
+// foreign-owned connection already says both of those things, once each, in
+// the place that belongs to them: the management-mode statement states the
+// boundary, and plan.action offers the take-over. A third sentence added no
+// new fact and no new decision, so it is gone rather than reworded.
+//
+// It also had to go for a second reason. Compare threw this sentence away and
+// substituted a hand-written literal of its own, which happened to be
+// byte-identical to the mode statement — and that accidental equality was the
+// only thing making the page de-duplicate correctly. Presentation structure
+// must follow typed facts, never equality between human sentences, so both
+// literals were removed instead of being kept in step by hand. The typed facts
+// (Mode, Scope and the take-over action) carry the whole answer now.
+const (
+	// LimitReasonSelfManaged — the record says a person maintains this
+	// connection.
+	LimitReasonSelfManaged = "You maintain this cluster's ArgoCD connection yourself, so Sharko only checks the addon labels on it and never its connection details."
+
+	// LimitReasonAdopted — the live Secret was already there and Sharko came
+	// in as a guest.
+	LimitReasonAdopted = "Sharko adopted this cluster's existing ArgoCD connection rather than creating it, so Sharko only checks the addon labels on it and never its connection details."
+
+	// LimitReasonInlineKubeconfig — the pasted credential is only in the live
+	// Secret, so there is no independent copy to compare against.
+	LimitReasonInlineKubeconfig = "This cluster was registered with a pasted kubeconfig, and those credentials are only stored in the connection itself. Sharko has no second copy to check the connection details against, so it checks the labels and the plain connection facts only."
+
+	// LimitReasonBackendUnreadable — the source is one Sharko understands, but
+	// the backend cannot be read right now. Distinct from
+	// LimitReasonSecretMissingBackendUnreadable, which answers the different
+	// question "why is there no Secret".
+	LimitReasonBackendUnreadable = "This cluster's credentials are kept in a secrets backend, but Sharko cannot read them from there right now, so it cannot check the connection details against them."
+)
+
+// SecretMissingReason is the honest sentence for a connection whose live
+// Secret does not exist.
+//
+// IT TAKES THE WHOLE POLICY, NOT THE MODE, AND THAT MATTERS. An earlier
+// version keyed on the mode alone and argued that was safe because "Classify
+// only reaches ModeBackendStoredCredentials or ModeEKSToken through the
+// supportedCredsSources allowlist". The allowlist is necessary and it is NOT
+// sufficient: Classify returns those same two modes from a second place, the
+// !BackendCanProvideStoredFacts branch, which means Sharko cannot read the
+// credentials source right now. One connection then carried two sentences that
+// contradicted each other at the same moment — a limit reason saying Sharko
+// cannot read the credentials, and a missing-Secret sentence promising it
+// would build the Secret from them the next time the cluster reconciler runs.
+// A cluster whose provider is unconfigured or unreachable was told to wait for
+// a pass that cannot run, and the page never named the thing to fix.
+//
+// So the promise is gated on RepairScopeFullConnection, which is the policy's
+// own statement that Sharko may rewrite this whole connection from the backend
+// plus git. Classify produces it on exactly the two paths where the backend
+// really can be read; the unreadable-backend branch drops to
+// RepairScopeAddonLabelsOnly, and every other mode never had it. A promise is
+// opt-in, and it is now opt-in on the capability rather than on the label.
+//
+// Taking Policy rather than two arguments is deliberate: Classify is the only
+// thing that builds a Policy, so a caller cannot pair a mode with a
+// capability those two never actually came with.
+// TestClassifyThenSecretMissingReason_ComposedOverRealInputs drives the join
+// itself, which is where this defect lived.
+//
+// # Only one mode is a real refusal, and ModeAdopted was never it (B3b)
+//
+// ModeAdopted used to share the self-managed answer, which tells the reader
+// "Sharko does not create it". Adopted and self-managed do look alike while a
+// Secret exists — Sharko is a guest on both, and touches only the addon labels
+// — but they part company the moment the Secret is gone. Self-managed is
+// recorded in Git as connectionManagedBy: user, and that recorded value is the
+// ONE thing the create path partitions on, so Sharko really does stand still
+// (internal/clusterreconciler/reconciler.go, reconcileDiff). Adopted is not
+// recorded in Git at all: it is an annotation on the live Secret. With the
+// Secret gone the annotation is gone with it, so the cluster is an ordinary
+// Sharko-managed entry that lands in the create set like any other.
+//
+// Classify cannot in fact hand this function ModeAdopted or ModeForeignOwned,
+// because both of those need in.LiveSecretFound and this function is only ever
+// asked about a connection that has no live Secret. That made the mapping
+// unreachable rather than shipped — but it was a live trap: it read as the
+// intended answer, a test pinned it as correct, and one edit to Classify would
+// have shipped it. The pairing is gone, and
+// TestSecretMissingReason_JoinIsExhaustiveBothWays holds both halves: which
+// modes actually arrive here, and that the two live-Secret-only modes fall to
+// the sentence below, which neither promises creation nor refuses it.
+func SecretMissingReason(p Policy) string {
+	switch p.Mode {
+	case ModeSelfManaged:
+		return LimitReasonSecretMissingSelfManaged
+	case ModeInlineKubeconfig:
+		return LimitReasonSecretMissingLegacyInline
+	case ModeBackendStoredCredentials, ModeEKSToken:
+		if p.RepairScope == RepairScopeFullConnection {
+			return LimitReasonSecretMissingDurable
+		}
+		return LimitReasonSecretMissingBackendUnreadable
+	}
+	return LimitReasonSecretMissingUnknownSource
+}
 
 // Scope is how much of the connection Sharko can honestly check for a mode.
 type Scope string
@@ -275,11 +483,13 @@ func Classify(in ClassifyInput) Policy {
 	// wider scope. A person needs to be told who holds the connection, not
 	// given a diff of a connection Sharko has no business converging.
 	if in.LiveSecretFound && in.LiveManagedBy != "" && in.LiveManagedBy != argosecrets.ManagedByValue {
+		// No LimitReason: the mode and the scope ARE the answer, and every
+		// surface states the ownership boundary once from those typed facts.
+		// See the note above the LimitReason constants.
 		return Policy{
 			Mode:        ModeForeignOwned,
 			Scope:       ScopeOwnershipConflict,
 			RepairScope: RepairScopeNone,
-			LimitReason: "This cluster's ArgoCD connection is marked as owned by another tool, so Sharko does not compare it or change it. Take the connection over in Sharko first if you want Sharko to manage it.",
 		}
 	}
 
@@ -289,7 +499,7 @@ func Classify(in ClassifyInput) Policy {
 			Mode:        ModeSelfManaged,
 			Scope:       ScopeAddonLabelsOnly,
 			RepairScope: RepairScopeAddonLabelsOnly,
-			LimitReason: "You maintain this cluster's ArgoCD connection yourself, so Sharko only checks the addon labels on it and never its connection details.",
+			LimitReason: LimitReasonSelfManaged,
 		}
 	}
 
@@ -299,7 +509,7 @@ func Classify(in ClassifyInput) Policy {
 			Mode:        ModeAdopted,
 			Scope:       ScopeAddonLabelsOnly,
 			RepairScope: RepairScopeAddonLabelsOnly,
-			LimitReason: "Sharko adopted this cluster's existing ArgoCD connection rather than creating it, so Sharko only checks the addon labels on it and never its connection details.",
+			LimitReason: LimitReasonAdopted,
 		}
 	}
 
@@ -330,7 +540,7 @@ func Classify(in ClassifyInput) Policy {
 			Mode:        ModeInlineKubeconfig,
 			Scope:       ScopeLimited,
 			RepairScope: RepairScopeAddonLabelsOnly,
-			LimitReason: "This cluster was registered with a pasted kubeconfig, and those credentials are only stored in the connection itself. Sharko has no second copy to check the connection details against, so it checks the labels and the plain connection facts only.",
+			LimitReason: LimitReasonInlineKubeconfig,
 		}
 	}
 
@@ -348,20 +558,24 @@ func Classify(in ClassifyInput) Policy {
 			Mode:        backendMode(in.CredsSource),
 			Scope:       ScopeLimited,
 			RepairScope: RepairScopeAddonLabelsOnly,
-			LimitReason: "This cluster's credentials are kept in a secrets backend, but Sharko cannot read them from there right now, so it cannot check the connection details against them.",
+			LimitReason: LimitReasonBackendUnreadable,
 		}
 	}
 
 	if in.CredsSource == models.CredsSourceEKSToken {
 		// The one place scope and repair deliberately disagree.
 		//
-		// The backend holds EKS metadata, not a fixed credential: every fetch
-		// mints a brand-new short-lived STS bearer token (see the token mint
-		// in internal/providers/aws_sm.go's buildFromStructured). So a rebuilt
-		// credential blob differs from the live one on every single check,
-		// with nothing having drifted — which means Sharko cannot honestly
-		// compare that blob, and cannot claim this connection is fully in
-		// sync.
+		// The configured credentials source holds EKS metadata, not a
+		// credential: it stores what is needed to CREATE a short-lived STS
+		// bearer token (the token creation lives in
+		// internal/providers/aws_sm.go's buildFromStructured, on the WRITE
+		// path). So there is no credential on the expected side at all —
+		// nothing to compare the live blob against, rather than two values
+		// that happen never to agree. Sharko cannot honestly compare that
+		// blob, and cannot claim this connection is fully in sync.
+		//
+		// The check itself creates nothing. It reads through
+		// providers.StoredConnectionFacts, which stops at the stored payload.
 		//
 		// A repair is still worth offering, and is still full: rewriting the
 		// connection from the backend produces a correct connection whatever
@@ -371,7 +585,7 @@ func Classify(in ClassifyInput) Policy {
 			Mode:        ModeEKSToken,
 			Scope:       ScopeLimited,
 			RepairScope: RepairScopeFullConnection,
-			LimitReason: LimitReasonEKSTokenChangesEveryTime,
+			LimitReason: LimitReasonEKSNoStoredCredential,
 		}
 	}
 

@@ -158,13 +158,21 @@ func newToolExecutorWithArgocd(srv *httptest.Server, gp gitprovider.GitProvider)
 
 // ------- getAddonOnCluster tests -------
 
-// TestGetAddonOnCluster_OperationMessageIncluded asserts that when the ArgoCD
-// app has a non-empty OperationMessage, getAddonOnCluster includes it in the
-// output (V2-cleanup-39).
-func TestGetAddonOnCluster_OperationMessageIncluded(t *testing.T) {
-	const wantMsg = "one or more tasks failed: CRD name too long"
+// TestGetAddonOnCluster_OperationMessageIsSharkosOwnSentence used to be
+// TestGetAddonOnCluster_OperationMessageIncluded, and it used to require that
+// ArgoCD's own operationState.message came out in the assistant's context
+// verbatim (V2-cleanup-39). That assertion was the leak's keeper on the AI
+// surface: the message quotes the repository ArgoCD was syncing from, token
+// and all, and the assistant's context becomes the assistant's answer.
+//
+// It is inverted, not deleted. The same fixture still drives the same path; the
+// line is still there and still labelled; what it carries is now Sharko's own
+// sentence, and ArgoCD's words must be absent (B8).
+func TestGetAddonOnCluster_OperationMessageIsSharkosOwnSentence(t *testing.T) {
+	const argocdsOwnWords = "one or more tasks failed: CRD name too long"
+	const wantMsg = "ArgoCD could not finish syncing this addon. Sharko does not repeat ArgoCD's own message here: that message quotes whatever ArgoCD was working on, which includes the repository address with its access token inside it. Open this application in ArgoCD to read the full error."
 
-	appBody := argocdAppJSON("keda-prod-eu", "Healthy", "OutOfSync", wantMsg)
+	appBody := argocdAppJSON("keda-prod-eu", "Healthy", "OutOfSync", argocdsOwnWords)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(appBody)
@@ -176,8 +184,11 @@ func TestGetAddonOnCluster_OperationMessageIncluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getAddonOnCluster returned error: %v", err)
 	}
+	if strings.Contains(out, argocdsOwnWords) {
+		t.Errorf("the assistant's context carries ArgoCD's own message\ngot: %s", out)
+	}
 	if !strings.Contains(out, wantMsg) {
-		t.Errorf("output does not contain operation message\ngot: %s", out)
+		t.Errorf("output does not carry Sharko's own sentence\ngot: %s", out)
 	}
 	if !strings.Contains(out, "Operation Message:") {
 		t.Errorf("output missing 'Operation Message:' label\ngot: %s", out)
@@ -207,13 +218,15 @@ func TestGetAddonOnCluster_EmptyOperationMessageOmitted(t *testing.T) {
 
 // ------- getUnhealthyAddons tests -------
 
-// TestGetUnhealthyAddons_OperationMessageIncluded asserts that when an
-// unhealthy app has a non-empty OperationMessage, it appears indented after
-// the main health line (V2-cleanup-39).
-func TestGetUnhealthyAddons_OperationMessageIncluded(t *testing.T) {
-	const wantMsg = "sync failed: pod quota exceeded"
+// TestGetUnhealthyAddons_OperationMessageIsSharkosOwnSentence is the same
+// inversion for the unhealthy-addons tool (was
+// TestGetUnhealthyAddons_OperationMessageIncluded, V2-cleanup-39). See the
+// note on the addon-detail one above.
+func TestGetUnhealthyAddons_OperationMessageIsSharkosOwnSentence(t *testing.T) {
+	const argocdsOwnWords = "sync failed: pod quota exceeded"
+	const wantMsg = "ArgoCD could not finish syncing this addon. Sharko does not repeat ArgoCD's own message here: that message quotes whatever ArgoCD was working on, which includes the repository address with its access token inside it. Open this application in ArgoCD to read the full error."
 
-	unhealthyApp := argocdAppJSON("keda-prod-eu", "Degraded", "OutOfSync", wantMsg)
+	unhealthyApp := argocdAppJSON("keda-prod-eu", "Degraded", "OutOfSync", argocdsOwnWords)
 	listBody := argocdAppsListJSON(unhealthyApp)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -227,8 +240,11 @@ func TestGetUnhealthyAddons_OperationMessageIncluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getUnhealthyAddons returned error: %v", err)
 	}
+	if strings.Contains(out, argocdsOwnWords) {
+		t.Errorf("the assistant's context carries ArgoCD's own message\ngot: %s", out)
+	}
 	if !strings.Contains(out, wantMsg) {
-		t.Errorf("output does not contain operation message\ngot: %s", out)
+		t.Errorf("output does not carry Sharko's own sentence\ngot: %s", out)
 	}
 	if !strings.Contains(out, "message:") {
 		t.Errorf("output missing 'message:' label\ngot: %s", out)

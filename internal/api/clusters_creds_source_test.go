@@ -36,6 +36,9 @@ func postCluster(t *testing.T, router http.Handler, body map[string]interface{})
 // credProvider==nil guard (the inline path needs no backend). It must not 503.
 func TestRegisterCluster_CredsSourceInline_NotGatedByProvider(t *testing.T) {
 	srv := newIsolatedTestServer(t)
+	// Explicitly enabled: the test pins the inline path's provider gating,
+	// which the default-off legacy switch would otherwise short-circuit.
+	enableLegacyInlineForTest(t, srv)
 	router := NewRouter(srv, nil)
 
 	w := postCluster(t, router, map[string]interface{}{

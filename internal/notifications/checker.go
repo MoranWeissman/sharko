@@ -87,41 +87,42 @@ func (c *Checker) check() {
 	now := time.Now()
 
 	for _, info := range infos {
+		// The checker names the SUBJECT of each alert — which addon, which
+		// cluster, which versions — and nothing else. It writes no sentence
+		// and no identifier: New() hands these to the checks in render.go and
+		// the server composes the words. A version or a name that is not the
+		// shape it claims to be is not interpolated at all.
+
 		// Check for upgrades (major/minor only).
 		if info.LatestVersion != "" && info.LatestVersion != info.CatalogVersion {
 			if isMajorOrMinorUpgrade(info.CatalogVersion, info.LatestVersion) {
-				c.store.Add(Notification{
-					ID:          fmt.Sprintf("upgrade-%s-%s", info.AddonName, info.LatestVersion),
-					Type:        TypeUpgrade,
-					Title:       fmt.Sprintf("%s %s available", info.AddonName, info.LatestVersion),
-					Description: fmt.Sprintf("Upgrade from %s to %s", info.CatalogVersion, info.LatestVersion),
-					Timestamp:   now,
-				})
+				c.store.Add(New(CodeAddonUpgradeAvailable, "", Params{
+					Addon:          info.AddonName,
+					Version:        info.LatestVersion,
+					CatalogVersion: info.CatalogVersion,
+				}, now))
 			}
 
 			// Check for security-relevant versions: flag major version bumps as
 			// potentially security-relevant since they often include breaking CVE fixes.
 			if isMajorUpgrade(info.CatalogVersion, info.LatestVersion) {
-				c.store.Add(Notification{
-					ID:          fmt.Sprintf("security-%s-%s", info.AddonName, info.LatestVersion),
-					Type:        TypeSecurity,
-					Title:       fmt.Sprintf("Major update: %s %s", info.AddonName, info.LatestVersion),
-					Description: fmt.Sprintf("Major version change from %s — review for security patches", info.CatalogVersion),
-					Timestamp:   now,
-				})
+				c.store.Add(New(CodeAddonMajorUpdate, "", Params{
+					Addon:          info.AddonName,
+					Version:        info.LatestVersion,
+					CatalogVersion: info.CatalogVersion,
+				}, now))
 			}
 		}
 
 		// Check for drift between cluster version and catalog version.
 		for clusterName, clusterVersion := range info.ClusterVersions {
 			if clusterVersion != info.CatalogVersion && clusterVersion != "" {
-				c.store.Add(Notification{
-					ID:          fmt.Sprintf("drift-%s-%s", info.AddonName, clusterName),
-					Type:        TypeDrift,
-					Title:       fmt.Sprintf("Version drift: %s on %s", info.AddonName, clusterName),
-					Description: fmt.Sprintf("Running %s, catalog has %s", clusterVersion, info.CatalogVersion),
-					Timestamp:   now,
-				})
+				c.store.Add(New(CodeAddonVersionDrift, "", Params{
+					Addon:          info.AddonName,
+					Cluster:        clusterName,
+					Version:        clusterVersion,
+					CatalogVersion: info.CatalogVersion,
+				}, now))
 			}
 		}
 	}

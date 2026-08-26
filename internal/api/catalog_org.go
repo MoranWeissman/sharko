@@ -28,7 +28,9 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
@@ -47,6 +49,10 @@ func (s *Server) loadOrgCatalog(ctx context.Context, gp gitprovider.GitProvider)
 	data, err := gp.GetFileContent(ctx, config.AddonCatalogPath, s.gitopsConfig().BaseBranch)
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			// A real answer from the repo, not a failure to get one:
+			// there is no catalog.yaml, so nothing is approved. Zero is
+			// a measurement here and belongs on the graph.
+			metrics.SetCatalogEntries(0)
 			return config.AddonCatalogSpec{}, nil
 		}
 		return config.AddonCatalogSpec{}, err
@@ -55,7 +61,12 @@ func (s *Server) loadOrgCatalog(ctx context.Context, gp gitprovider.GitProvider)
 		return config.AddonCatalogSpec{}, fmt.Errorf("%w: %s",
 			orchestrator.ErrCatalogFileEmpty, orchestrator.CatalogFileEmptyMessage)
 	}
-	return config.LoadAddonCatalog(data)
+	spec, err := config.LoadAddonCatalog(data)
+	if err != nil {
+		return config.AddonCatalogSpec{}, err
+	}
+	metrics.SetCatalogEntries(len(spec.Addons))
+	return spec, nil
 }
 
 // writeOrgCatalogReadError answers a catalog READ failure. A blank
@@ -121,7 +132,7 @@ func sortedCatalogAddons(view map[string]catalog.CatalogAddon) []catalog.Catalog
 // handleListOrgCatalog godoc
 //
 // @Summary List the addons your org approved
-// @Description Returns the contents of catalog.yaml in your git repo — the addons this org allows on its clusters, and nothing else. The list Sharko ships is NOT included: it lives on GET /marketplace/addons as discovery only. Each entry is self-contained (chart, chart repo, version, namespace, settings, needed secrets) and carries `origin`: "curated" when the Marketplace also knows this addon by name (so a description and docs link are filled in), "internal" when only your own entry describes it. An entry missing its chart location comes back with `deployable: false` and `missing_fields` naming what to fill in, rather than failing the whole list. A repo with no catalog.yaml returns an empty list — a fresh repo approves nothing on purpose.
+// @Description Returns the contents of catalog.yaml in your Git repo — the addons this org allows on its clusters, and nothing else. The list Sharko ships is NOT included: it lives on GET /marketplace/addons as discovery only. Each entry is self-contained (chart, chart repo, version, namespace, settings, needed secrets) and carries `origin`: "curated" when the Marketplace also knows this addon by name (so a description and docs link are filled in), "internal" when only your own entry describes it. An entry missing its chart location comes back with `deployable: false` and `missing_fields` naming what to fill in, rather than failing the whole list. A repo with no catalog.yaml returns an empty list — a fresh repo approves nothing on purpose.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -141,7 +152,14 @@ func (s *Server) handleListOrgCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	addons := sortedCatalogAddons(catalog.BuildCatalogView(s.catalog, spec))
-	writeJSON(w, http.StatusOK, orgCatalogListResponse{Addons: addons, Total: len(addons)})
+	// B11: repo_url is copied straight out of catalog.yaml, where it is
+	// routinely written with the access token inside it. SafeForResponse is
+	// the response boundary — the raw value stays with everything that fetches
+	// the chart or rewrites the file.
+	writeJSON(w, http.StatusOK, orgCatalogListResponse{
+		Addons: catalog.SafeCatalogAddonsForResponse(addons),
+		Total:  len(addons),
+	})
 }
 
 // handleGetOrgCatalogAddon godoc
@@ -180,14 +198,15 @@ func (s *Server) handleGetOrgCatalogAddon(w http.ResponseWriter, r *http.Request
 			fmt.Sprintf("%s is not in your catalog — add it first", name))
 		return
 	}
-	writeJSON(w, http.StatusOK, entry)
+	// B11 — same boundary as the list above.
+	writeJSON(w, http.StatusOK, entry.SafeForResponse())
 }
 
 // handleAddToCatalog godoc
 //
 // @Summary Add addons to your org's catalog
 // @Description Writes one or more full addon entries into catalog.yaml and opens a pull request — the approval step, and the only way anything enters the org. Three shapes, one endpoint: ONE addon (a single-element `addons` list); MANY addons (several elements — still exactly ONE pull request, which is what the first-run wizard needs); and add-AND-enable (`enable_on_cluster` set — one pull request touching catalog.yaml and cluster-addons/<name>.yaml together, so the reviewer sees both halves in one diff and one merge makes both true). The add-and-enable shape REQUIRES `yes: true`, the same confirmation the v4 enable endpoint asks for, because that half changes what runs on a real cluster; a catalog-only add needs no confirmation. Set `from_marketplace: true` on an entry to copy the chart location, default namespace and needed-secrets list out of the curated list; leave `version` empty there and the server fills in the newest version it knows for the chart (the same freshness data the version picker shows), so the resolved pin is visible in the pull-request diff — if Sharko has no version data for that chart you get a 422 with code `version_required` asking you to pick one. Nothing is written unless everything checks out: an unknown cluster, an entry with no chart location, or an addon whose required values are not set all fail before a branch exists.
-// @Description Every 4xx body carries a machine-readable `code` next to the plain-English `error`, so a client branches on the code and never on the message text. Codes: `invalid_request` (400); `cluster_not_found` (404); `repo_layout` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of `confirmation_required`, `empty_catalog_file`, `not_in_marketplace`, `version_required`, `incomplete_entry` (with a `problems` array naming each missing piece), `not_in_catalog`, or `validation_failed` (also with `problems`). A 502 means a genuine upstream/git failure and carries no code.
+// @Description Every 4xx body carries a machine-readable `code` next to the plain-English `error`, so a client branches on the code and never on the message text. Codes: `invalid_request` (400); `cluster_not_found` (404); `repo_layout` (409 — the repo is still v3, or carries both layouts at once); and on 422 one of `confirmation_required`, `empty_catalog_file`, `not_in_marketplace`, `version_required`, `incomplete_entry` (with a `problems` array naming each missing piece), `not_in_catalog`, or `validation_failed` (also with `problems`). A 502 means a genuine upstream/Git failure and carries no code.
 // @Tags catalog
 // @Accept json
 // @Produce json
@@ -250,7 +269,7 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
@@ -258,7 +277,7 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 	// the service token. Same tiering as every other catalog write.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -325,6 +344,10 @@ const (
 	CodeVersionRequired = "version_required"
 	// CodeEmptyCatalogFile — catalog.yaml exists in the repo but is blank.
 	CodeEmptyCatalogFile = "empty_catalog_file"
+	// CodeUnsupportedRepoURL — the entry's chart repository address is in a
+	// shape the technical preview does not support. The message states the
+	// rule; it never repeats the address back.
+	CodeUnsupportedRepoURL = "unsupported_repo_url"
 	// CodeConfirmationRequired — an add-and-enable without yes: true.
 	CodeConfirmationRequired = "confirmation_required"
 	// CodeInvalidRequest — the request itself cannot be read (400).
@@ -363,6 +386,7 @@ func writeCodedError(w http.ResponseWriter, status int, code, msg string, extra 
 func writeAddToCatalogError(w http.ResponseWriter, err error) {
 	var semantic *orchestrator.V4SemanticValidationError
 	var missing *catalog.MissingRequiredFieldError
+	var unsupportedRepo *credsafe.UnsupportedRepoURLError
 	switch {
 	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
 		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
@@ -381,6 +405,9 @@ func writeAddToCatalogError(w http.ResponseWriter, err error) {
 				"addon":    semantic.Addon,
 				"problems": semantic.Problems,
 			})
+	case errors.As(err, &unsupportedRepo):
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeUnsupportedRepoURL, unsupportedRepo.Error(),
+			map[string]interface{}{"problems": []string{unsupportedRepo.Error()}})
 	case errors.As(err, &missing):
 		writeCodedError(w, http.StatusUnprocessableEntity, CodeIncompleteEntry, missing.Error(),
 			map[string]interface{}{
@@ -442,14 +469,14 @@ func (s *Server) handleEditOrgCatalogAddon(w http.ResponseWriter, r *http.Reques
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 2: configuration change — same tiering as every other catalog write.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -479,6 +506,7 @@ func (s *Server) handleEditOrgCatalogAddon(w http.ResponseWriter, r *http.Reques
 // upstream failure.
 func writeEditCatalogEntryError(w http.ResponseWriter, err error) {
 	var missing *catalog.MissingRequiredFieldError
+	var unsupportedRepo *credsafe.UnsupportedRepoURLError
 	switch {
 	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
 		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
@@ -488,6 +516,9 @@ func writeEditCatalogEntryError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrCatalogFileEmpty):
 		writeCodedError(w, http.StatusUnprocessableEntity, CodeEmptyCatalogFile, err.Error(), nil)
+	case errors.As(err, &unsupportedRepo):
+		writeCodedError(w, http.StatusUnprocessableEntity, CodeUnsupportedRepoURL, unsupportedRepo.Error(),
+			map[string]interface{}{"problems": []string{unsupportedRepo.Error()}})
 	case errors.As(err, &missing):
 		writeCodedError(w, http.StatusUnprocessableEntity, CodeIncompleteEntry, missing.Error(),
 			map[string]interface{}{"addon": missing.Addon, "problems": []string{missing.Error()}})
@@ -554,14 +585,14 @@ func (s *Server) handleDeleteOrgCatalogAddon(w http.ResponseWriter, r *http.Requ
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 2: configuration change.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 

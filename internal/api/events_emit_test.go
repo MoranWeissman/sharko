@@ -61,7 +61,7 @@ func assertWarning(t *testing.T, fake *record.FakeRecorder, wantReason string) {
 
 func assertNoSecretMaterialAPI(t *testing.T, message string) {
 	t.Helper()
-	banned := []string{"sharko_", "BEGIN ", "eyJ", "AKIA", "704909879244"}
+	banned := []string{"sharko_", "BEGIN ", "eyJ", "AKIA", "123456789012"}
 	for _, b := range banned {
 		if strings.Contains(message, b) {
 			t.Errorf("event message contains banned secret-shaped token %q: %q", b, message)

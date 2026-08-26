@@ -207,6 +207,13 @@ func envelopedManagedClusters(clusters ...string) []byte {
 	return []byte(b.String())
 }
 
+// staticVault wraps a fixed provider value as a Deps.Vault resolver. Test
+// wiring only — for reconcilers whose backend genuinely never changes
+// mid-test. Production wiring resolves the live provider on every call
+// (serve.go wires api.Server.ClusterCredentialsProvider); freezing a boot
+// value there is the R2-1 bug.
+func staticVault(v Vault) func() Vault { return func() Vault { return v } }
+
 // newReconcilerForTest builds a Reconciler wired against the supplied
 // fakes. TickInterval is set high (1h) so the goroutine never auto-fires
 // during a synchronous pollOnce assertion — tests drive pollOnce
@@ -230,7 +237,7 @@ func newReconcilerForTest(t *testing.T, gp gitprovider.GitProvider, k8sClient *f
 	return New(Deps{
 		GitProvider:  gitFn,
 		ArgoClient:   k8sClient,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      audits.Add,
 		TickInterval: 0, // default; we never Start the loop in these tests
 	})
@@ -602,8 +609,13 @@ func TestPollOnce_VaultFailsForOneCluster_OthersStillReconcile(t *testing.T) {
 	// Audit shape: a failure event for c2; success events for c1 and c3;
 	// the tick summary fired with result=partial.
 	entries := audits.Snapshot()
-	if !hasEventForResource(entries, "cluster_secret_create", "cluster:c2") {
-		t.Fatalf("expected an audit entry referencing cluster c2 (the failure); got %v", entries)
+	// Ruling (f): c2's create FAILED, so it files under the failure-shaped
+	// event; c1 and c3 really were created, so they keep the past tense.
+	if !hasEventForResource(entries, EventClusterSecretCreateFailed, "cluster:c2") {
+		t.Fatalf("expected a cluster_secret_create_failed entry referencing cluster c2; got %v", entries)
+	}
+	if hasEventForResource(entries, EventClusterSecretCreate, "cluster:c2") {
+		t.Fatalf("a past-tense \"Secret created\" entry was written for c2, whose Secret does not exist; got %v", entries)
 	}
 	if !hasEventForResource(entries, "cluster_secret_create", "cluster:c1") {
 		t.Fatalf("expected an audit entry referencing cluster c1 (success); got %v", entries)
@@ -767,7 +779,7 @@ func TestPollOnce_EKSClusterKeepsExecShape(t *testing.T) {
 			return &fakeGit{files: map[string][]byte{DefaultManagedClustersPath: body}}
 		},
 		ArgoClient:     k8sClient,
-		Vault:          vault,
+		Vault:          staticVault(vault),
 		AuditFn:        audits.Add,
 		DefaultRoleARN: "arn:aws:iam::123456789012:role/EKSReadRole",
 	})

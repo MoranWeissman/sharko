@@ -1,0 +1,234 @@
+// Command gen-notification-codes reads notifications.DeclaredCodes — the Go
+// catalog of every notification identifier the server can emit — and writes a
+// TypeScript `as const` map plus a union type at
+// ui/src/generated/notification-codes.ts, so the browser routes notifications
+// by an identifier it never types by hand.
+//
+// # Why
+//
+// The notification bell used to be routed by its own words. Browser code
+// decided which of two connection panels received a notification's detail by
+// comparing the notification's TITLE against a copy of that sentence typed
+// into a .tsx file, and used the same sentence as a map key. Capitalising one
+// letter server-side would have blanked both panels: no test failing, no
+// error, the detail simply stops arriving.
+//
+// The product owner's ruling: notifications carry a required stable
+// identifier; titles and descriptions are display content only, and no
+// routing, grouping, deduplication, map key or behaviour may depend on human
+// wording. This generator is the half that makes the browser able to obey it —
+// there is exactly one list of identifiers, it lives in Go, and the TypeScript
+// is a copy nobody edits.
+//
+// # It reads the catalog at RUNTIME, and parses nothing
+//
+// Same argument as its sibling cmd/gen-connection-sentences: what it needs is
+// a slice of strings that IS a runtime value, so it imports the package and
+// reads the value rather than walking Go source with go/ast. The compiler
+// resolves the constants for free, and this file therefore holds no copy of
+// any identifier — main_test.go fails the build if one ever appears here.
+//
+// (The other sibling, cmd/gen-provider-types, does parse source, because what
+// it needs — the arms of a switch statement — has no runtime representation.)
+//
+// # The TypeScript key is derived from the wire value
+//
+// cmd/gen-connection-sentences keys its output by the Go constant's own name
+// with the first letter lowercased, because there its identifiers ARE the Go
+// names — nothing else exists to key on. Here there is a wire value in
+// lower_snake_case, and the key is that value converted to camelCase. That is
+// a deliberate difference, not a drifting
+// one: deriving the key from the value means no second source can go stale,
+// so a Go rename cannot silently produce a TypeScript key that no longer
+// matches the string on the wire.
+//
+// # No commit SHA in the header
+//
+// Deliberately, for the reason gen-connection-sentences gives: a generated
+// file stamped with the revision it was built from churns on every unrelated
+// commit and fails CI saying "out of date" about content that is correct.
+//
+// Usage:
+//
+//	go run ./cmd/gen-notification-codes
+//
+// or via the Makefile:
+//
+//	make generate-notification-codes
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/notifications"
+)
+
+const defaultOutputPath = "ui/src/generated/notification-codes.ts"
+
+func main() {
+	var outputPath string
+	flag.StringVar(&outputPath, "output", defaultOutputPath,
+		"path to the TypeScript file to (over)write")
+	flag.Parse()
+
+	if err := run(notifications.DeclaredCodes(), outputPath); err != nil {
+		fmt.Fprintf(os.Stderr, "gen-notification-codes: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// run is the testable entry point: it renders `codes` and writes the result to
+// `outputPath`. The output directory is created if it doesn't exist.
+//
+// The catalog is a PARAMETER rather than a package reference so the renderer
+// can be driven over a synthetic list in tests. main passes the real
+// notifications.DeclaredCodes() and nothing else does.
+func run(codes []notifications.Code, outputPath string) error {
+	if len(codes) == 0 {
+		return fmt.Errorf("the notification code catalog is empty — refusing to write an empty contract to %s", outputPath)
+	}
+
+	rendered, err := renderTypeScript(codes)
+	if err != nil {
+		return fmt.Errorf("render: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(outputPath), err)
+	}
+	if err := os.WriteFile(outputPath, []byte(rendered), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", outputPath, err)
+	}
+	fmt.Printf("gen-notification-codes: wrote %d codes to %s\n", len(codes), outputPath)
+	return nil
+}
+
+// renderTypeScript renders the deterministic TS output. The format is pinned
+// by tests and by the CI "Notification Codes Up To Date" check — keep it
+// byte-stable across refactors.
+//
+// The order is DeclaredCodes()' own order, which is the Go declaration order,
+// which is fixed source. There is deliberately no sort: the Go slice already
+// has a stable order, and re-sorting here would hide a reordering in Go rather
+// than showing it in the diff.
+func renderTypeScript(codes []notifications.Code) (string, error) {
+	var b strings.Builder
+	b.WriteString("// Code generated by cmd/gen-notification-codes. DO NOT EDIT.\n")
+	b.WriteString("// Source: internal/notifications/codes.go\n")
+	b.WriteString("// Run `make generate-notification-codes` to refresh.\n")
+	b.WriteString("//\n")
+	b.WriteString("// Every notification identifier the server can emit. Route on these.\n")
+	b.WriteString("//\n")
+	b.WriteString("// A notification's `title` and `description` are text to show a person and\n")
+	b.WriteString("// may be reworded in any release. Never route on them, never use one as a\n")
+	b.WriteString("// map key, and never compare one: the browser used to pick which connection\n")
+	b.WriteString("// panel got a notification's detail by matching the title sentence, and one\n")
+	b.WriteString("// capitalised letter server-side would have blanked both panels with nothing\n")
+	b.WriteString("// failing anywhere.\n")
+	b.WriteString("\n")
+	b.WriteString("export const NOTIFICATION_CODES = {\n")
+
+	seenKeys := make(map[string]notifications.Code, len(codes))
+	seenValues := make(map[notifications.Code]struct{}, len(codes))
+	for _, code := range codes {
+		key, err := tsKey(code)
+		if err != nil {
+			return "", err
+		}
+		if previous, clash := seenKeys[key]; clash {
+			return "", fmt.Errorf("codes %q and %q both produce the TypeScript key %q — one would silently overwrite the other",
+				previous, code, key)
+		}
+		if _, dup := seenValues[code]; dup {
+			return "", fmt.Errorf("code %q is declared more than once", code)
+		}
+		seenKeys[key] = code
+		seenValues[code] = struct{}{}
+
+		quoted, err := quoteForTypeScript(string(code))
+		if err != nil {
+			return "", fmt.Errorf("code %q: %w", code, err)
+		}
+		b.WriteString("  ")
+		b.WriteString(key)
+		b.WriteString(": ")
+		b.WriteString(quoted)
+		b.WriteString(",\n")
+	}
+
+	b.WriteString("} as const\n")
+	b.WriteString("\n")
+	b.WriteString("// The set of identifiers the server declares. An identifier outside it is one\n")
+	b.WriteString("// this build does not know: show the notification with its own title and\n")
+	b.WriteString("// description rather than routing it, and never drop it silently.\n")
+	b.WriteString("export type NotificationCode = (typeof NOTIFICATION_CODES)[keyof typeof NOTIFICATION_CODES]\n")
+	b.WriteString("\n")
+	b.WriteString("export type NotificationCodeName = keyof typeof NOTIFICATION_CODES\n")
+	return b.String(), nil
+}
+
+// tsKey converts a snake_case wire value into a camelCase TypeScript property
+// name: "some_broken_thing" -> "someBrokenThing".
+//
+// The example is deliberately made up. Pasting a real code in here would be a
+// second copy of the contract sitting in a comment, going stale quietly — and
+// main_test.go fails the build if one appears.
+//
+// It rejects anything that would not be a bare JavaScript property name, so a
+// code whose value cannot be rendered without quoting fails the generator
+// rather than producing TypeScript that needs a per-key decision.
+func tsKey(code notifications.Code) (string, error) {
+	raw := string(code)
+	if raw == "" {
+		return "", fmt.Errorf("a notification code is empty — every code needs a value")
+	}
+
+	parts := strings.Split(raw, "_")
+	var b strings.Builder
+	for i, part := range parts {
+		if part == "" {
+			return "", fmt.Errorf("code %q has an empty word in it — expected lower_snake_case", raw)
+		}
+		for j, r := range part {
+			isLower := r >= 'a' && r <= 'z'
+			isDigit := r >= '0' && r <= '9'
+			if !isLower && !isDigit {
+				return "", fmt.Errorf("code %q contains %q — expected lower_snake_case (a-z, 0-9 and underscores)", raw, r)
+			}
+			if i == 0 && j == 0 && isDigit {
+				return "", fmt.Errorf("code %q starts with a digit, which is not a valid TypeScript property name", raw)
+			}
+		}
+		if i == 0 {
+			b.WriteString(part)
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]))
+		b.WriteString(part[1:])
+	}
+	return b.String(), nil
+}
+
+// quoteForTypeScript renders one value as a TypeScript double-quoted string
+// literal.
+//
+// It goes through encoding/json rather than strconv.Quote for the reason
+// cmd/gen-connection-sentences gives: JSON's string grammar is a strict subset
+// of JavaScript's, whereas Go's own quoting can emit `\U0001F600`, an escape
+// JavaScript does not have.
+func quoteForTypeScript(s string) (string, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(s); err != nil {
+		return "", err
+	}
+	// Encode appends a newline of its own.
+	return strings.TrimRight(buf.String(), "\n"), nil
+}

@@ -900,11 +900,24 @@ func TestResolveArgoCDNamespaceTyped(t *testing.T) {
 }
 
 // TestResolveArgoCDNamespaceTyped_DeprecationWarnEmitted confirms the
-// SHARKO_ARGOCD_NAMESPACE compat alias emits a slog.Warn so operators see they
+// SHARKO_ARGOCD_NAMESPACE compat path emits a slog.Warn so operators see they
 // are on the legacy path. The warn is the deprecation signal; removed in v1.26
 // per V125-1-11 planning doc OQ #4.
+//
+// The second half of this test used to be the exact opposite: it REQUIRED
+// the warning to contain the value, and the code obliged with
+// "env_value", env. That is a namespace today; the next setting somebody
+// deprecates may not be. The registry's Deprecation type carries two
+// names and nothing else precisely so a deprecation warning can never
+// leak a secret, and a rule that holds only for the settings somebody
+// remembered to mark secret is not a rule. So the assertion is inverted,
+// and the old wording is banned by name below rather than merely no
+// longer required — a check for "the value is absent" that did not also
+// ban the attribute would pass again the moment somebody re-added it
+// under another key.
 func TestResolveArgoCDNamespaceTyped_DeprecationWarnEmitted(t *testing.T) {
 	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "legacy-ns")
+	resetArgoCDNamespaceWarnForTest()
 
 	// Capture slog output through a buffer + JSON handler, restoring the
 	// default at test end so other tests aren't affected.
@@ -921,8 +934,66 @@ func TestResolveArgoCDNamespaceTyped_DeprecationWarnEmitted(t *testing.T) {
 	if !strings.Contains(out, "SHARKO_ARGOCD_NAMESPACE") || !strings.Contains(out, "deprecated") {
 		t.Errorf("expected deprecation slog.Warn mentioning SHARKO_ARGOCD_NAMESPACE + deprecated, got: %q", out)
 	}
-	if !strings.Contains(out, "legacy-ns") {
-		t.Errorf("expected warn payload to include the env value %q, got: %q", "legacy-ns", out)
+	if !strings.Contains(out, "use_instead") {
+		t.Errorf("the warning does not say what to set instead, which is the only thing that makes it "+
+			"actionable, got: %q", out)
+	}
+	if strings.Contains(out, "legacy-ns") {
+		t.Errorf("the warning carries the VALUE of the setting. Warnings name settings and never "+
+			"values — configuration values reach every log aggregator the moment they are emitted, "+
+			"got: %q", out)
+	}
+	if strings.Contains(out, "env_value") {
+		t.Errorf("the warning still carries an env_value attribute. That is the exact key the leak "+
+			"used, and banning it by name is what stops it coming back, got: %q", out)
+	}
+}
+
+// TestArgoCDNamespaceFromEnv_WarnsOnceForThreeReaders pins the other half
+// of the fix.
+//
+// Three places read this setting: resolveArgoCDNamespaceTyped here, and
+// two reads in cmd/sharko/serve.go. Only this one warned, while
+// charts/sharko/values.yaml told operators the setting "emits slog.Warn
+// at startup" — and the two startup reads warned about nothing. All
+// three go through ArgoCDNamespaceFromEnv now, which means one warning
+// and not three.
+func TestArgoCDNamespaceFromEnv_WarnsOnceForThreeReaders(t *testing.T) {
+	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "legacy-ns")
+	resetArgoCDNamespaceWarnForTest()
+
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	for i := 0; i < 3; i++ {
+		value, set := ArgoCDNamespaceFromEnv()
+		if !set || value != "legacy-ns" {
+			t.Fatalf("read %d returned (%q, %v), want (\"legacy-ns\", true)", i, value, set)
+		}
+	}
+	if n := strings.Count(buf.String(), "SHARKO_ARGOCD_NAMESPACE"); n != 1 {
+		t.Errorf("three readers produced %d warnings about one setting, want 1: %q", n, buf.String())
+	}
+}
+
+// TestArgoCDNamespaceFromEnv_SaysNothingWhenUnset — the ordinary install
+// must be silent.
+func TestArgoCDNamespaceFromEnv_SaysNothingWhenUnset(t *testing.T) {
+	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "")
+	resetArgoCDNamespaceWarnForTest()
+
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	if value, set := ArgoCDNamespaceFromEnv(); set || value != "" {
+		t.Errorf("an unset setting read as (%q, %v)", value, set)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an ordinary install was warned about a setting nobody set: %q", buf.String())
 	}
 }
 

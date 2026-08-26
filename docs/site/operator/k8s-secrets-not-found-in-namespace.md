@@ -399,13 +399,14 @@ namespace without also granting RBAC there produces a 403, not a
 
 ## Prevention
 
-- **Monitoring — per-cluster credential-fetch failure counter.**
-  Same as the AWS-SM not-found runbook: a V2-3.x follow-up metric
+- **Monitoring — per-cluster credential-fetch failure counter.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. Same sketch as
+  the AWS-SM not-found runbook:
   `sharko_provider_get_credentials_errors_total{cluster, provider,
-  reason}` with reasons including `not_found`, `missing_data_key`,
-  `rbac_denied` would let operators alert on patterns. Today, the
-  only signal is the per-cluster `test_status` in
-  `/api/v1/fleet/status`.
+  reason}` with reasons including `not_found`, `missing_data_key` and
+  `rbac_denied`, letting operators alert on patterns. Today, the only
+  signal is the per-cluster `test_status` in `/api/v1/fleet/status`.
 
 - **Gating — `sharko add-cluster` should pre-flight the secret.**
   Before committing the registration, call `provider.GetCredentials`

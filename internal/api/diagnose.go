@@ -56,8 +56,15 @@ func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
 
 	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
 	if err != nil {
-		slog.Error("[cluster-diagnose] failed to build client", "name", name, "error", err)
-		writeError(w, http.StatusBadGateway, "failed to build k8s client: "+err.Error())
+		// PUBLIC BOUNDARY. Safe only because every return in
+		// NewClientFromKubeconfig happens to be credsafe.Mark'd — a property
+		// of that function, not of this call site, and one unmarked return
+		// away from leaking. Made explicit, and note the log line was
+		// asymmetric too: nine lines up it logs the safe sentence, here it
+		// logged the raw error value.
+		safeMsg := credsafe.Sentence(err)
+		slog.Error("[cluster-diagnose] failed to build client", "name", name, "step", "build-client", "error", safeMsg)
+		writeError(w, http.StatusBadGateway, "failed to build k8s client: "+safeMsg)
 		return
 	}
 

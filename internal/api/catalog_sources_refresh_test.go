@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // callRefreshSources invokes POST /api/v1/catalog/sources/refresh with an
@@ -35,9 +37,16 @@ func callRefreshSources(t *testing.T, s *Server) (*httptest.ResponseRecorder, []
 	return rw, body, fields
 }
 
-// auditDetail parses the Detail JSON string back into its map shape so tests
-// can assert on the urls / status payload without string-matching.
-func auditDetail(t *testing.T, fields *audit.Fields) (urls []string, statusByURL map[string]string) {
+// auditDetail parses the Detail JSON string back into its counts shape so
+// tests can assert on the payload without string-matching.
+//
+// The payload is counts only — how many sources were attempted and how
+// many ended in each state. It used to carry the attempted addresses and
+// a per-address status map; a configured catalog source address can carry
+// an auth token inside it, so no address may reach an audit record in any
+// form, and the tests below also assert the addresses are absent from the
+// Detail string itself.
+func auditDetail(t *testing.T, fields *audit.Fields) (attempted int, statusCounts map[string]int) {
 	t.Helper()
 	if fields == nil {
 		t.Fatal("audit fields is nil — enrichment context was not attached")
@@ -49,13 +58,13 @@ func auditDetail(t *testing.T, fields *audit.Fields) (urls []string, statusByURL
 		t.Fatal("audit Detail is empty; want JSON payload")
 	}
 	var payload struct {
-		URLs   []string          `json:"urls"`
-		Status map[string]string `json:"status"`
+		SourcesAttempted int            `json:"sources_attempted"`
+		StatusCounts     map[string]int `json:"status_counts"`
 	}
 	if err := json.Unmarshal([]byte(fields.Detail), &payload); err != nil {
 		t.Fatalf("decode audit Detail: %v; detail = %s", err, fields.Detail)
 	}
-	return payload.URLs, payload.Status
+	return payload.SourcesAttempted, payload.StatusCounts
 }
 
 // --- V123-2.4 / B2 BLOCKER fix: admin-only authz gate ---
@@ -186,12 +195,12 @@ func TestRefreshCatalogSources_NoFetcher_ReturnsEmbeddedOnly(t *testing.T) {
 		t.Errorf("body[0].EntryCount = %d, want %d", body[0].EntryCount, c.Len())
 	}
 
-	urls, statusByURL := auditDetail(t, fields)
-	if len(urls) != 0 {
-		t.Errorf("audit urls = %v, want empty slice (no fetcher configured)", urls)
+	attempted, statusCounts := auditDetail(t, fields)
+	if attempted != 0 {
+		t.Errorf("audit sources_attempted = %d, want 0 (no fetcher configured)", attempted)
 	}
-	if len(statusByURL) != 0 {
-		t.Errorf("audit statusByURL = %v, want empty map", statusByURL)
+	if len(statusCounts) != 0 {
+		t.Errorf("audit status_counts = %v, want empty map", statusCounts)
 	}
 }
 
@@ -213,12 +222,12 @@ func TestRefreshCatalogSources_FetcherEmpty_NoSourcesConfigured(t *testing.T) {
 		t.Errorf("body[0].URL = %q, want \"embedded\"", body[0].URL)
 	}
 
-	urls, statusByURL := auditDetail(t, fields)
-	if len(urls) != 0 {
-		t.Errorf("audit urls = %v, want empty (no sources configured)", urls)
+	attempted, statusCounts := auditDetail(t, fields)
+	if attempted != 0 {
+		t.Errorf("audit sources_attempted = %d, want 0 (no sources configured)", attempted)
 	}
-	if len(statusByURL) != 0 {
-		t.Errorf("audit statusByURL = %v, want empty map", statusByURL)
+	if len(statusCounts) != 0 {
+		t.Errorf("audit status_counts = %v, want empty map", statusCounts)
 	}
 }
 
@@ -256,8 +265,8 @@ func TestRefreshCatalogSources_SingleOKSnapshot(t *testing.T) {
 		t.Errorf("body[0].URL = %q, want \"embedded\"", body[0].URL)
 	}
 	tp := body[1]
-	if tp.URL != url {
-		t.Errorf("body[1].URL = %q, want %q", tp.URL, url)
+	if tp.URL != credsafe.RedactedSourceLabel {
+		t.Errorf("body[1].URL = %q, want %q — the configured address never reaches the wire", tp.URL, credsafe.RedactedSourceLabel)
 	}
 	if tp.Status != "ok" {
 		t.Errorf("body[1].Status = %q, want \"ok\"", tp.Status)
@@ -266,12 +275,15 @@ func TestRefreshCatalogSources_SingleOKSnapshot(t *testing.T) {
 		t.Errorf("body[1].LastFetched = %v, want %v", tp.LastFetched, success)
 	}
 
-	urls, statusByURL := auditDetail(t, fields)
-	if len(urls) != 1 || urls[0] != url {
-		t.Errorf("audit urls = %v, want [%q]", urls, url)
+	attempted, statusCounts := auditDetail(t, fields)
+	if attempted != 1 {
+		t.Errorf("audit sources_attempted = %d, want 1", attempted)
 	}
-	if statusByURL[url] != "ok" {
-		t.Errorf("audit statusByURL[%q] = %q, want \"ok\"", url, statusByURL[url])
+	if statusCounts["ok"] != 1 || len(statusCounts) != 1 {
+		t.Errorf("audit status_counts = %v, want exactly {\"ok\": 1}", statusCounts)
+	}
+	if strings.Contains(fields.Detail, url) {
+		t.Errorf("ADDRESS IN THE AUDIT | the configured address %q appears in the audit Detail: %s", url, fields.Detail)
 	}
 }
 
@@ -309,23 +321,27 @@ func TestRefreshCatalogSources_SingleFailedSnapshot(t *testing.T) {
 		t.Errorf("body[1].EntryCount = %d, want 0", tp.EntryCount)
 	}
 
-	urls, statusByURL := auditDetail(t, fields)
-	if len(urls) != 1 || urls[0] != url {
-		t.Errorf("audit urls = %v, want [%q]", urls, url)
+	attempted, statusCounts := auditDetail(t, fields)
+	if attempted != 1 {
+		t.Errorf("audit sources_attempted = %d, want 1", attempted)
 	}
-	if statusByURL[url] != "failed" {
-		t.Errorf("audit statusByURL[%q] = %q, want \"failed\"", url, statusByURL[url])
+	if statusCounts["failed"] != 1 || len(statusCounts) != 1 {
+		t.Errorf("audit status_counts = %v, want exactly {\"failed\": 1}", statusCounts)
+	}
+	if strings.Contains(fields.Detail, url) {
+		t.Errorf("ADDRESS IN THE AUDIT | the configured address %q appears in the audit Detail: %s", url, fields.Detail)
 	}
 }
 
-// TestRefreshCatalogSources_MultipleSources_AlphabeticalSort — three
-// snapshots injected in a deliberately non-alphabetical order; asserts that
-// both the response's third-party rows AND the audit Detail's urls array
-// come back alphabetically sorted. Deterministic ordering is load-bearing:
-// without it, Go's randomised map iteration would leak into the response
-// (response test flakiness) and into the audit log (making log diffs +
-// alerting rules non-deterministic).
-func TestRefreshCatalogSources_MultipleSources_AlphabeticalSort(t *testing.T) {
+// TestRefreshCatalogSources_MultipleSources_CountsAndNoAddress — three
+// snapshots injected in a deliberately non-alphabetical order. Every
+// third-party row on the wire carries the fixed word, the audit Detail
+// carries only counts, and no configured address appears anywhere in the
+// response body or the Detail string. The Detail is also byte-identical
+// across two refreshes of the same source set — that determinism used to
+// come from sorting the address list, and now comes from encoding/json
+// writing map keys in sorted order.
+func TestRefreshCatalogSources_MultipleSources_CountsAndNoAddress(t *testing.T) {
 	s := serverWithCatalog(t, testCatalog(t))
 
 	urls := []string{
@@ -333,50 +349,54 @@ func TestRefreshCatalogSources_MultipleSources_AlphabeticalSort(t *testing.T) {
 		"https://alpha.example.com/catalog.yaml",
 		"https://mid.example.com/catalog.yaml",
 	}
+	fixed := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
 	snaps := make(map[string]*sources.SourceSnapshot, len(urls))
 	for _, u := range urls {
 		snaps[u] = &sources.SourceSnapshot{
 			URL:           u,
 			Status:        sources.StatusOK,
-			LastSuccessAt: time.Now(),
-			LastAttemptAt: time.Now(),
+			LastSuccessAt: fixed,
+			LastAttemptAt: fixed,
 			Entries:       []catalog.CatalogEntry{{Name: "x", Chart: "x", Repo: "https://x"}},
 		}
 	}
 	s.SetSourcesFetcher(makeFetcherWithSnapshots(t, snaps))
 
-	_, body, fields := callRefreshSources(t, s)
+	rw, body, fields := callRefreshSources(t, s)
 	if len(body) != 4 {
 		t.Fatalf("len(body) = %d, want 4 (embedded + 3 third-party)", len(body))
 	}
 	if body[0].URL != "embedded" {
 		t.Errorf("body[0].URL = %q, embedded must always be first", body[0].URL)
 	}
-	wantOrder := []string{
-		"https://alpha.example.com/catalog.yaml",
-		"https://mid.example.com/catalog.yaml",
-		"https://zeta.example.com/catalog.yaml",
-	}
-	for i, want := range wantOrder {
-		got := body[i+1].URL
-		if got != want {
-			t.Errorf("body[%d].URL = %q, want %q (third-party must be alphabetical)", i+1, got, want)
+	for i := 1; i < len(body); i++ {
+		if body[i].URL != credsafe.RedactedSourceLabel {
+			t.Errorf("body[%d].URL = %q, want %q", i, body[i].URL, credsafe.RedactedSourceLabel)
 		}
 	}
 
-	auditURLs, statusByURL := auditDetail(t, fields)
-	if len(auditURLs) != 3 {
-		t.Fatalf("audit urls length = %d, want 3", len(auditURLs))
+	attempted, statusCounts := auditDetail(t, fields)
+	if attempted != 3 {
+		t.Errorf("audit sources_attempted = %d, want 3", attempted)
 	}
-	for i, want := range wantOrder {
-		if auditURLs[i] != want {
-			t.Errorf("audit urls[%d] = %q, want %q (audit list must be alphabetical too)", i, auditURLs[i], want)
+	if statusCounts["ok"] != 3 || len(statusCounts) != 1 {
+		t.Errorf("audit status_counts = %v, want exactly {\"ok\": 3}", statusCounts)
+	}
+
+	// No configured address, anywhere: not in the response bytes, not in
+	// the audit Detail.
+	for _, u := range urls {
+		if strings.Contains(rw.Body.String(), u) {
+			t.Errorf("ADDRESS IN THE RESPONSE | %q appears in the refresh response body", u)
+		}
+		if strings.Contains(fields.Detail, u) {
+			t.Errorf("ADDRESS IN THE AUDIT | %q appears in the audit Detail: %s", u, fields.Detail)
 		}
 	}
-	// Status map is unordered on the wire, but every URL must have an entry.
-	for _, u := range wantOrder {
-		if statusByURL[u] != "ok" {
-			t.Errorf("audit statusByURL[%q] = %q, want \"ok\"", u, statusByURL[u])
-		}
+
+	// Byte-identical Detail across two refreshes of the same source set.
+	_, _, fields2 := callRefreshSources(t, s)
+	if fields.Detail != fields2.Detail {
+		t.Errorf("two refreshes of the same source set produced different audit Details:\nfirst:  %s\nsecond: %s", fields.Detail, fields2.Detail)
 	}
 }

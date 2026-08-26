@@ -130,30 +130,29 @@ func TestReconcilerCredFailure_LeaksNothingIntoAuditOrTheRecord(t *testing.T) {
 
 	// 1. What the reconciler HANDS to the audit sink.
 	//
-	// Error and Detail — the two PUBLIC fields — must already be safe here, and
-	// the CredentialFailure flag must be set: that is the reconciler's own
-	// classification, made at the credential boundary where the typed error is
-	// still alive. audit.Add acts on the flag, never on the words.
+	// Security story S3 moved the safety to the sink, so what travels from here
+	// is a CATEGORY and nothing else: Error cannot be set from this package at
+	// all (it is an audit.SafeText with no exported constructor), and Detail is
+	// whatever the writer typed. The reconciler's own job is to classify at the
+	// credential boundary, where the typed error is still alive, and hand over
+	// the answer.
 	entries := audits.Snapshot()
 	if len(entries) == 0 {
 		t.Fatal("the reconciler wrote no audit entry for a failed credential fetch, so this test proved nothing")
 	}
 	var sawCredFailure bool
 	for _, e := range entries {
-		assertNoReconcilerCredSentinel(t, "an audit entry's Error field", e.Error)
+		assertNoReconcilerCredSentinel(t, "an audit entry's Error field", e.Error.String())
 		assertNoReconcilerCredSentinel(t, "an audit entry's Detail field", e.Detail)
 		if e.Action == "get_credentials" {
 			sawCredFailure = true
-			if e.Error != credsafe.Message {
-				t.Errorf("the credential-failure audit entry's Error = %q, want the fixed safe sentence %q", e.Error, credsafe.Message)
-			}
-			if !e.CredentialFailure {
-				t.Error(`the credential-failure audit entry does not carry the CredentialFailure flag.
+			if e.Reason != audit.ReasonCredentials {
+				t.Errorf(`the credential-failure audit entry has reason %q, want %q.
 
-The flag is the reconciler's ANSWER to credsafe.Is, computed where the typed error still exists. It is how audit.Add classifies by type instead of by reading the error's words — which is the exact thing that makes this bug class come back.`)
+The reason is the reconciler's ANSWER to audit.Classify, computed where the typed error still exists. It is how the audit sink classifies by type instead of by reading the error's words — which is the exact thing that makes this bug class come back.`, e.Reason, audit.ReasonCredentials)
 			}
-			// No error-typed field on the entry at all. That is what a bool
-			// carrying the decision buys: nothing live travels this far.
+			// No error-typed field on the entry at all. That is what carrying
+			// only a category buys: nothing live travels this far.
 			v := reflect.ValueOf(e)
 			for i := 0; i < v.NumField(); i++ {
 				f := v.Field(i)
@@ -170,20 +169,18 @@ The flag is the reconciler's ANSWER to credsafe.Is, computed where the typed err
 	}
 
 	// 1b. What actually gets STORED. This is the surface a viewer reads: the
-	// safe sentence in Error, an EMPTY Detail, and the flag cleared. %+v rather
-	// than JSON, because a json:"-" field would be invisible to a JSON check.
+	// safe sentence in Error and an EMPTY Detail, both put there by the sink
+	// from the category alone. %+v rather than JSON, because a json:"-" field
+	// would be invisible to a JSON check.
 	log := audit.NewLog(50)
 	for _, e := range entries {
 		log.Add(e)
 	}
 	for _, e := range log.List(0) {
 		assertNoReconcilerCredSentinel(t, "a STORED audit entry printed with %+v", fmt.Sprintf("%+v", e))
-		if e.CredentialFailure {
-			t.Error("a stored audit entry still has CredentialFailure set — audit.Add must clear it")
-		}
 		if e.Action == "get_credentials" {
-			if e.Error != credsafe.Message {
-				t.Errorf("the stored credential-failure entry's Error = %q, want the fixed safe sentence", e.Error)
+			if e.Error.String() != credsafe.Message {
+				t.Errorf("the stored credential-failure entry's Error = %q, want the fixed safe sentence", e.Error.String())
 			}
 			if e.Detail != "" {
 				t.Errorf(`the stored credential-failure entry's Detail = %q, want EMPTY.
@@ -266,7 +263,7 @@ func TestReconcilerCredFailure_WrappedCredErrorStillCaught(t *testing.T) {
 
 	log := audit.NewLog(50)
 	for _, e := range audits.Snapshot() {
-		assertNoReconcilerCredSentinel(t, "a wrapped-error audit entry's Error field", e.Error)
+		assertNoReconcilerCredSentinel(t, "a wrapped-error audit entry's Error field", e.Error.String())
 		assertNoReconcilerCredSentinel(t, "a wrapped-error audit entry's Detail field", e.Detail)
 		log.Add(e)
 	}

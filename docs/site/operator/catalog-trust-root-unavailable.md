@@ -224,42 +224,35 @@ defaults to Unverified).
 
    Apply and restart Sharko.
 
-3. **If the TUF fetch returns a malformed body**, work around by
-   pre-cached trusted root. Sigstore ships periodic "trust root
-   snapshots" via the `sigstore-go` SDK that can be bundled offline.
-   The operator-side mitigation is to:
+3. **If the TUF fetch returns a malformed body, you cannot point Sharko
+   at a trusted root on disk.** Sharko has no such override. The only
+   Sigstore path setting it reads is `SHARKO_SIGSTORE_TUF_CACHE`
+   (`internal/catalog/signing/tufroot.go`, default `/tmp/sigstore-tuf`),
+   and that names the directory TUF *caches into* — it does not bypass TUF
+   and it will not accept a hand-placed `trusted_root.json` as a substitute
+   for a TUF fetch.
 
-   - Download a known-good `trusted_root.json` from a trusted source.
-   - Mount it as a file in the Sharko pod.
-   - Configure Sharko to read from disk instead of TUF (the env var
-     name varies; check `internal/catalog/signing/tufroot.go` for
-     the current override).
+   Earlier versions of this page told you to set `SHARKO_TRUSTED_ROOT_PATH`
+   to a mounted file. **Do not do that.** Sharko has never read that name,
+   and from this release a `SHARKO_` name Sharko does not recognise stops
+   the server at startup — so the command that was supposed to get you past
+   an unreachable TUF root now stops Sharko from starting at all.
 
-   ```sh
-   # Create a configmap with the trusted root:
-   kubectl -n "$SHARKO_NS" create configmap sigstore-trusted-root \
-     --from-file=trusted_root.json=/path/to/trusted_root.json
-
-   # Mount it in the Sharko deployment (example patch):
-   kubectl -n "$SHARKO_NS" patch deployment sharko --type='json' -p='[
-     {"op":"add","path":"/spec/template/spec/volumes/-","value":{
-       "name":"sigstore-trusted-root","configMap":{"name":"sigstore-trusted-root"}}},
-     {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{
-       "name":"sigstore-trusted-root","mountPath":"/var/lib/sharko/sigstore","readOnly":true}}
-   ]'
-   ```
-
-   Then set the env var to point at the file:
+   What the cache setting IS good for: giving the cache a persistent,
+   writable home so a pod restart does not force a fresh network fetch,
+   and so a read-only root filesystem does not break the default
+   `/tmp/sigstore-tuf` path.
 
    ```sh
    kubectl -n "$SHARKO_NS" set env deployment/sharko \
-     SHARKO_TRUSTED_ROOT_PATH=/var/lib/sharko/sigstore/trusted_root.json
+     SHARKO_SIGSTORE_TUF_CACHE=/var/lib/sharko/sigstore
    ```
 
-   This bypasses TUF entirely. Document the override; without TUF, the
-   trusted root no longer auto-rotates, so the operator must update
-   the ConfigMap when Sigstore rotates its root keys (rare — quarterly
-   or less often, typically).
+   If the cache already holds a good, unexpired fetch, keeping that
+   directory across restarts buys you time while the upstream problem is
+   fixed. If it does not, go to mitigation 4 — turning signature
+   enforcement off temporarily is the supported way through, and it is
+   honest about what it costs.
 
 4. **Mitigate user-visible state by disabling signature enforcement
    temporarily.** If verification can't be restored quickly, the
@@ -299,8 +292,9 @@ Sigstore's status page lists an active incident. Other Sigstore-
 dependent projects (cosign verify, in-toto attestations) are also
 failing globally.
 
-Fix is to wait it out, OR to switch to a pre-cached trusted root
-(Mitigation step 3) as a bridge.
+Fix is to wait it out, using a persistent TUF cache (Mitigation step 3)
+as a bridge if one is already warm, or turning enforcement off
+temporarily (Mitigation step 4) if it is not.
 
 ### Corporate proxy / NetworkPolicy egress block
 
@@ -343,8 +337,9 @@ body.
 
 Fix is a Sharko restart (Mitigation step 1). The TUF client retries on
 restart and typically lands on a healthy edge. If the malformed
-response is consistent across restarts, fall back to Mitigation step 3
-(pre-cached trusted root).
+response is consistent across restarts, a persistent TUF cache
+(Mitigation step 3) keeps the last good fetch alive across that
+restart; if there is no good fetch to keep, go to Mitigation step 4.
 
 ---
 
@@ -353,16 +348,27 @@ response is consistent across restarts, fall back to Mitigation step 3
 Mitigation steps 1, 2, 5 are non-destructive (restart, NetworkPolicy
 update, CA install).
 
-For Mitigation step 3 (pre-cached trusted root):
+For Mitigation step 3 (persistent TUF cache directory):
 
-1. To revert to TUF-based fetch once Sigstore is healthy:
+1. To go back to the stock cache location once Sigstore is healthy:
    ```sh
    kubectl -n "$SHARKO_NS" set env deployment/sharko \
-     SHARKO_TRUSTED_ROOT_PATH-
+     SHARKO_SIGSTORE_TUF_CACHE-
    kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
    ```
 
-2. Verify the TUF path works (Diagnosis step 2 wget returns 200).
+   Keeping the mounted cache is fine too — it is a cache location, not a
+   trust decision.
+
+2. If someone set `SHARKO_TRUSTED_ROOT_PATH` on the deployment before
+   reading this, remove it — otherwise the server will refuse to start:
+
+   ```sh
+   kubectl -n "$SHARKO_NS" set env deployment/sharko SHARKO_TRUSTED_ROOT_PATH-
+   kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
+   ```
+
+3. Verify the TUF path works (Diagnosis step 2 wget returns 200).
 
 For Mitigation step 4 (trust-policy permissive mode):
 
@@ -383,35 +389,41 @@ For Mitigation step 4 (trust-policy permissive mode):
 
 ## Prevention
 
-- **Monitoring — startup failure metric.** Add
+- **Monitoring — startup failure metric.** Sharko does not export this
+  metric today. The alert below is a design sketch for a future release,
+  not something you can deploy now. The sketch: register
   `sharko_catalog_verifier_initialized{result="success|failed"}` as a
-  Counter incremented once at startup. Alert when the failed-bucket
-  count is non-zero. Wiring is in
-  `internal/catalog/signing/verify.go` init.
+  Counter incremented once at startup, and alert when the failed-bucket
+  count is non-zero. Nothing in `internal/catalog/signing/` registers or
+  writes it, so the only startup signal available right now is the log
+  line.
 
-- **Monitoring — TUF fetch reachability.** Add a periodic background
-  check that re-validates TUF reachability and exposes a gauge:
+- **Monitoring — TUF fetch reachability.** Sharko does not export this
+  metric today. The alert below is a design sketch for a future release,
+  not something you can deploy now. The sketch: a periodic background
+  check that re-validates TUF reachability and exposes a gauge —
 
-  ```promql
+  ```
   sharko_sigstore_tuf_reachable == 0
   ```
 
-  Alert when 0 for > 5m. Catches the slow-degradation case where
-  TUF starts failing mid-runtime (rare, but the verifier caches the
-  trusted root and won't re-fetch until restart).
+  — alerting when it sits at 0 for more than 5 minutes. It would catch
+  the slow-degradation case where TUF starts failing mid-runtime (rare,
+  but the verifier caches the trusted root and won't re-fetch until
+  restart).
 
-- **Gating — pre-cached trusted root as a chart default.** Ship the
-  Helm chart with a default pre-cached `trusted_root.json` baked in
-  as a ConfigMap, with TUF as the override (not the default). This
-  inverts the failure mode: TUF outage is irrelevant; the operator
-  only pays the trust-root-update cost on Sigstore's rotation
-  cadence (rare).
+- **Gating — a trusted root that does not come from TUF. NOT BUILT.**
+  Sharko today can only get its trusted root from TUF; there is no code
+  path that reads one from disk. Shipping the chart with a bundled
+  `trusted_root.json` would make a TUF outage irrelevant, but it needs a
+  product change first, not a Helm value. Recorded here as the fix worth
+  having, explicitly not as something an operator can do now.
 
-- **Scheduled work — quarterly trusted-root refresh drill.** Once per
-  quarter, refresh the pre-cached trusted root, verify the new bundle
-  validates a known-signed catalog entry, and document the
-  procedure. Catches "the bundle in the chart is stale" before a real
-  Sigstore rotation forces it.
+- **Scheduled work — quarterly TUF-cache drill.** Once per quarter,
+  clear `SHARKO_SIGSTORE_TUF_CACHE`, restart, and confirm a cold fetch
+  still validates a known-signed catalog entry. Catches an egress rule
+  or a CA change that only bites on a cold start, before a real Sigstore
+  rotation forces one.
 
 ---
 

@@ -147,7 +147,7 @@ func TestReconcileV4_CreatesSkipsAndRotates(t *testing.T) {
 	)
 
 	r.reconcile()
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Created != 1 || stats.Errors != 0 {
 		t.Fatalf("first pass: stats = %+v, want Created=1 Errors=0 (errors: %v)", stats, r.GetErrors())
 	}
@@ -160,14 +160,14 @@ func TestReconcileV4_CreatesSkipsAndRotates(t *testing.T) {
 	}
 
 	r.reconcile()
-	if stats = r.GetStats().(ReconcileStats); stats.Skipped != 1 || stats.Updated != 0 {
+	if stats = r.GetStats(); stats.Skipped != 1 || stats.Updated != 0 {
 		t.Errorf("second pass: stats = %+v, want Skipped=1 Updated=0", stats)
 	}
 
 	// Rotation: the value behind the same provider path changes.
 	provider.values["secrets/datadog/api-key"] = []byte("rotated-key")
 	r.reconcile()
-	if stats = r.GetStats().(ReconcileStats); stats.Updated != 1 {
+	if stats = r.GetStats(); stats.Updated != 1 {
 		t.Errorf("after rotation: stats = %+v, want Updated=1", stats)
 	}
 	secret, err = client.CoreV1().Secrets("monitoring").Get(context.Background(), "datadog-secret", metav1.GetOptions{})
@@ -195,7 +195,7 @@ func TestReconcileV4_AddonSwitchedOffIsLeftAlone(t *testing.T) {
 	)
 	r.reconcile()
 
-	if stats := r.GetStats().(ReconcileStats); stats.Checked != 0 || stats.Created != 0 {
+	if stats := r.GetStats(); stats.Checked != 0 || stats.Created != 0 {
 		t.Errorf("stats = %+v, want nothing checked or created", stats)
 	}
 }
@@ -216,7 +216,7 @@ func TestReconcileV4_ProseOnlyRequirementPushesNothing(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Checked != 0 || stats.Errors != 0 {
 		t.Errorf("stats = %+v, want nothing to do and no errors (%v)", stats, r.GetErrors())
 	}
@@ -261,7 +261,7 @@ func TestReconcileV4_UnreadableAssignmentFileLandsInTheStatus(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Errors != 1 {
 		t.Fatalf("stats = %+v, want Errors=1", stats)
 	}
@@ -288,7 +288,7 @@ func TestReconcile_NoCatalogAnywhereLandsInTheStatus(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Errors != 1 {
 		t.Fatalf("stats = %+v, want Errors=1", stats)
 	}
@@ -321,7 +321,7 @@ func TestReconcileV4_UnreadableManagedClustersLandsInTheStatus(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Errors != 1 || stats.LastRun.IsZero() {
 		t.Fatalf("stats = %+v, want one error and a stamped run", stats)
 	}
@@ -392,7 +392,7 @@ func TestReconcile_V3RepoStillWins(t *testing.T) {
 	)
 	r.reconcile()
 
-	if stats := r.GetStats().(ReconcileStats); stats.Created != 1 {
+	if stats := r.GetStats(); stats.Created != 1 {
 		t.Errorf("stats = %+v, want the v3 catalog's secret created (errors: %v)", stats, r.GetErrors())
 	}
 }

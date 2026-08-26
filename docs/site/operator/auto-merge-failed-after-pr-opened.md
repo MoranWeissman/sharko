@@ -417,12 +417,14 @@ branch protection, rebasing).
 How to make this failure mode less likely going forward. Three
 levers:
 
-- **Monitoring — expose a per-PR auto-merge-failure counter.**
-  Wire `sharko_pr_auto_merge_failed_total` (with labels for the
-  operation and the cluster) and alert on >0 over 5 minutes. The
-  bounded blast radius keeps this at P1; the counter would catch
-  the slow drift cases (branch protection rules added after Sharko
-  was deployed) at first-fail. V2-4.x follow-up.
+- **Monitoring — expose a per-PR auto-merge-failure counter.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. The sketch:
+  wire `sharko_pr_auto_merge_failed_total` (with labels for the
+  operation and the cluster) and alert on more than 0 over 5 minutes.
+  The bounded blast radius keeps this at P1; the counter would catch the
+  slow drift cases — branch protection rules added after Sharko was
+  deployed — at first-fail. V2-4.x follow-up.
 
 - **Gating — pre-flight branch protection check on `sharko init`.**
   The init flow could query branch protection on the base branch

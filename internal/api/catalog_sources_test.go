@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // callListSources invokes the GET /catalog/sources handler and returns the
@@ -112,8 +113,8 @@ func TestListCatalogSources_WithOKSnapshot(t *testing.T) {
 	assertEmbeddedRecord(t, body[0], c.Len())
 
 	tp := body[1]
-	if tp.URL != url {
-		t.Errorf("third-party URL = %q, want %q", tp.URL, url)
+	if tp.URL != credsafe.RedactedSourceLabel {
+		t.Errorf("third-party URL = %q, want the fixed word %q — the configured address never reaches the wire", tp.URL, credsafe.RedactedSourceLabel)
 	}
 	if tp.Status != "ok" {
 		t.Errorf("third-party Status = %q, want \"ok\"", tp.Status)
@@ -210,48 +211,68 @@ func TestListCatalogSources_WithFailedSnapshot(t *testing.T) {
 	}
 }
 
-// TestListCatalogSources_MultipleSourcesSortedByURL — inject 3 snapshots
-// in a deliberately non-alphabetical order and assert the third-party
-// rows come back alphabetically sorted with the embedded row still first.
-// Deterministic ordering is required so tests + clients don't flake on Go
-// map iteration order.
-func TestListCatalogSources_MultipleSourcesSortedByURL(t *testing.T) {
+// TestListCatalogSources_MultipleSourcesStableOrderAndByteIdentical —
+// inject 3 snapshots in a deliberately non-alphabetical order. Every
+// third-party row's url on the wire is the same fixed word, so the sort
+// cannot use the wire value — the handler sorts the SNAPSHOTS by their
+// internal address before projecting. Each source is given a different
+// entry count so the order is still observable on the wire, and the whole
+// body must come back byte-identical across two consecutive calls
+// (acceptance item 7): with equal wire keys, an order left to Go's
+// randomised map iteration would make two identical requests answer
+// differently.
+func TestListCatalogSources_MultipleSourcesStableOrderAndByteIdentical(t *testing.T) {
 	s := serverWithCatalog(t, testCatalog(t))
 
-	urls := []string{
-		"https://zeta.example.com/catalog.yaml",
-		"https://alpha.example.com/catalog.yaml",
-		"https://mid.example.com/catalog.yaml",
+	// Alphabetical order of the internal addresses: alpha (1 entry),
+	// mid (2 entries), zeta (3 entries).
+	entryCountByURL := map[string]int{
+		"https://zeta.example.com/catalog.yaml":  3,
+		"https://alpha.example.com/catalog.yaml": 1,
+		"https://mid.example.com/catalog.yaml":   2,
 	}
-	snaps := make(map[string]*sources.SourceSnapshot, len(urls))
-	for _, u := range urls {
+	fixed := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	snaps := make(map[string]*sources.SourceSnapshot, len(entryCountByURL))
+	for u, n := range entryCountByURL {
+		entries := make([]catalog.CatalogEntry, 0, n)
+		for i := 0; i < n; i++ {
+			entries = append(entries, catalog.CatalogEntry{Name: "x", Chart: "x", Repo: "https://x"})
+		}
 		snaps[u] = &sources.SourceSnapshot{
 			URL:           u,
 			Status:        sources.StatusOK,
-			LastSuccessAt: time.Now(),
-			LastAttemptAt: time.Now(),
-			Entries:       []catalog.CatalogEntry{{Name: "x", Chart: "x", Repo: "https://x"}},
+			LastSuccessAt: fixed,
+			LastAttemptAt: fixed,
+			Entries:       entries,
 		}
 	}
 	s.SetSourcesFetcher(makeFetcherWithSnapshots(t, snaps))
 
-	_, body := callListSources(t, s)
+	rw, body := callListSources(t, s)
 	if len(body) != 4 {
 		t.Fatalf("len(body) = %d, want 4 (embedded + 3 third-party)", len(body))
 	}
 	if body[0].URL != "embedded" {
 		t.Errorf("body[0].URL = %q, embedded must always be first", body[0].URL)
 	}
-	wantOrder := []string{
-		"https://alpha.example.com/catalog.yaml",
-		"https://mid.example.com/catalog.yaml",
-		"https://zeta.example.com/catalog.yaml",
-	}
-	for i, want := range wantOrder {
-		got := body[i+1].URL
-		if got != want {
-			t.Errorf("body[%d].URL = %q, want %q (third-party must be alphabetical)", i+1, got, want)
+	// Every third-party row carries the fixed word, and the order follows
+	// the internal addresses alphabetically — visible here through the
+	// per-source entry counts.
+	wantCounts := []int{1, 2, 3}
+	for i, want := range wantCounts {
+		row := body[i+1]
+		if row.URL != credsafe.RedactedSourceLabel {
+			t.Errorf("body[%d].URL = %q, want %q", i+1, row.URL, credsafe.RedactedSourceLabel)
 		}
+		if row.EntryCount != want {
+			t.Errorf("body[%d].EntryCount = %d, want %d (rows must follow the internal addresses alphabetically)", i+1, row.EntryCount, want)
+		}
+	}
+
+	// Byte-identical across two consecutive calls with the same sources.
+	rw2, _ := callListSources(t, s)
+	if rw.Body.String() != rw2.Body.String() {
+		t.Errorf("two consecutive GET /catalog/sources calls answered different bytes:\nfirst:\n%s\nsecond:\n%s", rw.Body.String(), rw2.Body.String())
 	}
 }
 
@@ -340,10 +361,11 @@ func TestListCatalogSources_JSONShape(t *testing.T) {
 	}
 
 	// Third-party row: non-nil *time.Time, int EntryCount, bool Verified,
-	// string Issuer preserved.
+	// string Issuer preserved. The url is the fixed word, never the
+	// configured address.
 	tp := body[1]
-	if tp.URL != url {
-		t.Errorf("third-party URL round-trip: got %q, want %q", tp.URL, url)
+	if tp.URL != credsafe.RedactedSourceLabel {
+		t.Errorf("third-party URL round-trip: got %q, want %q", tp.URL, credsafe.RedactedSourceLabel)
 	}
 	if tp.LastFetched == nil {
 		t.Fatalf("third-party LastFetched decoded as nil; want *time.Time")

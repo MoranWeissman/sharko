@@ -93,7 +93,7 @@ All write endpoints are **synchronous** — they return the final result once al
 }
 ```
 
-When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, the PR is merged immediately after creation and `merged` will be `true`.
+When `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`, the PR is merged immediately after creation and `merged` will be `true`.
 
 ### Standard Error Codes
 
@@ -199,22 +199,151 @@ Includes ArgoCD connection state as of v1.16.0:
 
 ```json
 {
-  "cluster": "prod-eu",
-  "argocd_connection_status": "connected",
-  "argocd_connection_message": "",
-  "addons": [
+  "cluster": { "name": "prod-eu" },
+  "argocd_connection_status": "Failed",
+  "argocd_connection_message": "ArgoCD cannot reach this cluster. Sharko does not repeat ArgoCD's own message here, because it quotes the credentials layer's words in full. Open the cluster in ArgoCD to read the connection error.",
+  "addon_comparisons": [
     {
       "addon_name": "monitoring",
       "git_version": "56.6.2",
-      "argocd_version": "56.6.2",
-      "sync_status": "Synced",
-      "health_status": "Healthy"
+      "git_repo_url": "https://charts.example.com/monitoring",
+      "argocd_deployed_version": "56.6.2",
+      "argocd_sync_status": "Synced",
+      "argocd_health_status": "Healthy",
+      "argocd_source_repo_url": "https://github.example/org/addons.git",
+      "argocd_operation_message": "",
+      "issues": []
     }
   ]
 }
 ```
 
-`argocd_connection_status` values: `connected`, `error`. When `error`, `argocd_connection_message` contains the human-readable reason. The UI surfaces this as a single consolidated error banner at the top of the cluster detail page.
+`argocd_connection_status` values: `Successful`, `Failed`, `Unknown`, or `unrecognised`
+when ArgoCD reports a word Sharko does not know. The UI surfaces a failure as a single
+consolidated error banner at the top of the cluster detail page.
+
+**These fields never carry ArgoCD's own text (B7, B8).** Three of them used to, on this
+ordinary 200 response with nothing having gone wrong:
+
+- `argocd_source_repo_url` and `git_repo_url` are repository addresses, and a repository
+  address is routinely written with the access token inside its userinfo section
+  (`https://x-access-token:<token>@host/org/repo.git`). Both now go through
+  `credsafe.SafeRepoURL`, which removes the whole userinfo section, the query and the
+  fragment. When it cannot parse the value it returns an empty string, and the field is
+  empty rather than falling back to the original.
+- `argocd_operation_message`, `issues[]` and `argocd_connection_message` used to be
+  ArgoCD's `operationState.message` and its cluster `connectionMessage`, quoted whole.
+  Those messages quote the repository ArgoCD was syncing from and quote the credentials
+  layer's errors word for word, so they no longer travel at all. Each field now carries a
+  fixed sentence Sharko wrote plus the facts `internal/credsafe` will vouch for: the sync
+  phase, the sync and health status, and the repository address with the credential
+  removed. ArgoCD's own text is not kept anywhere on the Sharko side any more — not in
+the response and not in the server-side log either (changed by B9, 2026-08-20). The log
+line names the operation, the endpoint and the status code, plus Sharko's own
+classification of the failure; it never quotes ArgoCD's words, because those words quote
+the repository address with its access token inside it. To read ArgoCD's full message,
+open the application or the cluster in ArgoCD.
+
+Do NOT write a client that parses these strings for an error code. They are prose for a
+person, and the operator's next move is the same in every case: open the application or
+the cluster in ArgoCD.
+
+### ArgoCD's own text never reaches a response body (B10)
+
+The rule above is not limited to the comparison endpoint. Every place Sharko copies a
+value out of an ArgoCD object and onto a response follows the same two rules, and B10
+finished applying them:
+
+- **A status word travels only when Sharko knows it.** ArgoCD's sync status, health
+  status, operation phase, cluster connection state, application condition type and
+  ApplicationSet condition type are all closed sets in ArgoCD's own Go types. Sharko
+  echoes the value when it is a member of the set and says `unrecognised` otherwise.
+  `unrecognised` and an empty string mean different things: `unrecognised` is "ArgoCD said
+  something Sharko does not know", empty is "ArgoCD said nothing".
+- **Free-form prose never travels at all.** An operation message, a cluster connection
+  message, an application condition message, an ApplicationSet condition message and a
+  managed resource's health message are whatever ArgoCD, Helm, the Kubernetes API server
+  or a Git transport wrote, quoted verbatim — and they routinely name the repository
+  ArgoCD was reading, which is routinely written with an access token inside it. Each of
+  these fields now carries a fixed sentence Sharko wrote plus the facts Sharko will vouch
+  for. To read the original, open the object in ArgoCD.
+
+The fields B10 changed, all of them on ordinary 200 responses with nothing having gone
+wrong:
+
+| Endpoint | Field | What it carries now |
+|----------|-------|---------------------|
+| `GET /observability/overview` | `addon_health[].clusters[].resources[].message` | a fixed sentence, plus sync/health/repo — was ArgoCD's health-assessment text |
+| `GET /observability/overview` | `addon_health[].clusters[].resources[].status` / `.health` | allow-listed ArgoCD words |
+| `GET /observability/overview` | `addon_health[].clusters[].health`, `addon_groups[].child_apps[].health` / `.sync_status` | allow-listed ArgoCD words |
+| `GET /observability/overview` | `control_plane.health_summary` and `addon_groups[].health_counts` **keys** | allow-listed ArgoCD words — a map key is a response value too |
+| `GET /dashboard/attention` | `error` | a fixed sentence, plus phase/sync/health/repo — was the ArgoCD application condition's own text |
+| `GET /dashboard/attention` | `error_type`, `health`, `sync` | allow-listed ArgoCD words |
+| `GET /addons/{name}` | `application_set.conditions[].message` / `.type` / `.status` | a fixed sentence; allow-listed words |
+| `GET /addons/{name}`, `GET /addons/catalog` | `addon.repo_url` | the repository address with the credential removed |
+| `GET /addons/{name}`, `GET /addons/catalog` | `applications[].sync_status` / `.health_status` | allow-listed ArgoCD words |
+| `POST /clusters/{name}/resync` | `message` on a failed resync | one of the reconciler's canned sentences — was the raw Kubernetes/git error |
+
+The resource is still fully identified in every case: kind, API group, namespace and name
+are Kubernetes object names, and they are not touched.
+
+B11 closed the last one of the same shape — the endpoints that hand back a catalog entry
+as it is written in the repository. A catalog entry's `repoURL` is the operator's own
+value, and it is routinely written with the access token inside it:
+
+| Endpoint | Field | What it carries now |
+|----------|-------|---------------------|
+| `GET /addons/list` | `applicationsets[].repoURL` | the repository address with the credential removed |
+| `GET /addons/list` | `applicationsets[].additionalSources[].repoURL` | the same, for every extra chart source |
+| `GET /catalog/addons` | `addons[].repo_url` and `addons[].additional_sources[].repoURL` | the same |
+| `GET /catalog/addons/{name}` | `repo_url` and `additional_sources[].repoURL` | the same |
+
+The AI assistant's own `list_addons` and `search_addons` answers carry the stripped
+address too — that text is sent to the AI provider and shown in the chat.
+
+**The file on disk is untouched.** The stripping happens only on the copy that becomes a
+response. `models.AddonCatalogEntry` and `config.AddonCatalogEntry` — the structs with
+yaml tags, which Sharko reads `addons-catalog.yaml` / `catalog.yaml` into and writes back
+out — keep the operator's credential exactly as it was written, and so does everything
+that dials the chart repository to fetch an index or a values file. The response copy is a
+separate, json-only type (`models.AddonCatalogEntryView`) or an explicit boundary call
+(`catalog.CatalogAddon.SafeForResponse`).
+
+B14 closed five more of the same shape, and two of them were on ordinary successful
+replies. The two version endpoints hand back the chart repository address they were
+asked about, and one of them also builds a plain-English sentence around it that the
+browser prints exactly as it arrives:
+
+| Endpoint | Field | What it carries now |
+|----------|-------|---------------------|
+| `GET /upgrade/{addonName}/versions` | `repo_url` | the repository address with the credential removed |
+| `GET /marketplace/addons/{name}/versions` | `repo` | the same |
+| `GET /marketplace/addons/{name}/versions` | `no_data_reason` | still a complete sentence saying why there is no version list, naming the repository with the credential removed. When Sharko cannot take the address apart at all, the sentence says "the chart repository" rather than leaving a gap. |
+
+Three more places carried the same value off the machine and are closed with it:
+
+- **The server log.** A chart repository address was written to the log in full, under an
+  attribute key nobody would call sensitive (`repo`, and `url` in the advisory checker).
+  The fix is in the log sink, not at those two lines: `internal/logging`'s redact handler
+  now rewrites any string value that net/url parses as a URL **with a userinfo section**,
+  because a userinfo section is by definition credential material. A URL written without
+  one is left exactly as it was, so no other log line changes.
+- **The AI assistant.** A failed tool used to be reported to the configured model provider
+  as `Error executing <tool>: <the raw Go error>`, and those errors quote the address they
+  failed on. The model is now told the step failed and roughly what kind of failure it was
+  (Go type names only, via `credsafe.LogClass`), and never the error's own words.
+- **Who may ask.** `GET /upgrade/{addonName}/versions` and
+  `GET /marketplace/addons/{name}/versions` were registered with no role check at all.
+  They now gate on `addon.list` and `catalog.freshness.read` respectively — the same
+  viewer-and-above actions their sibling read endpoints already use. No caller loses
+  access; what changes is that both routes are now named in the role table instead of
+  being invisible to it.
+
+Read endpoints as a class were outside every role-gate guard in the codebase, because the
+guard's route inventory only ever collected POST, PUT, PATCH and DELETE.
+`internal/api/authz_read_coverage_test.go` now walks every GET route: each one is either
+gated on a named action, or listed as deliberately open to any authenticated caller. A new
+ungated read fails the build until somebody decides which it is.
 
 ### Addons (Read)
 
@@ -398,7 +527,7 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | name | string | yes | Cluster name. Must match the values file name (coupling contract). Alphanumeric + hyphens. |
-| addons | map[string]bool | no | Addon labels to set. Defaults to `SHARKO_DEFAULT_ADDONS` if configured, otherwise none. |
+| addons | map[string]bool | no | Addon labels to set. Defaults to `SHARKO_CONN_GITOPS_DEFAULT_ADDONS` if configured, otherwise none. |
 | region | string | no | Cluster region metadata. |
 
 **Orchestration Steps:**
@@ -407,7 +536,7 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 3. Verify Kubernetes connectivity (connect to cluster API, get version)
 4. Register cluster in ArgoCD (create cluster secret with addon labels)
 5. Generate cluster values file
-6. Commit to Git (always as a PR; auto-merged when `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+6. Commit to Git (always as a PR; auto-merged when `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`)
 7. If addon secret definitions are configured, deliver secrets to the remote cluster
 
 **Success Response (201 Created):**
@@ -488,6 +617,14 @@ Register multiple clusters in a single request. Clusters are processed sequentia
   "total": 2,
   "succeeded": 2,
   "failed": 0,
+  "partial": 0,
+  "outcome": {
+    "total": 2,
+    "completed": 2,
+    "partly_completed": 0,
+    "failed": 0,
+    "unrecognized": 0
+  },
   "results": [
     {
       "status": "success",
@@ -504,7 +641,37 @@ Register multiple clusters in a single request. Clusters are processed sequentia
 ```
 
 **Partial Success Response (207 Multi-Status):**
-When one or more clusters fail, the response has HTTP 207 and `failed > 0`.
+When one or more clusters do not fully succeed, the response has HTTP 207 and `failed > 0`.
+
+> **Read the body. The HTTP status is not the answer.**
+>
+> The status code says whether Sharko accepted and processed the batch request. It does not
+> say what happened to the individual clusters. **HTTP 200 does not mean every cluster was
+> registered.** Read `outcome` and treat anything other than `completed == total` as work
+> that did not finish.
+
+**Reading `outcome` — the accurate counts:**
+
+| Field | Meaning |
+|-------|---------|
+| `outcome.total` | How many clusters came back. |
+| `outcome.completed` | How many finished every step. |
+| `outcome.partly_completed` | How many stopped part-way. **Nothing is rolled back**, so real changes may already be in Git and on the cluster. These need looking at. |
+| `outcome.failed` | How many failed outright — nothing landed for them at all. |
+| `outcome.unrecognized` | How many came back with a status this server does not know. Normally 0. Never counted as a success. |
+
+The four buckets always add up to `outcome.total`.
+
+**The older top-level counters — unchanged, and they mean something different:**
+
+| Field | Meaning |
+|-------|---------|
+| `total` | How many clusters were in the request. |
+| `succeeded` | How many finished every step. Same number as `outcome.completed`. |
+| `failed` | How many did NOT finish every step — this counts hard failures **and** partials, and it is what the 207 status is derived from. `succeeded + failed` always equals `total`. It is **not** the same number as `outcome.failed`. |
+| `partial` | How many of `failed` were partials. A subset of `failed`, not a third bucket. Same number as `outcome.partly_completed`. |
+
+A cluster's own `results[].status` says which it was: `success`, `partial`, or `failed`.
 
 **Error Responses:**
 | Code | Condition |
@@ -558,6 +725,13 @@ Adopt clusters that already have ArgoCD cluster secrets but are not managed by S
 **Success Response (200 OK):**
 ```json
 {
+  "outcome": {
+    "total": 1,
+    "completed": 1,
+    "partly_completed": 0,
+    "failed": 0,
+    "unrecognized": 0
+  },
   "results": [
     {
       "name": "prod-eu",
@@ -573,6 +747,29 @@ Adopt clusters that already have ArgoCD cluster secrets but are not managed by S
   ]
 }
 ```
+
+> **Read the body. The HTTP status is not the answer.**
+>
+> This endpoint answers **200 even when every cluster failed**, and 200 when every cluster
+> stopped part-way. 207 appears only when at least one cluster failed outright **and** at
+> least one did not. So `200` here means "Sharko processed the request", never "every cluster
+> was adopted". Read `outcome` and treat anything other than `completed == total` as work
+> that did not finish.
+>
+> That this differs from `POST /api/v1/clusters/batch`, which answers 207 for any cluster
+> that did not fully succeed, is a known inconsistency. Both endpoints are stable, so
+> changing either status rule is a major version bump; it is recorded as a compatibility
+> item for the next major version rather than fixed here.
+
+**Reading `outcome` — the accurate counts:**
+
+| Field | Meaning |
+|-------|---------|
+| `outcome.total` | How many clusters came back. |
+| `outcome.completed` | How many were fully adopted. |
+| `outcome.partly_completed` | How many stopped part-way. **Nothing is rolled back** — the pull request may have merged and the ArgoCD connection may already have been handed over, so real changes may be out there. These need looking at. |
+| `outcome.failed` | How many failed outright — nothing landed for them at all. |
+| `outcome.unrecognized` | How many came back with a status this server does not know. Normally 0. Never counted as a success. |
 
 **Error Responses:**
 | Code | Condition |
@@ -1388,7 +1585,9 @@ Note: The `gitops` section reports `pr_auto_merge` (not a `mode` field). Git ope
 
 Returns Prometheus-format metrics. No auth required in default configuration.
 
-20 metrics across 6 categories (cluster, addon, reconciler, PR, HTTP, auth). Dynamic path segments are normalized to prevent cardinality explosion.
+44 metric families: 32 registered in `internal/metrics/metrics.go`, plus 12 built from the four SLO surfaces. Dynamic path segments are normalized to prevent cardinality explosion.
+
+Every metric name, type, label and meaning is listed on one page: [Reference — Metrics, Alerts, and the Grafana Dashboard](site/operator/metrics.md). This page deliberately keeps no copy of that list.
 
 ---
 
@@ -1521,12 +1720,37 @@ List audit events with optional filters. Default limit is 50 entries, newest fir
       "resource": "cluster:prod-eu",
       "source": "cli",
       "result": "success",
+      "changes": "applied",
       "duration_ms": 3200,
       "detail": "3 addons enabled"
     }
   ]
 }
 ```
+
+**`result` and `changes` — two different questions.**
+
+`result` is how the operation went; `changes` is whether anything was actually written.
+
+| `changes` | Meaning |
+|-----------|---------|
+| `not_applicable` | Read-only. Nothing was going to change. |
+| `none` | The action ran and deliberately wrote nothing. The one case where "no changes made" is true. |
+| `applied` | Something really was written. |
+| `may_be_applied` | The action stopped part-way with nothing rolled back, so changes may be out there and Sharko cannot say for certain either way. |
+| *(absent)* | Nobody said. Render nothing — never "no changes". |
+
+For a fan-out operation (`cluster_registered`, `cluster_adopted`), the two fields together are:
+
+| What happened | `result` | `changes` |
+|---------------|----------|-----------|
+| Every cluster finished every step | `success` | `applied` |
+| Some finished, some failed outright, none part-way | `partial` | `applied` |
+| At least one cluster stopped part-way | `partial` | `may_be_applied` |
+| Nothing landed for any cluster | `failure` | `none` |
+
+Work that stopped part-way is never recorded as fully registered or adopted, and never as
+"nothing changed".
 
 ---
 
@@ -1565,6 +1789,23 @@ Every CLI command is a thin HTTP client call to the Sharko API.
 | `sharko pr status <id>` | GET | `/api/v1/prs/{id}` | Detailed PR info |
 | `sharko pr refresh <id>` | POST | `/api/v1/prs/{id}/refresh` | Force poll Git provider |
 | `sharko pr wait <id> [--timeout 10m]` | POST | `/api/v1/prs/{id}/refresh` | Polls every 5s until merged/closed/timeout |
+
+### CLI exit codes for the multi-cluster commands
+
+`sharko add-clusters` and `sharko adopt` act on several clusters in one call and get one
+answer back per cluster. For both:
+
+- **Exit 0 only when every requested cluster completed fully.**
+- **Exit non-zero when any cluster failed OR completed only part-way.** A cluster that
+  stopped part-way was not rolled back, so real changes may already be in Git and on the
+  cluster — the command says so and points at the per-cluster lines.
+- The summary always prints all three counts: fully completed, partly completed, failed.
+- Neither command prints "done" for a run that did not complete. Both used to: they printed
+  it the moment the HTTP call came back, and returned 0 even when every cluster had failed.
+- `sharko adopt --dry-run` previews and adopts nothing, so a successful preview exits 0.
+
+The exit code is decided from the response body, never from the HTTP status — `POST
+/api/v1/clusters/adopt` answers 200 even when every cluster failed.
 
 ### CLI Auth Flow
 
@@ -1719,19 +1960,21 @@ Both parameters accept semver strings with or without a leading `v` (e.g. `1.14.
 
 ### GET /api/v1/notifications — List Notifications
 
-Returns all in-memory notifications, newest first. Notification types: `upgrade`, `security`, `drift`.
+Returns every notification, newest first. Notification types: `upgrade`, `security`, `drift`, `connection`.
 
 **Response (200 OK):**
 ```json
 {
   "notifications": [
     {
-      "id": "abc123",
+      "id": "upgrade-cert-manager-1.15.0",
+      "code": "addon_upgrade_available",
       "type": "upgrade",
       "title": "cert-manager 1.15.0 available",
-      "description": "Current: 1.14.5. New version 1.15.0 is available in the Helm repo.",
+      "description": "Upgrade from 1.14.5 to 1.15.0",
       "timestamp": "2026-04-05T08:00:00Z",
-      "read": false
+      "read": false,
+      "schema": 3
     }
   ],
   "unread_count": 1
@@ -1739,6 +1982,34 @@ Returns all in-memory notifications, newest first. Notification types: `upgrade`
 ```
 
 Returns `{"notifications": [], "unread_count": 0}` when no notifications exist.
+
+`code` is the stable identifier and the only field a client may branch on.
+`reason` appears on connection alerts and is a closed enum. `schema` is the
+record shape version.
+
+#### Every word in a notification is written by the server
+
+`id`, `type`, `title` and `description` are all rendered server-side from the
+`code` plus a small set of checked identifiers — an addon name, a cluster name,
+a chart version. No caller-supplied prose, no raw provider or Kubernetes error
+text and no credential-bearing value can reach any of them, on any code, and
+there is no flag or classification that turns that off. A code the server does
+not know, or an identifier that is not the shape it claims to be, falls back to
+a generic safe sentence rather than being interpolated.
+
+The three addon alerts have distinct wording. They are not exceptions to that
+rule — they are three declared codes with three server-owned templates:
+
+| code | title | description |
+|------|-------|-------------|
+| `addon_upgrade_available` | `<addon> <version> available` | `Upgrade from <catalogVersion> to <version>` |
+| `addon_major_update` | `Major update: <addon> <version>` | `Major version change from <catalogVersion> — review for security patches` |
+| `addon_version_drift` | `Version drift: <addon> on <cluster>` | `Running <version>, catalog has <catalogVersion>` |
+
+The five connection codes (`git_connection_broken`, `argocd_repo_broken`,
+`argocd_auth_failed`, `argocd_unreachable`, `argocd_forbidden`) take a fixed
+title from the same table and a description built from two catalog lookups —
+the code picks the first sentence, the `reason` enum picks the second.
 
 ---
 

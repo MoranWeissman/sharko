@@ -72,19 +72,31 @@ func TestEffectiveServer_PrefersFlagOverConfig(t *testing.T) {
 
 	// Flag empty → saved value wins (existing behaviour, must keep working).
 	serverFlag = ""
-	if got := effectiveServer("https://saved.example.com"); got != "https://saved.example.com" {
+	got, err := effectiveServer("https://saved.example.com")
+	if err != nil {
+		t.Fatalf("a credential-free saved address must be accepted, got: %v", err)
+	}
+	if got != "https://saved.example.com" {
 		t.Errorf("with empty flag, want saved value, got %q", got)
 	}
 
 	// Flag set → flag wins over saved.
 	serverFlag = "https://override.example.com"
-	if got := effectiveServer("https://saved.example.com"); got != "https://override.example.com" {
+	got, err = effectiveServer("https://saved.example.com")
+	if err != nil {
+		t.Fatalf("a credential-free flag address must be accepted, got: %v", err)
+	}
+	if got != "https://override.example.com" {
 		t.Errorf("with flag set, want override, got %q", got)
 	}
 
 	// Both empty → empty (login uses this to detect "required" error).
 	serverFlag = ""
-	if got := effectiveServer(""); got != "" {
+	got, err = effectiveServer("")
+	if err != nil {
+		t.Fatalf("an empty address is 'not configured yet', not a refusal, got: %v", err)
+	}
+	if got != "" {
 		t.Errorf("with both empty, want empty, got %q", got)
 	}
 }

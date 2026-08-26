@@ -8,12 +8,12 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
@@ -24,6 +24,103 @@ import (
 // the bootstrap-app probe with a 403. Phrased so a user with a scoped token
 // understands the cause is RBAC on their token — NOT a broken bootstrap app.
 const permissionDeniedDetail = "ArgoCD rejected Sharko's token (permission denied) — the token needs permission to read applications. Check your ArgoCD RBAC: the account needs role:admin (or at least applications:get)."
+
+// The sentences below are the whole of what the init handlers and the
+// bootstrap probe are allowed to say when something upstream of Sharko fails
+// (B4).
+//
+// # What they replaced, and why it had to go
+//
+// Every one of these places used to hand the underlying error's own words
+// straight to the caller — a short prefix of Sharko's own followed by
+// err.Error(), or fmt.Sprintf("...: %v", err). That text is written by
+// somebody else: the Git
+// library, the ArgoCD server, the Go HTTP transport, the credentials store.
+// It is not Sharko's to pass on, and on the Git side it can carry a secret
+// outright. A repository URL is often written with the token inside it
+// (https://x-access-token:<token>@host/org/repo.git), and net/url's own parse
+// error quotes the URL it failed on in full — so one unparseable repo URL in
+// the saved connection put the token into the body of a 502 that any signed-in
+// viewer could ask for.
+//
+// # The rule these follow
+//
+// The sentence is a fixed constant, chosen by WHICH failure this is, and it
+// never contains a fragment of the underlying error. That is unconditional: it
+// does not depend on today's trace showing that a particular backend cannot
+// reach a particular line. The classification is by type — errors.Is against a
+// sentinel — never by reading an error's words, because a text match stops
+// matching the day the other side rephrases itself.
+//
+// # They stay three different answers on purpose
+//
+// permissionDeniedDetail (403), tokenInvalidDetail (401) and
+// bootstrapProbeFailedDetail ("Sharko could not check") are three separate
+// sentences because they need three separate fixes: widen the token's ArgoCD
+// permissions, replace a dead token, or go and look at whether ArgoCD is
+// reachable. Collapsing them into one vague sentence would swap a leak for a
+// different kind of dishonesty — telling an operator "we don't know" when
+// Sharko does in fact know.
+const (
+	// The two sentences that used to be declared HERE — the ones for "no
+	// usable Git connection" and "no usable ArgoCD connection" — moved to
+	// internal/credsafe in B1 (credsafe.NoActiveGitConnectionMessage and
+	// credsafe.NoActiveArgocdConnectionMessage). Sixty-four more call sites in
+	// this package and four in internal/remediation say them now, and
+	// internal/remediation cannot import internal/api. One owner, not two
+	// copies: two copies of a fixed sentence is how two sentences drift apart.
+
+	// tokenInvalidDetail is said when ArgoCD answers the bootstrap probe with
+	// a 401. The token Sharko holds is not accepted at all, so nothing was
+	// learned about the bootstrap application.
+	tokenInvalidDetail = "ArgoCD rejected Sharko's token (the token is not valid, or it has expired). Create a new ArgoCD token and save it in Settings."
+
+	// bootstrapProbeFailedDetail is said when the ArgoCD read failed for a
+	// reason that is neither a permission problem nor a bad token. Sharko
+	// genuinely does not know the bootstrap application's state, and the
+	// sentence says exactly that and nothing more.
+	bootstrapProbeFailedDetail = "Sharko could not reach ArgoCD to check the bootstrap application, so it does not know whether the bootstrap is healthy. Check that the ArgoCD server address in Settings is right and that Sharko can reach it."
+
+	// noArgocdClientDetail is said when there is no ArgoCD connection to ask
+	// in the first place. Kept apart from bootstrapProbeFailedDetail because
+	// "there is nothing configured" and "the thing that is configured did not
+	// answer" send an operator to two different screens.
+	noArgocdClientDetail = "No ArgoCD connection is configured, so Sharko did not check the bootstrap application."
+)
+
+// argocdSyncStatuses and argocdHealthStatuses are the values ArgoCD is known
+// to report, and the only ones Sharko will repeat back in the diagnostic
+// detail string.
+//
+// The status fields are read off ArgoCD's API response, so they are somebody
+// else's text arriving over the wire, and the detail string they are pasted
+// into is shown to a person. They are a closed set in practice, which is what
+// makes an allow-list the honest fix here: every real value still comes
+// through unchanged, so the operator loses nothing, and a value nobody has
+// seen before is named as unrecognised instead of being echoed.
+var (
+	argocdSyncStatuses = map[string]bool{
+		"Synced": true, "OutOfSync": true, "Unknown": true,
+	}
+	argocdHealthStatuses = map[string]bool{
+		"Healthy": true, "Progressing": true, "Degraded": true,
+		"Suspended": true, "Missing": true, "Unknown": true, "Error": true,
+	}
+)
+
+// unrecognisedArgocdStatus is what the detail string says in place of a status
+// value that is not in the allow-list above. It is a fixed word, so it cannot
+// carry anything ArgoCD sent.
+const unrecognisedArgocdStatus = "unrecognised"
+
+// knownArgocdStatus returns value when it is one ArgoCD is known to report,
+// and the fixed unrecognisedArgocdStatus otherwise.
+func knownArgocdStatus(known map[string]bool, value string) string {
+	if known[value] {
+		return value
+	}
+	return unrecognisedArgocdStatus
+}
 
 // handleInit godoc
 //
@@ -48,13 +145,18 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		// B4: the error's own words never go out. See the sentence block at
+		// the top of this file for why, and for what is lost by not sending
+		// them (nothing the operator can act on).
+		// B1 routed this through the shared gate, which logs and writes the
+		// same fixed sentence for all sixty-six sites.
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -252,7 +354,7 @@ func (s *Server) runInitOperation(
 		// degraded (OutOfSync/Degraded, or the probe itself failed to
 		// resolve one). Re-running Initialize cannot fix a live
 		// application — refuse plainly instead of re-seeding anything.
-		s.opsStore.Fail(sessionID, unhealthyRepairRefusalMessage(detail))
+		s.opsStore.Fail(sessionID, unhealthyRepairRefusalMessage(bootstrapStatus, detail))
 		return
 	case RepoStateUnreachable:
 		// Sync=Unknown — ArgoCD's repo-server can't reach/evaluate the Git
@@ -431,17 +533,23 @@ func (s *Server) runBootstrapSteps(
 }
 
 // unhealthyRepairRefusalMessage builds the POST /init failure message for
-// the RepoStatePartial + bootstrapUnhealthy case (w2-q2). When argoDetail
-// carries a resolved app's sync/health values (the "argocd app %q sync=...
-// health=..." shape ProbeBootstrapApp emits once it has actually found the
-// application), the message says so explicitly: the app already exists, so
-// re-running Initialize will not fix it, and points at ArgoCD/diagnostics
-// instead. When the probe couldn't even resolve an app (e.g. the ArgoCD LIST
-// call itself failed for a non-permission reason), we don't actually know
-// whether the app exists — keep the original, more conservative wording
-// rather than asserting something we can't confirm.
-func unhealthyRepairRefusalMessage(argoDetail string) string {
-	if !strings.Contains(argoDetail, "sync=") {
+// the RepoStatePartial + bootstrapUnhealthy case (w2-q2). When the probe
+// actually RESOLVED the bootstrap Application, the message says so explicitly:
+// the app already exists, so re-running Initialize will not fix it, and it
+// points at ArgoCD/diagnostics instead. When the probe never got far enough to
+// resolve one (e.g. the ArgoCD LIST call itself failed for a non-permission
+// reason), Sharko does not know whether the app exists — keep the original,
+// more conservative wording rather than asserting something it cannot confirm.
+//
+// IT ASKS THE STATUS, NOT THE SENTENCE. This used to test the diagnostic
+// string for the substring "sync=", which is the shape ProbeBootstrapApp
+// happens to emit once it has found an Application. Reordering or rewording
+// that diagnostic — its own comment already asks a reader not to reorder
+// sync= and health= — would have flipped which claim this message makes about
+// the operator's cluster, with nothing failing anywhere. bootstrapStatus is
+// the fact the caller already holds; bootstrapAppResolved reads it.
+func unhealthyRepairRefusalMessage(bootstrapStatus, argoDetail string) string {
+	if !bootstrapAppResolved(bootstrapStatus) {
 		return fmt.Sprintf("repo initialized but ArgoCD bootstrap is missing or unhealthy: %s", argoDetail)
 	}
 	return fmt.Sprintf(
@@ -628,7 +736,7 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 	if ac == nil {
 		// No ArgoCD client at all — Sharko has nothing to ask, so this is
 		// "couldn't check", not "broken" (see bootstrapUnknown doc).
-		return bootstrapUnknown, "no ArgoCD client configured"
+		return bootstrapUnknown, noArgocdClientDetail
 	}
 	apps, err := ac.ListApplications(ctx)
 	if err != nil {
@@ -641,15 +749,32 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 		// A 401 on the LIST means the token itself is invalid/expired — this
 		// is the root-cause bug this status was added for: without it, a
 		// dead token fell through to the catch-all below and got mislabeled
-		// as a broken (but existing) bootstrap app. err already carries the
-		// full actionable message (argocd.ErrTokenInvalid).
+		// as a broken (but existing) bootstrap app.
+		//
+		// B4: this used to return err.Error(). The comment that stood here
+		// claimed the error "already carries the full actionable message",
+		// and by the time it reached this line that was not true — the real
+		// client wraps the sentinel ("listing applications: %w"), and every
+		// other implementation of orchestrator.ArgocdClient is free to wrap
+		// it with whatever its transport produced. All this line ever knows
+		// is that errors.Is found the sentinel, so the sentence is Sharko's,
+		// fixed, and written here.
 		if errors.Is(err, argocd.ErrTokenInvalid) {
-			return bootstrapAuthFailed, err.Error()
+			slog.Warn("bootstrap probe: argocd refused the token", "outcome", bootstrapAuthFailed)
+			return bootstrapAuthFailed, tokenInvalidDetail
 		}
 		// Any other LIST failure (network blip, malformed response, etc.) —
 		// Sharko genuinely does not know whether the bootstrap app is
 		// healthy. Report that honestly instead of guessing "unhealthy".
-		return bootstrapUnknown, fmt.Sprintf("listing argocd applications failed: %v", err)
+		//
+		// B4: this is the catch-all, so whatever the transport produced used
+		// to ride out on it — the ArgoCD server address, a TLS chain, a DNS
+		// answer, anything a future client wrapped in. The error value is not
+		// logged either: this branch is reached by definition when Sharko
+		// does not know what the error is, so it cannot know what is inside
+		// it. The step name is enough to find the request in the log.
+		slog.Warn("bootstrap probe: could not read applications from argocd", "outcome", bootstrapUnknown)
+		return bootstrapUnknown, bootstrapProbeFailedDetail
 	}
 
 	// Look for the current bootstrap app name first, then the v3 one. A
@@ -681,12 +806,24 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 		// Build the base detail with sync and health status (V2-cleanup-51.1
 		// test asserts sync= and health= are present; do not reorder them).
 		detail := fmt.Sprintf("argocd app %q sync=%s health=%s",
-			foundName, found.SyncStatus, found.HealthStatus)
+			foundName, knownArgocdStatus(argocdSyncStatuses, found.SyncStatus),
+			knownArgocdStatus(argocdHealthStatuses, found.HealthStatus))
 		// Append repo URL when available so the bell alert "ArgoCD can't sync
-		// the repo" names WHICH repo is failing (V2-cleanup-52). Empty URL
-		// produces no trailing artifact.
-		if found.SourceRepoURL != "" {
-			detail += " repo=" + found.SourceRepoURL
+		// the repo" names WHICH repo is failing (V2-cleanup-52).
+		//
+		// B4: the URL is passed through credsafe.SafeRepoURL first, and this
+		// is the leak that had nothing to do with an error at all. The value
+		// is spec.source.repoURL copied verbatim out of ArgoCD's API answer,
+		// and a repo URL is routinely written with the token inside it
+		// (https://x-access-token:<token>@host/org/repo.git). So a degraded
+		// bootstrap — an ordinary 200 response, no failure needed — put that
+		// token in the detail string, which goes into the init-status body,
+		// into the POST /init operation message, and into the bell alert.
+		// SafeRepoURL keeps the host and path, which is all the alert needed
+		// in order to name the repo, and returns "" for anything it cannot
+		// take apart with confidence — in which case the repo is not named.
+		if safeRepo := credsafe.SafeRepoURL(found.SourceRepoURL); safeRepo != "" {
+			detail += " repo=" + safeRepo
 		}
 		// Predicate (locked, V2-cleanup-51.1): Sync=Unknown ⟺ ArgoCD's
 		// repo-server could not reach/evaluate the repo (comparison error /

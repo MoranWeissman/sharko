@@ -111,6 +111,10 @@ const STATUS_META: Record<ResourceStatus, StatusMeta> = {
     mark: Check,
   },
   out_of_sync: {
+    // "Out of sync" and "Not checked yet" below are also sentences the server
+    // authors for a CONNECTION. Same words, different surface and different
+    // fact — classified as browser-owned in ui/src/__tests__/browserOwnedCopy.ts,
+    // where serverSentenceCopies.test.ts checks the classification is still true.
     label: 'Out of sync',
     dotClassName: 'bg-amber-600 dark:bg-amber-500',
     stripClassName: 'border-amber-600 dark:border-amber-500',

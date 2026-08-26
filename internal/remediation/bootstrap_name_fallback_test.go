@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -24,6 +25,9 @@ func (f *legacyOnlyArgo) ListApplications(context.Context) ([]models.ArgocdAppli
 }
 func (f *legacyOnlyArgo) TerminateOperation(context.Context, string) error { return nil }
 func (f *legacyOnlyArgo) SyncApplication(context.Context, string) error    { return nil }
+func (f *legacyOnlyArgo) CanSyncApplication(context.Context, string, string) argocd.Capability {
+	return argocd.CapabilityAllowed
+}
 func (f *legacyOnlyArgo) RefreshApplication(_ context.Context, appName string, _ bool) (*models.ArgocdApplication, error) {
 	f.attempted = append(f.attempted, appName)
 	if appName == orchestrator.BootstrapRootAppName {

@@ -430,24 +430,29 @@ However:
 
 ## Prevention
 
-- **Monitoring — login_failed rate-zero alert.** Add a Prometheus rule
-  that pages when `rate(sharko_login_failed_total[15m]) == 0` and
-  `rate(sharko_login_attempts_total[15m]) > 0`. The pattern catches
+- **Monitoring — login_failed rate-zero alert.** Sharko does not export
+  these metrics today. The alert below is a design sketch for a future
+  release, not something you can deploy now. The sketch: a rule that
+  pages when `rate(sharko_login_failed_total[15m]) == 0` and
+  `rate(sharko_login_attempts_total[15m]) > 0`. That pattern would catch
   Test A's "every login is accepted" signal automatically. Wiring
-  requires `sharko_login_*_total` metrics — in V2-3.x scope.
+  requires the `sharko_login_*_total` metrics — in V2-3.x scope.
 
-- **Monitoring — token-created-without-login alert.** A `token_created`
-  audit event with no preceding `login_succeeded` for the same
-  session is the V125-1-7 fingerprint. Detect in audit-log SSE:
+- **Monitoring — token-created-without-login alert.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. A `token_created`
+  audit event with no preceding `login_succeeded` for the same session
+  is the V125-1-7 fingerprint, and the sketch detects it like this —
 
-  ```promql
+  ```
   sum(rate(sharko_audit_events_total{event="token_created"}[5m]))
     -
   sum(rate(sharko_audit_events_total{event="login_succeeded"}[5m]))
   > 0
   ```
 
-  Alert when non-zero. Requires audit metrics — V2-3.x scope.
+  — alerting when non-zero. It requires audit metrics that do not exist
+  yet, V2-3.x scope.
 
 - **Gating — auth integration test in CI.** Add a CI test that runs
   the three Diagnosis tests (A/B/C) against every PR. If a code

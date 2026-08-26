@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
+import {
+  SYNC_ADDON_LABELS_NOTHING_TO_APPLY,
+  SYNC_ADDON_LABELS_HINT,
+  syncAddonLabelsConfirmText,
+} from '@/components/ClusterActionHints';
 
 // v4-8-5 — "Re-sync now" in the drift view, renamed to "Sync" as part of the
 // Managed cluster secret panel's ArgoCD-vocabulary toolbar (walk day 4 /
-// S1), and renamed again to "Re-apply addon labels" by the honest-labels
-// epic (HL-1) — the action re-applies only Sharko's own addon label keys,
-// so its name says exactly that now. Pins:
+// S1), renamed again to "Re-apply addon labels" by the honest-labels epic
+// (HL-1) — the action re-applies only Sharko's own addon label keys, so its
+// name said exactly that — and renamed once more, to "Sync addon labels",
+// by the Round 3 walkthrough ruling (2026-08-16). Pins:
 //  1. The button always renders, but stays DISABLED when there is nothing
 //     to apply (no drift) — not hidden, unlike the old always-conditional
 //     "Re-sync now".
@@ -125,7 +131,7 @@ describe('ClusterDetail — Re-sync now (v4-8-5)', () => {
     });
   });
 
-  it('renders "Re-apply addon labels" disabled when labels are in sync (nothing to apply)', async () => {
+  it('renders "Sync addon labels" disabled when labels are in sync (nothing to apply)', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
     renderView();
 
@@ -133,43 +139,103 @@ describe('ClusterDetail — Re-sync now (v4-8-5)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
     expect(screen.getByText('Synced')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeDisabled();
   });
 
-  it('renders "Re-apply addon labels" enabled when drift is present', async () => {
+  // B13 item 9. The same button, offered in the same situation on the Cluster
+  // connections list, said something different: "Nothing to apply — this
+  // connection already matches the Git-defined connection." This page said
+  // "Nothing to apply — this secret already matches git." One situation, two
+  // answers — and this page's version also used the vocabulary the locked
+  // model replaced ("this secret", "git" as the comparator).
+  it('the nothing-to-apply hint is the SHARED sentence, pinned by exact text, and the old one is gone', async () => {
+    mockGetClusterComparison.mockResolvedValue(baseComparisonResponse());
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'What does Sync addon labels do?' }));
+    await waitFor(() => {
+      expect(screen.getByText(SYNC_ADDON_LABELS_NOTHING_TO_APPLY)).toBeInTheDocument();
+    });
+    // Character for character, so a paraphrase on either surface fails.
+    expect(SYNC_ADDON_LABELS_NOTHING_TO_APPLY).toBe(
+      'Nothing to apply — this connection already matches the Git-defined connection.',
+    );
+    // The sentence this replaced is banned on this page.
+    expect(screen.queryByText(/this secret already matches git/)).not.toBeInTheDocument();
+  });
+
+  // Same class of defect as the nothing-to-apply pin above, on the OTHER
+  // half of the same hint. This page said "Applies git's addon labels to
+  // this cluster's secret now."; the Cluster connections list said "Sync
+  // addon labels puts git's addon labels back on this secret. Nothing else
+  // on it changes." One button, one write, two sentences. Both pages read
+  // the shared constant now, and both pin it by exact text — this half
+  // here, the other half in ManagedSecrets.reconciliationcontract.test.tsx.
+  it('the drift hint is the SHARED sentence, pinned by exact text, and the old one is gone', async () => {
+    mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'What does Sync addon labels do?' }));
+    await waitFor(() => {
+      expect(screen.getByText(SYNC_ADDON_LABELS_HINT)).toBeInTheDocument();
+    });
+    // Character for character, so a paraphrase on either surface fails.
+    expect(SYNC_ADDON_LABELS_HINT).toBe(
+      'Puts the addon labels Git defines back on this connection. Nothing else on it changes.',
+    );
+    // The sentence this replaced is banned on this page.
+    expect(screen.queryByText(/Applies git's addon labels to this cluster's secret now/)).not.toBeInTheDocument();
+  });
+
+  it('renders "Sync addon labels" enabled when drift is present', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText(/Out of sync/)).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeEnabled();
   });
 
-  it('a viewer never sees "Re-apply addon labels", even with drift present', async () => {
+  it('a viewer never sees "Sync addon labels", even with drift present', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
     renderView(viewerAuth);
 
     await waitFor(() => {
       expect(screen.getByText(/Out of sync/)).toBeInTheDocument();
     });
-    expect(screen.queryByRole('button', { name: /^Re-apply addon labels$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Sync addon labels$/ })).not.toBeInTheDocument();
   });
 
-  it('clicking "Re-apply addon labels" opens a confirm dialog naming exactly what it does', async () => {
+  it('clicking "Sync addon labels" opens a confirm dialog naming exactly what it does', async () => {
     mockGetClusterComparison.mockResolvedValue(baseComparisonResponse({ added: ['addon-foo'] }));
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeEnabled();
     });
-    fireEvent.click(screen.getByRole('button', { name: /^Re-apply addon labels$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Sync addon labels$/ }));
 
+    // The SHARED confirm sentence, character for character. The Cluster
+    // connections list puts the same write behind the same confirm box and
+    // pins the same function's output — see
+    // ManagedSecrets.reconciliationcontract.test.tsx.
     await waitFor(() => {
-      expect(
-        screen.getByText(/Applies git's addon labels to this cluster's ArgoCD secret — one time; the self-heal setting is not changed/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(syncAddonLabelsConfirmText('prod-eu'))).toBeInTheDocument();
     });
+    expect(syncAddonLabelsConfirmText('prod-eu')).toBe(
+      'This writes to cluster "prod-eu" now. No pull request. It puts back the addon labels Git defines, and nothing else. The self-heal setting doesn\'t change.',
+    );
+    // The wording this replaced is banned on this page.
+    expect(
+      screen.queryByText(/one time; the self-heal setting is not changed/i),
+    ).not.toBeInTheDocument();
     expect(mockResyncClusterLabels).not.toHaveBeenCalled();
   });
 
@@ -178,19 +244,22 @@ describe('ClusterDetail — Re-sync now (v4-8-5)', () => {
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeEnabled();
     });
-    fireEvent.click(screen.getByRole('button', { name: /^Re-apply addon labels$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Sync addon labels$/ }));
 
     // Wait for the dialog to actually render before looking for its confirm
-    // button. HL-1: the modal's confirm button reads "Re-apply labels" — a
-    // different name from the toolbar button, so no getAllByRole hack.
+    // button. Round 3 (2026-08-16): the modal's confirm button now reads
+    // the SAME words as the toolbar button ("Sync addon labels") — the
+    // toolbar button stays mounted behind the dialog, so the confirm
+    // button is found scoped to the dialog, not by a page-wide role query.
     await waitFor(() => {
-      expect(screen.getByText(/one time; the self-heal setting is not changed/i)).toBeInTheDocument();
+      expect(screen.getByText(syncAddonLabelsConfirmText('prod-eu'))).toBeInTheDocument();
     });
 
     const callCountBefore = mockGetClusterComparison.mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: /^Re-apply labels$/ }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Sync addon labels$/ }));
 
     await waitFor(() => {
       expect(mockResyncClusterLabels).toHaveBeenCalledWith('prod-eu');

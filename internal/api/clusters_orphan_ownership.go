@@ -93,7 +93,7 @@ func listSharkoOwnedSecretNames(ctx context.Context, k8sClient kubernetes.Interf
 	})
 	if err != nil {
 		slog.Warn("[orphan] listing sharko-owned Secrets failed — degrading to empty",
-			"namespace", namespace, "selector", selector, "err", err.Error(),
+			"namespace", namespace, "selector", selector, "err", err,
 		)
 		return nil
 	}

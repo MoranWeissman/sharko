@@ -67,8 +67,26 @@ type NotCheckedField struct {
 // Reasons a field is not checked. Fixed literals — never a provider error,
 // never anything derived from a value.
 const (
-	reasonFreshTokenEveryFetch = "This cluster's sign-in details are issued fresh every time, so they are never the same twice and there is nothing stable to compare them against."
-	reasonNoIndependentCopy    = "Sharko has no copy of these details outside the connection itself, so the only thing it could compare them against is the connection — which would always agree and tell you nothing."
+	// ReasonEKSNoStoredCredential is the product owner's wording (2026-08-13).
+	// It replaced a sentence saying the sign-in details are issued fresh every
+	// time, which suggested the check creates them. It does not — the read-only
+	// path stops at the stored payload. The real limit is that there is no
+	// stored credential to compare against. Pinned by
+	// TestCompare_EKSNotCheckedReasonIsExact.
+	ReasonEKSNoStoredCredential = "The backend stores EKS cluster details, not a reusable sign-in credential. Sharko therefore has no stored credential to compare with `data.config`."
+	ReasonNoIndependentCopy     = "Sharko has no copy of these details outside the connection itself, so the only thing it could compare them against is the connection — which would always agree and tell you nothing."
+
+	// ReasonLabelPreservedForPreviousOwner covers a label Git declares that a
+	// takeover also recorded as belonging to whoever managed the cluster
+	// before Sharko. Sharko leaves recorded labels alone everywhere — it does
+	// not compare them here and it does not change them on the cluster — so
+	// this one label is the two sides disagreeing about who owns a key, and
+	// the connection is not fully checked while that is true.
+	ReasonLabelPreservedForPreviousOwner = "Git declares this label, and a takeover also recorded it as belonging to whoever managed this cluster before Sharko. Sharko leaves recorded labels alone, so it neither compared this one nor changes it on the cluster."
+
+	// ReasonLabelNotCompared is the backstop sentence. Nothing in today's
+	// code produces it; see unaccountedOwnedLabels for why it exists anyway.
+	ReasonLabelNotCompared = "Sharko owns this label and Git declares a value for it, but this check did not compare it. Sharko will not call the connection synced while that is true."
 )
 
 // On a connection Sharko does not own, the connection details are not listed
@@ -128,9 +146,15 @@ type Request struct {
 	// and the endpoint that builds it goes through the secrets backend.
 	ExpectedSpec *argosecrets.ClusterSecretSpec
 
-	// CheckFailure, when non-empty, is a fixed safe sentence saying Sharko
-	// could not finish. Set it and the answer is check_failed, full stop.
-	CheckFailure string
+	// CheckFailure, when set, names WHY Sharko could not finish. Set it and
+	// the answer is check_failed, full stop.
+	//
+	// It is a TYPED reason, not a sentence. It used to be the whole paragraph
+	// a person reads, and the connection page switched on it — so rewording
+	// one sentence silently changed which branch of the page ran. The words
+	// are produced from this value by the one caller that has to show them;
+	// see internal/connectioncompare/checkfailure.go.
+	CheckFailure CheckFailure
 }
 
 // Result is the comparison's answer. Nothing in it carries credential
@@ -154,8 +178,13 @@ type Result struct {
 	// count of FIELDS, not of bytes or characters of any value.
 	CheckedFieldCount int
 
-	// FailureReason is the fixed safe sentence for a check_failed answer.
-	FailureReason string
+	// Failure names WHY a check_failed answer could not finish, as a typed
+	// reason. Empty for every other status.
+	//
+	// It carries no words. A caller that shows this to a person maps it to a
+	// sentence itself, in one place — which is what stops a copy edit from
+	// changing how anything is routed.
+	Failure CheckFailure
 
 	// RepairAvailable and RepairScope come straight from the policy. Step 2
 	// never repairs; these say what step 3 would be allowed to do.
@@ -179,49 +208,97 @@ type Result struct {
 //  5. Then, and only then, fields are compared.
 func Compare(req Request) Result {
 	res := Result{
-		Scope:           req.Policy.Scope,
-		Mode:            req.Policy.Mode,
-		LimitReason:     req.Policy.LimitReason,
-		RepairAvailable: req.Policy.RepairOffered(),
-		RepairScope:     req.Policy.RepairScope,
+		Scope:       req.Policy.Scope,
+		Mode:        req.Policy.Mode,
+		LimitReason: req.Policy.LimitReason,
+		// R3-8: RepairAvailable and RepairScope computed AFTER status is known,
+		// not before. check_failed, missing and ownership_conflict must all
+		// return repair_available: false.
 	}
 
 	// 1. Sharko could not finish.
-	if req.CheckFailure != "" {
+	if req.CheckFailure != CheckFailureNone {
 		res.Status = StatusCheckFailed
-		res.FailureReason = req.CheckFailure
+		res.Failure = req.CheckFailure
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	// 2. Somebody else owns it.
+	//
+	// NO SENTENCE IS WRITTEN HERE, and that is the point. This exit used to
+	// overwrite the policy's own limit sentence with a hand-written literal of
+	// its own. The two copies happened to be byte-identical to the connection
+	// page's foreign-owned mode statement, and that accidental equality was
+	// load-bearing: it was the only reason the page de-duplicated instead of
+	// printing the same sentence twice. Changing either literal by one
+	// character would have silently broken a different file's rendering, and no
+	// test could catch it, because "these two sentences are equal" is not a
+	// fact any test would think to assert.
+	//
+	// The answer a caller needs is already here and already typed: Status,
+	// Scope and Mode. Callers phrase it; this function does not phrase it for
+	// them, and cannot drift from them.
 	if req.Policy.Scope == ScopeOwnershipConflict {
 		res.Status = StatusOwnershipConflict
+		res.LimitReason = ""
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	// 3. There is nothing there.
+	//
+	// The sentence is per mode. It used to be one unconditional sentence
+	// promising the reconciler would create the Secret on its next pass,
+	// which is a promise Sharko cannot keep for a self-managed connection, a
+	// legacy pasted-credential one, or one whose credentials source it does
+	// not understand — see SecretMissingReason.
 	if !req.LiveFound || req.Live == nil {
 		res.Status = StatusMissing
+		res.LimitReason = SecretMissingReason(req.Policy)
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	// 4. Sharko does not know what the labels should be.
 	if !req.AddonLabelsKnown {
 		res.Status = StatusCheckFailed
-		res.FailureReason = "Sharko could not read which addons should be on for this cluster, so it cannot tell whether this connection's labels are right. Check that the cluster's addon file is readable in git, then check again."
+		res.Failure = CheckFailureAddonLabelsUnknown
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	expectedLabels, expectedSecret, buildFailed := expectedSides(req)
-	if buildFailed != "" {
+	if buildFailed != CheckFailureNone {
 		res.Status = StatusCheckFailed
-		res.FailureReason = buildFailed
+		res.Failure = buildFailed
+		res.RepairAvailable = false
+		res.RepairScope = RepairScopeNone
 		return res
 	}
 
 	// Labels.
 	skip := labelSkipSet(req.Live)
-	res.Differences = append(res.Differences, compareLabels(expectedLabels, req.Live.Labels, req.Policy.Scope, skip, &res.CheckedFieldCount)...)
+	labelDiffs, labelNotChecked, accounted := compareLabels(expectedLabels, req.Live.Labels, req.Policy.Scope, skip, &res.CheckedFieldCount)
+	res.Differences = append(res.Differences, labelDiffs...)
+	res.NotChecked = append(res.NotChecked, labelNotChecked...)
+
+	// The backstop. compareLabels above is expected to account for every
+	// label key Sharko declares and owns — either by comparing it, or by
+	// naming it in NotChecked. This re-derives that set from the inputs and
+	// says so out loud about anything that came back unaccounted for.
+	//
+	// It is here so the promise below ("synced means Sharko checked
+	// everything it owns") cannot be broken by a skip that does not exist
+	// yet. Any future filter added inside compareLabels that quietly drops an
+	// owned, declared key lands here instead of disappearing, and the answer
+	// stops being synced. TestCompare_UnaccountedOwnedLabelIsNotChecked
+	// breaks this on purpose and pins it.
+	res.NotChecked = append(res.NotChecked, unaccountedOwnedLabels(expectedLabels, req.Policy.Scope, accounted)...)
 
 	// Everything below is only Sharko's on a connection Sharko owns. On a
 	// guest connection Sharko manages the addon labels and nothing else, so
@@ -252,17 +329,24 @@ func Compare(req Request) Result {
 	default:
 		res.Status = StatusLimited
 	}
+
+	// R3-8: Repair offer computed AFTER the status is known. Only out_of_sync,
+	// synced and limited reach here; the early exits (check_failed, missing,
+	// ownership_conflict) already set repair_available: false above.
+	res.RepairAvailable = req.Policy.RepairOffered()
+	res.RepairScope = req.Policy.RepairScope
+
 	return res
 }
 
 // expectedSides builds the expected label set and, where the mode allows it,
-// the expected Secret. Returns a fixed safe sentence when the build failed.
+// the expected Secret. Returns a typed reason when the build failed.
 //
 // The expected Secret always comes from argosecrets.BuildClusterSecret. The
 // expected labels come from the same builder on the owned-connection path, so
 // the label set the comparison checks against is byte-for-byte the label set a
 // write would produce.
-func expectedSides(req Request) (labels map[string]string, secret *corev1.Secret, failure string) {
+func expectedSides(req Request) (labels map[string]string, secret *corev1.Secret, failure CheckFailure) {
 	// Guest connections: Sharko writes only the addon labels, so that is the
 	// whole expectation. SyncLabelsOnly is the writer, and it deliberately
 	// does not add the ownership or secret-type labels and strips the
@@ -275,7 +359,7 @@ func expectedSides(req Request) (labels map[string]string, secret *corev1.Secret
 			guest[k] = v
 		}
 		models.RemoveConnectivityCheckLabels(guest)
-		return guest, nil, ""
+		return guest, nil, CheckFailureNone
 	}
 
 	// Owned connections. The label set is what the write path would stamp:
@@ -293,7 +377,7 @@ func expectedSides(req Request) (labels map[string]string, secret *corev1.Secret
 		// knowable from git, so they are still compared; the credential
 		// fields become "not checked". Build the label set through the
 		// canonical builder's own label function so it matches a real write.
-		return argosecrets.BuildClusterSecretLabels(argosecrets.ClusterSecretSpec{Labels: specLabels}), nil, ""
+		return argosecrets.BuildClusterSecretLabels(argosecrets.ClusterSecretSpec{Labels: specLabels}), nil, CheckFailureNone
 	}
 
 	spec := *req.ExpectedSpec
@@ -306,21 +390,44 @@ func expectedSides(req Request) (labels map[string]string, secret *corev1.Secret
 	built, err := argosecrets.BuildClusterSecret(spec, req.Namespace)
 	if err != nil {
 		// The error could name the cluster and, in some future shape, could
-		// carry more. It is not passed through: a fixed sentence goes out and
-		// the caller logs the detail on the server side.
-		return nil, nil, "Sharko could not work out what this cluster's connection should look like, so there is nothing to compare against. Check again in a moment."
+		// carry more. It is not passed through: a typed reason goes out, the
+		// caller turns that into one fixed sentence, and the detail is logged
+		// on the server side.
+		return nil, nil, CheckFailureExpectedBuild
 	}
-	return built.Labels, built, ""
+	return built.Labels, built, CheckFailureNone
 }
 
 // compareLabels compares the label keys Sharko owns at this scope.
-func compareLabels(expected, live map[string]string, scope Scope, skip map[string]bool, checked *int) []Difference {
+// The third return value is the set of label keys this function accounted for
+// — every key it compared, plus every key it deliberately named in NotChecked.
+// Compare cross-checks it against the keys Sharko declares and owns, so a key
+// that leaves here without either treatment cannot go unnoticed.
+func compareLabels(expected, live map[string]string, scope Scope, skip map[string]bool, checked *int) ([]Difference, []NotCheckedField, map[string]bool) {
 	var diffs []Difference
+	var notChecked []NotCheckedField
+	accounted := map[string]bool{}
 
 	for key, want := range expected {
-		if skip[key] || !ownedLabelKey(key, scope) {
+		// Not Sharko's at this scope. Nothing to record: it is somebody
+		// else's label, and Sharko never claimed it.
+		if !ownedLabelKey(key, scope) {
 			continue
 		}
+		// Sharko DOES claim this one, and something told the comparison to
+		// leave it alone. That is a field inside Sharko's own scope that was
+		// not compared, so it is said out loud rather than dropped. Silently
+		// dropping it is what let a connection report "synced" while one of
+		// Sharko's own labels was never looked at.
+		if skip[key] {
+			accounted[key] = true
+			notChecked = append(notChecked, NotCheckedField{
+				Path:   labelFieldPath(key),
+				Reason: ReasonLabelPreservedForPreviousOwner,
+			})
+			continue
+		}
+		accounted[key] = true
 		*checked++
 		have, ok := live[key]
 		switch {
@@ -332,17 +439,46 @@ func compareLabels(expected, live map[string]string, scope Scope, skip map[strin
 	}
 
 	for key, have := range live {
-		if skip[key] || !ownedLabelKey(key, scope) {
+		if !ownedLabelKey(key, scope) {
+			continue
+		}
+		// A skipped key Sharko does NOT declare is outside this connection's
+		// scope, not a gap in the check — same stance the guest-connection
+		// fields take below. A takeover carried the previous owner's label
+		// over on purpose, Sharko has no expectation for it and will never
+		// change it, so there is nothing here Sharko failed to verify.
+		if skip[key] {
 			continue
 		}
 		if _, declared := expected[key]; declared {
 			continue // already handled above
 		}
+		accounted[key] = true
 		*checked++
 		diffs = append(diffs, safeDifference(labelFieldPath(key), FieldUnexpected, nil, strPtr(have)))
 	}
 
-	return diffs
+	sortNotChecked(notChecked)
+	return diffs, notChecked, accounted
+}
+
+// unaccountedOwnedLabels returns a NotChecked entry for every label key Sharko
+// declares and owns at this scope that compareLabels did not account for.
+//
+// On today's code it always returns nothing, and that is the point: it is a
+// backstop, not a code path anybody is meant to reach. It exists so the rule
+// "synced means Sharko compared everything it owns" is enforced structurally
+// rather than by everyone remembering to keep compareLabels honest.
+func unaccountedOwnedLabels(expected map[string]string, scope Scope, accounted map[string]bool) []NotCheckedField {
+	var out []NotCheckedField
+	for key := range expected {
+		if !ownedLabelKey(key, scope) || accounted[key] {
+			continue
+		}
+		out = append(out, NotCheckedField{Path: labelFieldPath(key), Reason: ReasonLabelNotCompared})
+	}
+	sortNotChecked(out)
+	return out
 }
 
 // compareIdentityAndType compares the Secret's name, namespace and type.
@@ -405,9 +541,9 @@ func compareConnectionData(req Request, expectedSecret *corev1.Secret, checked *
 	// without it these are reported unchecked rather than guessed.
 	if expectedSecret == nil {
 		notChecked = append(notChecked,
-			NotCheckedField{Path: FieldPathDataName, Reason: reasonNoIndependentCopy},
-			NotCheckedField{Path: FieldPathDataServer, Reason: reasonNoIndependentCopy},
-			NotCheckedField{Path: FieldPathDataConfig, Reason: reasonNoIndependentCopy},
+			NotCheckedField{Path: FieldPathDataName, Reason: ReasonNoIndependentCopy},
+			NotCheckedField{Path: FieldPathDataServer, Reason: ReasonNoIndependentCopy},
+			NotCheckedField{Path: FieldPathDataConfig, Reason: ReasonNoIndependentCopy},
 		)
 		return diffs, notChecked
 	}
@@ -438,12 +574,18 @@ func compareConnectionData(req Request, expectedSecret *corev1.Secret, checked *
 
 	// data.config, the credential blob.
 	if req.Policy.Mode == ModeEKSToken {
-		// The stored details mint a brand-new short-lived token on every
-		// fetch, so the rebuilt blob differs from the live one every time
-		// with nothing having drifted. Comparing it would report drift that
-		// is not real; claiming it matched would be a lie. So it is not
-		// checked, and the reason says so in plain words.
-		notChecked = append(notChecked, NotCheckedField{Path: FieldPathDataConfig, Reason: reasonFreshTokenEveryFetch})
+		// The configured credentials source stores EKS cluster metadata, not a
+		// credential — so there is no credential on the expected side and
+		// nothing to compare the live blob against. Calling it different would
+		// report drift that is not real; claiming it matched would be a lie
+		// about a check that never happened. So it is not checked, and the
+		// reason says so in plain words.
+		//
+		// Nothing here creates a credential to compare with, either: the
+		// expected side comes from providers.StoredConnectionFacts, which stops
+		// at the stored payload. A WRITE creates a token, once. A check creates
+		// none.
+		notChecked = append(notChecked, NotCheckedField{Path: FieldPathDataConfig, Reason: ReasonEKSNoStoredCredential})
 		return diffs, notChecked
 	}
 

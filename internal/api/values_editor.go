@@ -144,14 +144,14 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 2: configuration change — prefer per-user PAT, fall back to service token.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -184,7 +184,8 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 		}
 		raw, ferr := helm.NewFetcher().FetchValues(ctx, repoURL, chart, version)
 		if ferr != nil {
-			writeError(w, http.StatusBadGateway, "fetching upstream values: "+ferr.Error())
+			// B13 — the chart download's error text carries the repo token.
+			writeChartRepoError(w, r, chartRepoFetchValues, ferr)
 			return
 		}
 
@@ -331,13 +332,13 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -396,7 +397,7 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 
@@ -489,7 +490,7 @@ func (s *Server) handleGetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 

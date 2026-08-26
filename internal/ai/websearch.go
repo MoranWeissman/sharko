@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // WebSearch performs a web search using DuckDuckGo HTML search (no API key needed).
@@ -25,13 +27,17 @@ func WebSearch(ctx context.Context, query string, maxResults int) (string, error
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("creating search request: %w", err)
+		// The search address carries the user's query in it, and a
+		// *url.Error prints the whole address back (BF12).
+		return "", fmt.Errorf("the web search request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; ArgoCD-Addons-Platform/1.0)")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("web search request failed: %w", err)
+		return "", fmt.Errorf("the web search request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 

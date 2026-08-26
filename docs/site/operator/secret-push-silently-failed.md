@@ -424,10 +424,12 @@ For Mitigation step 5 (catalog-level addon removal):
     re-run after fixing the secret config.
   This is the V2-4.x code-level prevention. Tracking required.
 
-- **Monitoring — alert on per-addon secret-push failures.** Add a
-  Prometheus counter `sharko_addon_secret_push_failures_total` and
-  alert when its rate exceeds 0 for any 5-minute window. Wiring is a
-  small change in `internal/orchestrator/secrets.go`.
+- **Monitoring — alert on per-addon secret-push failures.** Sharko does
+  not export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch: register
+  a counter `sharko_addon_secret_push_failures_total` and alert when its
+  rate exceeds 0 for any 5-minute window. Wiring would be a small change
+  in `internal/orchestrator/secrets.go`.
 
 - **Scheduled work — daily reconciliation of secret state.** Sharko
   already runs the cluster-secret reconciler at 30s cadence; add an

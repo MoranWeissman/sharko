@@ -15,7 +15,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { testClusterConnection, adoptClusters, isTestClusterUnavailable } from '@/services/api'
+import { testClusterConnection, adoptClusters, isTestClusterUnavailable, isCredentialLookupFailure } from '@/services/api'
 import type { Cluster, AdoptResult, VerifyResult, DryRunResult } from '@/services/models'
 import { CHECK_PERMISSIONS_LABEL } from '@/components/ClusterActionHints'
 import { DryRunPreview } from '@/components/AddAddonFlow'
@@ -98,22 +98,18 @@ export function AdoptClustersDialog({
           if (cancelled) return
 
           // F14: Credentials-optional contract — distinguish informational
-          // cases (test unavailable OR credentials not found) from genuine
-          // verification failures. The backend (adopt.go:103-139) documents
-          // that credentials are OPTIONAL: "A failed credential lookup is
-          // the NORMAL case, not a fatal one — skip verification instead of
-          // failing the adoption."
-          const isCredentialsNotFound = (msg: string | undefined): boolean => {
-            if (!msg) return false
-            const lower = msg.toLowerCase()
-            return (
-              lower.includes('secret') && lower.includes('not found') ||
-              lower.includes('credential') && (lower.includes('not found') || lower.includes('unavailable')) ||
-              lower.includes('no credentials available')
-            )
-          }
+          // cases (test unavailable OR the credential lookup failed) from
+          // genuine verification failures. The backend
+          // (internal/orchestrator/adopt.go) documents that credentials are
+          // OPTIONAL: "A failed credential lookup is the NORMAL case, not a
+          // fatal one — skip verification instead of failing the adoption."
+          //
+          // ASKED OF A TYPED FIELD. This used to be answered by lower-casing
+          // the server's error_message and hunting five phrases in it — see
+          // isCredentialLookupFailure in services/api for what that cost and
+          // why it had stopped working entirely.
 
-          // Case (a): Test unavailable OR credentials not found → informational,
+          // Case (a): Test unavailable OR the credential lookup failed → informational,
           // not blocking. Keep cluster selected and adoptable.
           if (isTestClusterUnavailable(result)) {
             setVerifications((prev) => {
@@ -135,10 +131,10 @@ export function AdoptClustersDialog({
             continue
           }
 
-          // Case (a) continued: Credentials not found in error message → also
-          // informational, per the credentials-optional contract.
-          const errorMsg = result.error_message || ''
-          if (!result.success && isCredentialsNotFound(errorMsg)) {
+          // Case (a) continued: the credential lookup itself failed → also
+          // informational, per the credentials-optional contract. Nothing was
+          // asked of the cluster, so nothing is known against it.
+          if (isCredentialLookupFailure(result)) {
             setVerifications((prev) => {
               const next = [...prev]
               next[i] = {

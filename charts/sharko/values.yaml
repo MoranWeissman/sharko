@@ -85,10 +85,13 @@ settings:
   # Leave empty to keep runtime API value authoritative (today's behavior).
   probeMode: ""
 
-  # allowInlineCredentials: Whether the "Paste a kubeconfig" registration path
-  # is enabled server-wide (true | false, default true when unset).
-  # Set to false to forbid inline credential paste install-wide; connection-only
-  # registrations are unaffected.
+  # allowInlineCredentials: The "Allow legacy inline credentials" switch —
+  # whether the "Paste a kubeconfig" registration path is enabled server-wide
+  # (true | false, default FALSE when unset). The paste path is a legacy
+  # escape hatch: a pasted credential exists only in the live ArgoCD cluster
+  # Secret and cannot be recovered from Git. Set to true only if this install
+  # still depends on pasted registrations; connection-only registrations are
+  # unaffected either way.
   # Leave empty to keep runtime API value authoritative (today's behavior).
   allowInlineCredentials: ""
 
@@ -109,6 +112,28 @@ settings:
 # Scope: the ACTIVE (or default) connection only. When no connection exists yet
 # (fresh install, token not entered), this block is a no-op — Sharko never
 # fabricates a connection without credentials.
+#
+# repoURL and serverURL are written into the pod as ordinary environment
+# values, which anyone who can read the Deployment can read. So the chart
+# REFUSES TO INSTALL unless it can read the address and finds no user
+# information in the host part, no query string and no fragment. Those three
+# are the only places a credential can sit in an address. It turns away most
+# addresses it cannot read as well — a port that is not a number, for example,
+# or a git@host:org/repo.git remote, which Sharko has never supported.
+#
+# It is not a full address checker. It looks at the shape of the address, not
+# at whether the host is a real machine, so a malformed IPv6 address in square
+# brackets can still install; Sharko's own reading of an address is stricter
+# about that and turns it away. Neither one lets a credential through.
+#
+# A scheme is optional. https://github.com/org/repo, github.com/org/repo and
+# localhost:8080 all install, and so does an "@" inside the path, as in
+# https://github.com/org/repo@v1. An ordinary "?ref=main" is refused: the check
+# looks at the shape of the address and never tries to guess which text looks
+# secret. Use a plain credential-free address; the Git token and the ArgoCD
+# token go in the connection Secret, entered once via the Settings UI.
+#
+# The same rule is applied to ai.baseURL and ai.ollama.url further down.
 connection:
   git:
     provider: ""      # "github" | "azuredevops"
@@ -171,11 +196,21 @@ config:
 # Secrets — webhook HMAC verification
 # ---------------------------------------------------------------------------
 secrets:
-  # HMAC-SHA256 secret for validating POST /api/v1/webhooks/git (the
-  # X-Hub-Signature-256 header). Maps to the SHARKO_WEBHOOK_SECRET env var.
-  # Leave empty to skip signature verification (fine for internal
-  # environments without a public gateway; set it before exposing the
-  # webhook endpoint to the internet).
+  # Shared secret for POST /api/v1/webhooks/git. Your Git provider signs each
+  # webhook call with it (the X-Hub-Signature-256 header) and Sharko checks
+  # the signature. Maps to the SHARKO_WEBHOOK_SECRET env var.
+  #
+  # EMPTY MEANS THE WEBHOOK IS CLOSED, which is the default. Sharko refuses
+  # every call to that endpoint until you set this and set the same value in
+  # your Git provider's webhook settings. This endpoint is the one route that
+  # does not need a login or a token, so the signature is the only thing
+  # standing in front of it — there is no way to turn the check off and leave
+  # the endpoint answering.
+  #
+  # Nothing else stops working while it is empty. Sharko still picks up
+  # changes on its own; the webhook only makes it notice sooner.
+  #
+  #   openssl rand -hex 32
   webhookSecret: ""
 
 # ---------------------------------------------------------------------------
@@ -200,6 +235,12 @@ secrets:
 #   - bootstrapAdmin.existingSecret.name: name of a Secret in the same
 #     namespace with a key holding the plaintext password (recommended
 #     for production; rotate by updating the Secret + restarting the pod)
+#
+# Neither path puts the password in the Deployment. On the inline path the
+# chart writes the plaintext into its own Secret under the key
+# admin.bootstrapPassword and the pod reads it from there with
+# valueFrom.secretKeyRef; on the existingSecret path the pod reads your
+# Secret the same way. The Deployment carries a reference, never a value.
 #
 # Operator-supplied passwords are NEVER logged — see
 # internal/auth/store.go SeedBootstrapAdminFromEnv.
@@ -323,6 +364,15 @@ ai:
   apiKey: ""       # For claude/openai/gemini (stored in secret)
   cloudModel: ""   # e.g., claude-sonnet-4-20250514, gpt-4o, gemini-2.5-flash
   # Custom OpenAI-compatible provider (e.g., enterprise LLM gateways)
+  # Base URL for a custom OpenAI-compatible provider. Written into the pod as
+  # an ordinary environment value, so the chart refuses to install unless it
+  # can read the address and finds no user information in the host part, no
+  # query string and no fragment — the only three places a credential can sit
+  # in an address. It turns away most addresses it cannot read as well, though
+  # it checks the shape rather than whether the host is a real machine, so a
+  # malformed IPv6 address in square brackets can still install. A scheme is
+  # optional, and an "@" inside the path is fine.
+  # The credential is ai.apiKey, which goes into the chart's Secret.
   baseURL: ""       # e.g., https://your-gateway.example.com/api
   authHeader: ""    # Custom auth header (default: "Authorization")
   maxIterations: 8  # Agent tool-calling loop limit (increase for migration workflows)
@@ -330,8 +380,21 @@ ai:
   ollama:
     # Deploy an Ollama pod alongside Sharko (set to true to auto-deploy)
     deploy: false
-    image: "ollama/ollama:latest"  # ~1.2GB compressed, ~3GB on disk
-    # URL is auto-set when deploy=true, override for external Ollama
+    image: "ollama/ollama:0.6.8"  # ~1.2GB compressed, ~3GB on disk. Pinned on
+    # purpose: ":latest" means two installs a month apart run different
+    # software with no record of the change. Bump this line to move.
+    # URL is auto-set when deploy=true, override for external Ollama.
+    # Written into the pod as an ordinary environment value, so the chart
+    # refuses to install unless it can read the address and finds no user
+    # information in the host part, no query string and no fragment — the only
+    # three places a credential can sit in an address. It turns away most
+    # addresses it cannot read as well, though it checks the shape rather than
+    # whether the host is a real machine, so a malformed IPv6 address in
+    # square brackets can still install. A scheme is optional, so a plain
+    # ollama.example:11434 works. If your Ollama sits behind something
+    # that needs a credential, put the credential in a Secret and reach it
+    # another way — do not write it into this address, where anyone who can
+    # read the Deployment can read it too.
     url: ""
     # Model for simple queries. See resource requirements:
     #   llama3.2 (3B)    — 2-4 GB RAM, weak tool calling

@@ -11,6 +11,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -292,7 +293,12 @@ func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.Gi
 		item := models.AddonCatalogItem{
 			AddonName: addon.Name,
 			Chart:     addon.Chart,
-			RepoURL:   addon.RepoURL,
+			// B10: a chart repository address is a repository address,
+			// whoever wrote it — the same call B7 made for the comparison
+			// response's git_repo_url, which reads the same catalog file.
+			// The RAW value stays available to everything that has to fetch
+			// from it; only the copy that goes on the response is stripped.
+			RepoURL:   credsafe.SafeRepoURL(addon.RepoURL),
 			Namespace: addon.Namespace,
 			Version:   addon.Version,
 		}
@@ -339,8 +345,14 @@ func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.Gi
 				// Check ArgoCD status
 				appName := addon.Name + "-" + cluster.Name
 				if app, ok := appMap[appName]; ok {
-					dep.SyncStatus = app.SyncStatus
-					dep.HealthStatus = app.HealthStatus
+					// B10: the two ArgoCD status words go through
+					// internal/credsafe's allow-lists on their way onto the
+					// catalog and addon-detail responses. classifyAddonApp
+					// below still reads the RAW app, because reading to
+					// classify happens server-side and only Sharko's own
+					// word comes back out.
+					dep.SyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
+					dep.HealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
 					dep.DeployedVersion = app.SourceTargetRevision
 					dep.ApplicationName = app.Name
 
@@ -461,7 +473,8 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 		item := models.AddonCatalogItem{
 			AddonName: addonName,
 			Chart:     addon.Chart,
-			RepoURL:   addon.RepoURL,
+			// B10 — same as the v3 branch above.
+			RepoURL:   credsafe.SafeRepoURL(addon.RepoURL),
 			Namespace: addon.Namespace,
 			Version:   addon.Version,
 		}
@@ -500,8 +513,9 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 
 			appName := addonName + "-" + clusterName
 			if app, ok := appMap[appName]; ok {
-				dep.SyncStatus = app.SyncStatus
-				dep.HealthStatus = app.HealthStatus
+				// B10 — same as the v3 branch above.
+				dep.SyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
+				dep.HealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
 				dep.DeployedVersion = app.SourceTargetRevision
 				dep.ApplicationName = app.Name
 
@@ -591,11 +605,21 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 					Name:          appSetStatus.Name,
 					GeneratedApps: appSetStatus.GeneratedApps,
 				}
+				// B10: `message` used to be the ArgoCD ApplicationSet
+				// condition's own text, quoted whole, on the ordinary 200
+				// the addon detail page calls. An ApplicationSet's
+				// generator holds the repository it templates from, so its
+				// ErrorOccurred condition names that repository — and a
+				// repository address is routinely written with the access
+				// token inside it. The type and the True/False/Unknown
+				// status are closed enums and still travel; the prose does
+				// not.
 				for _, c := range appSetStatus.Conditions {
 					info.Conditions = append(info.Conditions, models.ApplicationSetCondition{
-						Type:    c.Type,
-						Status:  c.Status,
-						Message: c.Message,
+						Type:   credsafe.SafeAppSetConditionType(c.Type),
+						Status: credsafe.SafeConditionStatus(c.Status),
+						Message: credsafe.SafeReportedDetail(c.Message != "",
+							credsafe.ArgocdAppSetConditionMessage, credsafe.OperationFacts{}),
 					})
 				}
 				resp.ApplicationSet = info

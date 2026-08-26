@@ -4,15 +4,13 @@ package api
 // package is missing from HandlerTier (in tier_registry.go) or, when intentional,
 // from tierAllowlist.
 //
-// Mirrors audit_coverage_test.go in approach: parse the package AST, find every
-// mux.HandleFunc("POST|PUT|PATCH|DELETE ...", srv.handleXXX), check that the
-// handler is classified.
+// Mirrors audit_coverage_test.go in approach: ask the router what it
+// registered (collectMutatingHandlers → routeInventory, route_registry.go),
+// then check that every mutating handler is classified. It reads the router's
+// own registration record rather than the package source, so a route
+// registered through a helper is classified like any other (B16).
 
 import (
-	"go/parser"
-	"go/token"
-	"os"
-	"strings"
 	"testing"
 )
 
@@ -25,25 +23,7 @@ var tierAllowlist = map[string]string{
 }
 
 func TestTierCoverage(t *testing.T) {
-	pkgDir, err := findPackageDir()
-	if err != nil {
-		t.Fatalf("cannot locate internal/api package: %v", err)
-	}
-
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, pkgDir, func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatalf("parsing package: %v", err)
-	}
-
-	pkg, ok := pkgs["api"]
-	if !ok {
-		t.Fatal("package 'api' not found in parsed directory")
-	}
-
-	mutatingHandlers := collectMutatingHandlers(pkg)
+	mutatingHandlers := collectMutatingHandlers(t)
 
 	var missing []string
 	for handler := range mutatingHandlers {

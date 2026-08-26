@@ -28,6 +28,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/envreg"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/helm"
@@ -82,6 +83,35 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the Sharko API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// The configuration registry runs FIRST, before any other code
+		// reads the environment — including the log-level read three
+		// lines below.
+		//
+		// It fails the boot on a registry that contradicts itself and on
+		// a canonical setting and its deprecated alias set to different
+		// values. Silently preferring one of two contradictory
+		// instructions is how an operator ends up certain they changed
+		// something they did not. The error names both settings and
+		// repeats neither value.
+		//
+		// See internal/envreg.
+		if err := envreg.Validate(); err != nil {
+			return err
+		}
+
+		// And then the environment itself: a SHARKO_ name the registry
+		// has never heard of stops the server here. A misspelled setting
+		// used to be accepted in silence, which left an operator sure
+		// they had changed something they had not.
+		//
+		// The names Kubernetes injects into Sharko's own Pod are
+		// recognised by their shape and pass through — see
+		// internal/envreg/unknown.go, which also says what this rule
+		// deliberately does not cover.
+		if err := envreg.ValidateEnvironment(); err != nil {
+			return err
+		}
+
 		// Configure structured logging from SHARKO_LOG_LEVEL env var (default: info).
 		//
 		// Handler chain order matters: the RedactHandler wraps the base
@@ -101,8 +131,7 @@ var serveCmd = &cobra.Command{
 		default:
 			level = slog.LevelInfo
 		}
-		baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-		slog.SetDefault(slog.New(logging.NewRedactHandler(baseHandler)))
+		slog.SetDefault(slog.New(logging.NewHandler(os.Stdout, level)))
 
 		port, _ := cmd.Flags().GetInt("port")
 		configPath, _ := cmd.Flags().GetString("config")
@@ -134,9 +163,33 @@ var serveCmd = &cobra.Command{
 		}
 
 		// Override from env
-		if envPort := os.Getenv("SHARKO_PORT"); envPort != "" {
-			fmt.Sscanf(envPort, "%d", &port)
+		//
+		// The listen port comes from SHARKO_HTTP_PORT, with --port as the
+		// fallback when nothing is set. The old line here was
+		// fmt.Sscanf(envPort, "%d", &port) with the error dropped, which
+		// read "80x" as 80 and left a URI-shaped value doing nothing at
+		// all — silently, in both cases. envreg.ResolveHTTPPort parses
+		// strictly, still accepts the old SHARKO_PORT name with a
+		// deprecation warning, and refuses to start on anything that is
+		// not a port. Its error names the setting and never the value.
+		resolvedPort, err := envreg.ResolveHTTPPort(port)
+		if err != nil {
+			return err
 		}
+		port = resolvedPort
+
+		// One warning per deprecated setting in use, once, from this one
+		// call. Each record names the setting and the name to use
+		// instead, and carries no value attribute at all. It runs after
+		// the port is resolved so a deprecated name used only there is
+		// still reported.
+		envreg.WarnDeprecated(slog.Default())
+
+		// One line per registered setting that is set here but only ever
+		// read by the end-to-end test harness. Registered names, so not a
+		// refusal; never read by the server, so not silence either.
+		envreg.WarnUnusedSettings(slog.Default())
+
 		if envConfig := os.Getenv("SHARKO_CONFIG"); envConfig != "" {
 			configPath = envConfig
 		}
@@ -144,8 +197,31 @@ var serveCmd = &cobra.Command{
 			staticDir = envStatic
 		}
 
-		// Load secrets from secrets.env for local development
-		loadSecretsEnv("secrets.env")
+		// Which proxies may tell Sharko who the caller is.
+		//
+		// Parsed before anything else is built, so a bad list stops the
+		// server here instead of at the first request. An empty setting
+		// trusts no proxy: forwarding headers are ignored and every caller
+		// is keyed by its real TCP peer. See internal/api/clientip.go.
+		//
+		// The error names the setting and the position of the bad entry and
+		// never repeats the configured value.
+		trustedProxies, err := api.ParseTrustedProxies(os.Getenv(api.TrustedProxiesEnv))
+		if err != nil {
+			return err
+		}
+		slog.Info("trusted proxy list loaded", "setting", api.TrustedProxiesEnv, "entries", trustedProxies.Count())
+
+		// Load secrets from secrets.env for local development.
+		//
+		// This file calls os.Setenv, eighty-odd lines after the check
+		// above has already walked the environment — so a SHARKO_ name
+		// introduced HERE would never meet that rule. loadSecretsEnv
+		// checks each key itself, as it reads it, which is why the rule
+		// cannot be dodged by putting the misspelling in a file.
+		if err := loadSecretsEnv("secrets.env"); err != nil {
+			return err
+		}
 
 		// Detect runtime mode
 		mode := platform.Detect()
@@ -256,6 +332,7 @@ var serveCmd = &cobra.Command{
 
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+		srv.SetTrustedProxies(trustedProxies)   // Who may say where a request came from (parsed above)
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 		// v4 read paths must honor the configured GitOps base branch
@@ -566,8 +643,8 @@ var serveCmd = &cobra.Command{
 		connCheckInterval := getEnvDefault("SHARKO_CONNECTION_CHECK_INTERVAL", "60s")
 		connDur, connParseErr := time.ParseDuration(connCheckInterval)
 		if connParseErr != nil || connDur <= 0 {
-			slog.Warn("invalid connection check interval, using 60s", "interval", connCheckInterval)
 			connDur = notifications.DefaultConnectionCheckInterval
+			warnUnreadableSetting("SHARKO_CONNECTION_CHECK_INTERVAL", connDur)
 		}
 
 		// gitHealthFn: Sharko→Git. An error from GetActiveGitProvider (or a nil
@@ -575,13 +652,22 @@ var serveCmd = &cobra.Command{
 		// Resolves srv.ConnectionService() fresh on every call (not just once
 		// at closure-construction time) for the same demo-swap reason as
 		// notifProvider above.
+		//
+		// SECURITY (story S4): this used to return
+		// notifications.UnhealthyResult(err.Error()) — the Git provider's own
+		// error text, which the notification store then wrote into the
+		// sharko-notifications ConfigMap, served on every GET /notifications,
+		// and restored on the next restart. The bell now gets the CATEGORY of
+		// the failure, classified here where the error is still a live typed
+		// value; the error's own words go to the server log and stop there.
 		gitHealthFn := func(ctx context.Context) notifications.HealthResult {
 			gp, gpErr := srv.ConnectionService().GetActiveGitProvider()
 			if gpErr != nil || gp == nil {
 				return notifications.UndeterminedResult()
 			}
 			if err := gp.TestConnection(ctx); err != nil {
-				return notifications.UnhealthyResult(err.Error())
+				slog.Warn("git connection health check failed", "error", err, "component", "notifications")
+				return notifications.UnhealthyResult(notifications.ClassifyReason(err))
 			}
 			return notifications.HealthyResult()
 		}
@@ -592,26 +678,36 @@ var serveCmd = &cobra.Command{
 		// uncategorized probe failure are credential/connectivity problems,
 		// not "ArgoCD can't sync the repo" — conflating them made an expired
 		// token read as a broken repo sync (error review package 1).
+		//
+		// SECURITY (story S4): ProbeBootstrapApp's second return value is a
+		// free-text detail — err.Error() on a rejected token, a formatted %v on
+		// any other listing failure, and the source repo URL on an out-of-sync
+		// app. All of that used to be handed to the notification store, which
+		// persisted it into the sharko-notifications ConfigMap. It goes to the
+		// server log now and nowhere else; the bell gets the code and the
+		// category, both of which are enums.
 		argoHealthFn := func(ctx context.Context) notifications.HealthResult {
 			ac, acErr := srv.ConnectionService().GetActiveOrchestratorArgocdClient()
 			if acErr != nil || ac == nil {
 				return notifications.UndeterminedResult()
 			}
 			status, detail := api.ProbeBootstrapApp(ctx, ac)
+			if status != "healthy" && detail != "" {
+				slog.Warn("argocd bootstrap health probe reported a problem",
+					"status", status, "detail", detail, "component", "notifications")
+			}
 			switch status {
 			case "healthy":
 				return notifications.HealthyResult()
 			case "auth_failed":
-				return notifications.UnhealthyResultWithTitle(
-					notifications.TitleArgoAuthFailed,
-					"ArgoCD rejected the token Sharko uses to check on the bootstrap app, so Sharko can't confirm the cluster is in sync.",
-					detail,
+				return notifications.UnhealthyResultWithCode(
+					notifications.CodeArgoAuthFailed,
+					notifications.ReasonCredentials,
 				)
 			case "unknown":
-				return notifications.UnhealthyResultWithTitle(
-					notifications.TitleArgoUnreachable,
-					"Sharko couldn't get an answer from ArgoCD, so it can't confirm whether the cluster is in sync.",
-					detail,
+				return notifications.UnhealthyResultWithCode(
+					notifications.CodeArgoUnreachable,
+					notifications.ReasonUnreachable,
 				)
 			case "forbidden":
 				// Review findings r1, H1: a 403 means the token is valid but
@@ -619,16 +715,15 @@ var serveCmd = &cobra.Command{
 				// app, so this must not fall into the default "can't sync the
 				// repo" title, which would falsely claim Sharko found the
 				// repo broken.
-				return notifications.UnhealthyResultWithTitle(
-					notifications.TitleArgoForbidden,
-					"ArgoCD refused Sharko's token permission to read applications, so Sharko can't confirm the cluster is in sync.",
-					detail,
+				return notifications.UnhealthyResultWithCode(
+					notifications.CodeArgoForbidden,
+					notifications.ReasonPermission,
 				)
 			default:
-				if detail == "" {
-					detail = "argocd repo sync status: " + status
-				}
-				return notifications.UnhealthyResult(detail)
+				// ArgoCD answered and reported the bootstrap app as out of sync
+				// or unhealthy — nobody errored, the answer simply is not the
+				// one Sharko wants. That is what ReasonNotSynced says.
+				return notifications.UnhealthyResult(notifications.ReasonNotSynced)
 			}
 		}
 
@@ -897,8 +992,8 @@ var serveCmd = &cobra.Command{
 				reconcileInterval := getEnvDefault("SHARKO_SECRET_RECONCILE_INTERVAL", "5m")
 				dur, parseErr := time.ParseDuration(reconcileInterval)
 				if parseErr != nil {
-					slog.Warn("invalid reconcile interval, using 5m", "interval", reconcileInterval)
 					dur = 5 * time.Minute
+					warnUnreadableSetting("SHARKO_SECRET_RECONCILE_INTERVAL", dur)
 				}
 
 				parser := config.NewParser()
@@ -1005,14 +1100,19 @@ var serveCmd = &cobra.Command{
 		} else {
 			// Canonical source for the argocd namespace is the typed
 			// ClusterTestProviderConfig (when populated from the
-			// connection). SHARKO_ARGOCD_NAMESPACE remains a deprecated
-			// compat alias for one release.
+			// connection). SHARKO_ARGOCD_NAMESPACE still works and is
+			// deprecated — read through providers.ArgoCDNamespaceFromEnv
+			// so it WARNS here too. This read used to be silent while the
+			// chart told operators it warned at startup.
 			argocdNamespace := ""
 			if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
 				argocdNamespace = clusterTestCfgPtr.ArgoCDNamespace
 			}
 			if argocdNamespace == "" {
-				argocdNamespace = getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
+				argocdNamespace = providers.DefaultArgoCDNamespace
+				if fromEnv, set := providers.ArgoCDNamespaceFromEnv(); set {
+					argocdNamespace = fromEnv
+				}
 			}
 
 			// Manager: always wired in-cluster, regardless of credProvider.
@@ -1181,16 +1281,28 @@ var serveCmd = &cobra.Command{
 			// immediately. The reconciler requires the same preconditions
 			// as the prtracker (in-cluster K8s clientset for argocd Secret
 			// API access; an active git provider eventually becomes
-			// available via connSvc lazy getter) PLUS credProvider for
-			// vault credential resolution at create time. When any
-			// precondition is missing we log + skip.
+			// available via connSvc lazy getter). When any precondition is
+			// missing we log + skip.
+			//
+			// The credentials backend is deliberately NOT a start
+			// precondition (R2-1): Deps.Vault below is a resolver over the
+			// Server's live provider snapshot — the SAME snapshot the check
+			// path reads — so a backend configured through the connections
+			// API after boot is seen by the very next check, repair, and
+			// background write with no restart. Until one is configured the
+			// reconciler runs and skips each pass (fail closed).
 			//
 			// This reconciler is the SOLE writer of ArgoCD cluster Secrets
 			// driven by managed-clusters.yaml. The legacy argosecrets.Reconciler
 			// loop (dual-writer until V2-cleanup-28) has been retired.
 			var clusterRecon *clusterreconciler.Reconciler
-			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
-				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
+			if prCMStore != nil && inClusterK8sClient != nil {
+				// Same deprecated setting, same one warning — see
+				// providers.ArgoCDNamespaceFromEnv. This read was silent too.
+				clusterReconNamespace := providers.DefaultArgoCDNamespace
+				if fromEnv, set := providers.ArgoCDNamespaceFromEnv(); set {
+					clusterReconNamespace = fromEnv
+				}
 				if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
 					clusterReconNamespace = clusterTestCfgPtr.ArgoCDNamespace
 				}
@@ -1212,8 +1324,14 @@ var serveCmd = &cobra.Command{
 						}
 						return gp
 					},
-					ArgoClient:               inClusterK8sClient,
-					Vault:                    credProvider,
+					ArgoClient: inClusterK8sClient,
+					// The live resolver, not the boot value: every write
+					// resolves the currently-published provider at use time,
+					// the same generation the check path reads. Wiring
+					// credProvider here directly is the R2-1 bug — a backend
+					// configured after boot would stay invisible to writes
+					// until a restart.
+					Vault:                    srv.ClusterCredentialsProvider,
 					AuditFn:                  auditLog.Add,
 					TickInterval:             clusterreconciler.DefaultTickInterval,
 					ManagedClustersPath:      repoPaths.ManagedClusters,
@@ -1251,13 +1369,29 @@ var serveCmd = &cobra.Command{
 					"tick_interval", clusterreconciler.DefaultTickInterval,
 					"managed_clusters_path", repoPaths.ManagedClusters,
 				)
+
+				// W3-3: the slow background credential check. Runs the SAME
+				// read-only comparison the connection page's Check-again
+				// button drives, per managed cluster, on its own slow
+				// interval — deliberately NOT on the reconciler's 30-second
+				// tick, which must never read the credentials backend (see
+				// internal/clusterreconciler/connection_drift_notice.go).
+				// It detects only; repair stays an admin's click.
+				credCheckIntervalStr := getEnvDefault("SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL", "15m")
+				credCheckInterval, credCheckParseErr := time.ParseDuration(credCheckIntervalStr)
+				if credCheckParseErr != nil {
+					credCheckInterval = api.DefaultConnectionCredentialCheckInterval
+					warnUnreadableSetting("SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL", credCheckInterval)
+				}
+				credCheckLoop := api.NewConnectionCredentialCheckLoop(srv, credCheckInterval)
+				credCheckLoop.Start(context.Background())
+				defer credCheckLoop.Stop()
+				slog.Info("connection credential check loop started", "interval", credCheckInterval)
 			} else {
 				if prCMStore == nil {
 					slog.Info("cluster reconciler skipped: no ConfigMap store (out-of-cluster or k8s client failure)")
 				} else if inClusterK8sClient == nil {
 					slog.Info("cluster reconciler skipped: no in-cluster k8s client")
-				} else if credProvider == nil {
-					slog.Info("cluster reconciler skipped: no credentials provider configured")
 				}
 			}
 
@@ -1271,7 +1405,7 @@ var serveCmd = &cobra.Command{
 					if parsed, err := time.ParseDuration(envInterval); err == nil {
 						settingsReclaimInterval = parsed
 					} else {
-						slog.Warn("invalid SHARKO_SETTINGS_RECONCILE_INTERVAL, using default 60s", "value", envInterval)
+						warnUnreadableSetting("SHARKO_SETTINGS_RECONCILE_INTERVAL", settingsReclaimInterval)
 					}
 				}
 
@@ -1526,6 +1660,43 @@ func getEnvDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
+// warnUnreadableSetting is the ONE way this file complains about a
+// configuration value it could not use.
+//
+// It names the setting and says what Sharko will use instead. It never
+// carries the value the operator typed, and it takes no parameter that
+// could hold one — there is nowhere to put it.
+//
+// # Why the shape matters more than these four call sites
+//
+// Four startup warnings used to log their own value:
+//
+//	slog.Warn("invalid SHARKO_SETTINGS_RECONCILE_INTERVAL, using default 60s", "value", envInterval)
+//	slog.Warn("invalid connection check interval, using 60s", "interval", connCheckInterval)
+//	slog.Warn("invalid connection credential check interval, using 15m", "interval", credCheckIntervalStr)
+//	slog.Warn("invalid reconcile interval, using 5m", "interval", reconcileInterval)
+//
+// All four hold a duration, so nothing secret leaked. That is not the
+// point. A rule that holds only for the settings somebody remembered to
+// mark secret is not a rule, and the next warning added by copying one
+// of these lines will be copied whole — attribute included. The way to
+// stop that is to leave no line worth copying: the value never reaches
+// a signature, so it cannot reach a log.
+//
+// The fourth one is the argument for the source guard in
+// serve_setting_warning_test.go rather than a runtime test. Three were
+// reported; the guard read the file and found the fourth, on a branch no
+// test drives.
+//
+// Three of the four did not even name their setting — "invalid connection
+// check interval" left an operator grepping for which variable to fix.
+// Naming it is the half of the message that was actually useful.
+func warnUnreadableSetting(setting string, using time.Duration) {
+	slog.Warn("configuration setting could not be read, using the default instead",
+		"setting", setting,
+		"using", using.String())
+}
+
 // connectivityCheckDisabled returns true when the caller should DISABLE the
 // connectivity-check feature. The feature is on by default; the operator
 // opts out by setting SHARKO_CONNECTIVITY_CHECK=false or
@@ -1546,16 +1717,35 @@ func getConnectionGitOps(connSvc *service.ConnectionService) *models.GitOpsSetti
 
 // loadSecretsEnv loads KEY=VALUE pairs from secrets.env into the environment.
 // Lines starting with # and empty lines are skipped. Does not override existing env vars.
-func loadSecretsEnv(path string) {
+//
+// # The hole this closes
+//
+// envreg.ValidateEnvironment walks the environment at the top of serve,
+// and this function runs eighty-odd lines later and calls os.Setenv. A
+// SHARKO_ name that arrived through this file was therefore never seen
+// by that rule at all: put the misspelling in secrets.env instead of in
+// the Pod and the rule was gone. So every SHARKO_ key is checked HERE,
+// as it is read, against the same registry and by the same function.
+//
+// Keys are checked whether or not the value is actually set. A line the
+// file only fails to apply because the name is already exported is
+// still a line telling the reader that setting exists; if the name is a
+// misspelling, saying so is the point.
+//
+// The error names the file, the line and the key, and never the value —
+// this is the secrets file.
+func loadSecretsEnv(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return // file doesn't exist, that's fine
+		return nil // file doesn't exist, that's fine
 	}
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
 	count := 0
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -1570,6 +1760,9 @@ func loadSecretsEnv(path string) {
 		if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
 			value = value[1 : len(value)-1]
 		}
+		if checkErr := envreg.CheckSetting(key, value); checkErr != nil {
+			return fmt.Errorf("%s line %d: %w", path, lineNo, checkErr)
+		}
 		// Don't override existing env vars
 		if os.Getenv(key) == "" {
 			os.Setenv(key, value)
@@ -1579,4 +1772,5 @@ func loadSecretsEnv(path string) {
 	if count > 0 {
 		slog.Info("loaded secrets from file", "count", count, "path", path)
 	}
+	return nil
 }

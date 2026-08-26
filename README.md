@@ -19,6 +19,8 @@
 
 > **There is no release to install right now.** `v3.0.0`, the only public release, is retired — it is unsafe and unsupported, so **do not install it**. There is no patch for the `v3` line, and every earlier tag has the same flaw. The `v4` work described below is built on `main` and has not been tagged yet — wait for it. See [SECURITY.md](SECURITY.md#why-v300-is-retired) for what went wrong. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
 
+> **Sharko is a technical preview, not production ready.** There are no *known* credential leaks, permission bypasses, or places where Sharko says work finished when it did not — but nobody outside this project has assessed its security, the activity history is lost on every restart, and only one copy of Sharko can run at a time. Read [Technical preview — read this before you point Sharko at a cluster](docs/site/technical-preview.md) before you give it real cluster credentials.
+
 Full documentation: **https://sharko.readthedocs.io/**
 
 **Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — every change to what runs on your cluster goes through a PR you review, never straight to your cluster behind your back.**
@@ -186,7 +188,7 @@ The server holds all credentials. The CLI is a thin HTTP client — like `kubect
 | `sharko upgrade-addons <addon=ver,...>` | Batch upgrade multiple addons |
 | `sharko list-addons [--show-config]` | List addons |
 | `sharko refresh-secrets [cluster]` | Trigger immediate secrets reconcile |
-| `sharko secret-status` | Show reconciler status per cluster |
+| `sharko secret-status` | Show addon-secret sync status per cluster |
 | `sharko token create` | Create an API key |
 | `sharko token list` | List API keys |
 | `sharko token revoke <name>` | Revoke an API key |

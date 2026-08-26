@@ -42,7 +42,7 @@ spec:
 
 **CRITICAL: Token-Leak Caveat**
 
-Marketplace source URLs can encode authentication tokens in the path or query string (e.g., `https://catalogs.example.com/addons.yaml?token=abc123`). If you commit a tokenized URL to the git file, **you leak the token into your Git history**. Never commit URLs with embedded secrets.
+Marketplace source URLs can encode authentication tokens in the path or query string (e.g., `https://catalogs.example.com/addons.yaml?token=abc123`). If you commit a tokenized URL to the Git file, **you leak the token into your Git history**. Never commit URLs with embedded secrets.
 
 For private/tokened sources, use the `SHARKO_CATALOG_URLS` environment variable instead. The env var is read from Sharko's runtime environment (Kubernetes Secret, Helm values, or container env) and is not committed to Git.
 
@@ -55,7 +55,7 @@ At startup and on every refresh interval (default: 1 hour), Sharko:
 3. Merges both lists (deduplicating by canonical URL).
 4. Fetches each source URL and loads the catalog entries into the Marketplace browse surface.
 
-If the git file is absent, Sharko continues using only the env var. If both are absent, Sharko uses the embedded curated catalog only (no third-party sources).
+If the Git file is absent, Sharko continues using only the env var. If both are absent, Sharko uses the embedded curated catalog only (no third-party sources).
 
 ## Validation
 
@@ -94,7 +94,7 @@ To add a new source:
 If you are upgrading from a version without this feature:
 
 - Your existing `SHARKO_CATALOG_URLS` env var continues to work unchanged.
-- The git file is optional. You can migrate to it incrementally (or never).
+- The Git file is optional. You can migrate to it incrementally (or never).
 - Both approaches can coexist. Sharko merges the lists at runtime.
 
 ## Related Pages

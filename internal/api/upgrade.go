@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -17,12 +18,23 @@ import (
 // @Produce json
 // @Security BearerAuth
 // @Param addonName path string true "Addon name"
-// @Success 200 {object} map[string]interface{} "Available versions"
+// @Success 200 {object} models.AvailableVersionsResponse "Available versions. repo_url carries the chart repository address with any embedded credential removed."
 // @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 403 {object} map[string]interface{} "Forbidden — requires addon.list"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Failure 503 {object} map[string]interface{} "Service unavailable"
 // @Router /upgrade/{addonName}/versions [get]
 func (s *Server) handleListUpgradeVersions(w http.ResponseWriter, r *http.Request) {
+	// B14: this route was registered with no role gate at all. It reads the
+	// org's addon catalog, so it takes the same permission every other read
+	// of that catalog takes — addon.list. No new role is invented: addon.list
+	// is already viewer-and-above, so nobody who could reach this endpoint
+	// yesterday loses it. What changes is that the route now has a named,
+	// auditable action instead of being invisible to the role table.
+	if !authz.RequireWithResponse(w, r, "addon.list") {
+		return
+	}
+
 	addonName := r.PathValue("addonName")
 	if addonName == "" {
 		writeError(w, http.StatusBadRequest, "addon name is required")
@@ -31,13 +43,15 @@ func (s *Server) handleListUpgradeVersions(w http.ResponseWriter, r *http.Reques
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 
 	resp, err := s.upgradeSvc.ListVersions(r.Context(), addonName, gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// B13: this wraps internal/helm's *url.Error, whose text keeps a
+		// token written in the username position of the chart repo address.
+		writeChartRepoError(w, r, chartRepoListVersions, err)
 		return
 	}
 
@@ -72,13 +86,14 @@ func (s *Server) handleCheckUpgrade(w http.ResponseWriter, r *http.Request) {
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 
 	resp, err := s.upgradeSvc.CheckUpgrade(r.Context(), req.AddonName, req.TargetVersion, gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// B13 — CheckUpgrade downloads both charts; same *url.Error, same token.
+		writeChartRepoError(w, r, chartRepoUpgradeCheck, err)
 		return
 	}
 
@@ -113,19 +128,22 @@ func (s *Server) handleGetAISummary(w http.ResponseWriter, r *http.Request) {
 	// First get the upgrade check result
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 
 	result, err := s.upgradeSvc.CheckUpgrade(r.Context(), req.AddonName, req.TargetVersion, gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// B13 — same chart download behind the AI summary.
+		writeChartRepoError(w, r, chartRepoUpgradeCheck, err)
 		return
 	}
 
 	summary, err := s.upgradeSvc.GetAISummary(r.Context(), result)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// B13 — the AI provider's base URL is operator-supplied too, so its
+		// *url.Error carries the same risk as a chart repository's.
+		writeChartRepoError(w, r, chartRepoAISummary, err)
 		return
 	}
 
@@ -168,13 +186,14 @@ func (s *Server) handleGetRecommendations(w http.ResponseWriter, r *http.Request
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 
 	rec, err := s.upgradeSvc.GetRecommendations(r.Context(), addonName, gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// B13 — recommendations read the repository's version list.
+		writeChartRepoError(w, r, chartRepoRecommendations, err)
 		return
 	}
 

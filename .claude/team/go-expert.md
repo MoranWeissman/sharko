@@ -509,8 +509,12 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 
 ### `internal/metrics/` — Prometheus Metrics
 ```go
-// 20 metrics across 6 categories: cluster, addon, reconciler, PR, HTTP, auth
-// All registered via promauto (default registry)
+// 44 metric families in total.
+// 32 registered via promauto in metrics.go (default registry): cluster, addon,
+// catalog, reconciler, PR, HTTP, auth, AI, Scorecard.
+// 12 more built at runtime in slo_registry.go from the four SLO paths — their
+// names are assembled from strings, so grepping for them finds nothing.
+// /metrics serves both registries via prometheus.Gatherers.
 var ClusterCount, ClusterStatus, AddonSyncStatus, ReconcilerRuns, HTTPRequests, AuthLoginTotal ...
 // HTTP middleware for request counting + duration
 func Middleware(next http.Handler) http.Handler
@@ -544,11 +548,13 @@ func RequireWithResponse(w http.ResponseWriter, r *http.Request, action string) 
 type Entry struct {
     ID, Level, Event, User, Action, Resource, Source, Result string
     Timestamp time.Time; DurationMs int64; Error, RequestID string
+    Changes string // "" | not_applicable | none | applied (ruling f, 2026-08-19)
 }
 type AuditFilter struct { User, Action, Source, Result, Cluster string; Since time.Time; Limit int }
 func (l *Log) ListFiltered(filter AuditFilter) []Entry
 func (l *Log) Subscribe() (<-chan Entry, func()) // SSE support, buffered channel
-// Default buffer: 1000 events (SHARKO_AUDIT_BUFFER_SIZE)
+// Buffer: audit.NewLog(1000) in internal/api/router.go — a hardcoded literal.
+// NOT configurable; there is no SHARKO_AUDIT_BUFFER_SIZE and never was.
 ```
 
 ### `internal/auth/` (updated in Epic 2)
@@ -709,13 +715,36 @@ CI fails if any mutating handler in `internal/api/` lacks `audit.Enrich(` — en
 ## Write Rate Limiting
 
 Write endpoints (admin, POST/DELETE/PATCH) are rate-limited to **30 requests/minute** per IP.
-Rate limiter middleware is in `internal/api/router.go`. The same `SHARKO_TRUSTED_PROXIES` env var
-governs IP extraction.
+Rate limiter middleware is in `internal/api/router.go`.
+
+The client address comes from **one** resolver: `(*TrustedProxies).ClientIP` in
+`internal/api/clientip.go`, reached through `(*Server).clientIP`. Story B11 built it; the old
+package-level `clientIP()` that believed `X-Forwarded-For` from anyone is deleted, not left
+beside it. All three consumers go through the resolver — the login limiter, the write limiter,
+and the `client_ip` field on the security log line — so the limit and the log can never disagree.
+
+`SHARKO_TRUSTED_PROXIES` (`TrustedProxiesEnv`) is the list of proxy addresses and CIDR ranges
+whose forwarding headers are believed. It is parsed at startup in `cmd/sharko/serve.go` before
+any store or port work and published with `SetTrustedProxies`. Empty means no proxy is trusted;
+there is no implicit trust for loopback, private or Kubernetes ranges. A value that is not an
+address or range, and any value that would trust every address (`*`, `0.0.0.0/0`, `::/0`), stops
+the server at startup with an error that names the setting and repeats no configured value.
 
 ## Webhook HMAC Verification
 
 `POST /api/v1/webhooks/git` validates the `X-Hub-Signature-256` header using HMAC-SHA256.
-Secret configured via `SHARKO_WEBHOOK_SECRET` env var. Requests without a valid signature return 401.
+Shared secret configured via `SHARKO_WEBHOOK_SECRET`.
+
+**The check is unconditional and there is no way to switch it off (BF3).** An empty
+`SHARKO_WEBHOOK_SECRET` means the endpoint refuses every call — it does NOT mean "skip
+verification", which is what it used to mean while the chart shipped the value empty. Every
+refusal returns the SAME fixed sentence (`webhookRefusal` in `internal/api/webhooks.go`) for all
+three cases — no secret set, no signature sent, signature mismatch — so the response cannot be
+used to find out whether the server is protected. Do not add a per-case message back.
+
+The handler records NOTHING from the request body as text: `gitHubPushEvent` has no field for the
+pusher name or a commit message, and the audit entry's `User`, `Resource` and `Detail` are a
+constant, Sharko's own branch name, and a count.
 
 ## Update This File When
 - Interface signatures change (add/remove methods)

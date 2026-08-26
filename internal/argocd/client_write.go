@@ -5,23 +5,61 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
+
+// ErrNoOperationInProgress is the sentinel TerminateOperation wraps in when
+// ArgoCD refuses the terminate because there is nothing to terminate.
+//
+// # Why this sentinel has to be minted here and nowhere else
+//
+// Two callers — the restart-sync button and auto-remediation — need to tell
+// this one refusal apart from every other, because it is harmless: the
+// operation finished on its own between Sharko looking and Sharko acting, and
+// the right response is to carry on and sync. Both used to work it out by
+// lowercasing the error and searching it for the words "no operation is in
+// progress". That is exactly the kind of match this project bans: it is
+// reading ArgoCD's prose to decide what Sharko does, and it stops working the
+// day ArgoCD rephrases itself.
+//
+// # How it is decided without reading a single word
+//
+// By the call and the status code. Sharko sent DELETE to one application's
+// /operation endpoint with a path it built itself, and ArgoCD answered 400.
+// ArgoCD's terminate handler has exactly one thing it calls a bad request —
+// being asked to terminate when no operation is running. So the fact is
+// carried by the shape of the exchange, not by the reply, and the reply can be
+// thrown away without losing it.
+//
+// If ArgoCD ever grows a second reason to answer 400 here, the cost is that
+// Sharko carries on to the sync instead of stopping — which is what it did
+// before this sentinel existed, and the sync then reports its own failure in
+// its own words.
+var ErrNoOperationInProgress = errors.New("ArgoCD had no sync operation to terminate on this application")
 
 // TerminateOperation cancels the in-flight sync operation for the named ArgoCD
 // application. It is a no-op when no operation is active (ArgoCD returns 200
 // with no body in that case). Use this before re-syncing an application that is
 // permanently failing due to a stale operation snapshot.
+//
+// A 400 comes back wrapped in ErrNoOperationInProgress — see that sentinel for
+// why the status code alone is the whole answer.
 func (c *Client) TerminateOperation(ctx context.Context, appName string) error {
 	path := "/api/v1/applications/" + url.PathEscape(appName) + "/operation"
 	_, err := c.doDelete(ctx, path)
 	if err != nil {
+		var refused *WriteRefusedError
+		if errors.As(err, &refused) && refused.Status == http.StatusBadRequest {
+			return fmt.Errorf("terminating operation for %q: %w: %w", appName, ErrNoOperationInProgress, err)
+		}
 		return fmt.Errorf("terminating operation for %q: %w", appName, err)
 	}
 	return nil
@@ -66,15 +104,16 @@ func (c *Client) doPost(ctx context.Context, path string, payload []byte) ([]byt
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		// Address-free for the same reason as the read path (BF12).
+		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
+			http.MethodPost, path, credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		slog.Error("argocd POST call failed", "error", err, "endpoint", path)
-		return nil, fmt.Errorf("executing POST request to %s: %w", path, err)
+		return nil, unreachableCallError(http.MethodPost, path, err)
 	}
 	defer resp.Body.Close()
 
@@ -84,8 +123,7 @@ func (c *Client) doPost(ctx context.Context, path string, payload []byte) ([]byt
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Error("argocd POST call failed", "endpoint", path, "status", resp.StatusCode)
-		return nil, fmt.Errorf("unexpected status %d from POST %s: %s", resp.StatusCode, path, string(body))
+		return nil, writeCallError(http.MethodPost, path, resp.StatusCode)
 	}
 
 	return body, nil
@@ -97,15 +135,16 @@ func (c *Client) doPut(ctx context.Context, path string, payload []byte) ([]byte
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, reqURL, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		// Address-free for the same reason as the read path (BF12).
+		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
+			http.MethodPut, path, credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		slog.Error("argocd PUT call failed", "error", err, "endpoint", path)
-		return nil, fmt.Errorf("executing PUT request to %s: %w", path, err)
+		return nil, unreachableCallError(http.MethodPut, path, err)
 	}
 	defer resp.Body.Close()
 
@@ -115,8 +154,7 @@ func (c *Client) doPut(ctx context.Context, path string, payload []byte) ([]byte
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Error("argocd PUT call failed", "endpoint", path, "status", resp.StatusCode)
-		return nil, fmt.Errorf("unexpected status %d from PUT %s: %s", resp.StatusCode, path, string(body))
+		return nil, writeCallError(http.MethodPut, path, resp.StatusCode)
 	}
 
 	return body, nil
@@ -128,15 +166,16 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, reqURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		// Address-free for the same reason as the read path (BF12).
+		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
+			http.MethodDelete, path, credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		slog.Error("argocd DELETE call failed", "error", err, "endpoint", path)
-		return nil, fmt.Errorf("executing DELETE request to %s: %w", path, err)
+		return nil, unreachableCallError(http.MethodDelete, path, err)
 	}
 	defer resp.Body.Close()
 
@@ -146,11 +185,149 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Error("argocd DELETE call failed", "endpoint", path, "status", resp.StatusCode)
-		return nil, fmt.Errorf("unexpected status %d from DELETE %s: %s", resp.StatusCode, path, string(body))
+		return nil, writeCallError(http.MethodDelete, path, resp.StatusCode)
 	}
 
 	return body, nil
+}
+
+// WriteRefusalCode is the stable, machine-readable class of a refused ArgoCD
+// write. It is written here in Go source by a programmer; no value from
+// ArgoCD, from a repository, or from a credentials backend can ever put text
+// into one. That is what makes it safe to show a person and safe to branch on.
+type WriteRefusalCode string
+
+const (
+	// WriteRefusalTokenInvalid is HTTP 401 — the credential Sharko presented
+	// was not accepted.
+	WriteRefusalTokenInvalid WriteRefusalCode = "argocd_token_invalid"
+	// WriteRefusalPermissionDenied is HTTP 403 — the credential is fine and
+	// this account may not do this.
+	WriteRefusalPermissionDenied WriteRefusalCode = "argocd_permission_denied"
+	// WriteRefusalNotFound is HTTP 404 — ArgoCD has no such object or no such
+	// endpoint.
+	WriteRefusalNotFound WriteRefusalCode = "argocd_not_found"
+	// WriteRefusalRejected is any other 4xx — ArgoCD understood the call and
+	// would not do it.
+	WriteRefusalRejected WriteRefusalCode = "argocd_rejected"
+	// WriteRefusalUpstreamFailure is 5xx, or any other status outside 2xx —
+	// something broke on ArgoCD's side.
+	WriteRefusalUpstreamFailure WriteRefusalCode = "argocd_upstream_failure"
+)
+
+// WriteRefusedError is the ONE error every failed ArgoCD write call returns,
+// and it is the boundary ArgoCD's own reply does not cross.
+//
+// # Every field is Sharko's own
+//
+// Verb is the HTTP method Sharko chose. Endpoint is the path Sharko itself
+// built out of a cluster name, an application name or a fixed string. Status
+// is the number ArgoCD answered with, and Code is one of the constants above,
+// which are spelled out in this file. There is deliberately NO field for the
+// response body, and no option that puts one back: a caller must not be able
+// to switch this off.
+//
+// # Why the body is gone rather than filtered
+//
+// ArgoCD quotes whatever it was working on inside its error payloads, and for
+// a repository that includes the access token in the address —
+// https://x-access-token:<token>@host/org/repo.git. Scanning that payload for
+// things that look like secrets is the idea this project has refused
+// everywhere else and refuses here: it fails on the first shape nobody thought
+// of. So the payload is read off the wire, used to close the connection
+// cleanly, and dropped.
+//
+// # What a caller can still find out
+//
+// Which call failed and how — the verb, the endpoint and the status — plus a
+// stable code to branch on. errors.Is against ErrTokenInvalid and
+// ErrPermissionDenied keeps working, so every caller that already told "not
+// allowed" apart from "ArgoCD is broken" still can.
+type WriteRefusedError struct {
+	// Verb is the HTTP method Sharko used.
+	Verb string
+	// Endpoint is the ArgoCD API path Sharko built for the call.
+	Endpoint string
+	// Status is the HTTP status ArgoCD answered with.
+	Status int
+	// Code is the stable class of the refusal.
+	Code WriteRefusalCode
+}
+
+// Error returns credsafe's fixed sentence followed by Sharko's own facts, in
+// the same key=value shape credsafe.SafeOperationDetail uses so the two read
+// alike. Nothing here comes from ArgoCD's reply.
+func (e *WriteRefusedError) Error() string {
+	return fmt.Sprintf("%s (code=%s call=%s %s status=%d)",
+		credsafe.ArgocdWriteRefusedMessage, e.Code, e.Verb, e.Endpoint, e.Status)
+}
+
+// Is lets errors.Is match the two sentinels the read path has always returned,
+// so a 401 or a 403 on a write is indistinguishable from one on a read as far
+// as every existing caller is concerned. It compares the CODE, never any text.
+func (e *WriteRefusedError) Is(target error) bool {
+	switch target {
+	case ErrTokenInvalid:
+		return e.Code == WriteRefusalTokenInvalid
+	case ErrPermissionDenied:
+		return e.Code == WriteRefusalPermissionDenied
+	}
+	return false
+}
+
+// writeRefusalCodeFor classifies a status code. Status codes are integers, so
+// this is classification by value out of a closed set — there is no text to
+// read and no message to match.
+func writeRefusalCodeFor(status int) WriteRefusalCode {
+	switch {
+	case status == http.StatusUnauthorized:
+		return WriteRefusalTokenInvalid
+	case status == http.StatusForbidden:
+		return WriteRefusalPermissionDenied
+	case status == http.StatusNotFound:
+		return WriteRefusalNotFound
+	case status >= 400 && status < 500:
+		return WriteRefusalRejected
+	default:
+		return WriteRefusalUpstreamFailure
+	}
+}
+
+// writeCallError turns a non-2xx answer to a POST/PUT/DELETE into the error
+// callers see.
+//
+// It takes no body parameter, on purpose. The three do* functions above read
+// the response body so the connection can be reused, and none of them may hand
+// it to this function: there is no parameter to hand it to.
+func writeCallError(verb, path string, status int) error {
+	slog.Error("argocd write call failed", "verb", verb, "endpoint", path, "status", status)
+	return &WriteRefusedError{
+		Verb:     verb,
+		Endpoint: path,
+		Status:   status,
+		Code:     writeRefusalCodeFor(status),
+	}
+}
+
+// SafeWriteFailure is the sentence a boundary may show a person for a failed
+// ArgoCD write.
+//
+// Two outcomes, decided by TYPE:
+//
+//   - the chain carries a *WriteRefusedError — ArgoCD answered, and the
+//     sentence carries Sharko's own facts about which call was refused;
+//   - it does not — Sharko never got an answer (a refused dial, a DNS failure,
+//     a timeout, a TLS handshake that would not verify), and the sentence says
+//     that instead.
+//
+// It never reads the words of the error it was given, so a transport error
+// quoting the address it failed on cannot travel through it.
+func SafeWriteFailure(err error) string {
+	var refused *WriteRefusedError
+	if errors.As(err, &refused) {
+		return refused.Error()
+	}
+	return credsafe.ArgocdWriteUnreachableMessage
 }
 
 // RegisterCluster registers a cluster in ArgoCD by POSTing to the clusters API.

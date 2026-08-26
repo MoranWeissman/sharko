@@ -6,17 +6,35 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // catalogSourceRecord is one row of the GET /catalog/sources response
-// (design §6.8). URLs are intentionally returned verbatim — the endpoint
-// is authenticated and the caller is the same admin who configured
-// SHARKO_CATALOG_URLS, so the response does not disclose anything new.
-// The embedded pseudo-source always uses the literal string "embedded"
-// (never a file path).
+// (design §6.8). The embedded pseudo-source always uses the literal string
+// "embedded" (never a file path).
+//
+// # Why the url field never carries the configured address, not even a clean one
+//
+// An earlier version returned the address whenever the URL grammar could
+// vouch it carried no credential. That allowance was withdrawn: the
+// documented private-catalog shape hides the token in the address's own
+// path — /private/<token>/catalog.yaml — and no grammar can tell that
+// apart from an ordinary path. An address that LOOKS clean can still be
+// the key to someone's private catalog. And the caller here is not the
+// admin who configured SHARKO_CATALOG_URLS: any signed-in account can
+// read this page, down to a viewer.
+//
+// So the configured address is treated as sensitive because of what it
+// IS. Every third-party row's url is the fixed word "redacted" — never
+// the address, and never anything computed from it (no hash, no length,
+// no partial). The known cost: an operator with three sources configured
+// sees three rows that all say the same word and tells them apart only
+// by status, entry count and last-fetched time.
 type catalogSourceRecord struct {
 	// URL is either the literal string "embedded" (for the binary-shipped
-	// curated catalog) or the full third-party URL from SHARKO_CATALOG_URLS.
+	// curated catalog) or the fixed word "redacted" for every configured
+	// third-party source. The configured address never appears here in
+	// any form.
 	URL string `json:"url"`
 
 	// Status is "ok", "stale", or "failed" — mirrors
@@ -47,7 +65,7 @@ type catalogSourceRecord struct {
 // handleListCatalogSources godoc
 //
 // @Summary List catalog sources with fetch status
-// @Description Returns one record per catalog source — the embedded binary catalog (url="embedded", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified), and optional issuer when verified. Read-only; requires authentication.
+// @Description Returns one record per catalog source — the embedded binary catalog (url="embedded", always first) plus one row per configured third-party source from SHARKO_CATALOG_URLS. A third-party row's url is always the fixed word "redacted" — the configured address is never returned, because the documented private-catalog form carries an auth token inside the address itself. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified), and optional issuer when verified. Read-only; requires authentication.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -84,15 +102,22 @@ func (s *Server) buildCatalogSourcesResponse() []catalogSourceRecord {
 		},
 	}
 	if s.sourcesFetcher != nil {
-		snaps := s.sourcesFetcher.Snapshots()
-		third := make([]catalogSourceRecord, 0, len(snaps))
-		for _, snap := range snaps {
-			third = append(third, recordFromSnapshot(snap))
+		snapMap := s.sourcesFetcher.Snapshots()
+		snaps := make([]*sources.SourceSnapshot, 0, len(snapMap))
+		for _, snap := range snapMap {
+			snaps = append(snaps, snap)
 		}
-		// Deterministic order so tests do not flake on Go map iteration
-		// order and clients can diff responses across calls.
-		sort.Slice(third, func(i, j int) bool { return third[i].URL < third[j].URL })
-		records = append(records, third...)
+		// Deterministic order, decided BEFORE the projection to the wire.
+		// Every third-party row's url on the wire is the same fixed word,
+		// so sorting the wire rows would compare equal keys and the order
+		// would follow Go's randomised map iteration — two identical
+		// requests could return different bodies. The configured address
+		// is allowed to exist here, inside the process, so it is the sort
+		// key; only the projected rows leave.
+		sort.Slice(snaps, func(i, j int) bool { return snaps[i].URL < snaps[j].URL })
+		for _, snap := range snaps {
+			records = append(records, recordFromSnapshot(snap))
+		}
 	}
 	return records
 }
@@ -103,7 +128,12 @@ func (s *Server) buildCatalogSourcesResponse() []catalogSourceRecord {
 // (instead of `"0001-01-01T00:00:00Z"`).
 func recordFromSnapshot(snap *sources.SourceSnapshot) catalogSourceRecord {
 	rec := catalogSourceRecord{
-		URL:        snap.URL,
+		// snap.URL is the configured source address, and the env var that
+		// sets it is documented as being for tokened/private URLs — the
+		// token can sit in the address's own path, where no grammar can
+		// spot it. So the address never reaches the wire in any form; the
+		// row carries the fixed word instead.
+		URL:        credsafe.PublicSourceLabel(),
 		Status:     string(snap.Status),
 		EntryCount: len(snap.Entries),
 		Verified:   snap.Verified,

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -125,21 +126,24 @@ func isHonestFailure(app *models.ArgocdApplication) bool {
 	return false
 }
 
-// buildCheckFailDetail assembles a short human-readable reason from the
-// ArgoCD application's operation message and conditions.
+// buildCheckFailDetail assembles the reason the connectivity check is failing,
+// out of facts internal/credsafe will vouch for.
+//
+// It used to return ArgoCD's operationState.message, and failing that an
+// application condition's message, both quoted whole. Both are free-form text
+// written by ArgoCD, Helm, the Kubernetes API server or a Git transport, and
+// both routinely quote the repository ArgoCD was syncing from — with the access
+// token inside it. This lands on models.Cluster.ConnectivityDetail, which is a
+// plain JSON field on the cluster list, the cluster detail AND the cluster
+// comparison responses, so it travelled on ordinary 200s with nothing having
+// gone wrong (B8).
 func buildCheckFailDetail(app *models.ArgocdApplication) string {
-	// Prefer the operation message (sync error detail).
-	if app.OperationMessage != "" {
-		return app.OperationMessage
-	}
-	// Fall back to first error condition message.
-	for _, c := range app.Conditions {
-		if strings.Contains(c.Type, "Error") && c.Message != "" {
-			return c.Message
-		}
-	}
-	// Generic fallback.
-	return "connectivity-check application sync or health error — inspect in ArgoCD"
+	return credsafe.SafeOperationDetail(credsafe.ArgocdCheckFailureMessage, credsafe.OperationFacts{
+		Phase:        app.OperationPhase,
+		SyncStatus:   app.SyncStatus,
+		HealthStatus: app.HealthStatus,
+		RepoURL:      app.SourceRepoURL,
+	})
 }
 
 // Derived health status values (V2-cleanup-85.4). See models.Cluster.DerivedHealthStatus.

@@ -129,11 +129,24 @@ func TestSentinel_CreateAddonSecrets_PushFailure_ErrorNeverLeaksValue(t *testing
 	if len(result.Failed) != 1 {
 		t.Fatalf("expected 1 failed secret, got %d: %v", len(result.Failed), result.Failed)
 	}
-	if !strings.Contains(result.Failed[0].Error, "simulated apiserver rejection") {
-		t.Fatalf("expected the push failure recorded, got: %q", result.Failed[0].Error)
+	// This assertion used to be
+	//   if !strings.Contains(result.Failed[0].Error, "simulated apiserver rejection")
+	// — it REQUIRED the Kubernetes API server's own words to be in the text a
+	// caller sees, which is the leak written down as the design. What the
+	// caller gets now is the catalog sentence plus the structured fields, and
+	// the apiserver's words must be absent.
+	got := result.Failed[0]
+	if got.Code != SecretFailureWrite {
+		t.Fatalf("a failed cluster write should be coded as the write failure, got %q", got.Code)
 	}
-	if strings.Contains(result.Failed[0].Error, orchestratorSentinelValue) {
-		t.Fatalf("sentinel leaked into the SecretError text a caller sees: %q", result.Failed[0].Error)
+	if got.Error.String() != secretFailureSentences[SecretFailureWrite] {
+		t.Fatalf("expected the catalog write sentence, got: %q", got.Error.String())
+	}
+	if strings.Contains(got.Error.String(), "simulated apiserver rejection") {
+		t.Fatalf("the apiserver's own words reached the caller: %q", got.Error.String())
+	}
+	if strings.Contains(got.Error.String(), orchestratorSentinelValue) {
+		t.Fatalf("sentinel leaked into the SecretError text a caller sees: %q", got.Error.String())
 	}
 	if strings.Contains(logs, orchestratorSentinelValue) {
 		t.Fatalf("sentinel leaked into logs on a push failure:\n%s", logs)
@@ -172,8 +185,14 @@ func TestSentinel_CreateAddonSecrets_FetchFailure_ErrorNeverLeaksValue(t *testin
 	if len(result.Failed) != 1 {
 		t.Fatalf("expected 1 failed secret, got %d", len(result.Failed))
 	}
-	if strings.Contains(result.Failed[0].Error, orchestratorSentinelValue) {
-		t.Fatalf("sentinel leaked into the fetch-failure SecretError text: %q", result.Failed[0].Error)
+	if result.Failed[0].Code != SecretFailureFetch {
+		t.Fatalf("a failed store read should be coded as the fetch failure, got %q", result.Failed[0].Code)
+	}
+	if strings.Contains(result.Failed[0].Error.String(), "simulated vault outage") {
+		t.Fatalf("the secrets store's own words reached the caller: %q", result.Failed[0].Error.String())
+	}
+	if strings.Contains(result.Failed[0].Error.String(), orchestratorSentinelValue) {
+		t.Fatalf("sentinel leaked into the fetch-failure SecretError text: %q", result.Failed[0].Error.String())
 	}
 	if strings.Contains(logs, orchestratorSentinelValue) {
 		t.Fatalf("sentinel leaked into logs on a fetch failure:\n%s", logs)
@@ -219,8 +238,8 @@ func TestSentinel_CreateAddonSecrets_ForeignSecret_ValueFetchedButNeverWritten(t
 	if len(result.Failed) != 1 {
 		t.Fatalf("expected the foreign-secret refusal recorded as a failed push, got %d", len(result.Failed))
 	}
-	if strings.Contains(result.Failed[0].Error, orchestratorSentinelValue) {
-		t.Fatalf("sentinel leaked into the foreign-secret SecretError text: %q", result.Failed[0].Error)
+	if strings.Contains(result.Failed[0].Error.String(), orchestratorSentinelValue) {
+		t.Fatalf("sentinel leaked into the foreign-secret SecretError text: %q", result.Failed[0].Error.String())
 	}
 	if strings.Contains(logs, orchestratorSentinelValue) {
 		t.Fatalf("sentinel (fetched, then discarded because the secret is foreign) leaked into logs:\n%s", logs)

@@ -60,7 +60,7 @@ func FailureSentence(raw string) string {
 	case strings.Contains(raw, "could not read") || strings.Contains(raw, "no addon catalog could be read"):
 		// Plan-level: the catalog or the managed-clusters file itself
 		// couldn't be read — nothing cluster-specific went wrong yet.
-		return "Sharko couldn't read the addon catalog or the managed-clusters file in git. Check that Sharko can reach your git host, then click Refresh."
+		return "Sharko couldn't read the addon catalog or the managed-clusters file in Git. Check that Sharko can reach your Git host, then click Refresh."
 	default:
 		return "The last check didn't finish. Click Refresh to try again."
 	}

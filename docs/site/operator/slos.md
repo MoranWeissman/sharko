@@ -36,7 +36,7 @@ this rule of thumb (from
 |--------------|----------------------------|
 | In-process dispatch (no remote I/O) | ~3× (absorbs the dev→CI→prod gap; real prod adds HTTP round-trip) |
 | Real ArgoCD / kube-apiserver call | ~3× (CI runners are slower than dev workstations; production AWS API latency is higher than kind-on-Docker-Desktop) |
-| Real git provider round-trip (GitHub / GitLab) | ~3× plus an absolute floor that covers third-party API latency |
+| Real Git provider round-trip (GitHub / GitLab) | ~3× plus an absolute floor that covers third-party API latency |
 | User-blocking UI path | Steady-state baseline first; cold-start outliers absorbed by the rolling budget (see "First-register bootstrap" below) |
 
 Initial v2.0.0 targets carry **extra headroom (~3× p99 vs. the more
@@ -171,9 +171,9 @@ stakes (it rewrites the catalog and opens a PR).
 
 | Phase | What happens |
 |-------|-------------|
-| `enable_dry_run` | `POST /api/v1/clusters/{c}/addons/{a}` with `dry_run=true`. The per-cluster enable preview round-trip; no git write, no ArgoCD dial. |
+| `enable_dry_run` | `POST /api/v1/clusters/{c}/addons/{a}` with `dry_run=true`. The per-cluster enable preview round-trip; no Git write, no ArgoCD dial. |
 | `disable_dry_run` | `DELETE /api/v1/clusters/{c}/addons/{a}` with `dry_run=true`. The per-cluster disable preview round-trip. |
-| `upgrade_global` | `POST /api/v1/addons/{a}/upgrade`. Live catalog rewrite + PR open path against the git provider. |
+| `upgrade_global` | `POST /api/v1/addons/{a}/upgrade`. Live catalog rewrite + PR open path against the Git provider. |
 
 ### Targets
 
@@ -192,7 +192,7 @@ stakes (it rewrites the catalog and opens a PR).
   looks huge but absolute-wise it's still well under user-perceptible
   for an interactive preview.
 - `upgrade_global` is sub-millisecond in the harness because the mock
-  git provider is in-memory. The 5000ms p99 target reflects the
+  Git provider is in-memory. The 5000ms p99 target reflects the
   production reality: the path opens a PR against a real Git host
   (GitHub / GitLab / Bitbucket), which is bounded by third-party API
   latency.
@@ -290,8 +290,8 @@ to operators monitoring the fleet.
 
 | Phase | What happens |
 |-------|-------------|
-| `pull_requests` | `GET /api/v1/dashboard/pull-requests` — active-PR list via the git provider. |
-| `fleet_status` | `GET /api/v1/observability/fleet-status` — aggregated cluster + addon view; resilient handler reports git + ArgoCD availability as flags. |
+| `pull_requests` | `GET /api/v1/dashboard/pull-requests` — active-PR list via the Git provider. |
+| `fleet_status` | `GET /api/v1/observability/fleet-status` — aggregated cluster + addon view; resilient handler reports Git + ArgoCD availability as flags. |
 | `repo_status` | `GET /api/v1/observability/repo-status` — bootstrap state of the managed repo. |
 
 ### Targets
@@ -308,7 +308,7 @@ to operators monitoring the fleet.
   harness boots with `N = M = 0` clusters × addons (the dispatch +
   connection-lookup floor). The targets reflect the production
   reality: `pull_requests` and `repo_status` round-trip to a real
-  git provider; `fleet_status` joins git availability + ArgoCD
+  Git provider; `fleet_status` joins Git availability + ArgoCD
   availability + cluster slice.
 - `fleet_status` gets a slightly higher p99 target (2000ms vs.
   1500ms) because its handler aggregates across more subsystems —

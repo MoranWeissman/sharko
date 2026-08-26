@@ -53,6 +53,7 @@ import (
 	"path/filepath"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/schema"
 )
@@ -167,7 +168,12 @@ type addonCatalogV4Doc struct {
 }
 
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// Wrapped in redaction like every other Sharko entry point. Without the
+	// wrapper the log_error_guard list said this line's error was protected
+	// by the sink while the sink was not in this logger's chain at all — a
+	// written claim about a handler this binary did not have (B16).
+	logger := slog.New(logging.NewRedactHandler(
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	if err := run(logger); err != nil {
 		logger.Error("schema generation failed", "error", err)
 		os.Exit(1)

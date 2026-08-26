@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster, resyncClusterLabels, diagnoseCluster, doctorCluster } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
+import { ApiError } from '@/services/api';
 import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
@@ -49,6 +50,9 @@ import {
   TEST_CONNECTION_HINT,
   CHECK_PERMISSIONS_LABEL,
   CHECK_PERMISSIONS_HINT,
+  SYNC_ADDON_LABELS_NOTHING_TO_APPLY,
+  SYNC_ADDON_LABELS_HINT,
+  syncAddonLabelsConfirmText,
 } from '@/components/ClusterActionHints';
 import { InfoHint } from '@/components/InfoHint';
 import { LoadingState } from '@/components/LoadingState';
@@ -237,6 +241,22 @@ export function ClusterDetail() {
   const [pendingPRsByAddon, setPendingPRsByAddon] = useState<Record<string, TrackedPR[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The HTTP status the comparison fetch failed with, or null when the
+   * failure never reached the server (a dropped connection, a thrown
+   * TypeError). A NUMBER, deliberately.
+   *
+   * This page used to decide whether to render the "cluster not found" empty
+   * state by SEARCHING THE SERVER'S ERROR SENTENCE for "not found", "404" and
+   * "cluster not found" — and its own comment admitted it was guessing. The
+   * producer is `writeError(w, 404, "cluster not found")` in four handlers, so
+   * the moment anyone rewords that sentence, or a different 404 arrives
+   * phrased another way, this page silently renders the wrong screen. The
+   * product owner's ruling is that presentation structure follows typed
+   * facts, never equality between human sentences. The status code is the
+   * typed fact, it is already on ApiError, and it was there the whole time.
+   */
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   // S2 (walk day 5 ride-along): manual refresh in the page header, on top
   // of the 30s auto-poll below. A separate flag from `loading` — fetchData
   // runs in background mode here (no full-page loading state), so the
@@ -517,6 +537,7 @@ export function ClusterDetail() {
         setLoading(true);
       }
       setError(null);
+      setErrorStatus(null);
       // Fetch cluster-scoped open PRs alongside the comparison so the
       // addons table can render per-row pending-PR badges. The .catch
       // keeps the page rendering when the PR-tracker is disabled.
@@ -590,6 +611,7 @@ export function ClusterDetail() {
             ? e.message
             : `Failed to load comparison for cluster: ${name}`,
         );
+        setErrorStatus(e instanceof ApiError ? e.status : null);
       }
       return undefined;
     } finally {
@@ -1074,13 +1096,12 @@ export function ClusterDetail() {
   // because misspelled URL" without the pending-registrations list cached.
   // Show an empty state with a link back to /clusters — the operator gets
   // one click to the surface that DOES know about pending PRs.
+  //
+  // The branch is chosen by the STATUS CODE. It used to be chosen by reading
+  // the server's sentence and looking for "not found" / "404" in it — see
+  // errorStatus for why that had to go.
   if (error) {
-    const lower = error.toLowerCase();
-    const looksLikeNotFound =
-      lower.includes('not found') ||
-      lower.includes('404') ||
-      lower.includes('cluster not found');
-    if (looksLikeNotFound) {
+    if (errorStatus === 404) {
       return (
         <EmptyState
           title={`Cluster "${name}" not found`}
@@ -1287,7 +1308,7 @@ export function ClusterDetail() {
             type="button"
             onClick={handleRefresh}
             disabled={isRefreshing}
-            title="Check git and ArgoCD again now"
+            title="Check Git and ArgoCD again now"
             data-testid="page-refresh"
             className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
           >
@@ -1687,7 +1708,7 @@ export function ClusterDetail() {
                   Refresh
                 </button>
                 <InfoHint
-                  text="Checks this cluster's ArgoCD secret against git right now, instead of waiting for the reconciler's regular check."
+                  text="Checks this cluster's ArgoCD secret against Git right now, instead of waiting for the reconciler's regular check."
                   label="What does Refresh do?"
                 />
               </RoleGuard>
@@ -1702,12 +1723,23 @@ export function ClusterDetail() {
                   {/* HL-1 (honest labels): this action re-applies only
                       Sharko's own addon label keys — it does not rebuild
                       config, server or name — so it is not called "Sync"
-                      anymore. testid stays secret-sync-sync on purpose. */}
-                  Re-apply addon labels
+                      anymore. Round 3 ruling (2026-08-16) renamed it again,
+                      from "Re-apply addon labels" to "Sync addon labels".
+                      testid stays secret-sync-sync on purpose. */}
+                  Sync addon labels
                 </button>
                 <InfoHint
-                  text={hasDrift ? "Applies git's addon labels to this cluster's secret now." : 'Nothing to apply — this secret already matches git.'}
-                  label="What does Re-apply addon labels do?"
+                  // B13 item 9: the nothing-to-do sentence is SHARED with the
+                  // Cluster connections list, which offers the same button in
+                  // the same situation. It used to say "this secret already
+                  // matches git" here and something else there.
+                  //
+                  // BOTH halves are shared now. The drift half used to read
+                  // "Applies git's addon labels to this cluster's secret now."
+                  // here while the connections list said the same thing in
+                  // different words — see SYNC_ADDON_LABELS_HINT.
+                  text={hasDrift ? SYNC_ADDON_LABELS_HINT : SYNC_ADDON_LABELS_NOTHING_TO_APPLY}
+                  label="What does Sync addon labels do?"
                 />
               </RoleGuard>
               <button
@@ -1760,18 +1792,18 @@ export function ClusterDetail() {
             {diffOpen && (
               <div className="rounded-md ring-2 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid="secret-sync-diff-panel">
                 {!lastRec ? (
-                  <p className="text-sm text-[#3a6a8a] dark:text-gray-400">Sharko hasn't checked this secret against git yet — click Refresh to check now.</p>
+                  <p className="text-sm text-[#3a6a8a] dark:text-gray-400">Sharko hasn't checked this secret against Git yet — click Refresh to check now.</p>
                 ) : !hasDrift ? (
                   <div className="flex items-center gap-2">
                     <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                    <p className="text-sm font-medium text-green-700 dark:text-green-400">No differences — this secret's addon labels match git.</p>
+                    <p className="text-sm font-medium text-green-700 dark:text-green-400">No differences — this secret's addon labels match Git.</p>
                   </div>
                 ) : (
                   <div className="space-y-2.5">
                     {added.length > 0 && (
                       <div>
                         <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-                          This secret is missing {added.length} addon label{added.length === 1 ? '' : 's'} that git expects.
+                          This secret is missing {added.length} addon label{added.length === 1 ? '' : 's'} that Git expects.
                         </p>
                         <p className="mt-0.5 font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{added.join(', ')}</p>
                       </div>
@@ -1779,7 +1811,7 @@ export function ClusterDetail() {
                     {removed.length > 0 && (
                       <div>
                         <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-                          This secret has {removed.length} addon label{removed.length === 1 ? '' : 's'} that git doesn't expect.
+                          This secret has {removed.length} addon label{removed.length === 1 ? '' : 's'} that Git doesn't expect.
                         </p>
                         <p className="mt-0.5 font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{removed.join(', ')}</p>
                       </div>
@@ -1787,7 +1819,7 @@ export function ClusterDetail() {
                     {changed.length > 0 && (
                       <div>
                         <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-                          {changed.length} addon label{changed.length === 1 ? '' : 's'} {changed.length === 1 ? 'has' : 'have'} a different value than git.
+                          {changed.length} addon label{changed.length === 1 ? '' : 's'} {changed.length === 1 ? 'has' : 'have'} a different value than Git.
                         </p>
                         <p className="mt-0.5 font-mono text-xs text-[#5a8aaa] dark:text-gray-500">{changed.join(', ')}</p>
                       </div>
@@ -1795,9 +1827,26 @@ export function ClusterDetail() {
                     <RoleGuard roles={['admin', 'operator']}>
                       {/* HL-1: names the renamed button, and only promises
                           the labels — the old "apply git's version" read
-                          wider than what the action writes. */}
-                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
-                        Click Re-apply addon labels above to put git's addon labels back on this secret.
+                          wider than what the action writes. Round 3
+                          ruling (2026-08-16): button name updated again.
+
+                          THIRD wording of the same write, closed here: this
+                          line used to say "Click Sync addon labels above to
+                          put git's addon labels back on this secret." — its
+                          own words for the write the shared hint a few
+                          hundred lines above already describes, and in the
+                          retired vocabulary ("secret", not "connection").
+
+                          It stays an instruction — its job is to point at a
+                          control the reader may not have noticed, which the
+                          hint never does. Only the pointer half is written
+                          here; every word about what the write DOES comes
+                          from SYNC_ADDON_LABELS_HINT, so this line and the
+                          button's own hint cannot say different things
+                          again. Pinned by exact text in
+                          ClusterDetail.driftdiff.test.tsx. */}
+                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500" data-testid="drift-sync-pointer">
+                        {`Click Sync addon labels above. ${SYNC_ADDON_LABELS_HINT}`}
                       </p>
                     </RoleGuard>
                   </div>
@@ -1812,11 +1861,20 @@ export function ClusterDetail() {
         open={resyncModalOpen}
         onClose={() => setResyncModalOpen(false)}
         onConfirm={handleResyncNow}
-        // HL-1: same per-kind treatment as the Secrets pages — this is a
-        // cluster connection, so the confirm carries the action's real name.
-        title={`Re-apply addon labels on "${name}"?`}
-        description="Applies git's addon labels to this cluster's ArgoCD secret — one time; the self-heal setting is not changed"
-        confirmText="Re-apply labels"
+        // HL-1, renamed by the Round 3 ruling (2026-08-16): same per-kind
+        // treatment as the Secrets pages — this is a cluster connection, so
+        // the confirm carries the action's real name.
+        title={`Sync addon labels on "${name}"?`}
+        // The confirm sentence is SHARED with the Cluster connections list,
+        // which puts the same write behind the same confirm box — see
+        // syncAddonLabelsConfirmText. It used to read "Applies git's addon
+        // labels to this cluster's ArgoCD secret — one time; the self-heal
+        // setting is not changed" here, and something different there.
+        // `name` comes off the /clusters/:name route param, so it is always
+        // there when this page renders; `?? ''` is only to satisfy the
+        // route-param type, never a real case.
+        description={syncAddonLabelsConfirmText(name ?? '')}
+        confirmText="Sync addon labels"
         loading={resyncing}
       />
 

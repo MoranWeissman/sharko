@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // AzureDevOpsProvider implements GitProvider for Azure DevOps repositories.
@@ -40,13 +42,20 @@ func (a *AzureDevOpsProvider) authHeader() string {
 func (a *AzureDevOpsProvider) doGet(url string) (*http.Response, []byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create request: %w", err)
+		// Never wrap this (BF12). net/http hands back a *url.Error, and
+		// that type prints the whole address it was given — here an
+		// address built from the organisation, project and repository the
+		// operator configured. The reason comes from credsafe, which is
+		// built from error types and never reads a message.
+		return nil, nil, fmt.Errorf("the Azure DevOps GET could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", a.authHeader())
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("execute request: %w", err)
+		return nil, nil, fmt.Errorf("the Azure DevOps GET did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -70,14 +79,17 @@ func (a *AzureDevOpsProvider) doPatch(url string, jsonBody []byte) (*http.Respon
 func (a *AzureDevOpsProvider) doRequest(method, url string, jsonBody []byte) (*http.Response, []byte, error) {
 	req, err := http.NewRequest(method, url, bytes.NewReader(jsonBody))
 	if err != nil {
-		return nil, nil, fmt.Errorf("create request: %w", err)
+		// Address-free for the same reason as doGet above (BF12).
+		return nil, nil, fmt.Errorf("the Azure DevOps %s could not be built (%s)",
+			method, credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", a.authHeader())
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("execute request: %w", err)
+		return nil, nil, fmt.Errorf("the Azure DevOps %s did not complete (%s)",
+			method, credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 

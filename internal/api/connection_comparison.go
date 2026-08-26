@@ -24,7 +24,7 @@ package api
 // expected manifest, a hash, a secrets-backend path, a destination override or
 // a namespace — the namespace comes from the running reconciler. That is what
 // stops this from becoming a way to guess at a value: a caller cannot ask "is
-// the token X?", only "does the connection match what Sharko intends?", and the
+// the token X?", only "does the connection match the Git-defined connection?", and
 // answer to that is the same no matter what else they put on the request.
 // TestConnectionComparison_IsNotAGuessingOracle pins it.
 //
@@ -56,6 +56,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/connectioncompare"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -71,14 +72,110 @@ const connectionComparisonTimeout = 20 * time.Second
 // has already had a near-miss on exactly that.
 const (
 	failNoReconciler     = "The part of Sharko that manages cluster connections is not running on this server, so it cannot check this connection."
-	failNoGitConnection  = "Sharko is not connected to a git repository right now, so it cannot see what this connection should look like."
+	failNoGitConnection  = "Sharko is not connected to a Git repository right now, so it cannot see what this connection should look like."
 	failNoHubClient      = "Sharko is not connected to its own cluster on this server, so it cannot read this connection."
-	failGitRead          = "Sharko could not read this cluster's record from git, so it cannot tell what the connection should look like. Check the git connection and try again."
+	failGitRead          = "Sharko could not read this cluster's record from Git, so it cannot tell what the connection should look like. Check the Git connection and try again."
 	failLiveRead         = "Sharko could not read this cluster's connection from its own cluster, so the check did not finish. Try again in a moment."
-	failBackendRead      = "Sharko could not read this cluster's stored sign-in details from the secrets backend, so it could not work out what the connection should look like. Check the secrets backend connection and try again."
-	failNotManaged       = "This cluster has no entry in the git-managed cluster list, so Sharko has nothing to compare its connection against."
-	failCredsUnavailable = "Sharko could not read this cluster's stored sign-in details, so the check did not finish."
+	failBackendRead      = "Sharko could not read this cluster's configured credentials source from the secrets backend, so it could not work out what the connection should look like. Check the secrets backend connection and try again."
+	failNotManaged       = "This cluster has no entry in the Git-managed cluster list, so Sharko has nothing to compare its connection against."
+	failCredsUnavailable = "Sharko could not read this cluster's configured credentials source, so the check did not finish."
+
+	// The two sentences below used to be typed INLINE inside
+	// internal/connectioncompare/compare.go, which is a file no catalog guard
+	// and no inline-prose sweep read. So they shipped to a person's screen
+	// from outside the contract that is supposed to own every sentence on this
+	// surface. They live here now, with the other seven, for the same reason
+	// limitReasonCommitUnknown does.
+
+	// failAddonLabelsUnknown is byte-for-byte the sentence compare.go used to
+	// type inline. Nothing about it was wrong; only its address was.
+	failAddonLabelsUnknown = "Sharko could not read which addons should be on for this cluster, so it cannot tell whether this connection's labels are right. Check that the cluster's addon file is readable in Git, then check again."
+
+	// failExpectedBuild is the one sentence in this story that CHANGED.
+	//
+	// It used to end "Check again in a moment." — character-for-character the
+	// promise that was already removed from repairFailSecretGone. Here the
+	// problem is not the timeframe, it is the advice: this failure is a JSON
+	// marshalling failure inside argosecrets.BuildClusterSecret, over Sharko's
+	// own struct. The same inputs produce the same failure every time, so
+	// "check again in a moment" tells the reader to do something that cannot
+	// possibly help, and sends them looking at their cluster and their Git
+	// repository for a fault that is in neither.
+	//
+	// This does NOT contradict the deliberate exception kept for
+	// repairFailWrite ("Try again in a moment.") — a failed WRITE genuinely
+	// can succeed on a second attempt, so telling a person to retry is true
+	// there. See TestConnectionSentences_RepairRefusalsAreExact, which pins
+	// that exception on purpose.
+	failExpectedBuild = "Sharko could not work out what this cluster's connection should look like, so there is nothing to compare against. This is a fault in Sharko itself — nothing on the cluster or in Git needs changing."
+
+	// failCheckDidNotFinish is the last resort, for a typed reason that has no
+	// sentence of its own. Unreachable while the exhaustiveness guard passes —
+	// it exists so that if it ever IS reached, the reader gets a true sentence
+	// rather than a check_failed answer with a blank explanation.
+	failCheckDidNotFinish = "Sharko could not finish checking this connection."
 )
+
+// connectionFailureSentences is the ONE map from a typed check failure to the
+// words a person reads.
+//
+// # Why this map exists at all
+//
+// The product owner's ruling: "presentation structure must follow typed facts,
+// never equality between human sentences." Before this map, the sentence WAS
+// the fact — connectioncompare.Result carried the whole paragraph and the
+// connection page switched on it, so a copy edit silently changed which branch
+// of the page ran and which failed step it named.
+//
+// Now the fact travels typed and the words are looked up here, once, at the
+// edge. Routing keys on the fact; a sentence can be rewritten freely.
+//
+// # It is exhaustive in both directions, and that is checked
+//
+// TestConnectionFailure_EveryTypedReasonHasASentence walks
+// connectioncompare.CheckFailures() and fails BY NAME on a reason with no
+// sentence AND on a sentence whose reason no longer exists. Neither direction
+// is a count.
+var connectionFailureSentences = map[connectioncompare.CheckFailure]string{
+	connectioncompare.CheckFailureNoReconciler:           failNoReconciler,
+	connectioncompare.CheckFailureNoGitConnection:        failNoGitConnection,
+	connectioncompare.CheckFailureNoHubClient:            failNoHubClient,
+	connectioncompare.CheckFailureGitRead:                failGitRead,
+	connectioncompare.CheckFailureLiveRead:               failLiveRead,
+	connectioncompare.CheckFailureBackendRead:            failBackendRead,
+	connectioncompare.CheckFailureNotManaged:             failNotManaged,
+	connectioncompare.CheckFailureCredentialsUnavailable: failCredsUnavailable,
+	connectioncompare.CheckFailureAddonLabelsUnknown:     failAddonLabelsUnknown,
+	connectioncompare.CheckFailureExpectedBuild:          failExpectedBuild,
+}
+
+// connectionFailureSentence is what a person is shown for a typed check
+// failure. The empty reason means nothing failed, so it has no words.
+//
+// An UNDECLARED reason falls back to failCheckDidNotFinish rather than to an
+// empty string: a check_failed answer with no explanation at all would be the
+// worst of both — a page that says something went wrong and refuses to say
+// what. It cannot happen (the guard above fails first), and if it ever does
+// the reader still gets a sentence that is TRUE, just narrow.
+func connectionFailureSentence(f connectioncompare.CheckFailure) string {
+	if f == connectioncompare.CheckFailureNone {
+		return ""
+	}
+	if sentence, ok := connectionFailureSentences[f]; ok {
+		return sentence
+	}
+	return failCheckDidNotFinish
+}
+
+// limitReasonCommitUnknown is the R3-8 repair withdrawal sentence.
+//
+// IT USED TO BE TYPED INLINE, in the middle of compareClusterConnection. A
+// sentence that is not a constant is invisible to the message catalog and to
+// the guard that keeps the catalog complete, so it would have shipped to a
+// person's screen from outside the contract that is supposed to own it — and
+// a copy of it is already hand-typed in a test fixture. The value is
+// byte-for-byte what the handler assigned before.
+const limitReasonCommitUnknown = "Sharko cannot tell which commit your Git branch is on, so it will not offer to rewrite this connection. Sharko only makes this change when it can name the exact commit it is matching."
 
 // connectionComparisonDifference is one field that did not match.
 //
@@ -186,12 +283,107 @@ type connectionComparisonView struct {
 	// ValuesNeverReturned is always true. It is in the body so the promise is
 	// visible to anyone reading the API, not only to anyone reading this file.
 	ValuesNeverReturned bool `json:"values_never_returned"`
+
+	// policy is the classification this check ran under, kept whole as a join
+	// for the reconciliation endpoint. UNEXPORTED, like the two provenance
+	// fields below: encoding/json never touches it, so the comparison
+	// endpoint's wire shape is unchanged.
+	//
+	// It exists because the exported fields are a lossy summary, and two
+	// places on the connection page promise Sharko will create a missing
+	// Secret. OwnershipMode alone cannot decide that promise: Classify hands
+	// out backend_stored_credentials and eks_token BOTH when the secrets
+	// backend can be read and when it cannot, and the two situations deserve
+	// opposite answers. RepairScope cannot decide it either — the comparison
+	// sets it to none on a missing Secret, which is correct for a repair
+	// offer and useless as a capability. The Policy carries the real answer,
+	// so both promises are keyed on the same one thing.
+	//
+	// A zero Policy classifies as unknown_source, which promises nothing.
+	// That is the right value for the early check_failed returns, which never
+	// reach a Classify call.
+	policy connectioncompare.Policy
+
+	// failure is WHY a check_failed answer could not finish, as a typed fact.
+	// UNEXPORTED, like policy: encoding/json never touches it, so this
+	// endpoint's wire shape is unchanged.
+	//
+	// FailureReason above is DERIVED FROM THIS AND NEVER AUTHORED. finishView
+	// is the only place in the server that assigns it, and it assigns it from
+	// connectionFailureSentence(failure), so the words and the fact cannot
+	// disagree. That note deliberately does NOT live on FailureReason's own doc
+	// comment: swaggo copies an exported field's doc comment into the published
+	// API description, and naming Sharko's internal functions there tells an API
+	// consumer about machinery it cannot see.
+	//
+	// THIS IS WHAT THE PAGE ROUTES ON, and FailureReason is what it shows.
+	// They used to be one field — the whole paragraph — and the connection
+	// page's condition builder switched on it with case values that were
+	// sentences a person reads. Rewording one of those sentences would have
+	// dropped the page into its default branch and named the wrong failed
+	// step, with nothing to notice: no compiler error, no failing test.
+	//
+	// The product owner's ruling is the reason both exist now: "presentation
+	// structure must follow typed facts, never equality between human
+	// sentences." connection_sentence_routing_test.go fails on any new
+	// comparison against a sentence constant, so the old shape cannot come
+	// back quietly.
+	failure connectioncompare.CheckFailure
+
+	// liveAppliedRevision and liveWrittenAt are joins for the reconciliation
+	// endpoint (connection_reconciliation.go): the live Secret's
+	// sharko.dev/revision and sharko.dev/written-at provenance annotations,
+	// read during the one Secret Get this check already performs. They are
+	// UNEXPORTED on purpose — encoding/json never serialises them, so the
+	// comparison endpoint's wire shape stays byte-for-byte what it was.
+	// Empty when the Secret is missing or was never stamped; an empty value
+	// means "Sharko does not know", never a guessed one.
+	liveAppliedRevision string
+	liveWrittenAt       string
+
+	// liveSecretFound and liveOwnershipMarker are the two live facts about
+	// WHO the connection Secret says it belongs to, kept from the same Secret
+	// Get this check already performs. UNEXPORTED like the joins above —
+	// encoding/json never touches them, so this endpoint's wire shape is
+	// unchanged.
+	//
+	// They are here because the ownership MODE is not the same fact as the
+	// ownership MARKER, and the page was stating the mode as though it were
+	// the marker. Classify's foreign-owner rule needs a marker that is
+	// non-empty AND not Sharko's, so a Secret carrying NO managed-by label at
+	// all falls through to the ordinary Sharko-managed path — and the page
+	// then rendered "Sharko owns this connection Secret." as a passed check
+	// about a Secret that says no such thing, promised an automatic label
+	// re-apply nothing performs (the reconciler lists only marked Secrets and
+	// refuses unmarked ones as Adopt territory), and would offer a repair
+	// argosecrets.Manager.RepairOwnedConnection refuses on the same marker.
+	//
+	// liveOwnershipMarker is a LABEL VALUE from Sharko's own vocabulary — the
+	// same string the ownership model is built on. It is never rendered; only
+	// liveOwnershipMarkerRefusesWrite reads it.
+	liveSecretFound     bool
+	liveOwnershipMarker string
+}
+
+// liveOwnershipMarkerRefusesWrite reports the EXACT condition
+// argosecrets.Manager.RepairOwnedConnection refuses a write on: a live
+// connection Secret is there and its app.kubernetes.io/managed-by marker is
+// not Sharko's own.
+//
+// It is false when there is no live Secret at all — there is nothing to
+// refuse, and a missing Secret is its own state with its own answers.
+//
+// This does not weaken that gate and does not add a second one. The gate
+// stays exactly as strict; this is the page asking the gate's own question so
+// it cannot claim, offer or promise something the gate will shut.
+func (v connectionComparisonView) liveOwnershipMarkerRefusesWrite() bool {
+	return v.liveSecretFound && v.liveOwnershipMarker != argosecrets.ManagedByValue
 }
 
 // handleGetConnectionComparison godoc
 //
-// @Summary Compare a cluster's ArgoCD connection with what Sharko intends
-// @Description Read-only. Works out what the named cluster's ArgoCD connection Secret should look like — from git plus, where one exists, an independently stored copy of the cluster's sign-in details — and compares it with the connection that is actually there. Writes nothing. The answer says how much of the connection could honestly be checked: a cluster whose sign-in details only exist inside the connection itself, or whose record does not say where they are kept, is reported with a narrower scope rather than being compared against itself. Sign-in details are compared in memory and neither side is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true, with no expected value and no live value present at all. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.
+// @Summary Compare a cluster's ArgoCD connection with the Git-defined connection
+// @Description Read-only. Works out what the named cluster's ArgoCD connection Secret should look like — the connection Git defines, with credential values resolved, where one exists, from the cluster's configured credentials source held outside the connection — and compares it with the connection that is actually there. For an EKS cluster that source is the cluster's own details rather than a reusable sign-in credential, and the check creates no sign-in tokens. Writes nothing. The answer says how much of the connection could honestly be checked: a cluster whose sign-in details only exist inside the connection itself, or whose record does not say where they are kept, is reported with a narrower scope rather than being compared against itself. Sign-in details are compared in memory and neither side is ever returned: a sensitive field comes back with its path, one of same/different/missing/unexpected, and sensitive true, with no expected value and no live value present at all. The request identifies a cluster and nothing else — no candidate value, no expected manifest, no hash, no backend path, no namespace.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -200,7 +392,7 @@ type connectionComparisonView struct {
 // @Failure 400 {object} map[string]interface{} "Cluster name is required"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden — requires operator role or higher"
-// @Failure 404 {object} map[string]interface{} "This cluster is not in the git-managed cluster list"
+// @Failure 404 {object} map[string]interface{} "This cluster is not in the Git-managed cluster list"
 // @Failure 503 {object} map[string]interface{} "Sharko is missing something it needs to run the check"
 // @Router /clusters/{name}/connection-comparison [get]
 func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Request) {
@@ -214,21 +406,64 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if s.clusterRecon == nil {
-		writeError(w, http.StatusServiceUnavailable, failNoReconciler)
-		return
-	}
-	if s.clusterRecon.GitProviderForRead() == nil {
-		writeError(w, http.StatusServiceUnavailable, failNoGitConnection)
-		return
-	}
-	client, ns, ok := s.k8sClientAndNamespace()
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, failNoHubClient)
+	view, refusal := s.compareClusterConnection(r.Context(), cluster)
+	if refusal != nil {
+		writeError(w, refusal.httpStatus, refusal.sentence)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), connectionComparisonTimeout)
+	// The human check and the background loop (connection_credential_check.go)
+	// feed the SAME per-cluster store, so the fleet page never lags a check a
+	// person just ran. This is a store update, not a write to any cluster.
+	s.connCredChecks.record(cluster, view)
+
+	s.auditSecretResourceRead(r, fmt.Sprintf("cluster:%s", cluster),
+		"compared the cluster connection with the Git-defined connection", auditResultFor(connectioncompare.Status(view.Status)))
+	writeJSON(w, http.StatusOK, view)
+}
+
+// connectionComparisonRefusal is a whole-check refusal: the comparison could
+// not even start (a missing server-side dependency) or the cluster is not in
+// the git-managed list. The sentence is always one of the fixed literals at
+// the top of this file — never provider or Kubernetes error text.
+type connectionComparisonRefusal struct {
+	httpStatus int
+	sentence   string
+	// notManaged marks the "no entry in git" refusal (a 404 for the
+	// endpoint; a silent skip for the background loop — a cluster that
+	// left the list has no row to annotate).
+	notManaged bool
+}
+
+// compareClusterConnection is the read-only comparison core for ONE cluster.
+//
+// TWO CALLERS, ONE ANSWER. The GET /clusters/{name}/connection-comparison
+// handler above and the background credential-check loop
+// (connection_credential_check.go) both call this exact method, so a button
+// check and a background check can never disagree about a cluster. Everything
+// HTTP-specific (the authz gate, status codes, the per-request audit entry)
+// stays in the handler; everything cadence-specific stays in the loop.
+//
+// READ-ONLY, INHERITED BY BOTH CALLERS. Every call this makes is a read (one
+// git file read at a pinned commit, one Secret Get, at most one read-only
+// secrets-backend fetch). It never calls the write path's
+// clusterreconciler.ConnectionCredentialSpecForWrite — that builder can mint
+// an EKS sign-in token; the read here goes through
+// StoredFactsIndependentOfArgoCDSecret, which cannot (see
+// expectedConnectionSpec below).
+func (s *Server) compareClusterConnection(parent context.Context, cluster string) (connectionComparisonView, *connectionComparisonRefusal) {
+	if s.clusterRecon == nil {
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusServiceUnavailable, sentence: failNoReconciler}
+	}
+	if s.clusterRecon.GitProviderForRead() == nil {
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusServiceUnavailable, sentence: failNoGitConnection}
+	}
+	client, ns, ok := s.k8sClientAndNamespace()
+	if !ok {
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusServiceUnavailable, sentence: failNoHubClient}
+	}
+
+	ctx, cancel := context.WithTimeout(parent, connectionComparisonTimeout)
 	defer cancel()
 
 	branch := s.clusterRecon.Branch()
@@ -264,16 +499,14 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 		// which is enough to find the matching provider log entry.
 		slog.Warn("[connection-comparison] could not read the desired state from git",
 			"cluster", cluster, "branch", branch, "path", desired.ComparedPath)
-		writeJSON(w, http.StatusOK, finishView(view, connectioncompare.Compare(connectioncompare.Request{
+		return finishView(view, connectioncompare.Compare(connectioncompare.Request{
 			ClusterName:  cluster,
 			Namespace:    ns,
-			CheckFailure: failGitRead,
-		})))
-		return
+			CheckFailure: connectioncompare.CheckFailureGitRead,
+		})), nil
 	}
 	if !desired.Found {
-		writeError(w, http.StatusNotFound, failNotManaged)
-		return
+		return connectionComparisonView{}, &connectionComparisonRefusal{httpStatus: http.StatusNotFound, sentence: failNotManaged, notManaged: true}
 	}
 	view.CredentialSourceType = desired.Entry.CredsSource
 
@@ -287,12 +520,17 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	case getErr != nil:
 		slog.Warn("[connection-comparison] could not read the live connection secret",
 			"cluster", cluster, "namespace", ns)
-		writeJSON(w, http.StatusOK, finishView(view, connectioncompare.Compare(connectioncompare.Request{
+		return finishView(view, connectioncompare.Compare(connectioncompare.Request{
 			ClusterName:  cluster,
 			Namespace:    ns,
-			CheckFailure: failLiveRead,
-		})))
-		return
+			CheckFailure: connectioncompare.CheckFailureLiveRead,
+		})), nil
+	}
+	if liveFound && live != nil {
+		// Provenance joins for the reconciliation endpoint — same Get, no
+		// extra read, never serialised on this endpoint (unexported fields).
+		view.liveAppliedRevision = live.Annotations[clusterreconciler.AnnotationRevision]
+		view.liveWrittenAt = live.Annotations[clusterreconciler.AnnotationWrittenAt]
 	}
 
 	// ONE ANSWER, ASKED ONCE, USED TWICE.
@@ -311,14 +549,24 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	// not have. TestConnectionComparison_ScopeNeverWiderThanTheAnswer pins that
 	// combination as a failure.
 	backendCanProvideStoredFacts := s.credsRouter().CanReadStoredFactsIndependentOfArgoCDSecret()
+	liveMarker := liveManagedBy(live)
 	policy := connectioncompare.Classify(connectioncompare.ClassifyInput{
 		CredsSource:                  desired.Entry.CredsSource,
 		ConnectionManagedBy:          desired.Entry.ConnectionManagedBy,
 		BackendCanProvideStoredFacts: backendCanProvideStoredFacts,
 		LiveSecretFound:              liveFound,
-		LiveManagedBy:                liveManagedBy(live),
+		LiveManagedBy:                liveMarker,
 		LiveAdopted:                  live != nil && argosecrets.IsAdopted(live.Annotations),
 	})
+	// Carried whole to the reconciliation endpoint. See the policy field's
+	// comment on connectionComparisonView: two creation promises on that page
+	// key off it, and neither can be decided from the exported summary.
+	view.policy = policy
+	// The SAME two values Classify was just given, kept for the page. Assigned
+	// from the one local so the classification and the page can never be
+	// looking at different readings of the same Secret.
+	view.liveSecretFound = liveFound
+	view.liveOwnershipMarker = liveMarker
 
 	req := connectioncompare.Request{
 		ClusterName:         cluster,
@@ -348,7 +596,7 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	// answers here is exactly how the policy and the enforcement drifted apart.
 	if desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts) {
 		spec, credFailure := s.expectedConnectionSpec(desired.Entry)
-		if credFailure != "" {
+		if credFailure != connectioncompare.CheckFailureNone {
 			req.CheckFailure = credFailure
 		} else {
 			req.ExpectedSpec = spec
@@ -356,9 +604,20 @@ func (s *Server) handleGetConnectionComparison(w http.ResponseWriter, r *http.Re
 	}
 
 	result := connectioncompare.Compare(req)
-	s.auditSecretResourceRead(r, fmt.Sprintf("cluster:%s", cluster),
-		"compared the cluster connection with what Sharko intends", auditResultFor(result.Status))
-	writeJSON(w, http.StatusOK, finishView(view, result))
+
+	// R3-8: when the git provider cannot report a commit (revision is empty),
+	// the comparison may still run and report what it could check, but the
+	// repair offer must be withdrawn. Sharko only rewrites a connection when it
+	// can name the exact commit it is matching — otherwise a repair's
+	// git-revision guard (R3-4) would always refuse, and offering the button
+	// would mislead the user.
+	if revision == "" && result.RepairAvailable {
+		result.RepairAvailable = false
+		result.RepairScope = connectioncompare.RepairScopeNone
+		result.LimitReason = limitReasonCommitUnknown
+	}
+
+	return finishView(view, result), nil
 }
 
 // liveManagedBy reads the ownership label off the live Secret, nil-safe.
@@ -394,14 +653,14 @@ func auditResultFor(status connectioncompare.Status) string {
 // spec is built without one — the comparison then reports data.config as a field
 // it did not check, which is the honest answer.
 //
-// It returns a fixed safe sentence rather than an error on failure: the
-// backend's error can carry credential material in its text, so it is logged
-// on the server side (without its text) and one of two pre-written sentences
-// goes out.
-func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argosecrets.ClusterSecretSpec, string) {
+// It returns a TYPED reason rather than an error on failure: the backend's
+// error can carry credential material in its text, so it is logged on the
+// server side (without its text) and the caller turns the reason into one of
+// two pre-written sentences.
+func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argosecrets.ClusterSecretSpec, connectioncompare.CheckFailure) {
 	router := s.credsRouter()
 	if router == nil {
-		return nil, failCredsUnavailable
+		return nil, connectioncompare.CheckFailureCredentialsUnavailable
 	}
 	facts, err := router.StoredFactsIndependentOfArgoCDSecret(entry.CredentialLookupKey(), entry.CredsSource)
 	if err != nil {
@@ -412,13 +671,13 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 			// half, at a narrower scope.
 			slog.Info("[connection-comparison] no independent copy of this cluster's sign-in details — checking the rest of the connection only",
 				"cluster", entry.Name)
-			return nil, ""
+			return nil, connectioncompare.CheckFailureNone
 		}
 		// The backend error's own text is never passed through or logged — a
 		// provider error can carry credential material in its message.
-		slog.Warn("[connection-comparison] could not read this cluster's stored sign-in details",
+		slog.Warn("[connection-comparison] could not read this cluster's configured credentials source",
 			"cluster", entry.Name)
-		return nil, failBackendRead
+		return nil, connectioncompare.CheckFailureBackendRead
 	}
 
 	// The role ARN follows the write path's precedence: the cluster's own
@@ -434,7 +693,7 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 		CertData: base64.StdEncoding.EncodeToString(facts.CertData),
 		KeyData:  base64.StdEncoding.EncodeToString(facts.KeyData),
 		CAData:   base64.StdEncoding.EncodeToString(facts.CAData),
-	}, ""
+	}, connectioncompare.CheckFailureNone
 }
 
 // finishView copies a comparison result onto the response view.
@@ -450,7 +709,12 @@ func finishView(view connectionComparisonView, res connectioncompare.Result) con
 	view.Scope = string(res.Scope)
 	view.OwnershipMode = string(res.Mode)
 	view.LimitReason = res.LimitReason
-	view.FailureReason = res.FailureReason
+	// THE ONE PLACE the failure sentence is produced, and it is produced FROM
+	// the typed reason. Everything that routes reads view.failure; everything
+	// that displays reads view.FailureReason; neither can drift from the other
+	// because there is only one assignment and it derives one from the other.
+	view.failure = res.Failure
+	view.FailureReason = connectionFailureSentence(res.Failure)
 	view.CheckedFieldCount = res.CheckedFieldCount
 	view.RepairAvailable = res.RepairAvailable
 	view.RepairScope = string(res.RepairScope)

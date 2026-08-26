@@ -29,6 +29,9 @@ import type { ManagedSecretsResponse } from '@/services/models'
 // drawer in place. See renderPage.
 
 const mockShowToast = vi.fn()
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -42,8 +45,36 @@ const mockDeleteOrphanedSecret = vi.fn()
 const mockFetchAuditLog = vi.fn()
 
 vi.mock('@/services/api', () => ({
-  api: { getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args) },
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  api: {
+    getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: () => Promise.resolve({
+      cluster: 'prod-eu',
+      management_mode: 'sharko_managed',
+      managed_scope: 'full_connection',
+      mode_statement: CONNECTION_SENTENCES.modeStatementSharkoManaged,
+      definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+      sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-13T12:00:00Z' },
+      health: { state: 'connected' },
+      conditions: [
+        { id: 'git_definition', status: 'ok', detail: CONNECTION_SENTENCES.condGitDefinitionOK },
+        { id: 'argocd_connection', status: 'ok', detail: CONNECTION_SENTENCES.condArgoCDConnected },
+      ],
+      drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+      plan: { action: 'none', action_scopes: [] },
+      values_never_returned: true,
+    }),
+  },
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   deleteOrphanedSecret: (...args: unknown[]) => mockDeleteOrphanedSecret(...args),
@@ -194,7 +225,7 @@ describe('orphaned rows — the delete confirm flow', () => {
     // The confirm body names the exact blast radius (locked wording).
     expect(
       screen.getByText(
-        'This permanently deletes secret "external-secrets/eso-creds" from cluster "staging-us". Sharko wrote it once, but nothing in git asks for it anymore. This cannot be undone.',
+        'This permanently deletes secret "external-secrets/eso-creds" from cluster "staging-us". Sharko wrote it once, but nothing in Git asks for it anymore. This cannot be undone.',
       ),
     ).toBeInTheDocument()
 
@@ -241,7 +272,7 @@ describe('orphaned rows — the panel', () => {
     renderPage()
     const panel = await openRow()
     expect(within(panel).getByTestId('diff-verdict')).toHaveTextContent(
-      'Not in config — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.',
+      'Not in config — its source in Git is gone. Sharko wrote this secret once, but nothing asks for it anymore.',
     )
   })
 

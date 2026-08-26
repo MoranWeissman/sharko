@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'
+import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
 export type ConnectionHealthState = 'idle' | 'testing' | 'ok' | 'error'
 
@@ -81,10 +82,19 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
     refresh()
   }, [enabled, refresh])
 
+  // The fallback is only reached when the request itself threw and there is
+  // no server message to render at all. Story P2c found the three sentences
+  // that used to be typed here had ALREADY drifted: they carried a full stop
+  // where the server puts a dash and a next step, so the banner said something
+  // no build of Sharko has ever sent. They come from the generated contract
+  // now — the server's own wording for "the connection failed and there is no
+  // more specific reason", which is exactly this case.
   const failingMessages: string[] = []
-  if (git === 'error') failingMessages.push(gitMessage || "Sharko can't reach your Git host.")
-  if (argocd === 'error') failingMessages.push(argocdMessage || "Sharko can't reach ArgoCD.")
-  if (vault === 'error') failingMessages.push(vaultMessage || "Sharko can't reach your secrets store.")
+  if (git === 'error') failingMessages.push(gitMessage || CONNECTION_FAILURE_MESSAGES.connectionFailureGitUnknown)
+  if (argocd === 'error')
+    failingMessages.push(argocdMessage || CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDUnknown)
+  if (vault === 'error')
+    failingMessages.push(vaultMessage || CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsUnknown)
 
   return {
     git,

@@ -8,15 +8,16 @@ package api
 // Used by an admin verifying that a newly added source is reachable
 // without having to restart the process or wait for the ticker. The
 // endpoint is admin-only (Tier 2) and audit-logged — the audit Detail
-// carries the list of attempted URLs and their per-URL outcome, which
-// is the authoritative record of the operation (the handler itself
-// emits zero log lines to avoid leaking URLs into application logs).
+// carries how many sources were attempted and how many ended in each
+// state, never the addresses themselves. A configured catalog source
+// address may carry an auth token in its own path, so it is sensitive
+// by type and never appears in an audit record in any form. (The
+// handler itself emits zero log lines for the same reason.)
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -33,7 +34,7 @@ const refreshCtxTimeout = 60 * time.Second
 // handleRefreshCatalogSources godoc
 //
 // @Summary Force-refresh all catalog sources (Tier 2, admin-only)
-// @Description Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication AND admin role — classified Tier 2 and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.
+// @Description Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication AND admin role — classified Tier 2 and audit-logged; the audit Detail carries how many sources were attempted and a count per outcome (ok|stale|failed), never the configured addresses — a catalog source address can carry an auth token inside it and is never written to any record. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -53,12 +54,17 @@ func (s *Server) handleRefreshCatalogSources(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Attempted URLs + per-URL status are the audit payload regardless
-	// of whether a fetcher is wired. The empty-slice / empty-map case
-	// is a legitimate audit event (admin hit "refresh" on an
-	// embedded-only deployment — worth recording as a human action).
-	attempted := []string{}
-	statusByURL := map[string]string{}
+	// The audit payload is counts only: how many sources were attempted
+	// and how many ended in each state. It used to carry the attempted
+	// addresses and a per-address status map — but a configured catalog
+	// source address can carry an auth token inside it (the documented
+	// private-catalog form puts it in the path), so no address, and
+	// nothing derived from one, may reach an audit record. The
+	// zero-count case is still a legitimate audit event (admin hit
+	// "refresh" on an embedded-only deployment — worth recording as a
+	// human action).
+	attemptedCount := 0
+	statusCounts := map[string]int{}
 
 	if s.sourcesFetcher != nil {
 		// 60s safety cap around ForceRefresh. The fetcher itself uses
@@ -75,25 +81,20 @@ func (s *Server) handleRefreshCatalogSources(w http.ResponseWriter, r *http.Requ
 		// resolveTargets returns an empty target list).
 		s.sourcesFetcher.ForceRefresh(ctx)
 
-		snaps := s.sourcesFetcher.Snapshots()
-		for u, snap := range snaps {
-			attempted = append(attempted, u)
-			statusByURL[u] = string(snap.Status)
+		for _, snap := range s.sourcesFetcher.Snapshots() {
+			attemptedCount++
+			statusCounts[string(snap.Status)]++
 		}
-		// Deterministic order in the audit payload so two refreshes
-		// of the same source set produce byte-identical Detail
-		// strings (matters for log diffing / alerting rules).
-		sort.Strings(attempted)
 	}
 
 	// audit.Fields.Detail is a string — marshal the structured payload
-	// to JSON so audit log viewers can parse it back out. The
-	// statusByURL map is intentionally left in its natural
-	// (Go-randomised) JSON encoding; the urls slice above is the
-	// authoritative ordered list of attempted sources.
+	// to JSON so audit log viewers can parse it back out. encoding/json
+	// writes map keys in sorted order, so two refreshes of the same
+	// source set produce byte-identical Detail strings (matters for log
+	// diffing / alerting rules).
 	detailPayload := map[string]interface{}{
-		"urls":   attempted,
-		"status": statusByURL,
+		"sources_attempted": attemptedCount,
+		"status_counts":     statusCounts,
 	}
 	detailJSON, _ := json.Marshal(detailPayload)
 

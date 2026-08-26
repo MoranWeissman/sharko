@@ -16,11 +16,12 @@ package connectioncompare
 // down, and where the plan and the code disagreed the code won. The three
 // places that happened are called out in the comments: the connectivity-check
 // label, the provenance annotations, and the credential blob for a cluster
-// that mints a fresh token on every fetch.
+// whose configured credentials source stores no credential at all.
 
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -41,7 +42,35 @@ const (
 )
 
 // labelFieldPath renders the field path for one label key.
-func labelFieldPath(key string) string { return "metadata.labels[" + key + "]" }
+func labelFieldPath(key string) string { return labelFieldPathPrefix + key + "]" }
+
+// labelFieldPathPrefix is the one place the label-path shape is written down.
+// labelFieldPath builds with it and LabelKeyFromFieldPath takes it apart, so
+// the two can never disagree about the shape.
+const labelFieldPathPrefix = "metadata.labels["
+
+// LabelKeyFromFieldPath is the inverse of labelFieldPath: given a field path
+// this package produced, it returns the label key inside it.
+//
+// It exists so a CONSUMER of a Difference can ask which label a path is about
+// without re-typing the path shape and without guessing. Anything that is not
+// a label path — "data.server", "type", a truncated path — comes back false,
+// and false means "this is not a label", never "this is a label whose key I
+// could not work out".
+//
+// A Kubernetes label key is a DNS-style name with an optional DNS-subdomain
+// prefix, so it can never contain "[" or "]". That is why trimming the fixed
+// prefix and the final "]" recovers the key exactly.
+func LabelKeyFromFieldPath(path string) (string, bool) {
+	if !strings.HasPrefix(path, labelFieldPathPrefix) || !strings.HasSuffix(path, "]") {
+		return "", false
+	}
+	key := path[len(labelFieldPathPrefix) : len(path)-1]
+	if key == "" {
+		return "", false
+	}
+	return key, true
+}
 
 // FieldStatus is what happened to one compared field.
 type FieldStatus string
@@ -135,6 +164,14 @@ func strPtr(s string) *string { return &s }
 // differences share a path.
 func sortDifferences(diffs []Difference) {
 	sort.Slice(diffs, func(i, j int) bool { return diffs[i].Path < diffs[j].Path })
+}
+
+// sortNotChecked does the same for a batch of not-checked fields built by
+// walking a map, so the same connection lists them in the same order every
+// time. Only ever applied to a batch that came from a map walk — the fixed
+// data.* entries are already in a deliberate order and are appended after.
+func sortNotChecked(fields []NotCheckedField) {
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Path < fields[j].Path })
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,9 @@
 **Severity:** P0
 
 > **Verified:** Authored 2026-06-01 against `main` HEAD. The 502 error
-> string `"no active ArgoCD connection"` is verified verbatim against
+> string is now one fixed sentence written by `writeNoActiveArgocdConnection`
+> in `internal/api/connection_gate.go` (B1, 2026-08-20). The pre-B1 wording
+> below was verified verbatim against
 > `internal/api/addon_ops.go:73,190`, `internal/api/addons_upgrade.go:58,132`,
 > `internal/api/addons_write.go:67,241,331`, and
 > `internal/api/ai_annotate.go:97` as shipped. Diagnosis queries reference
@@ -37,7 +39,9 @@ What an operator sees when this fires:
   `POST /api/v1/clusters/{name}/test`, `POST /api/v1/addons`,
   `PATCH /api/v1/addons/{name}`, `POST /api/v1/addons/{name}/upgrade`,
   `POST /api/v1/addons/upgrade-batch`, and any `/ai/annotate-values` call.
-- Response body verbatim: `{"error":"no active ArgoCD connection: <err>"}`
+- Response body verbatim, one fixed sentence with no underlying error in
+  it (changed by B1, 2026-08-20):
+  `{"error":"Sharko has no usable ArgoCD connection. Open Settings and check the active connection: the ArgoCD server address and the ArgoCD token."}`
   where `<err>` is the underlying transport error (DNS resolution failure,
   TCP refused, TLS handshake failure, 401/403 from ArgoCD, or context
   timeout).
@@ -266,9 +270,12 @@ first step that restores reachability — don't keep walking the list.
      nslookup argocd-server.argocd.svc.cluster.local
    ```
 
-   If the Service was renamed, set `SHARKO_ARGOCD_SERVER` in the Sharko
-   deployment to the new name (or wait for the next pod restart — see
-   step 1 — to let `autoDiscoverArgoCD()` find it).
+   If the Service was renamed, set the ArgoCD server URL on the active
+   connection under **Settings → Connections** (or declare it in Git with
+   `SHARKO_CONN_ARGOCD_SERVER_URL`). Leaving it empty is also valid: with no
+   URL configured, Sharko discovers one from the ArgoCD namespace on each
+   client build (`argocd.DiscoverServerURL`), so it picks the new Service up
+   without a restart.
 
 5. **Last resort — scale Sharko to zero and back.** If steps 1-4 don't
    surface a root cause, a clean restart with no in-flight retry storm
@@ -387,15 +394,23 @@ break — rollback path:
    kubectl -n <sharko-ns> rollout undo deployment/sharko
    ```
 
-2. Generate a new token with the full set of permissions Sharko needs
-   (cluster CRUD + application CRUD + project CRUD). The ArgoCD account
-   used by Sharko must have these claims in `argocd-rbac-cm`:
+2. Generate a new token with the set of permissions Sharko needs
+   (cluster CRUD, project CRUD, and reading plus creating Applications).
+   The ArgoCD account used by Sharko must have these claims in
+   `argocd-rbac-cm`:
 
    ```
    p, sharko, clusters, *, *, allow
-   p, sharko, applications, *, *, allow
    p, sharko, projects, *, *, allow
+   p, sharko, applications, get, */*, allow
+   p, sharko, applications, create, */*, allow
    ```
+
+   `applications, *, *` is not the right line here: the wildcard verb
+   includes `sync`, which Sharko does not need for addons to be deployed
+   and which should be granted separately and scoped to Sharko's own
+   AppProject if you want it — see
+   [Letting Sharko restart a sync](security.md#letting-sharko-restart-a-sync).
 
 3. Confirm rollback success: `/api/v1/health` shows `argocd_reachable:
    true` and a synthetic write (e.g. `POST /api/v1/clusters/{name}/test`)
@@ -410,20 +425,22 @@ Mitigation steps 1, 3, 4, 5 are non-destructive — no rollback needed.
 How to make this failure mode less likely going forward. Three concrete
 levers — one monitoring, one gating, one scheduled work item.
 
-- **Monitoring — pre-page on the reachability probe directly.** The
-  current alert (`SharkoClusterRegistrationFastBurn`) fires on
-  error-rate burn after the failure is already user-visible. Add a
-  Sharko-internal recording rule that exposes the latest reachability
-  probe result and alert on it BEFORE the burn-rate alert:
+- **Monitoring — pre-page on the reachability probe directly.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. The alert that
+  does exist, `SharkoClusterRegistrationFastBurn`, fires on error-rate
+  burn — after the failure is already user-visible. The sketch is a
+  Sharko-internal recording rule exposing the latest reachability probe
+  result, alerted on before the burn-rate alert:
 
-  ```promql
+  ```
   sharko_argocd_reachable_probe == 0
   ```
 
-  When this is true for > 60s, page; this catches the failure before
-  any user-visible API returns 502. (Wiring the recording rule into
-  `internal/metrics/` is a P1 follow-up; the index entry stays a P0
-  GAP until then because the *user-impact* surface is page-grade.)
+  If it existed and were true for more than 60 seconds, it would page,
+  and it would do so before any user-visible API returned 502. Wiring it
+  into `internal/metrics/` is a P1 follow-up; the index entry stays a P0
+  GAP until then, because the *user-impact* surface is page-grade.
 
 - **Gating — pre-flight the ArgoCD account in CI.** Add a CI check to
   the Helm chart that verifies the configured ArgoCD account has the

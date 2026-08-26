@@ -58,7 +58,7 @@ Operation ID: op_a1b2c3d4
 [10:01:30] Done. Root application is Healthy.
 ```
 
-With auto-merge disabled (`SHARKO_GITOPS_PR_AUTO_MERGE=false`), the init completes after the PR is created. Merge the PR manually, then re-run `sharko init --resume <operation-id>` to continue ArgoCD bootstrap.
+With auto-merge disabled (`SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false`, or `connection.gitops.prAutoMerge: "false"` in Helm values), the init completes after the PR is created. Merge the PR manually, then re-run `sharko init --resume <operation-id>` to continue ArgoCD bootstrap.
 
 ### `sharko validate`
 
@@ -656,7 +656,7 @@ sharko refresh-secrets prod-eu       # reconcile a specific cluster
 
 ### `sharko secret-status`
 
-Show the current reconciler status per cluster: last run time, hash comparison result, and any errors.
+Show the current addon-secret sync status per cluster: last run time, hash comparison result, and any errors.
 
 ```bash
 sharko secret-status

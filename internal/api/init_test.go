@@ -284,10 +284,18 @@ func TestRunInitOperation_ListFailsGeneric_Fails(t *testing.T) {
 	if !strings.Contains(sess.Error, wantSubstr) {
 		t.Errorf("expected error to contain %q, got %q", wantSubstr, sess.Error)
 	}
-	// The underlying LIST error must still be threaded through so the user
-	// sees the actual reason — not a generic message.
-	if !strings.Contains(sess.Error, "not found") {
-		t.Errorf("expected error to surface the underlying LIST error, got %q", sess.Error)
+	// B4 reversed what this used to assert. It required the underlying LIST
+	// error to be threaded through "so the user sees the actual reason" —
+	// which is the leak: this branch is reached exactly when Sharko does NOT
+	// know what the failure is, so it cannot know what the text contains, and
+	// on the Git side that text can carry a repository token. The refusal now
+	// carries Sharko's own sentence and none of the other side's words.
+	if strings.Contains(sess.Error, "not found") || strings.Contains(sess.Error, "cluster-addons-bootstrap:") {
+		t.Errorf("the refusal still carries the underlying LIST error's own words, got %q", sess.Error)
+	}
+	const wantProbeFailed = "Sharko could not reach ArgoCD to check the bootstrap application, so it does not know whether the bootstrap is healthy. Check that the ArgoCD server address in Settings is right and that Sharko can reach it."
+	if !strings.Contains(sess.Error, wantProbeFailed) {
+		t.Errorf("the refusal is\n  %q\nwant it to carry exactly\n  %q", sess.Error, wantProbeFailed)
 	}
 }
 
@@ -315,8 +323,16 @@ func TestRunInitOperation_AuthFailed_Fails(t *testing.T) {
 		t.Errorf("expected status=%s, got %s (result=%q)",
 			operations.StatusFailed, sess.Status, sess.Result)
 	}
-	if !strings.Contains(sess.Error, "invalid ArgoCD token") {
-		t.Errorf("expected error to contain the actionable token message, got %q", sess.Error)
+	// B4: this used to look for "invalid ArgoCD token" — the ArgoCD client's
+	// own words, arriving here through err.Error(). The sentence is Sharko's
+	// now, and it is typed out in full so a change to the shipped wording has
+	// to be made here too.
+	const wantTokenInvalid = "ArgoCD rejected Sharko's token (the token is not valid, or it has expired). Create a new ArgoCD token and save it in Settings."
+	if !strings.Contains(sess.Error, wantTokenInvalid) {
+		t.Errorf("the refusal is\n  %q\nwant it to carry exactly\n  %q", sess.Error, wantTokenInvalid)
+	}
+	if strings.Contains(sess.Error, "listing applications") {
+		t.Errorf("the refusal still carries the ArgoCD client's own wrapping, got %q", sess.Error)
 	}
 	if strings.Contains(sess.Error, "already exists") {
 		t.Errorf("auth-failed must NOT claim anything about the app already existing, got %q", sess.Error)

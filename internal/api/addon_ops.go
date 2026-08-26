@@ -81,13 +81,13 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -226,13 +226,13 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 

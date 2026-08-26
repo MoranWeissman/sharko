@@ -41,7 +41,7 @@ make test-e2e-fast
 ```
 
 Runs the in-process tests only (~30 s on a laptop after first build). The
-Sharko server is wired in-memory via `httptest`, the git server is the
+Sharko server is wired in-memory via `httptest`, the Git server is the
 in-memory `harness.GitFake`, and the GitHub provider is the in-memory
 `harness.MockGitProvider`. No external services are touched.
 
@@ -74,7 +74,7 @@ The harness exposes a small set of primitives. Tests compose them as needed:
 | `harness.ProvisionTopology(t, req)` | Provision a kind topology (1 mgmt + N targets). Sentinel-labelled for safe destroy. |
 | `harness.InstallArgoCD(t, c)` | Install ArgoCD's stable release into a kind cluster. |
 | `harness.StartSharko(t, cfg)` | Boot Sharko in-process (default) via `httptest.NewServer`, or via `helm install` into a kind cluster (`SharkoModeHelm` / `E2E_SHARKO_MODE=helm`; see [Full-fidelity Helm mode](#full-fidelity-helm-mode-v125-1-13)). |
-| `harness.StartGitFake(t)` | In-memory `go-git` HTTP smart-protocol server hosting one repo. The URL fed into Sharko's git config. |
+| `harness.StartGitFake(t)` | In-memory `go-git` HTTP smart-protocol server hosting one repo. The URL fed into Sharko's Git config. |
 | `harness.StartGitMock(t)` | In-memory `gitprovider.GitProvider` mock — overrides the real GitHub API for read/write paths. |
 | `harness.NewClient(t, sharko, user, pass)` | Typed HTTP client that owns auth state (login + retry-on-401). |
 | `harness.SeedUsers(t, sharko, users)` | Seed bootstrap users via the in-process `*api.Server`, bypassing the login rate limiter. |
@@ -367,9 +367,9 @@ panic in `cmd/sharko/serve.go` writeInitialAdminSecretCLI path).
 with "git unreachable".** Host ↔ pod network gotcha. The in-cluster Sharko
 pod cannot reach a `127.0.0.1:NNNN` URL on your laptop — that loopback
 address means localhost *inside the pod*. Tests that drive a register or
-sync flow through the real git path either (a) skip the assertion (the
+sync flow through the real Git path either (a) skip the assertion (the
 Wave-D `_HappyPath` test does this — it asserts on `/providers`
-introspection instead of round-tripping through git) or (b) front the
+introspection instead of round-tripping through Git) or (b) front the
 GitFake with a routable address via `harness.RewriteHostLoopbackForPod`,
 which rewrites `127.0.0.1` / `localhost` / `[::1]` to
 `host.docker.internal`.
@@ -445,7 +445,7 @@ start.
 ### In-cluster gitfake (V125-1-13.x)
 
 Helm-mode tests historically could not drive register / sync flows that
-round-trip through git: the in-pod Sharko couldn't reach a host-side
+round-trip through Git: the in-pod Sharko couldn't reach a host-side
 `harness.GitFake` listener (loopback semantics, see Known limitations),
 and the production git-host whitelist in
 `internal/service/connection.go::deriveProviderFromURL` accepts only
@@ -463,7 +463,7 @@ or reuses the image (same `SHARKO_E2E_IMAGE_TAG` cache pattern as
 gets a reachable gitfake at `http://gitfake.default.svc.cluster.local`
 for free — no per-test boilerplate.
 
-**Why it exists.** Helm-mode tests need a git URL that is (a) reachable
+**Why it exists.** Helm-mode tests need a Git URL that is (a) reachable
 from inside a kind pod and (b) accepted by Sharko's connection validator.
 Pinning the GitFake on the host is incompatible with (a); pointing at
 the in-cluster gitfake URL is incompatible with (b) under production
@@ -483,7 +483,7 @@ from default values never surface the variable.
 
 **Writing a Helm-mode test that uses gitfake.** The `*Sharko` returned
 by `harness.StartSharko(t, cfg)` in Helm mode exposes
-`sharko.GitfakeRepoURL` — the full git remote URL on the in-cluster
+`sharko.GitfakeRepoURL` — the full Git remote URL on the in-cluster
 service (e.g. `http://gitfake.default.svc.cluster.local/sharko-e2e.git`).
 Point a Sharko connection at it; the URL passes the validator because
 the host is on the allowlist.
@@ -511,14 +511,14 @@ URL validation, and gitfake speaks git-protocol (clone / push) faithfully,
 but Sharko's GitHub-provider operations (`BatchCreateFiles`,
 `CreatePullRequest`, …) still hit `api.github.com`. So gitfake is not
 yet a complete drop-in for tests that exercise the full Sharko-driven
-git flow in Helm mode. Two workarounds today:
+Git flow in Helm mode. Two workarounds today:
 
 - **Test-cluster-style tests** (the V125-1-13.x.6 pattern, e.g.
-  `TestClusterTest_ArgoCDProvider`): bypass Sharko's git flow entirely
+  `TestClusterTest_ArgoCDProvider`): bypass Sharko's Git flow entirely
   by registering the target cluster directly via ArgoCD's REST API. The
   test exercises `ArgoCDProvider` against a real cluster Secret without
-  depending on Sharko's git side.
-- **Tests that need full git interception**: deferred to a future
+  depending on Sharko's Git side.
+- **Tests that need full Git interception**: deferred to a future
   follow-up (tracked as V125-1-13.y). Either a ghmock sidecar Pod that
   intercepts `api.github.com` traffic from inside the cluster, or making
   `GitHubProvider`'s base URL configurable. Out of scope for V125-1-13.x.
@@ -538,8 +538,8 @@ git flow in Helm mode. Two workarounds today:
   paths without `owner/repo` shape. Either use a 2-segment path in the
   gitfake repo name, or feed `owner` + `repo` fields directly on the
   connection payload instead of `RepoURL`.
-- **Allowlist works but git operations still hit github.com.** That's
-  the `GitHubProvider` limitation above — gitfake is not yet a full git
+- **Allowlist works but Git operations still hit github.com.** That's
+  the `GitHubProvider` limitation above — gitfake is not yet a full Git
   mock from Sharko's REST perspective.
 
 **CI integration.** Same `helm-mode-e2e` GH Actions job that already
@@ -750,7 +750,7 @@ the job; both are declared at the top of `e2e.yml`.
 | `E2E_OFFLINE` | `0` | When `1`, tests skip live network catalog reads (ArtifactHub, GitHub raw fetches). Useful in air-gapped CI runners. |
 | `E2E_SKIP_KIND` | unset | When set, kind-required tests skip themselves regardless of binary availability. Use on saturated dev hosts where Docker Desktop is at capacity. |
 | `E2E_AI_API_KEY` | unset | When set, `TestAIInvocation` actually invokes the AI provider; otherwise it skips. |
-| `E2E_GIT_BACKEND` | `mock` | `github` switches the git provider to live GitHub (foundation hook present, full wiring deferred — see Known limitations). |
+| `E2E_GIT_BACKEND` | `mock` | `github` switches the Git provider to live GitHub (foundation hook present, full wiring deferred — see Known limitations). |
 | `GOTMPDIR` | `/tmp` (set by Make) | Forces go-test temp dirs out of `/var/folders` on macOS to avoid disk-pressure flakes. |
 
 ## Troubleshooting
@@ -797,7 +797,7 @@ behind. `make kind-down` enumerates `sharko-e2e-*` and destroys them all.
   pod itself, not the host. Wave-D Helm-mode tests sidestep this by
   asserting on read-only introspection endpoints
   (`GET /api/v1/providers`) rather than driving register/sync flows that
-  would round-trip through git. A routable host-network mode (or moving
+  would round-trip through Git. A routable host-network mode (or moving
   GitFake into the cluster as a Service) is a follow-up.
 - **Helm `Fetcher` has no test seam.** Preview-merge and annotate paths
   reach the network for chart pulls. Tests that hit those paths skip

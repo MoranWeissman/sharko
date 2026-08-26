@@ -7,7 +7,13 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/MoranWeissman/sharko/internal/fanout"
 )
+
+// takeoverOperation names what `sharko takeover` attempted, for the headline,
+// the review warning and the exit message.
+const takeoverOperation = "The takeover"
 
 func init() {
 	takeoverCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
@@ -274,24 +280,33 @@ run with --dry-run first to see the exact ids to pass.`,
 		}
 
 		unwrapped, note := unwrapAttribution(respBody)
-		if !dryRun {
-			fmt.Println("done")
-		}
 
 		var result takeoverResponse
 		if err := json.Unmarshal(unwrapped, &result); err != nil {
+			if !dryRun {
+				fmt.Println("no readable answer")
+			}
 			return fmt.Errorf("invalid response: %w", err)
+		}
+
+		// The same one decision the fan-out commands take, on a fan-out of
+		// one. "done" used to be printed the moment the HTTP call came back,
+		// above a line that then said the takeover had only got part of the
+		// way.
+		outcome := fanout.SingleStatus(result.Status, status == 207)
+		if !dryRun {
+			fmt.Println(outcome.ProgressWord())
 		}
 
 		fmt.Println()
 		if dryRun {
 			printDryRun(result.DryRun)
 		} else {
-			isPartial := result.Status == "partial" || status == 207
-			if isPartial {
-				fmt.Println("Takeover completed with warnings (partial success).")
-			} else {
+			if outcome.Completed() {
 				fmt.Printf("Sharko now owns %s.\n", name)
+			} else {
+				fmt.Print(outcome.TroubleHeadline(takeoverOperation, name))
+				fmt.Print(outcome.ReviewWarning())
 			}
 			if result.Server != "" {
 				fmt.Printf("  Server: %s\n", result.Server)
@@ -316,7 +331,14 @@ run with --dry-run first to see the exact ids to pass.`,
 		if note != "" {
 			fmt.Printf("  Note: %s\n", note)
 		}
-		return nil
+		// A preview takes over nothing, so it has no completion to confirm.
+		if dryRun {
+			return nil
+		}
+		// Used to be a bare `return nil`, so a takeover that stopped
+		// half-way — Sharko's ownership labels already on the cluster, the
+		// pull request still open — exited 0.
+		return outcome.ExitError(takeoverOperation, name)
 	},
 }
 

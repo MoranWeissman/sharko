@@ -372,9 +372,20 @@ func TestLoadTrustPolicy_UnanchoredCustomEmitsWarning(t *testing.T) {
 	if got := rec.Message; !strings.Contains(got, "regexp.MatchString") {
 		t.Errorf("warning message lacks regexp.MatchString explanation: %q", got)
 	}
-	if got := rec.Message; !strings.Contains(got, unanchored) {
-		t.Errorf("warning message does not mention offending pattern %q: %q", unanchored, got)
+	// BF1: the message must NOT carry the pattern, and the old wording that
+	// did — "not fully anchored — '<pattern>'" — must not come back. The
+	// redaction sink rewrites attributes and leaves the message exactly as
+	// it was assembled, so an operator's own environment text formatted into
+	// a message reaches the collector by the one route nothing inspects.
+	if got := rec.Message; strings.Contains(got, unanchored) {
+		t.Errorf("the warning MESSAGE carries the operator's pattern %q, which nothing downstream inspects: %q", unanchored, got)
 	}
+	if got := rec.Message; strings.Contains(got, "anchored — '") {
+		t.Errorf("the old message wording is back — it formatted the pattern into the message: %q", got)
+	}
+	// It is still reported, once, as the attribute it always also was. An
+	// operator who cannot see which of their own patterns is unanchored
+	// cannot fix it.
 	if got := patternAttr(rec); got != unanchored {
 		t.Errorf("structured pattern attr = %q, want %q", got, unanchored)
 	}

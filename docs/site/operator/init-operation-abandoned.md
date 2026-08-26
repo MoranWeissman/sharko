@@ -110,9 +110,11 @@ What an operator sees when this fires:
   been opened, may have been merged, or may not have been opened at
   all — depending on which step the operation was on when the client
   disconnected. Diagnosis step 2 inspects the actual repo state.
-- **No specific Prometheus alert fires.** This is a V2-4.x
-  follow-up — surfacing `sharko_init_abandoned_total` would let
-  operators see operator-side disconnection patterns.
+- **No specific Prometheus alert fires.** Sharko does not export this
+  metric today. The alert below is a design sketch for a future release,
+  not something you can deploy now. The sketch: surface
+  `sharko_init_abandoned_total`, which would let operators see
+  operator-side disconnection patterns.
 
 If the symptom is **`POST /api/v1/init` returning `409 Conflict`**
 on a brand-new operator's first init attempt, this is the downstream

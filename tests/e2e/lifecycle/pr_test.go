@@ -353,10 +353,12 @@ func TestNotificationsLifecycle(t *testing.T) {
 		}
 	})
 
-	// Seed two distinct notifications. Same Title would dedupe, so we
-	// give them unique titles.
+	// Seed two distinct notifications. Same ID would dedupe, so we give
+	// them unique IDs. (Titles are display text and are not a key —
+	// two identical titles under different IDs are two alerts.)
 	store.Add(notifications.Notification{
 		ID:          "n-upgrade-1",
+		Code:        notifications.CodeAddonUpgradeAvailable,
 		Type:        notifications.TypeUpgrade,
 		Title:       "Addon argo-cd upgrade available",
 		Description: "argo-cd v2.10.0 → v2.11.0",
@@ -364,6 +366,7 @@ func TestNotificationsLifecycle(t *testing.T) {
 	})
 	store.Add(notifications.Notification{
 		ID:          "n-security-1",
+		Code:        notifications.CodeAddonMajorUpdate,
 		Type:        notifications.TypeSecurity,
 		Title:       "Security advisory for cert-manager",
 		Description: "CVE-2025-XXXX",

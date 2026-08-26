@@ -1,5 +1,33 @@
 {{- if and .Values.ai.enabled (eq .Values.ai.provider "ollama") .Values.ai.ollama.deploy }}
-# Ollama deployment — local LLM inference sidecar
+{{- /*
+Ollama deployment — local LLM inference sidecar.
+
+Two things this template has to get right, because getting them wrong
+makes the deployment claim it is working when it is not:
+
+  1. The model is fetched on EVERY install of this deployment, not only
+     when persistence is on. Persistence decides where a model is KEPT
+     between restarts; it never decided whether one is fetched. While
+     the fetch sat inside the persistence conditional, the documented
+     default install (persistence left off) started an Ollama holding no
+     model at all.
+
+  2. Readiness means "this Ollama can serve the model Sharko is
+     configured to use". An Ollama with zero models answers GET
+     /api/tags with HTTP 200 and an empty list, so an /api/tags probe
+     reports Ready for a pod that cannot answer a single question. The
+     readiness probe asks after the configured model by name instead.
+
+The init container's script runs under `set -e` so a failed download
+ends the container non-zero. Kubernetes then retries the init container
+and the pod never reaches Running without its model.
+*/}}
+{{- $model := .Values.ai.ollama.model | default "llama3.2" }}
+{{- $resources := .Values.ai.ollama.resources | default (dict "requests" (dict "memory" "2Gi" "cpu" "500m") "limits" (dict "memory" "4Gi" "cpu" "2000m")) }}
+{{- $readyCheck := printf "ollama show %s > /dev/null 2>&1" (quote $model) }}
+{{- if .Values.ai.ollama.agentModel }}
+{{- $readyCheck = printf "%s && ollama show %s > /dev/null 2>&1" $readyCheck (quote .Values.ai.ollama.agentModel) }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,47 +48,81 @@ spec:
         {{- include "sharko.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: ollama
     spec:
-      {{- if .Values.ai.ollama.persistence }}
       initContainers:
         - name: pull-model
-          image: "{{ .Values.ai.ollama.image | default "ollama/ollama:latest" }}"
+          image: "{{ .Values.ai.ollama.image | default "ollama/ollama:0.6.8" }}"
           command: ["/bin/sh", "-c"]
           args:
             - |
+              set -e
               ollama serve &
-              sleep 5
-              ollama pull {{ .Values.ai.ollama.model | default "llama3.2" }}
+              serve_pid=$!
+              # Wait for the local server to answer before asking it to
+              # download anything. Up to two minutes, then give up and
+              # let the download itself report the failure.
+              waited=0
+              while [ "$waited" -lt 120 ]; do
+                if ollama list > /dev/null 2>&1; then
+                  break
+                fi
+                sleep 2
+                waited=$((waited + 2))
+              done
+              ollama pull {{ $model | quote }}
               {{- if .Values.ai.ollama.agentModel }}
-              ollama pull {{ .Values.ai.ollama.agentModel }}
+              ollama pull {{ .Values.ai.ollama.agentModel | quote }}
               {{- end }}
-              kill %1
+              # Only reached when every download above succeeded — `set -e`
+              # ends the container on the first failure, and the exit
+              # status of a failed download is what Kubernetes sees. The
+              # shutdown below is deliberately the LAST thing that runs
+              # and deliberately cannot change the outcome.
+              kill "$serve_pid" 2> /dev/null || true
+              exit 0
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama
           resources:
-            {{- toYaml (.Values.ai.ollama.resources | default (dict "requests" (dict "memory" "2Gi" "cpu" "500m") "limits" (dict "memory" "4Gi" "cpu" "2000m"))) | nindent 12 }}
-      {{- end }}
+            {{- toYaml $resources | nindent 12 }}
       containers:
         - name: ollama
-          image: "{{ .Values.ai.ollama.image | default "ollama/ollama:latest" }}"
+          image: "{{ .Values.ai.ollama.image | default "ollama/ollama:0.6.8" }}"
           ports:
             - name: http
               containerPort: 11434
               protocol: TCP
+          # Liveness stays a plain "is the server process answering"
+          # check. Restarting the pod cannot conjure a missing model, so
+          # tying liveness to the model would only produce a restart loop.
           livenessProbe:
             httpGet:
               path: /api/tags
               port: http
             initialDelaySeconds: 10
             periodSeconds: 30
+            failureThreshold: 3
+          # Readiness asks whether the configured model is actually
+          # there. `ollama show` needs both the server up and the model
+          # present, so a server holding nothing never reads as Ready.
+          #
+          # The multi-gigabyte download happens in the init container,
+          # and Kubernetes does not start these timers until every init
+          # container has finished — so a legitimate first-run download
+          # can take as long as it takes without any probe killing it.
+          # failureThreshold gives the server a further minute to load
+          # after that.
           readinessProbe:
-            httpGet:
-              path: /api/tags
-              port: http
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - {{ $readyCheck | quote }}
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
-            {{- toYaml (.Values.ai.ollama.resources | default (dict "requests" (dict "memory" "2Gi" "cpu" "500m") "limits" (dict "memory" "4Gi" "cpu" "2000m"))) | nindent 12 }}
+            {{- toYaml $resources | nindent 12 }}
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama

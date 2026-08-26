@@ -110,7 +110,7 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 	// The preview merges against the v3 global values file. On a v4 repo
@@ -123,7 +123,7 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
@@ -157,7 +157,8 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 	// Pull the chart's upstream values.yaml at the catalog-pinned version.
 	upstreamRaw, ferr := helm.NewFetcher().FetchValues(r.Context(), repoURL, chart, version)
 	if ferr != nil {
-		writeError(w, http.StatusBadGateway, "fetching upstream values: "+ferr.Error())
+		// B13 — the chart download's error text carries the repo token.
+		writeChartRepoError(w, r, chartRepoFetchValues, ferr)
 		return
 	}
 	upstream := []byte(upstreamRaw)

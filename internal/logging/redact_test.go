@@ -300,35 +300,42 @@ func TestRedact_Base64Blob_LongNonBase64_Preserved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// _unsafe_ opt-out
+// there is no opt-out (BF1)
 // ---------------------------------------------------------------------------
+//
+// A key beginning `_unsafe_` used to skip every detector. It was a switch that
+// turned the protection off from the call site, which is the one thing a sink
+// exists to make impossible, and it was never used outside these tests. The
+// three tests below used to assert the raw value SURVIVED. They now assert the
+// opposite, and they are kept rather than deleted so the old promise cannot
+// come back quietly.
 
-func TestRedact_UnsafePrefix_BypassesKeyHeuristic(t *testing.T) {
+func TestRedact_UnsafePrefix_NoLongerBypassesKeyHeuristic(t *testing.T) {
 	rec := captureRecord(t, func(l *slog.Logger) {
 		l.Info("debug", "_unsafe_token", "raw-token-for-dev-debug")
 	})
-	if rec["_unsafe_token"] != "raw-token-for-dev-debug" {
-		t.Fatalf("expected _unsafe_token preserved, got %v", rec["_unsafe_token"])
+	if rec["_unsafe_token"] != redactedPlaceholder {
+		t.Fatalf("a caller switched redaction off by naming the key _unsafe_token, got %v", rec["_unsafe_token"])
 	}
 }
 
-func TestRedact_UnsafePrefix_BypassesJWTRegex(t *testing.T) {
+func TestRedact_UnsafePrefix_NoLongerBypassesJWTRegex(t *testing.T) {
 	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature"
 	rec := captureRecord(t, func(l *slog.Logger) {
 		l.Info("debug", "_unsafe_jwt", jwt)
 	})
-	if rec["_unsafe_jwt"] != jwt {
-		t.Fatalf("expected _unsafe_jwt preserved, got %v", rec["_unsafe_jwt"])
+	if rec["_unsafe_jwt"] != redactedPlaceholder {
+		t.Fatalf("a JWT survived under an _unsafe_ key, got %v", rec["_unsafe_jwt"])
 	}
 }
 
-func TestRedact_UnsafePrefix_BypassesBase64Detector(t *testing.T) {
+func TestRedact_UnsafePrefix_NoLongerBypassesBase64Detector(t *testing.T) {
 	blob := strings.Repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", 4)[:120]
 	rec := captureRecord(t, func(l *slog.Logger) {
 		l.Info("debug", "_unsafe_blob", blob)
 	})
-	if rec["_unsafe_blob"] != blob {
-		t.Fatalf("expected _unsafe_blob preserved, got %v", rec["_unsafe_blob"])
+	if rec["_unsafe_blob"] != redactedPlaceholder {
+		t.Fatalf("a base64 blob survived under an _unsafe_ key, got %v", rec["_unsafe_blob"])
 	}
 }
 
@@ -402,8 +409,9 @@ func TestRedact_DeeplyNestedGroup(t *testing.T) {
 	}
 }
 
-func TestRedact_NestedGroup_UnsafeBypass(t *testing.T) {
-	// _unsafe_ inside a group still bypasses redaction.
+func TestRedact_NestedGroup_UnsafeKeyIsRedactedToo(t *testing.T) {
+	// An _unsafe_ key nested inside a group used to bypass redaction as
+	// well. Nesting is not a second door — it gets the same answer.
 	rec := captureRecord(t, func(l *slog.Logger) {
 		l.Info("debug",
 			slog.Group("dev",
@@ -413,8 +421,8 @@ func TestRedact_NestedGroup_UnsafeBypass(t *testing.T) {
 		)
 	})
 	dev := rec["dev"].(map[string]any)
-	if dev["_unsafe_token"] != "raw" {
-		t.Fatalf("expected _unsafe_token preserved in group, got %v", dev["_unsafe_token"])
+	if dev["_unsafe_token"] != redactedPlaceholder {
+		t.Fatalf("an _unsafe_ key inside a group switched redaction off, got %v", dev["_unsafe_token"])
 	}
 	if dev["token"] != redactedPlaceholder {
 		t.Fatalf("expected token redacted in group, got %v", dev["token"])

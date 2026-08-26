@@ -91,7 +91,7 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
 
     // S2: the section body explains the safety claim instead of asserting
     // it — the old "safe to delete" one-liner is gone.
-    expect(screen.getByText(/is not in git, and has no open PR/i)).toBeInTheDocument();
+    expect(screen.getByText(/is not in Git, and has no open PR/i)).toBeInTheDocument();
     expect(screen.queryByText(/safe to delete/i)).not.toBeInTheDocument();
 
     // S4 (walk day 7, missing-truth finding b): the body now opens with

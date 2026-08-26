@@ -606,6 +606,20 @@ function StepInit({
   // — the app already exists but is degraded; re-init cannot fix a live
   // app, so the banner must not promise a repair.
   const [probeRepairable, setProbeRepairable] = useState(false)
+  /**
+   * Whether the server's probe actually FOUND the ArgoCD bootstrap
+   * Application. The one fact that makes "this application already exists but
+   * is not healthy" an honest thing to say.
+   *
+   * This panel used to decide that by asking whether `probeDetail` contained
+   * the substring "sync=". The claim it unlocks sends an operator to ArgoCD
+   * to look at an Application, so getting it wrong wastes their time on a
+   * thing that is not there — and the only thing standing between the right
+   * panel and the wrong one was the exact wording of a diagnostic string on
+   * the server, which nothing stopped anyone from rewording. It is a typed
+   * boolean on the response now (`bootstrap_app_resolved`).
+   */
+  const [probeAppResolved, setProbeAppResolved] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -616,6 +630,7 @@ function StepInit({
         setRepoState(res.state)
         setProbeDetail(res.detail || '')
         setProbeRepairable(Boolean(res.repairable))
+        setProbeAppResolved(Boolean(res.bootstrap_app_resolved))
       })
       .catch(() => {
         if (cancelled) return
@@ -818,14 +833,15 @@ function StepInit({
           state below).
           Guard (error review package 1, mirrors internal/api/init.go's
           unhealthyRepairRefusalMessage): the "already exists" claim is only
-          honest when probeDetail carries a RESOLVED app's sync=/health=
-          values — i.e. ArgoCD actually looked at the app. If the probe
-          couldn't resolve an app at all, Sharko doesn't know whether it
-          exists, so say that honestly instead of asserting it does. */}
+          honest when ArgoCD actually resolved the application. That is a
+          typed field on the probe response now — see probeAppResolved for
+          what it replaced and why. If the probe couldn't resolve an app at
+          all, Sharko doesn't know whether it exists, so say that honestly
+          instead of asserting it does. */}
       {repoState === 'partial' && !probeRepairable && state === 'idle' && (
         <div className="space-y-3">
           <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
-            {probeDetail.includes('sync=') ? (
+            {probeAppResolved ? (
               <>
                 <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
                   This repo's Sharko engine application already exists but is

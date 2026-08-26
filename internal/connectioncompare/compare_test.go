@@ -425,13 +425,17 @@ func TestCompare_CheckFailureIsNeverSoftened(t *testing.T) {
 	// A backend read failure, with everything else about the connection
 	// perfect — the tempting case to report as synced.
 	req, _ := ownedRequest(t, spec, nil)
-	req.CheckFailure = "Sharko could not read this cluster's stored sign-in details."
+	req.CheckFailure = CheckFailureBackendRead
 	res := Compare(req)
 	if res.Status != StatusCheckFailed {
 		t.Fatalf("perfect connection + backend read failure: status = %q, want %q", res.Status, StatusCheckFailed)
 	}
-	if res.FailureReason == "" {
-		t.Error("a check_failed answer must say why")
+	// A check_failed answer must say WHY, and the reason the caller reported
+	// must survive unchanged — the caller is the only one who knows it.
+	// Written as a literal, not as the constant the fixture set, so a rename
+	// of the constant's VALUE cannot move both sides together.
+	if res.Failure != CheckFailure("backend_read") {
+		t.Errorf("Failure = %q, want %q — the caller's reason must pass through untouched", res.Failure, "backend_read")
 	}
 	if len(res.Differences) != 0 {
 		t.Errorf("a failed check must report no differences, got %+v", res.Differences)
@@ -442,7 +446,7 @@ func TestCompare_CheckFailureIsNeverSoftened(t *testing.T) {
 	req, _ = ownedRequest(t, spec, nil)
 	req.Live = nil
 	req.LiveFound = false
-	req.CheckFailure = "Sharko could not read this cluster's connection."
+	req.CheckFailure = CheckFailureLiveRead
 	if res := Compare(req); res.Status != StatusCheckFailed {
 		t.Fatalf("live read failure: status = %q, want %q", res.Status, StatusCheckFailed)
 	}
@@ -461,8 +465,12 @@ func TestCompare_UnknownDesiredLabelsIsCheckFailed(t *testing.T) {
 	if res.Status != StatusCheckFailed {
 		t.Fatalf("status = %q, want %q", res.Status, StatusCheckFailed)
 	}
-	if res.FailureReason == "" {
-		t.Error("a check_failed answer must say why")
+	// Compare CHOOSES this reason itself — no caller supplied it — so the
+	// expected value is written as a LITERAL. Reading it from the same
+	// constant the production line assigns would move both sides together and
+	// prove nothing about which reason was picked.
+	if res.Failure != CheckFailure("addon_labels_unknown") {
+		t.Errorf("Failure = %q, want %q", res.Failure, "addon_labels_unknown")
 	}
 }
 
@@ -692,10 +700,17 @@ func TestCompare_ForeignOwnershipComparesNothing(t *testing.T) {
 }
 
 // TestCompare_EKSTokenNeverSyncedAndBlobNotChecked pins the CC2-2/CC2-3
-// finding: the stored EKS details mint a fresh token on every fetch, so the
-// credential blob can never be honestly compared, so an EKS cluster can never
-// be reported fully in sync — but a full repair is still on offer, because
-// rewriting the connection from the backend does fix it.
+// finding: the configured credentials source stores EKS metadata and no
+// credential, so there is nothing on the expected side to compare the live
+// credential blob against, so an EKS cluster can never be reported fully in
+// sync — but a full repair is still on offer, because rewriting the connection
+// from the backend does fix it.
+//
+// The live side here carries a credential and the expected side is given one
+// too, so this case proves the blob is not checked even when both sides HAVE a
+// value. TestCompare_EKSStoredPayloadHasNoCredentialOnTheExpectedSide below is
+// the shape production actually produces: no credential on the expected side at
+// all.
 func TestCompare_EKSTokenNeverSyncedAndBlobNotChecked(t *testing.T) {
 	policy := Classify(ClassifyInput{
 		CredsSource:                  models.CredsSourceEKSToken,
@@ -782,4 +797,216 @@ func findDiff(t *testing.T, res Result, path string) Difference {
 	}
 	t.Fatalf("no difference reported for %q; got %+v", path, res.Differences)
 	return Difference{}
+}
+
+// TestCompare_RepairNotOfferedForUnknownOrFailedStates (R3-8 criterion 6):
+// For every status that is not synced, out_of_sync or limited, RepairAvailable
+// must be false. The critical test is that check_failed, missing and
+// ownership_conflict never offer repair. Synced/out_of_sync/limited already
+// have extensive coverage in other tests and are tested here for completeness.
+func TestCompare_RepairNotOfferedForUnknownOrFailedStates(t *testing.T) {
+	// Build minimal requests that produce each status. The three early-exit
+	// states (check_failed, missing, ownership_conflict) are the ones R3-8
+	// specifically addresses.
+	tests := []struct {
+		name         string
+		build        func() Request
+		expectStatus Status
+		expectRepair bool // true = repair should be offered
+	}{
+		{
+			name: "check_failed",
+			build: func() Request {
+				policy := Classify(ClassifyInput{
+					CredsSource:                  models.CredsSourceSecretKubeconfig,
+					BackendCanProvideStoredFacts: true,
+					LiveSecretFound:              true,
+					LiveManagedBy:                argosecrets.ManagedByValue,
+				})
+				return Request{
+					ClusterName:      testCluster,
+					Namespace:        testNamespace,
+					Policy:           policy,
+					CheckFailure:     CheckFailureBackendRead,
+					AddonLabelsKnown: true,
+					LiveFound:        true,
+					Live:             &corev1.Secret{},
+				}
+			},
+			expectStatus: StatusCheckFailed,
+			expectRepair: false,
+		},
+		{
+			name: "missing",
+			build: func() Request {
+				policy := Classify(ClassifyInput{
+					CredsSource:                  models.CredsSourceSecretKubeconfig,
+					BackendCanProvideStoredFacts: true,
+					LiveSecretFound:              false,
+					LiveManagedBy:                "",
+				})
+				return Request{
+					ClusterName:      testCluster,
+					Namespace:        testNamespace,
+					Policy:           policy,
+					LiveFound:        false,
+					Live:             nil,
+					AddonLabelsKnown: true,
+				}
+			},
+			expectStatus: StatusMissing,
+			expectRepair: false,
+		},
+		{
+			name: "ownership_conflict",
+			build: func() Request {
+				policy := Classify(ClassifyInput{
+					CredsSource:                  models.CredsSourceSecretKubeconfig,
+					BackendCanProvideStoredFacts: true,
+					LiveSecretFound:              true,
+					LiveManagedBy:                "another-tool",
+				})
+				return Request{
+					ClusterName:      testCluster,
+					Namespace:        testNamespace,
+					Policy:           policy,
+					LiveFound:        true,
+					Live:             &corev1.Secret{},
+					AddonLabelsKnown: true,
+				}
+			},
+			expectStatus: StatusOwnershipConflict,
+			expectRepair: false,
+		},
+		// R3-8 criterion 6: test ALL statuses, not just the three critical ones.
+		// A seventh status added later should fail this test.
+		{
+			name: "synced",
+			build: func() Request {
+				spec := argosecrets.ClusterSecretSpec{
+					Name:   testCluster,
+					Server: "https://synced.invalid",
+					Token:  "synced-token",
+					Labels: map[string]string{"addon-foo": "enabled"},
+				}
+				req, _ := ownedRequest(t, spec, spec.Labels)
+				// ownedRequest builds a synced state (live == desired)
+				return req
+			},
+			expectStatus: StatusSynced,
+			expectRepair: true, // synced can offer repair
+		},
+		{
+			name: "out_of_sync",
+			build: func() Request {
+				spec := argosecrets.ClusterSecretSpec{
+					Name:   testCluster,
+					Server: "https://drift.invalid",
+					Token:  "drift-token",
+					Labels: map[string]string{"addon-foo": "enabled"},
+				}
+				req, _ := ownedRequest(t, spec, spec.Labels)
+				// Perturb live to make it drift from expected
+				req.Live.Data["server"] = []byte("https://different.invalid")
+				return req
+			},
+			expectStatus: StatusOutOfSync,
+			expectRepair: true, // out_of_sync can offer repair
+		},
+		{
+			name: "limited",
+			build: func() Request {
+				// EKS-shape connection (limited scope: can't compare credentials)
+				policy := Classify(ClassifyInput{
+					CredsSource:                  models.CredsSourceEKSToken,
+					BackendCanProvideStoredFacts: false, // EKS can't compare credentials
+					LiveSecretFound:              true,
+					LiveManagedBy:                argosecrets.ManagedByValue,
+				})
+				spec := argosecrets.ClusterSecretSpec{
+					Name:   testCluster,
+					Server: "https://eks.invalid",
+					Token:  "eks-token",
+					Labels: map[string]string{"addon-foo": "enabled"},
+				}
+				req, _ := ownedRequest(t, spec, spec.Labels)
+				req.Policy = policy // override to EKS mode
+				return req
+			},
+			expectStatus: StatusLimited,
+			expectRepair: true, // limited can offer repair (addon labels)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := tt.build()
+			res := Compare(req)
+
+			if res.Status != tt.expectStatus {
+				t.Fatalf("status = %q, want %q", res.Status, tt.expectStatus)
+			}
+
+			if res.RepairAvailable != tt.expectRepair {
+				t.Errorf("RepairAvailable = %v, want %v for status %q", res.RepairAvailable, tt.expectRepair, tt.expectStatus)
+			}
+
+			if !tt.expectRepair {
+				if res.RepairScope != RepairScopeNone {
+					t.Errorf("RepairScope = %q, want %q when repair not available", res.RepairScope, RepairScopeNone)
+				}
+				// For the early-exit states, verify the caller is left able to
+				// say something true.
+				switch tt.expectStatus {
+				case StatusCheckFailed:
+					if res.Failure == CheckFailureNone {
+						t.Error("Failure must be set for check_failed — a refusal with no reason leaves the caller unable to say anything true")
+					}
+					if !IsDeclared(res.Failure) {
+						t.Errorf("Failure = %q is not a declared reason, so no caller can map it to a sentence", res.Failure)
+					}
+				case StatusMissing:
+					if res.LimitReason == "" {
+						t.Errorf("LimitReason must be set for %s", tt.expectStatus)
+					}
+				case StatusOwnershipConflict:
+					// The OPPOSITE of the other early exits, and deliberately
+					// so. This exit writes NO sentence: Status, Scope and Mode
+					// are the whole answer, and each caller phrases it once in
+					// its own register. It used to write a hand-written literal
+					// here that happened to be byte-identical to the connection
+					// page's foreign-owned mode statement, and that page's
+					// de-duplication silently depended on the two staying equal.
+					if res.LimitReason != "" {
+						t.Errorf("LimitReason = %q for %s, want empty — the ownership answer is carried by "+
+							"the typed Status/Scope/Mode, never by a sentence this function writes",
+							res.LimitReason, tt.expectStatus)
+					}
+				}
+			}
+		})
+	}
+
+	// Verify we covered ALL six statuses. If a seventh status is added and this
+	// test is not updated, the test fails here (R3-8 criterion 6).
+	allStatuses := []Status{
+		StatusSynced,
+		StatusOutOfSync,
+		StatusMissing,
+		StatusCheckFailed,
+		StatusOwnershipConflict,
+		StatusLimited,
+	}
+	coveredStatuses := make(map[Status]bool)
+	for _, tt := range tests {
+		coveredStatuses[tt.expectStatus] = true
+	}
+	for _, s := range allStatuses {
+		if !coveredStatuses[s] {
+			t.Errorf("status %q is not covered by any test case — add one", s)
+		}
+	}
+	if len(coveredStatuses) > len(allStatuses) {
+		t.Errorf("test covers %d statuses but allStatuses only lists %d — a new status was added, update allStatuses[]", len(coveredStatuses), len(allStatuses))
+	}
 }

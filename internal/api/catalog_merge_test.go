@@ -7,6 +7,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // makeFetcherWithSnapshots builds a sources.Fetcher with the given pre-populated
@@ -47,7 +48,8 @@ func TestMergedCatalogEntries_EmbeddedOnly(t *testing.T) {
 func TestMergedCatalogEntries_DisjointThirdParty(t *testing.T) {
 	// embedded = {cert-manager, grafana}; third-party = {internal-foo}
 	// Expect 3 entries: embedded two stay "embedded", internal-foo carries
-	// the third-party URL as Source.
+	// the fixed word "redacted" as Source — the configured address never
+	// reaches an API response in any form.
 	s := serverWithCatalog(t, testCatalog(t))
 
 	tpURL := "https://internal.example.com/catalog.yaml"
@@ -100,8 +102,11 @@ func TestMergedCatalogEntries_DisjointThirdParty(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing third-party entry internal-foo")
 	}
-	if tp.Source != tpURL {
-		t.Errorf("third-party entry: Source = %q, want %q (helper must not trust upstream's Source)", tp.Source, tpURL)
+	if tp.Source != credsafe.RedactedSourceLabel {
+		t.Errorf("third-party entry: Source = %q, want %q (the configured address is sensitive by type, and the helper must not trust upstream's Source either)", tp.Source, credsafe.RedactedSourceLabel)
+	}
+	if tp.Source == tpURL || tp.Source == "malicious-upstream-declaration" {
+		t.Errorf("third-party entry: Source = %q carries a value that must never leave the process", tp.Source)
 	}
 }
 
@@ -242,8 +247,8 @@ func TestMergedCatalogGet_ThirdPartyOnly(t *testing.T) {
 	if got.Name != "third-party-only" {
 		t.Errorf("got Name=%q, want third-party-only", got.Name)
 	}
-	if got.Source != tpURL {
-		t.Errorf("expected Source=%q (third-party URL), got %q", tpURL, got.Source)
+	if got.Source != credsafe.RedactedSourceLabel {
+		t.Errorf("expected Source=%q (the configured address never reaches the wire), got %q", credsafe.RedactedSourceLabel, got.Source)
 	}
 	if got.Chart != "tpo" {
 		t.Errorf("expected the merger to surface the snapshot's Chart=%q, got %q", "tpo", got.Chart)

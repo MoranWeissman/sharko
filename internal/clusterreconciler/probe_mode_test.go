@@ -35,7 +35,7 @@ func TestPollOnce_ProbeModeFn_APITest_SkipsConnectivityCheckLabel(t *testing.T) 
 	r := New(Deps{
 		GitProvider:              func() gitprovider.GitProvider { return fg },
 		ArgoClient:               k8sClient,
-		Vault:                    vault,
+		Vault:                    staticVault(vault),
 		AuditFn:                  audits.Add,
 		TickInterval:             0,
 		DisableConnectivityCheck: false,                                      // static escape hatch OFF — feature "on" by that knob alone
@@ -73,7 +73,7 @@ func TestPollOnce_ProbeModeFn_CheckApp_AppliesConnectivityCheckLabel(t *testing.
 	r := New(Deps{
 		GitProvider:  func() gitprovider.GitProvider { return fg },
 		ArgoClient:   k8sClient,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      audits.Add,
 		TickInterval: 0,
 		ProbeModeFn:  func(context.Context) bool { return false }, // probe_mode = check-app (default)
@@ -110,7 +110,7 @@ func TestPollOnce_ProbeModeFn_Nil_FallsBackToStaticFlag(t *testing.T) {
 	r := New(Deps{
 		GitProvider:              func() gitprovider.GitProvider { return fg },
 		ArgoClient:               k8sClient,
-		Vault:                    vault,
+		Vault:                    staticVault(vault),
 		AuditFn:                  audits.Add,
 		TickInterval:             0,
 		DisableConnectivityCheck: true, // no ProbeModeFn — this alone decides

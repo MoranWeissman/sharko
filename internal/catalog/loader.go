@@ -210,8 +210,12 @@ type CatalogEntry struct {
 	// Moderate / Weak / unknown) and is never read from YAML.
 	SecurityTier string `yaml:"-" json:"security_tier,omitempty"`
 
-	// Source is the origin of the entry — "embedded" for the binary-shipped
-	// catalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).
+	// Source is the origin of the entry. Inside the process it is
+	// "embedded" for the binary-shipped catalog, or the full third-party
+	// catalog URL (from SHARKO_CATALOG_URLS) — but the raw URL never
+	// reaches an API response: the merge bridge in internal/api replaces
+	// it with the fixed word "redacted" before serialization, because a
+	// configured source address can carry an auth token in its own path.
 	// Computed at load/merge time — NOT persisted in YAML. The `yaml:"-"` tag
 	// is mandatory: without it, a malicious third-party YAML could set
 	// `source: embedded` and masquerade as curated. Stateless per NFR §2.7 —
@@ -543,7 +547,7 @@ func LoadBytesWithVerifierAndSource(
 				// fail in practice. Treat as infra error: log + leave
 				// Verified=false; don't fail the load.
 				log.Warn("catalog entry canonical serialization failed",
-					"entry", e.Name, "err", cerr.Error())
+					"entry", e.Name, "err", cerr)
 			} else {
 				ok, issuer, verr := verifyFn(ctx, payload, e.Signature.Bundle)
 				if verr != nil {
@@ -551,7 +555,7 @@ func LoadBytesWithVerifierAndSource(
 					// raw URL — bundle URLs may encode auth tokens).
 					log.Warn("catalog entry signature verification errored",
 						"entry", e.Name,
-						"err", verr.Error())
+						"err", verr)
 				}
 				e.Verified = ok
 				e.SignatureIdentity = issuer

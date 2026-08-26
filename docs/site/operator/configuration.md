@@ -10,12 +10,176 @@ Most Sharko configuration is managed via Helm values, documented on this page. A
 > See [cluster reconciler](./cluster-reconciler.md) for ownership
 > semantics, reconcile cadence, and recovery scenarios.
 
+## The listen port {#listen-port}
+
+The port Sharko's HTTP server listens on is `SHARKO_HTTP_PORT`. The chart
+sets it to `8080` and you do not normally touch it.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `SHARKO_HTTP_PORT` | `8080` | TCP port the server listens on. A whole number from 1 to 65535 |
+| `SHARKO_PORT` | — | The old name for the same thing. Still works, and warns once at startup. Do not use it in new installs |
+
+If the value is not a whole number in range, Sharko does not start. It says
+which setting is wrong and stops, rather than listening on some other port
+and leaving you to work out why nothing reaches it. Earlier versions read
+`80x` as `80` and said nothing.
+
+### If you are upgrading
+
+Nothing breaks. If you set `SHARKO_PORT` yourself, it keeps working and
+Sharko logs one line at startup telling you the new name. Rename it to
+`SHARKO_HTTP_PORT` when convenient. Do not set both to different numbers —
+Sharko will refuse to start rather than guess which one you meant. Setting
+both to the same number is fine.
+
+If you install with the Helm chart, this is already done for you: the chart
+sets `SHARKO_HTTP_PORT`.
+
+### If you write your own Kubernetes manifests {#service-links}
+
+**You must set `enableServiceLinks: false` on the Sharko Pod.** The chart
+does this; a hand-written Deployment will not unless you add it.
+
+```yaml
+spec:
+  template:
+    spec:
+      enableServiceLinks: false   # <- required
+      containers:
+        - name: sharko
+          # ...
+```
+
+It belongs in the Pod specification, next to `containers` — it is not a
+container field.
+
+Here is what goes wrong without it. Kubernetes puts an environment variable
+into every Pod for each Service in the same namespace, named after that
+Service. Sharko's own Service is normally called `sharko`, so Sharko's Pod
+gets handed about ten variables starting with `SHARKO_` that nobody asked
+for, including:
+
+```
+SHARKO_SERVICE_HOST=10.96.35.88
+SHARKO_SERVICE_PORT=80
+SHARKO_PORT=tcp://10.96.35.88:80
+SHARKO_PORT_80_TCP=tcp://10.96.35.88:80
+```
+
+That third one collides with Sharko's own old port setting. Sharko knows
+about this and ignores a `SHARKO_PORT` that looks like the address
+Kubernetes writes, so it will not misread it as a port and it will not warn
+you about a deprecated setting you never set. But the collision is only
+handled for this one name, and every one of those variables is noise in
+your Pod that exists for a discovery mechanism Sharko does not use. Turn it
+off.
+
+Setting the field is the only reliable fix. A list of variable names to
+ignore does not work: the names come from the Service name, so they change
+the moment somebody installs under a different release name.
+
+## A setting Sharko does not recognise stops it starting {#unknown-settings}
+
+Every environment variable starting with `SHARKO_` has to be one Sharko
+really reads. If you set one it does not know, Sharko says so by name and
+does not start.
+
+```
+<the name you set> is not a Sharko setting. Did you mean <the nearest real
+one>? Sharko has not started ...
+```
+
+The "did you mean" half only appears when a real setting is close enough
+to be the one you meant — one letter dropped from `SHARKO_LOG_LEVEL`, say.
+
+This is on purpose, and it replaces the old behaviour of accepting the
+misspelling in silence — which left you with a server on the default
+setting and no way to tell that the thing you set had done nothing.
+
+Some notes on what it does and does not cover:
+
+- **It only looks at names starting with `SHARKO_`.** The chart also sets
+  `CONNECTION_SECRET_NAME`, `ARGOCD_NAMESPACE`, `APP_ENVIRONMENTS`,
+  `GITOPS_ACTIONS_ENABLED` and the `AI_*` family. Those are real settings
+  and this check does not look at them.
+- **The message names the setting and never the value.** That holds for
+  every message Sharko writes about configuration.
+- **`secrets.env` is checked too.** Putting the misspelling in that file
+  instead of in the Pod does not get past it.
+- **The variables Kubernetes writes are fine.** If you run your own
+  manifests without `enableServiceLinks: false` (see
+  [above](#service-links)), your Pod has `SHARKO_SERVICE_HOST`,
+  `SHARKO_PORT_80_TCP` and friends in it. Sharko recognises those and
+  starts normally. You should still turn service links off.
+- **There is no way to switch it off.** If you need a name Sharko does
+  not have, the answer is a change to Sharko, not a flag.
+
+If you set a setting that only the end-to-end test rig reads (for example
+`SHARKO_E2E_IMAGE_TAG`), Sharko starts and logs one line saying the name
+is set and the server never reads it.
+
+## Server settings you set as environment variables {#env-settings}
+
+These are set with `extraEnv` (or however your own manifests set
+environment variables). None of them has a Helm value of its own.
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `SHARKO_CORS_ORIGIN` | unset — same-origin only | Which web origin may call the API from a browser. See [below](#cors-origin) before you set this |
+| `SHARKO_API_TOKENS_FILE` | `~/.sharko/api-tokens.json` | Where API tokens are saved when Sharko is NOT running in Kubernetes. In Kubernetes this setting does nothing — tokens go into the `sharko-api-tokens` Secret instead. The file holds bcrypt hashes, never the tokens themselves, and is written `0600` |
+| `SHARKO_REPO_PATH_MANAGED_CLUSTERS` | `configuration/managed-clusters.yaml` | Where the list of managed clusters lives inside your GitOps repository. Change it only if your repository puts that file somewhere else |
+| `SHARKO_SETTINGS_RECONCILE_INTERVAL` | `60s` | How often Sharko puts server settings back to what Git says. Only runs in Kubernetes. A value that is not a duration is ignored with a warning and the default is used |
+| `SHARKO_CONNECTION_CHECK_INTERVAL` | `60s` | How often Sharko checks its own two connections — Sharko to Git, and ArgoCD to the repository — and raises or clears the bell alert. A value that is not a positive duration is ignored with a warning and the default is used |
+| `SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL` | `15m` | How often Sharko re-checks, in the background, whether a cluster's stored credentials still match what the connection says. It only looks; repairing stays a click. A value that is not a duration is ignored with a warning and the default is used |
+| `SHARKO_SIGSTORE_TUF_CACHE` | `/tmp/sigstore-tuf` | Directory the Sigstore trust root is cached in, used when checking catalog signatures. The default is inside the container and is lost on restart, which costs one fetch. Point it at a mounted volume to keep it |
+
+Durations are written the Go way: `30s`, `5m`, `1h30m`.
+
+### `SHARKO_CORS_ORIGIN` — leave it unset {#cors-origin}
+
+**Short version: leave it unset. If you must set it, set one exact origin.
+Never set it to `*`.**
+
+Unset, Sharko answers browser calls from its own address and nowhere else.
+That is what you want almost always, including when the UI and the API are
+the same Sharko you are already logged into.
+
+Setting it to one origin, scheme included and no trailing slash, allows
+that one:
+
+```yaml
+extraEnv:
+  - name: SHARKO_CORS_ORIGIN
+    value: "https://sharko.example.com"
+```
+
+Sharko does not check what you put here. A typo, a trailing slash or a
+scheme that does not match will simply never match a real browser origin,
+and the calls you were trying to allow will keep being refused with no
+message explaining why. Copy the origin out of the browser's address bar.
+
+**Why `*` is the dangerous one.** Sharko uses no cookies anywhere and
+never sends the header that would let a browser attach your credentials to
+a cross-site call, so `*` cannot hand out anything that already needed a
+login. What it does open is everything that needs no login — and that
+includes `POST /api/v1/auth/login`, which returns a working session token.
+
+Put plainly: with `*` set on a Sharko your colleagues can reach, any web
+page any of them opens can sit there trying passwords against your Sharko
+from inside your network and read the answers. The only thing slowing it
+down is the login limit of five tries per minute per address. `*` also
+opens the built-in UI files and `/swagger/` to any page, because this check
+runs before Sharko has worked out who is calling.
+
+There is no case where `*` is the right answer on a real installation.
+
 ## Connection Config
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
 | `config.connectionSecretName` | string | `"sharko-connections"` | Name of the Kubernetes Secret where connections are stored (encrypted) |
-| `config.nodeAccess` | bool | `false` | Grant Sharko read access to Kubernetes Nodes (get/list). Opt-in — adds a ClusterRole rule |
+| `config.nodeAccess` | bool | `true` | Lets Sharko read Kubernetes Nodes (get/list) across the whole cluster it runs on. **On unless you turn it off.** It adds a rule to the cluster-wide role and feeds the node count on the Dashboard. Set it to `false` and the widget shows an empty state |
 | `config.environments` | string | `""` | Comma-separated keywords extracted from cluster names to infer environment. Example: `"dev,qa,staging,prod"` — cluster `"my-app-prod-eks"` → env `"prod"` |
 
 There is no `config.repoURL` value. The real key for the addons repo URL is
@@ -89,12 +253,26 @@ env var fallback, not something you'd use in production.
 | `ai.authHeader` | string | `""` | Custom auth header name for `custom-openai` (default: `Authorization`) |
 | `ai.maxIterations` | int | `8` | Tool-calling loop limit. Increase for complex migration workflows |
 
+!!! warning "`ai.baseURL` and `ai.ollama.url` must carry no credential"
+    Both are written into the pod as ordinary environment values, so anyone
+    who can read the Deployment can read them. The chart refuses to install
+    unless it can read the address and finds no user information in the host
+    part, no query string and no fragment — the only three places a credential
+    can sit in an address. It turns away most addresses it cannot read as
+    well, but it looks at the shape of the address rather than at whether the
+    host is a real machine, so a malformed IPv6 address in square brackets can
+    still install. Nothing that carries a credential gets through either way.
+    `connection.git.repoURL` and `connection.argocd.serverURL` go through the
+    same chart check — see
+    [Git-Native Server Configuration](git-native-config.md). The credential
+    for a cloud provider is `ai.apiKey`, which goes into the chart's Secret.
+
 ### Ollama (self-hosted)
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
 | `ai.ollama.deploy` | bool | `false` | Deploy an Ollama pod alongside Sharko |
-| `ai.ollama.image` | string | `"ollama/ollama:latest"` | Ollama container image (~1.2 GB compressed) |
+| `ai.ollama.image` | string | `"ollama/ollama:0.6.8"` | Ollama container image (~1.2 GB compressed). Pinned, not `latest`, so two installs a month apart run the same thing |
 | `ai.ollama.url` | string | `""` | External Ollama URL. Auto-set when `deploy=true` |
 | `ai.ollama.model` | string | `"llama3.2"` | Model for simple queries |
 | `ai.ollama.agentModel` | string | `""` | Separate model for agent/tool-calling. Leave empty to use `model` |
@@ -389,29 +567,47 @@ hostClusterName: "management"
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
-| `secrets.reconciler.enabled` | bool | `true` | Enable the background secrets reconciler |
-| `secrets.reconciler.interval` | string | `"5m"` | How often to check for secret changes. Maps to `SHARKO_SECRET_RECONCILE_INTERVAL`. Format: Go duration (`5m`, `1h`, `30s`) |
-| `secrets.webhookSecret` | string | `""` | HMAC-SHA256 secret for validating `POST /api/v1/webhooks/git`. Maps to `SHARKO_WEBHOOK_SECRET` |
+| `secrets.webhookSecret` | string | `""` | Shared secret the Git webhook is signed with. Empty — the default — means `POST /api/v1/webhooks/git` refuses every call. Maps to `SHARKO_WEBHOOK_SECRET` |
 
-The secrets reconciler uses the **same secrets provider** configured for cluster credentials (via Settings UI or API). No separate provider configuration is needed.
+There is no chart value that switches addon-secret syncing on or off, and none
+that sets its timer. It starts by itself as soon as a credentials backend and
+an addon-secret backend are both configured, and the timer comes from the
+`SHARKO_SECRET_RECONCILE_INTERVAL` environment variable (`5m` unless you set
+it), which you pass through `extraEnv`. If you have `secrets.reconciler.enabled`
+or `secrets.reconciler.interval` in your values file, delete them — the chart
+has never read either one, so they have never done anything.
 
-When `secrets.webhookSecret` is set, Sharko verifies the `X-Hub-Signature-256` header on every webhook call. Requests without a valid signature are rejected with 401. If the secret is empty, HMAC verification is skipped (useful for internal environments without a gateway).
+Addon-secret syncing uses the **same secrets provider** configured for cluster credentials (via Settings UI or API). No separate provider configuration is needed.
+
+Sharko checks the `X-Hub-Signature-256` header on every call to
+`POST /api/v1/webhooks/git`. A call without a signature that matches
+`secrets.webhookSecret` is refused with a 401.
+
+**Leaving `secrets.webhookSecret` empty does not make the endpoint open — it
+makes it closed.** Empty is the default, and while it is empty Sharko refuses
+every call to the webhook, because nothing could match. That endpoint is the
+one route that takes no login and no API token, so the signature is the only
+thing in front of it, and there is no setting that turns the check off and
+leaves the endpoint answering.
+
+Nothing else stops working meanwhile. Sharko picks up changes on its own
+either way; the webhook only makes it notice sooner. To switch the webhook on,
+set the same value in two places — this chart value, and your Git provider's
+webhook settings.
 
 ```yaml
-# Example: enable reconciler with webhook verification
+# Example: webhook verification, and a different sync timer
 secrets:
-  reconciler:
-    enabled: true
-    interval: "10m"
   webhookSecret: "your-hmac-secret"
-```
-
-Equivalent env vars:
-
-```yaml
 extraEnv:
   - name: SHARKO_SECRET_RECONCILE_INTERVAL
     value: "10m"
+```
+
+The webhook secret can also come from a Secret you already have:
+
+```yaml
+extraEnv:
   - name: SHARKO_WEBHOOK_SECRET
     valueFrom:
       secretKeyRef:
@@ -552,10 +748,19 @@ Inject arbitrary environment variables into the Sharko pod:
 
 ```yaml
 extraEnv:
-  - name: SHARKO_GITOPS_PR_AUTO_MERGE
-    value: "true"
-  - name: SHARKO_GITOPS_BASE_BRANCH
-    value: "main"
+  - name: SHARKO_LOG_LEVEL
+    value: "debug"
+  - name: SHARKO_CONNECTION_CHECK_INTERVAL
+    value: "5m"
 ```
+
+Names starting with `SHARKO_` have to be settings Sharko really reads — see
+[A setting Sharko does not recognise stops it starting](#unknown-settings).
+This example used to name `SHARKO_GITOPS_PR_AUTO_MERGE` and
+`SHARKO_GITOPS_BASE_BRANCH`, neither of which Sharko has ever read. The
+ones it does read are `SHARKO_CONN_GITOPS_PR_AUTO_MERGE` and
+`SHARKO_CONN_GITOPS_BASE_BRANCH`, and both are better set through
+`connection.gitops.*` in Helm values — see
+[Git-Native Server Configuration](git-native-config.md).
 
 Full list of supported env vars is in the [README](https://github.com/MoranWeissman/sharko#configuration).

@@ -101,7 +101,7 @@ All write endpoints require the `admin` role.
 
 The `/addon-secrets` definition endpoints were removed in v4.0.0. Addon secret
 definitions live only in the Git catalog (the `secrets:` block on a v3 catalog
-entry, the `push:` block on a v4 one); the reconciler and
+entry, the `push:` block on a v4 one); the background addon-secret sync and
 `POST /api/v1/clusters/{name}/secrets/refresh` both read from there.
 
 ### Tokens
@@ -130,13 +130,13 @@ entry, the `push:` block on a v4 one); the reconciler and
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/v1/secrets/reconcile` | Trigger immediate secrets reconcile (all clusters or specific cluster) |
-| `GET` | `/api/v1/secrets/status` | Reconciler status per cluster (last run, hash result, errors) |
+| `GET` | `/api/v1/secrets/status` | Addon-secret sync status per cluster (last run, hash result, errors) |
 
 ### Webhooks
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/webhooks/git` | Git push webhook — triggers secrets reconcile (requires HMAC-SHA256 signature) |
+| `POST` | `/api/v1/webhooks/git` | Git push webhook. Every call must carry an HMAC-SHA256 signature matching the shared secret an operator configured; with no shared secret configured this endpoint refuses every call |
 
 ---
 

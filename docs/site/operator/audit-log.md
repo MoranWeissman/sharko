@@ -1,89 +1,107 @@
-# Audit log — retention model
+# Activity history — what Sharko keeps and for how long
 
-> **Reference page, not a runbook.** This page documents the audit
-> log retention model — two streams (in-memory ring buffer + structured
-> stdout), how to wire long-term retention to your log aggregator, and
-> what "wiped on pod restart" means. If you are looking for a specific
-> failure to diagnose (audit buffer wrapped, SSE stream dropped, etc.),
-> search [`failure-mode-index.md`](failure-mode-index.md) by your error
-> message instead.
+> **Reference page, not a runbook.** This page says where Sharko's
+> activity history lives, how long it lasts, and what you can and
+> cannot do about that. If you are looking for a specific failure to
+> diagnose, search
+> [`failure-mode-index.md`](failure-mode-index.md) by your error message
+> instead.
 
-Sharko emits an audit record for every mutating API call (cluster registration, addon add/remove/upgrade, secret reconciliation, init runs, webhook events). The same record is delivered to **two streams** with very different lifetimes — operators need to understand both.
+Sharko records an entry for every request that changes something —
+registering a cluster, adding, removing or upgrading an addon, delivering
+secrets, first-run setup, incoming webhooks.
 
-## Two streams, one record
+!!! danger "This history is held in memory only. A restart loses all of it."
+    Sharko keeps the **last 1000 entries** in memory and writes them
+    nowhere else — no disk, no database, no volume, no log stream. Any
+    restart empties it completely. **Do not rely on this as your record of
+    what happened.** See
+    [Technical preview](../technical-preview.md#5-the-activity-history-lives-in-memory-and-is-gone-when-sharko-restarts).
 
-| Stream | Where | Lifetime | Use it for |
-|--------|-------|----------|------------|
-| In-memory ring buffer | UI, `GET /api/v1/audit`, SSE `/api/v1/audit/stream` | Last **1000 entries**, wiped on pod restart | Live debugging, "what just happened?" |
-| Structured stdout | Pod logs (`kubectl logs deployment/sharko`) | Whatever your cluster log pipeline retains (days to years) | Forensics, compliance, long-term reporting |
+## Where the entries go
 
-Both streams emit **the same fields** — `id`, `timestamp`, `event`, `user`, `action`, `resource`, `source`, `result`, `duration_ms`, `attribution_mode`, `tier`. The stdout records are JSON, one event per line, suitable for ingestion by any standard log shipper.
+| Where | Lifetime |
+|-------|----------|
+| The Activity page in the UI | The last 1000 entries, since this pod started |
+| `GET /api/v1/audit` | The same list |
+| `GET /api/v1/audit/stream` | A live feed of new entries, while you stay connected |
 
-![Audit Log tab showing the in-memory ring buffer with filter controls.](../assets/screenshots/audit-log.png){ loading=lazy }
-<figcaption>Audit Log tab showing the in-memory ring buffer with filter controls.</figcaption>
+All three read the same in-memory list. There is no fourth place.
 
-## Why this design
+Each entry carries `id`, `timestamp`, `event`, `user`, `action`,
+`resource`, `source`, `result`, `duration_ms`, `changes`,
+`attribution_mode` and `tier`.
 
-Sharko is **stateless**. Persistent audit storage would mean either bolting on a database (ops burden, schema migrations, backup story) or writing files to a PVC (single-pod limit, lost on PVC reclaim). Neither fits a Kubernetes-native control plane that operators expect to scale, restart, and roll forward without ceremony.
+### The `changes` field
 
-Cluster log aggregation already exists in essentially every production environment — that's where audit records belong. Sharko's responsibility is to emit the data in a structured, machine-readable shape; long-term retention is the cluster operator's job.
+`changes` says whether the operation behind the entry really changed
+anything. It is separate from `result`, which says whether the operation
+finished:
 
-This is captured in the [V2 PRD](https://sharko.readthedocs.io/en/latest/architecture/overview/) as functional requirement FR-7.3.
+| `changes` | Meaning |
+|-----------|---------|
+| `not_applicable` | A read-only check. Nothing was ever going to change. |
+| `none` | An action ran and deliberately wrote nothing. |
+| `applied` | Something really changed. |
+| absent | The writer did not say. Readers render nothing — never "no changes made". |
 
-## Setting up long-term retention
+`GET /api/v1/audit` has no typed response schema in the OpenAPI document
+(the endpoint is declared as a free-form object), so `changes` does not
+appear there. It is present on every entry the API returns.
 
-Pick whichever of these matches your environment. All you need is to ship `kubectl logs deployment/sharko -n sharko` to a queryable backend — Sharko does not care which one.
+![Audit Log tab showing the in-memory history with filter controls.](../assets/screenshots/audit-log.png){ loading=lazy }
+<figcaption>Audit Log tab showing the in-memory history with filter controls.</figcaption>
 
-### Loki (Grafana stack)
+## What "lost on restart" means in practice
 
-Promtail or the Loki agent already running in your cluster picks up the pod's stdout automatically. Query in Grafana with:
+The list lives inside the Sharko process. Anything that restarts the pod —
+a new image, a node drain, an out-of-memory kill, `kubectl rollout
+restart` — empties it. Those entries are gone. They are not recoverable
+from anywhere.
 
-```logql
-{namespace="sharko", pod=~"sharko-.*"} | json | event != ""
-```
+The Activity page says so at the top, so nobody reads an empty page as
+"nothing has happened".
 
-### Splunk
+The 1000-entry cap is fixed in the code. Sharko reads no environment
+variable and has no setting for it, so nothing you put in `extraEnv` will
+change it. A busy Sharko drops its oldest entries once it passes 1000,
+restart or no restart.
 
-Splunk's `splunk-otel-collector` (or the legacy `splunk-connect-for-kubernetes`) picks up pod logs. Filter by the `kubernetes.namespace_name` field and parse the JSON event in your search.
+## If you need a record that survives
 
-### ELK / Elastic
+**Sharko cannot give you one today, and no setting changes that.** Making
+this history durable is real, open work. It belongs with a wider question
+about what else Sharko should remember across restarts, so it is not a
+small change.
 
-Filebeat with the standard Kubernetes autodiscovery configuration captures the records. Use `kubernetes.namespace = "sharko"` and a JSON parsing processor.
+What you have outside Sharko, and what each one actually covers:
 
-### AWS CloudWatch Logs
+- **Your Git repository.** Every change Sharko makes to what runs on your
+  clusters goes through a commit and a pull request, and your Git host
+  keeps those for as long as you keep the repository. This is the most
+  complete record available today of *what changed*, and it carries who
+  asked for it — see [Git attribution](../user-guide/attribution.md).
+  It does **not** cover reads, failed attempts, sign-ins, or anything
+  Sharko does that is not a repository change.
+- **Kubernetes Events.** Sharko writes Events for operational successes
+  and failures — see [Sharko Events](sharko-events.md). Your cluster
+  keeps Events for a limited window (an hour by default on many clusters)
+  unless you ship them somewhere. They cover a different set of things
+  from the activity history, not the same set.
+- **Sharko's own pod log.** Sharko logs plenty as it works, and your log
+  pipeline will keep that. **These are ordinary log lines, not activity
+  entries** — they do not carry the fields above and there is no query
+  that turns them into the same list. Treat them as background for an
+  investigation, not as a record.
 
-Either the CloudWatch agent on EKS nodes or the `aws-for-fluent-bit` add-on ships pod logs to a log group named after the cluster. Use a metric filter or CloudWatch Logs Insights to query.
-
-### Google Cloud Logging
-
-GKE ships pod logs automatically. Filter with:
-
-```
-resource.type="k8s_container"
-resource.labels.namespace_name="sharko"
-jsonPayload.event != ""
-```
-
-## What "wiped on pod restart" actually means
-
-The ring buffer lives in the Sharko process memory. Anything that restarts the pod — new image roll-out, a node drain, an OOM kill, `kubectl rollout restart` — empties the buffer. The records that were in the buffer at that moment are still in the **stdout stream**, so they are still in your log pipeline; they just disappear from the UI.
-
-The UI banner at the top of the Audit Log page reminds operators of this so they don't conclude that events were lost.
-
-## Reading the structured stdout records
-
-Each record is a single JSON line. The minimum useful query is "everything that mutated state in the last hour":
-
-```bash
-kubectl logs deployment/sharko -n sharko --since=1h \
-  | grep '"audit":' \
-  | jq 'select(.action != "" and .result != "")'
-```
-
-For deeper investigation pipe through `jq` to filter by `user`, `cluster`, `action`, etc. — the same fields you can filter on in the UI.
+None of these three is a substitute for the activity history. If you have
+to be able to answer "who changed this, and when" weeks later, Sharko
+cannot answer it today.
 
 ## Related
 
+- [Technical preview](../technical-preview.md) — this limit alongside the
+  other things you should know before trusting Sharko
 - [Troubleshooting](troubleshooting.md) — broader log-and-debug guidance
-- [Security](security.md) — audit fields used for compliance
-- [Configuration](configuration.md) — `SHARKO_AUDIT_BUFFER_SIZE` env var to change the in-memory ring buffer cap
+- [Security](security.md) — the wider security posture
+- [Configuration](configuration.md) — the settings Sharko really reads

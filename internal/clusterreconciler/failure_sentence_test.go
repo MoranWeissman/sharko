@@ -71,7 +71,7 @@ func TestFailureSentence_MappedNeverEqualsRaw(t *testing.T) {
 		},
 		{
 			"selfHealManagedCluster write failure",
-			"Sharko couldn't converge git-desired addon labels on this drifted managed-cluster Secret: Update \"...\": conflict",
+			"Sharko couldn't converge Git-desired addon labels on this drifted managed-cluster Secret: Update \"...\": conflict",
 		},
 		{
 			"selfHealManagedCluster post-write verify read failure",

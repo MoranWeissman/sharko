@@ -348,6 +348,7 @@ import {
   ChevronUp,
   Copy,
   Filter,
+  Info,
   KeyRound,
   LayoutGrid,
   List,
@@ -360,7 +361,6 @@ import {
   X,
 } from 'lucide-react'
 import {
-  api,
   deleteOrphanedSecret,
   getAddonValuesSecretResource,
   getConnectionSecretResource,
@@ -373,13 +373,15 @@ import {
 } from '@/services/api'
 import type {
   AddonValuesSecretRow,
-  ClusterComparisonResponse,
+  BackgroundConnectionChecks,
+  ConnectionHealthWord,
   ConnectionSecretRow,
   ManagedSecretsEngineInfo,
   ManagedSecretsResponse,
   OrphanedSecretRow,
   SecretResource,
 } from '@/services/models'
+import { CONNECTION_HEALTH_WORDS, connectionHealthWord } from './connectionHealthWords'
 import { InfoHint } from '@/components/InfoHint'
 import { RoleGuard } from '@/components/RoleGuard'
 import { AuthContext } from '@/hooks/useAuth'
@@ -390,8 +392,15 @@ import { StatusDot, StatusMark, statusLabel, statusSortRank, statusStripClassNam
 import { TimeChip } from '@/components/resource/TimeChip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  SYNC_ADDON_LABELS_NOTHING_TO_APPLY,
+  SYNC_ADDON_LABELS_HINT,
+  SHARKO_REAPPLIES_ADDON_LABELS,
+  syncAddonLabelsConfirmText,
+} from '@/components/ClusterActionHints'
 import { SecretsSubnav } from '@/components/SecretsSubnav'
 import { SecretTiles } from './SecretTiles'
+import { ConnectionReconciliationView } from './ConnectionReconciliationView'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified row model — one shape for both secret kinds, hoisted at module
@@ -419,16 +428,28 @@ export function deleteConfirmDescription(row: UnifiedRow | null): string {
   if (!row) return ''
   const ns = row.secretNamespace ?? ''
   const name = row.secretName ?? ''
-  return `This permanently deletes secret "${ns}/${name}" from cluster "${row.cluster}". Sharko wrote it once, but nothing in git asks for it anymore. This cannot be undone.`
+  return `This permanently deletes secret "${ns}/${name}" from cluster "${row.cluster}". Sharko wrote it once, but nothing in Git asks for it anymore. This cannot be undone.`
 }
 
 /**
- * The one sentence Sharko says about a secret somebody else created — on the
- * disabled Sync button here, and word-for-word the same sentence the server
- * returns if an API call gets past the button (internal/secrets.
- * ErrForeignSecret). One boundary, one sentence, everywhere.
+ * What this page says about a secret somebody else created — on the disabled
+ * Sync button, and as the verdict line in the detail panel. ONE sentence for
+ * one fact, in one place (see FOREIGN_OWNER_FACT's two call sites).
+ *
+ * WHAT IT USED TO SAY, AND WHY THAT WENT. Two constants in this one file said
+ * "Someone else created this one — Sharko will not touch it." and "Someone
+ * else created this secret — Sharko will not touch it." Two authors, one
+ * fact, a word apart — and the half after the dash is a promise about what
+ * the SERVER will do, written by the browser. The browser cannot know that.
+ * The product owner ruled both of them out, together: "both near-duplicates
+ * are removed, not one chosen."
+ *
+ * What is left is only what this browser genuinely knows. `row.state ===
+ * 'foreign'` is a typed fact the server sent; this sentence states it and
+ * stops. Nothing is claimed about what will happen next, so there is nothing
+ * here that can turn out to be false.
  */
-const FOREIGN_SYNC_REASON = 'Someone else created this one — Sharko will not touch it.'
+export const FOREIGN_OWNER_FACT = 'This secret was created by something other than Sharko.'
 
 /**
  * What "Check all now" does, in the user's words (renamed from "Refresh
@@ -438,7 +459,7 @@ const FOREIGN_SYNC_REASON = 'Someone else created this one — Sharko will not t
  * schedule, which is what makes this safe to press.
  */
 const REFRESH_ALL_HINT =
-  "Asks Sharko to check every secret against its source — connection secrets against git, addon values against your secrets store. Checking only: nothing is written. The engines' own loops do the repairs."
+  "Asks Sharko to check every secret against its source — connection secrets against Git, addon values against your secrets store. Checking only: nothing is written. The engines' own loops do the repairs."
 
 /** The toast a connection row's Refresh raises. The check is estate-wide by nature, so the sentence says so instead of implying one cluster was singled out. */
 function connectionRefreshToast(cluster: string): string {
@@ -510,6 +531,40 @@ export interface UnifiedRow {
   selfHeals: boolean
   /** (P2-C6) Which side moved for an out-of-sync connection row: 'git' or 'cluster'. Connection rows only. */
   driftSource?: 'git' | 'cluster'
+  /**
+   * ── The canonical reconciliation answer (B5). Connection rows only. ───
+   *
+   * These are copied verbatim off the server row. The browser renders them
+   * and derives NOTHING from them — that is the product owner's ruling:
+   * "The fleet and detail page must derive their state from the same
+   * canonical reconciliation semantics. Do not maintain a second legacy
+   * vocabulary or duplicate status derivation in the browser."
+   *
+   * `state` above is the server's own PROJECTION of syncState, kept because
+   * the chips, the ?state= filter and the sort rank read it.
+   */
+  managementMode?: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  managedScope?: 'full_connection' | 'addon_labels' | 'none'
+  syncState?: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  verificationScope?: 'full' | 'partial' | 'none'
+  approvalRequired?: boolean
+  /** The display word for this row's git state — rendered VERBATIM, never selected from a table here. */
+  headline?: string
+  /** The scope sentence beside the headline. Absent when the state needs none. */
+  qualifier?: string
+  /** ArgoCD's own answer, INDEPENDENT of the git state above. */
+  health?: ConnectionHealthWord
+  /**
+   * (W3-3) The background credential-drift loop's own read-only verdict for
+   * this connection — separate from `state` (the git-labels comparison).
+   * Connection rows only; absent on a server that predates the loop or
+   * before its first pass over this cluster.
+   */
+  credentialCheck?: 'drifted' | 'clear' | 'not_compared' | 'check_failed'
+  /** (W3-3) The fixed server sentence explaining credentialCheck. Connection rows only. */
+  credentialCheckDetail?: string
+  /** (W3-3) RFC3339 — when credentialCheck was last set. Connection rows only. */
+  credentialCheckedAt?: string
 }
 
 export function buildUnifiedRows(
@@ -533,12 +588,23 @@ export function buildUnifiedRows(
     // below (the panel's lastCheckError paragraph), no per-kind branch.
     lastCheckError: r.last_check_error,
     fightCount: r.fight_count,
+    managementMode: r.management_mode,
+    managedScope: r.managed_scope,
+    syncState: r.sync_state,
+    verificationScope: r.verification_scope,
+    approvalRequired: r.approval_required,
+    headline: r.headline,
+    qualifier: r.qualifier,
+    health: r.health,
     sourceLabel: r.source || 'git',
     comparedRevision: r.compared_revision,
     comparedPath: r.compared_path,
     appliedRevision: r.applied_revision,
     selfHeals: r.self_heals,
     driftSource: r.drift_source,
+    credentialCheck: r.credential_check,
+    credentialCheckDetail: r.credential_check_detail,
+    credentialCheckedAt: r.credential_checked_at,
   }))
   const values: UnifiedRow[] = addonRows.map((r) => ({
     kind: 'values',
@@ -582,6 +648,141 @@ export function buildUnifiedRows(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// B5 — ONE status answer per row, for every surface on this page.
+//
+// The defect this replaces: the fleet showed `spoke-us` as a green **Synced**
+// while the same connection's own page said **Verification incomplete**, and
+// a "Not compared" chip sat right beside the green word. The server has been
+// fixed — a connection row's `state` is now a pure projection of the
+// canonical `sync_state`, and the words come down as `headline` — so the
+// browser's job is to render, not to decide.
+//
+// rowStatus is the one place any surface here asks "what is this row's
+// status?": the chip counts, the chip filter, the sort rank, the left edge
+// strip, the dot, the group rollups and the tiles all call it. One call
+// site per question means the chips and the word can never disagree again.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The word a connection row shows when the server has told us nothing
+ * canonical about it. Honest and deliberately not cheerful — it is the same
+ * word StatusMark uses for `unknown`, so the row's word, dot and strip agree.
+ *
+ * (Story P5) It is READ OFF StatusMark's own table rather than typed here.
+ * The sentence above promised "the same word StatusMark uses" and a comment
+ * was the only thing holding that promise up; now the promise is the code.
+ * It is deliberately NOT the server's `headlineNotCheckedYet` from the
+ * generated contract: this word is shown exactly when the server sent no
+ * canonical answer, so it is the browser's own row vocabulary — the same six
+ * words StatusMark paints its dot and strip from — and not a copy of a
+ * sentence the server would have sent.
+ */
+export const CONNECTION_NOT_CHECKED_LABEL = statusLabel('unknown')
+
+/**
+ * rowStatus is the row's status bucket — the SERVER's answer, with one
+ * fail-closed guard on top.
+ *
+ * THE GUARD (break test 1 and 2). A connection row may not land in the
+ * `in_sync` bucket unless every field inside the scope Sharko owns was
+ * successfully compared. The server already enforces this in two places
+ * (connection_canonical.go and applyConnectionRowCanonical), so this should
+ * never fire — it is here because "the fleet says Synced when nothing was
+ * verified" is exactly the defect that shipped, and an enforcement point is
+ * one edit away from being forgotten. It can only ever DOWNGRADE a row to
+ * "not checked yet"; it can never invent a better state than the server sent,
+ * so it is a guard and not a second derivation.
+ *
+ * A connection row from a server that never sent the canonical fields at all
+ * reads `unknown` too, for the same reason: no canonical answer means no
+ * verdict, never the old label-only "Synced".
+ */
+export function rowStatus(row: UnifiedRow): ResourceStatus {
+  const projected = toResourceStatus(row.state)
+  if (row.kind !== 'connection') return projected
+  if (!row.headline) return 'unknown'
+  if (projected === 'in_sync' && row.verificationScope !== 'full') return 'unknown'
+  return projected
+}
+
+/**
+ * connectionRowLabel is the WORD a connection row shows — the server's
+ * `headline`, verbatim. There is no headline table in this file and no
+ * mapping from state to words: that derivation moved to the server so the
+ * fleet row and the connection page cannot phrase one connection differently.
+ *
+ * The only case that does not come from the server is the one where the
+ * server said nothing canonical, and then the honest word is "Not checked
+ * yet" — the same word the guard above puts the row's dot into.
+ */
+export function connectionRowLabel(row: UnifiedRow): string {
+  if (!row.headline) return CONNECTION_NOT_CHECKED_LABEL
+  if (rowStatus(row) === 'unknown' && toResourceStatus(row.state) === 'in_sync') {
+    // The guard fired: the server sent a synced word at a scope that cannot
+    // support it. Never render the word it sent.
+    return CONNECTION_NOT_CHECKED_LABEL
+  }
+  return row.headline
+}
+
+/**
+ * The health words this row's Health column shows.
+ *
+ * ONE TABLE FOR BOTH SURFACES, and it is not this file's. This list and the
+ * connection's own page each used to hold their own copy of the same four
+ * words, held together by nothing but a comment in each file saying they
+ * agreed — and the tests pinned the two copies separately, so an edit to
+ * either one alone would have left the same connection reading one word here
+ * and another on its own page, with everything green. The table moved to
+ * ./connectionHealthWords, which is now the only place either word is
+ * written down. The name stays because this file's callers and tests have
+ * used it since B13.
+ */
+export const HEALTH_COLUMN_WORDS = CONNECTION_HEALTH_WORDS
+
+/**
+ * The word this row's Health column shows. The lookup, like the table above
+ * it, is the shared one — the two surfaces used to hold a copy each, and the
+ * reasoning for the two different absences it distinguishes is written where
+ * it now lives, in ./connectionHealthWords.
+ */
+export const healthColumnWord = connectionHealthWord
+
+/**
+ * (B13 item 6) The page-level line saying why no row has a check.
+ *
+ * THE PROBLEM IT FIXES. Every connection row's status word comes from its
+ * last check. When the background check cannot run, no row has one, so every
+ * row reads "Not checked yet" and the Synced count is zero — and there was
+ * no sentence anywhere on the page saying why. On an out-of-cluster server
+ * that is permanent, and the page looks like a fleet Sharko has not got
+ * round to rather than a server that does not do this at all.
+ *
+ * THE SENTENCE IS THE SERVER'S, WORD FOR WORD. The server is the only thing
+ * that knows which of the several reasons applies — no loop scheduled, no
+ * cluster reconciler, no ArgoCD connection, or a first pass still to finish
+ * — and each has its own fixed sentence there. The browser renders
+ * `reason` verbatim and composes nothing: a browser-written summary would
+ * be a guess at which case this is, which is the whole class of defect this
+ * round exists to remove.
+ *
+ * Renders nothing when checks ARE running, and nothing on a server too old
+ * to send the field (silence is honest there — this browser does not know).
+ */
+export function BackgroundChecksNotice({ status }: { status?: BackgroundConnectionChecks }) {
+  if (!status || status.running || !status.reason) return null
+  return (
+    <div
+      data-testid="background-checks-notice"
+      className="flex items-start gap-2 rounded-lg bg-[#e8f4ff] px-3 py-2 text-sm text-[#2a5a7a] ring-1 ring-[#6aade0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700"
+    >
+      <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#5a8aaa] dark:text-gray-500" />
+      <p>{status.reason}</p>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Grouping (G2/G3)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -609,7 +810,7 @@ export const CONNECTIONS_GROUP_KEY = '__connections__'
 function worstRankInGroup(rows: UnifiedRow[]): number {
   let best = Infinity
   for (const r of rows) {
-    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    const rank = statusSortRank(rowStatus(r), !!r.lastCheckError)
     if (rank < best) best = rank
   }
   return best
@@ -630,10 +831,10 @@ export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
   let best = Infinity
   let worst: ResourceStatus = 'in_sync'
   for (const r of rows) {
-    const rank = statusSortRank(r.state, !!r.lastCheckError)
+    const rank = statusSortRank(rowStatus(r), !!r.lastCheckError)
     if (rank < best) {
       best = rank
-      worst = toResourceStatus(r.state)
+      worst = rowStatus(r)
     }
   }
   return worst
@@ -646,7 +847,7 @@ export function worstStateInGroup(rows: UnifiedRow[]): ResourceStatus {
  * the one state that means "nothing here is worth a look."
  */
 export function groupHasIssues(group: RowGroup): boolean {
-  return group.rows.some((r) => toResourceStatus(r.state) !== 'in_sync')
+  return group.rows.some((r) => rowStatus(r) !== 'in_sync')
 }
 
 /**
@@ -724,7 +925,7 @@ export function buildRowGroups(rows: UnifiedRow[], groupBy: GroupBy): RowGroup[]
  */
 export function groupSummary(rows: UnifiedRow[]): string {
   const counts: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
-  for (const r of rows) counts[toResourceStatus(r.state)]++
+  for (const r of rows) counts[rowStatus(r)]++
   const parts = [`${rows.length} secret${rows.length === 1 ? '' : 's'}`]
   for (const status of CHIP_ORDER) {
     if (counts[status] > 0) parts.push(`${counts[status]} ${statusLabel(status).toLowerCase()}`)
@@ -743,7 +944,7 @@ function matchesSearch(row: UnifiedRow, q: string): boolean {
   )
 }
 
-type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'state'
+type SortKey = 'name' | 'namespace' | 'addon' | 'cluster' | 'source' | 'health' | 'state'
 
 /**
  * sourceShortLabel (design-secret-sync-visual-pass, section 2) — the SOURCE
@@ -791,8 +992,18 @@ function compareRows(a: UnifiedRow, b: UnifiedRow, key: SortKey): number {
       return a.cluster < b.cluster ? -1 : a.cluster > b.cluster ? 1 : 0
     case 'source':
       return a.sourceLabel < b.sourceLabel ? -1 : a.sourceLabel > b.sourceLabel ? 1 : 0
+    case 'health': {
+      // Worst first, matching the state column's own habit: a connection
+      // ArgoCD cannot use outranks one with no health answer, which outranks
+      // one that works. 'unknown' (B13 item 3) sorts with the other
+      // no-answer rows, NOT with the working ones — it means there is no
+      // health to report, which is the opposite of Connected.
+      const rank = (r: UnifiedRow) =>
+        r.health === 'unavailable' ? 0 : r.health === 'connected' ? 2 : 1
+      return rank(a) - rank(b)
+    }
     case 'state':
-      return statusSortRank(a.state, !!a.lastCheckError) - statusSortRank(b.state, !!b.lastCheckError)
+      return statusSortRank(rowStatus(a), !!a.lastCheckError) - statusSortRank(rowStatus(b), !!b.lastCheckError)
     default:
       return 0
   }
@@ -810,12 +1021,34 @@ export function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: stri
   if (row.state === 'orphaned') return { disabled: true, reason: "This secret's source isn't in config anymore — Delete is the only action." }
   // Checked first, and for both kinds of row: a secret Sharko did not create
   // is never Sharko's to write, whatever else is true about it (P1-A).
-  if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_SYNC_REASON }
+  if (row.state === 'foreign') return { disabled: true, reason: FOREIGN_OWNER_FACT }
   if (row.kind === 'connection') {
-    if (row.state === 'in_sync') return { disabled: true, reason: 'Nothing to apply — this secret already matches git.' }
-    if (row.state === 'missing')
+    // RULING (a), 2026-08-19: Sharko re-applies a self-managed connection's
+    // addon labels on EVERY reconciler pass, unconditionally. Offering a
+    // manual button for work the reconciler performs itself is exactly what
+    // the ruling removed, and the connection page's plan already says so
+    // (buildReconciliationPlan sets plan.automatic and NO action for this
+    // mode). The fleet row must not disagree with the page.
+    //
+    // The SENTENCE is the server's own, not a second browser-written
+    // version of it. This row has no plan field on the wire to render from
+    // (the fleet response carries none), so the text is the shared constant
+    // that is pinned character for character against the server's
+    // planAutomaticLabelSync — see SHARKO_REAPPLIES_ADDON_LABELS. The old
+    // browser-authored wording ("… on the next pass. Nothing to do here.")
+    // is gone: it promised the same future behaviour in different words.
+    if (row.managementMode === 'self_managed')
+      return { disabled: true, reason: SHARKO_REAPPLIES_ADDON_LABELS }
+    // The status word is the server's; this gate reads the same canonical
+    // projection every other surface on this page reads.
+    const status = rowStatus(row)
+    if (status === 'in_sync')
+      // B13 item 9: shared with the cluster detail page's own hint for the
+      // same button in the same situation — see ClusterActionHints.
+      return { disabled: true, reason: SYNC_ADDON_LABELS_NOTHING_TO_APPLY }
+    if (status === 'missing')
       return { disabled: true, reason: "This secret hasn't been created yet — there's nothing to sync onto." }
-    if (row.state === 'unknown') return { disabled: true, reason: 'Click Check now first to check this secret.' }
+    if (status === 'unknown') return { disabled: true, reason: 'Click Check now first to check this secret.' }
     return { disabled: false }
   }
   if (row.state === 'in_sync') return { disabled: true, reason: 'Nothing to push — this secret already matches its source.' }
@@ -830,17 +1063,23 @@ export function syncGateFor(row: UnifiedRow): { disabled: boolean; reason?: stri
  * resyncClusterLabels, which re-applies ONLY Sharko's own addon label keys —
  * it does not rebuild config, server or name — so calling it "Sync" promised
  * more than it does. An addon Secret's value really is delivered from its
- * backend, so that one keeps "Sync". The word "Repair" is reserved for a
- * later action that would genuinely rebuild the connection Secret; nothing
- * here may use it.
+ * backend, so that one keeps "Sync". The word "Repair" is reserved for the
+ * action that genuinely rewrites the connection Secret (see below).
+ *
+ * Round 3 ruling (2026-08-16): the product owner weighed the qualified form
+ * Moran raised during the walkthrough and ruled for it, superseding HL-1's
+ * "Re-apply addon labels" — the action is now called "Sync addon labels"
+ * everywhere it appears. Never bare "Sync" for this action (that name is
+ * reserved for the addon-values side, whose value really does come from a
+ * backend), and never "Refresh" for it either.
  */
 export function syncActionLabel(kind: 'connection' | 'values'): string {
-  return kind === 'connection' ? 'Re-apply addon labels' : 'Sync'
+  return kind === 'connection' ? 'Sync addon labels' : 'Sync'
 }
 
-/** HL-1: the confirm button's shorter form of the same name — "Re-apply labels" fits a button; the addon side stays "Sync". */
+/** Round 3 (2026-08-16): the confirm button's text now matches the action's full name — "Sync labels" was considered and rejected as too bare; the addon side stays "Sync". */
 export function syncConfirmButtonText(kind: 'connection' | 'values' | undefined): string {
-  return kind === 'connection' ? 'Re-apply labels' : 'Sync'
+  return kind === 'connection' ? 'Sync addon labels' : 'Sync'
 }
 
 /**
@@ -853,10 +1092,17 @@ export function syncConfirmButtonText(kind: 'connection' | 'values' | undefined)
  */
 export function syncConfirmDescription(row: UnifiedRow | null): string {
   if (!row) return ''
-  const opening = `This writes the secret on cluster "${row.cluster}" now. No pull request.`
+  // A connection row's confirm sentence is SHARED with the cluster detail
+  // page, which puts the same write behind its own confirm box — see
+  // syncAddonLabelsConfirmText. This page used to say "It copies git's addon
+  // labels onto the cluster's ArgoCD secret." and that page said the same
+  // thing in different words.
   if (row.kind === 'connection') {
-    return `${opening} It copies git's addon labels onto the cluster's ArgoCD secret. The self-heal setting doesn't change.`
+    return syncAddonLabelsConfirmText(row.cluster)
   }
+  // The addon-values half is a different action against a different source
+  // and is deliberately unchanged.
+  const opening = `This writes the secret on cluster "${row.cluster}" now. No pull request.`
   return `${opening} It pushes the current value from ${row.sourceLabel} onto the cluster. If the secret doesn't exist yet, this creates it.`
 }
 
@@ -993,8 +1239,11 @@ function SortableTh({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Panel action button — Refresh / Sync inside the detail panel. The info
-// hint renders ONLY when the button is genuinely disabled.
+// Panel action button — Check / Sync / Repair inside the detail panel. Two
+// separate InfoHints can render next to it: `hint` is an always-visible
+// scope explanation (Round 3 ruling, 2026-08-16 — "what does this button
+// do"), and the disabled-reason hint below still renders ONLY when the
+// button is genuinely disabled ("why is this unavailable").
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PanelActionButton({
@@ -1004,6 +1253,8 @@ function PanelActionButton({
   icon: Icon,
   label,
   reason,
+  hint,
+  hintLabel,
   testId,
   destructive,
   strong,
@@ -1014,6 +1265,10 @@ function PanelActionButton({
   icon: typeof RefreshCw
   label: string
   reason?: string
+  /** Round 3 (2026-08-16): always-visible scope text — "what does this button do", in the user's words. Independent of `disabled`. */
+  hint?: string
+  /** Accessible label for the `hint` trigger, e.g. "What does Sync addon labels do?" */
+  hintLabel?: string
   testId?: string
   /** leftover-secrets S1.2 — the panel's Delete button reads red, matching ConfirmationModal's own destructive styling, never the neutral Check now/Sync look. */
   destructive?: boolean
@@ -1046,6 +1301,7 @@ function PanelActionButton({
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
         {label}
       </button>
+      {hint && <InfoHint text={hint} label={hintLabel ?? `What does ${label} do?`} />}
       {disabled && reason && <InfoHint text={reason} label={`Why is ${label} unavailable?`} />}
     </span>
   )
@@ -1085,16 +1341,24 @@ function cadenceSentence(kind: 'connection' | 'values', intervalSeconds?: number
   return kind === 'connection' ? `Sharko re-checks it every ${human}, and right after each merge.` : `Sharko checks it every ${human} and repairs it automatically.`
 }
 
+/** W3-3 (AC9): the "Cluster connections" tile's secondary line — only rendered when count > 0, a zero-drift estate sees no change. */
+function credentialDriftCountSentence(count: number): string {
+  return `${count} with credential drift`
+}
+
 function EngineStat({
   label,
   kind,
   info,
   onErrorClick,
+  driftedCount,
 }: {
   label: string
   kind: 'connection' | 'values'
   info?: ManagedSecretsEngineInfo
   onErrorClick?: (cluster: string) => void
+  /** W3-3 (AC9): connection rows only — how many are credential_check === 'drifted'. */
+  driftedCount?: number
 }) {
   const cadence = cadenceSentence(kind, info?.interval_seconds)
   // gitops-proud P4-I (D2) — the values engine's off switch. `enabled` is
@@ -1112,9 +1376,13 @@ function EngineStat({
         </div>
       ) : info?.wired ? (
         <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
-          <span>
-            Sharko last ran a check <TimeChip iso={info.last_run} />.
-          </span>
+          {info.last_run ? (
+            <span>
+              Sharko last ran a check <TimeChip iso={info.last_run} />.
+            </span>
+          ) : (
+            <span>Not run yet</span>
+          )}
           {cadence && <InfoHint text={cadence} label={`How often does Sharko check ${label.toLowerCase()}?`} />}
         </div>
       ) : (
@@ -1142,6 +1410,14 @@ function EngineStat({
             <span className="text-red-700 dark:text-red-400">A check failed.</span>
           )}
           <InfoHint text={info.last_error} label="What was the error?" />
+        </div>
+      )}
+      {/* W3-3 (AC9): the background credential-drift loop's own count —
+          connection engine only, and only when there's something to say. A
+          zero-drift estate sees this exact tile unchanged. */}
+      {kind === 'connection' && (driftedCount ?? 0) > 0 && (
+        <div className="mt-1 text-sm text-amber-700 dark:text-amber-400" data-testid="engine-credential-drift-count">
+          {credentialDriftCountSentence(driftedCount!)}
         </div>
       )}
     </div>
@@ -1313,7 +1589,7 @@ type DiffVerdict = 'match' | 'differ' | 'never_created' | 'could_not_look' | 'fo
  * status label already says "Not in config" next to it.
  */
 const ORPHANED_PANEL_SENTENCE =
-  'Not in config — its source in git is gone. Sharko wrote this secret once, but nothing asks for it anymore.'
+  'Not in config — its source in Git is gone. Sharko wrote this secret once, but nothing asks for it anymore.'
 
 /**
  * diffVerdictFor picks which of the six sentences the panel says.
@@ -1367,18 +1643,21 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
       // SSF-8 binding honesty rule, still true here: a values row's source
       // is NEVER called "Git" — git only ever holds a pointer for a values
       // row, the real source is row.sourceLabel (e.g. an AWS Secrets
-      // Manager path). A connection row's source really is git.
-      return row.kind === 'connection'
-        ? 'The cluster copy matches Git. No action is needed.'
-        : `The cluster copy matches ${row.sourceLabel}. No action is needed.`
+      // Manager path). Connection rows never reach this function anymore —
+      // their page is ConnectionReconciliationView, and the old
+      // two-authority connection sentences are gone with it (ruling 8).
+      return `The cluster copy matches ${row.sourceLabel}. No action is needed.`
     case 'differ':
-      return row.kind === 'connection' ? 'The cluster copy does not match Git.' : `The cluster copy does not match ${row.sourceLabel}.`
+      return `The cluster copy does not match ${row.sourceLabel}.`
     case 'never_created':
       return row.kind === 'values'
         ? 'This secret was never created on the cluster — Sync creates it.'
         : 'This secret was never created on the cluster.'
     case 'foreign':
-      return 'Someone else created this secret — Sharko will not touch it.'
+      // The SAME constant the disabled Sync button reads. This case used to
+      // hold its own wording of the identical fact, one word away from the
+      // other — see FOREIGN_OWNER_FACT for why both were withdrawn.
+      return FOREIGN_OWNER_FACT
     case 'could_not_look':
       return 'Sharko could not look at the cluster just now.'
     case 'orphaned':
@@ -1392,11 +1671,15 @@ function diffVerdictSentence(verdict: DiffVerdict, row: UnifiedRow): string {
  * HL-1: the connection sentence used to say "Sync will update the cluster
  * copy to match Git", which was untrue — the action re-applies only
  * Sharko's own addon label keys. It now promises exactly that and no more.
+ * Round 3 (2026-08-16): reworded to name the renamed action.
  */
 function repairNoteFor(row: UnifiedRow): string {
-  return row.kind === 'connection'
-    ? "Re-apply addon labels puts git's addon labels back on this secret. Nothing else on it changes."
-    : `Sync will update the cluster copy to match ${row.sourceLabel}.`
+  // The connection branch reads the SHARED hint now — the same sentence the
+  // cluster detail page puts under its own "Sync addon labels" button. It
+  // used to say "Sync addon labels puts git's addon labels back on this
+  // secret. Nothing else on it changes." while that page said the same
+  // thing in different words.
+  return row.kind === 'connection' ? SYNC_ADDON_LABELS_HINT : `Sync will update the cluster copy to match ${row.sourceLabel}.`
 }
 
 /**
@@ -1470,13 +1753,13 @@ function ComparisonProvenance({ row }: { row: UnifiedRow }) {
   if (!row.comparedPath) {
     return (
       <p className="text-sm text-[#3a6a8a] dark:text-gray-400" data-testid="comparison-provenance">
-        Sharko hasn't compared this secret against git yet.
+        Sharko hasn't compared this secret against Git yet.
       </p>
     )
   }
   return (
     <p className="text-sm text-[#3a6a8a] dark:text-gray-400" data-testid="comparison-provenance">
-      Compared with git · <span className="font-mono text-[13px]">{row.comparedPath}</span>
+      Compared with Git · <span className="font-mono text-[13px]">{row.comparedPath}</span>
       {row.comparedRevision && (
         <>
           {' '}
@@ -1502,156 +1785,6 @@ function ComparisonProvenance({ row }: { row: UnifiedRow }) {
  * both, since the frontend has no reliable signal for which repo layout is
  * active.
  */
-const V4_ADDON_LABEL_PREFIX = 'addons.sharko.dev/'
-
-/**
- * SSF-14 walkthrough follow-up: opening "View comparison" on a healthy row
- * used to show only the same one-line claim the conclusion already made
- * ("Every addon label on the cluster matches what git expects.") — no new
- * evidence, which defeated the point of the control. This renders the
- * evidence: every addon git says is enabled for this cluster, and whether
- * its label is actually on the cluster right now (mirrors
- * internal/service.v4ClusterLabels, the source of diffData.cluster.labels
- * — a bare `<addon>: enabled|disabled` map, plus an unrelated
- * `<addon>-version` pseudo-key on a version override, both excluded here).
- * A disabled addon gets no row: it has no label on the cluster Secret
- * either way (that is the correct, expected state, not a comparable
- * field), so a row for it would invent a pairing that doesn't exist.
- *
- * Only reached once the backend's own label_drift already reports nothing
- * differs (see ConnectionLabelComparison below) — every row here should
- * read Match. The per-row Missing/differs fallback is a defensive read of
- * the SAME raw label data, in case the two ever momentarily disagree; it
- * never contradicts the backend's own verdict, only restates it evidence
- * by evidence.
- */
-function ConnectionLabelMatchTable({ diffData, live }: { diffData: ClusterComparisonResponse | null; live: LiveSecretState }) {
-  const gitLabels = diffData?.cluster?.labels ?? {}
-  const enabledAddons = Object.entries(gitLabels)
-    .filter(([key, value]) => value === 'enabled' && !key.endsWith('-version'))
-    .map(([key]) => key)
-
-  // Nothing to show evidence for (no enabled addons), or the cluster side
-  // can't be proven yet (live read still loading/failed/skipped) — an
-  // honest sentence, never a fabricated table.
-  if (enabledAddons.length === 0 || live.status !== 'ready') {
-    return (
-      <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="comparison-no-drift">
-        Every addon label on the cluster matches what git expects.
-      </p>
-    )
-  }
-
-  const liveLabelMap = new Map(live.resource.labels.map((l) => [l.key, l.value]))
-
-  return (
-    <table className="w-full text-left text-sm" data-testid="comparison-label-match">
-      <thead>
-        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
-          <th className="py-1 pr-3 font-medium">Field</th>
-          <th className="py-1 pr-3 font-medium">Expected in Git</th>
-          <th className="py-1 pr-3 font-medium">On the cluster</th>
-          <th className="py-1 font-medium">Result</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border">
-        {enabledAddons.map((addon) => {
-          const prefixedKey = `${V4_ADDON_LABEL_PREFIX}${addon}`
-          const onClusterPrefixed = liveLabelMap.get(prefixedKey)
-          const onClusterBare = liveLabelMap.get(addon)
-          // Show whichever key convention actually turned up on the
-          // cluster; when neither did, fall back to the v4-canonical form
-          // as the honest "this is the key git's convention expects" label
-          // for a row that turned out missing.
-          const field = onClusterPrefixed !== undefined ? prefixedKey : onClusterBare !== undefined ? addon : prefixedKey
-          const onCluster = onClusterPrefixed ?? onClusterBare
-          const matches = onCluster === 'enabled'
-          return (
-            <tr key={addon}>
-              <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{field}</td>
-              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">enabled</td>
-              <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{onCluster ?? 'missing'}</td>
-              <td
-                className={`py-1.5 font-medium ${matches ? 'text-[#3a6a8a] dark:text-gray-400' : 'text-amber-700 dark:text-amber-400'}`}
-              >
-                {matches ? 'Match' : onCluster ? 'Value differs' : 'Missing on cluster'}
-              </td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
-  )
-}
-
-/**
- * SSF-12 honesty rule (verified against the live API responses), now a real
- * table (SSF-14 item 3: Field | Expected in Git | On the cluster | Result)
- * instead of a loose grid: a connection secret's ONLY genuinely comparable
- * field pair is the addon labels git expects vs the addon labels on the
- * cluster, at the commit Sharko last checked — the SAME label-drift facts
- * the row list's own getClusterComparison fetch already carries
- * (added/removed/changed label NAMES; the server never sends per-label
- * values, so "a different value" is as specific as this can honestly get).
- *
- * SSF-14 walkthrough follow-up: when the backend reports no drift at all
- * (a healthy row), this now renders the full evidence table
- * (ConnectionLabelMatchTable) instead of a bare summary sentence — opening
- * the comparison must show something new, not repeat the conclusion.
- */
-function ConnectionLabelComparison({
-  diffLoading,
-  diffError,
-  diffData,
-  live,
-}: {
-  diffLoading: boolean
-  diffError: string | null
-  diffData: ClusterComparisonResponse | null
-  live: LiveSecretState
-}) {
-  if (diffError) {
-    return (
-      <p className="text-sm text-red-600 dark:text-red-400" data-testid="comparison-error">
-        {diffError}
-      </p>
-    )
-  }
-  if (diffLoading) {
-    return <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading…</p>
-  }
-  const drift = diffData?.cluster?.last_reconcile?.label_drift
-  const rows: { field: string; expected: string; onCluster: string; result: string }[] = [
-    ...(drift?.added ?? []).map((l) => ({ field: l, expected: 'Present', onCluster: 'Missing', result: 'Missing on cluster' })),
-    ...(drift?.removed ?? []).map((l) => ({ field: l, expected: 'Not present', onCluster: 'Present', result: 'Extra on cluster' })),
-    ...(drift?.changed ?? []).map((l) => ({ field: l, expected: 'A different value', onCluster: 'A different value', result: 'Value differs' })),
-  ]
-  if (rows.length === 0) {
-    return <ConnectionLabelMatchTable diffData={diffData} live={live} />
-  }
-  return (
-    <table className="w-full text-left text-sm" data-testid="comparison-label-drift">
-      <thead>
-        <tr className="text-[11px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
-          <th className="py-1 pr-3 font-medium">Field</th>
-          <th className="py-1 pr-3 font-medium">Expected in Git</th>
-          <th className="py-1 pr-3 font-medium">On the cluster</th>
-          <th className="py-1 font-medium">Result</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border">
-        {rows.map((r) => (
-          <tr key={r.field}>
-            <td className="break-all py-1.5 pr-3 font-mono text-[#2a5a7a] dark:text-gray-300">{r.field}</td>
-            <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{r.expected}</td>
-            <td className="py-1.5 pr-3 text-[#0a2a4a] dark:text-gray-200">{r.onCluster}</td>
-            <td className="py-1.5 font-medium text-amber-700 dark:text-amber-400">{r.result}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
 
 /**
  * SSF-12 honesty rule: an addon-values secret's ONLY genuinely comparable
@@ -1937,7 +2070,7 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-drift-source">
           {row.driftSource === 'git'
             ? 'Git moved — a newer commit changed what this secret should be.'
-            : 'The cluster moved — something changed this secret outside git.'}
+            : 'The cluster moved — something changed this secret outside Git.'}
         </p>
       )}
       {/* The repair promise — only where Sync is really the fix (a real
@@ -1949,19 +2082,39 @@ function HealthConclusion({ row, verdict }: { row: UnifiedRow; verdict: DiffVerd
           {repairNoteFor(row)}
         </p>
       )}
-      {/* P2-C3 (restored — walkthrough follow-up on SSF-14): does the
-          reader need to press Sync themselves, or will Sharko fix this on
-          its own pass — the single most important sentence on a broken
-          secret for an on-call reader. Same condition as the deleted
-          Resource details field (out_of_sync or missing, either row
-          kind) — never shown for a healthy/match row, exactly as before.
-          Sits right after the repair promise so "what Sync does" and
-          "do I actually need to click it" read together. */}
-      {(row.state === 'out_of_sync' || row.state === 'missing') && (
-        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-self-heals">
-          {/* HL-1: the button is named per kind now, so this points at the
-              right name — see syncActionLabel. */}
-          {row.selfHeals ? 'Sharko will fix this on the next pass.' : `Waiting for ${syncActionLabel(row.kind)}.`}
+      {/* Does the reader need to press Sync themselves?
+          THE SELF-HEALING HALF OF THIS LINE IS GONE, and it is not coming
+          back as different words.
+
+          It read "Sharko will fix this on its own — nobody has to ask for
+          it." — a promise about what the SERVER does, written in the
+          browser. Nothing on this page receives that promise from the
+          server: the fleet response's rows (ConnectionSecretRow and
+          AddonValuesSecretRow in services/models.ts) carry state, headline,
+          qualifier and the self_heals flag, and no plan sentence at all.
+          So the browser was the only author of it, and it had already
+          drifted from the server's own wording for the same fact.
+
+          The comment that used to sit here argued for keeping it, on the
+          grounds that it matched SHARKO_REAPPLIES_ADDON_LABELS /
+          planAutomaticLabelSync and was pinned by exact string. It matched
+          neither: those are a different sentence, and the pin it named
+          asserted a browser constant against a browser literal.
+
+          The truthful sentence has to come from the server's plan contract,
+          which is API-branch work scheduled separately. Until it lands, the
+          page says nothing here for a self-healing row rather than saying
+          something Sharko never promised. The reader is not left blank: the
+          conclusion word, the "does not match" sentence, the drift source
+          and the repair note above all still render.
+
+          The other half stays. "Waiting for <button name>." is a statement
+          about this page — what the reader has to do — not a claim about
+          server behaviour. HL-1: the button is named per row kind, see
+          syncActionLabel. */}
+      {(row.state === 'out_of_sync' || row.state === 'missing') && !row.selfHeals && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="detail-awaiting-sync">
+          {`Waiting for ${syncActionLabel(row.kind)}.`}
         </p>
       )}
       {/* SSF-14 item 7: a timestamp, so it stays at least 13px — was 12px
@@ -1984,6 +2137,14 @@ export function secretTitleFor(row: UnifiedRow): string {
   return row.kind === 'connection' ? `${row.cluster} connection` : row.addon ? `${row.addon} values on ${row.cluster}` : `Secret on ${row.cluster}`
 }
 
+// Connection rows: the always-visible teaching block ("How Sharko manages
+// this connection") and the three per-button scope hints are GONE — the
+// connection-reconciliation redesign (epic-connection-reconciliation-view,
+// ruling 8) replaced the page's split-authority framing with the server's
+// own mode statement, rendered once inside ConnectionReconciliationView.
+// The banned-wording tests in ConnectionReconciliationView.test.tsx pin
+// that the old heading and body never come back.
+
 export function SecretDetailContent({
   row,
   onRequestSync,
@@ -1998,12 +2159,10 @@ export function SecretDetailContent({
 }) {
   const navigate = useNavigate()
   const [refreshing, setRefreshing] = useState(false)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
-  const [diffData, setDiffData] = useState<ClusterComparisonResponse | null>(null)
   // SSF-5 (Secret Sync finish pass) — Overview vs Redacted YAML. Always
   // reopens on Overview for whichever row the panel is now showing; a tab
   // choice made on one row must not carry over to the next one it opens.
+  // Values rows only — a connection row's page is the reconciliation view.
   const [detailTab, setDetailTabState] = useState<'overview' | 'yaml'>('overview')
   // SSF-8/SSF-14 — whether the comparison box is expanded. Item 2 (SSF-14):
   // this now SURVIVES a Check again — a reader who opened it stays opened,
@@ -2011,35 +2170,6 @@ export function SecretDetailContent({
   // just flipped healthy -> broken, which forces it open so a new problem
   // is never hidden behind a closed toggle. See the effect below.
   const [comparisonOpen, setComparisonOpen] = useState(false)
-
-  // Connection-secret Diff keeps its existing getClusterComparison fetch
-  // (labels only, never credentials) — fired once per row the panel opens
-  // for. Re-runs whenever a DIFFERENT row is shown.
-  useEffect(() => {
-    setDiffData(null)
-    setDiffError(null)
-    if (!row || row.kind !== 'connection') {
-      setDiffLoading(false)
-      return
-    }
-    let cancelled = false
-    setDiffLoading(true)
-    api
-      .getClusterComparison(row.cluster)
-      .then((result) => {
-        if (!cancelled) setDiffData(result)
-      })
-      .catch((err) => {
-        if (!cancelled) setDiffError(err instanceof Error ? err.message : 'Failed to load the diff')
-      })
-      .finally(() => {
-        if (!cancelled) setDiffLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [row?.key])
 
   // The same role predicate RoleGuard applies below, read here so the
   // REQUEST is gated too and not just the rendering. A viewer's panel used
@@ -2080,16 +2210,14 @@ export function SecretDetailContent({
     prevVerdictRef.current = verdict
   }, [row?.key, verdict])
 
+  // Values rows only — a connection row's Check lives inside
+  // ConnectionReconciliationView (re-fetching the read-only reconciliation
+  // endpoint IS the check there).
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      if (row.kind === 'connection') {
-        await reconcileCluster(row.cluster)
-        showToast(connectionRefreshToast(row.cluster), 'success')
-      } else {
-        const result = await refreshAddonValuesSecret(row.cluster, row.addon!)
-        showToast(result.message, 'success')
-      }
+      const result = await refreshAddonValuesSecret(row.cluster, row.addon!)
+      showToast(result.message, 'success')
       onChanged()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to trigger refresh', 'error')
@@ -2126,9 +2254,7 @@ export function SecretDetailContent({
   // SSF-12: "Differences" only when there really are some (the "differ"
   // verdict) — every other state (including the four boundary/unknown
   // verdicts that used to borrow "Diff"/"Comparison" from row kind) gets
-  // the calmer, generic "Comparison" heading. Row kind no longer decides
-  // this word at all — "Diff" is gone; it always read as a claim that a
-  // values row is checked against git, which was never true.
+  // the calmer, generic "Comparison" heading.
   const comparisonHeading = verdict === 'differ' ? 'Differences' : 'Comparison'
 
   // SSF-12: "Check again" once a check has actually produced a result;
@@ -2139,6 +2265,58 @@ export function SecretDetailContent({
   const viewPageHref =
     row.kind === 'connection' || !row.addon ? `/clusters/${encodeURIComponent(row.cluster)}` : `/addons/${encodeURIComponent(row.addon)}`
 
+  const header = (
+    <div className="min-w-0 space-y-1">
+      <h1 className="text-2xl font-semibold leading-tight text-[#0a2a4a] dark:text-gray-100 sm:text-[28px]">{secretTitleFor(row)}</h1>
+      <p className="text-base text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
+      {/* SSF-14 item 5: "View cluster"/"View addon" next to the description,
+          as a normal secondary link. */}
+      <button
+        type="button"
+        onClick={() => navigate(viewPageHref)}
+        data-testid="detail-view-page-link"
+        className="text-sm text-teal-700 hover:underline dark:text-teal-400"
+      >
+        {viewPageLabel}
+      </button>
+    </div>
+  )
+
+  // ── The connection page (epic-connection-reconciliation-view, Story 2) —
+  // a GitOps reconciliation view consuming ONE new API. Everything the old
+  // page hand-assembled here (teaching block, health conclusion, comparison
+  // section, repair button row, repeated verdict sentences) is replaced by
+  // ConnectionReconciliationView, which renders the server's own contract.
+  // An orphaned row is never kind 'connection' (buildUnifiedRows folds
+  // orphans in as 'values'), so this branch needs no orphan handling.
+  if (row.kind === 'connection') {
+    return (
+      <div data-testid="secret-detail-panel" className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">{header}</div>
+        {/* P2-D D3: the label-fight warning is a fleet-row fact with no
+            equivalent in the reconciliation contract — it stays. */}
+        {(row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
+          <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
+            {fightWarningSentence(row.fightCount ?? 0)}
+          </p>
+        )}
+        <ConnectionReconciliationView
+          cluster={row.cluster}
+          onRequestSync={() => onRequestSync(row)}
+          onChanged={onChanged}
+          technicalEvidenceExtra={
+            canReadLive ? (
+              <div>
+                <h3 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Redacted YAML</h3>
+                <RedactedYamlSection row={row} live={live} onRetry={retry} />
+              </div>
+            ) : undefined
+          }
+        />
+      </div>
+    )
+  }
+
   return (
     <div data-testid="secret-detail-panel" className="space-y-4">
       {/* ── Identity + actions (SSF-11/SSF-12) — the title and its one-line
@@ -2146,21 +2324,7 @@ export function SecretDetailContent({
           the single Delete action) sit RIGHT, in the same row. flex-wrap
           alone stacks this safely once the row runs out of room. */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-semibold leading-tight text-[#0a2a4a] dark:text-gray-100 sm:text-[28px]">{secretTitleFor(row)}</h1>
-          <p className="text-base text-[#2a5a7a] dark:text-gray-300">{purposeSentence}</p>
-          {/* SSF-14 item 5: "View cluster"/"View addon" moves up here, next
-              to the description, as a normal secondary link — it used to
-              live inside the removed Resource details section. */}
-          <button
-            type="button"
-            onClick={() => navigate(viewPageHref)}
-            data-testid="detail-view-page-link"
-            className="text-sm text-teal-700 hover:underline dark:text-teal-400"
-          >
-            {viewPageLabel}
-          </button>
-        </div>
+        {header}
         <RoleGuard roles={['admin', 'operator']}>
           <div className="flex flex-wrap items-center gap-2">
             {/* leftover-secrets S1.2: an orphaned row gets exactly one
@@ -2180,7 +2344,13 @@ export function SecretDetailContent({
                 {/* SSF-12: "Check now" only before the first result ever
                     lands; "Check again" every time after — testid
                     unchanged. */}
-                <PanelActionButton onClick={handleRefresh} loading={refreshing} icon={RefreshCw} label={checkLabel} testId="detail-refresh" />
+                <PanelActionButton
+                  onClick={handleRefresh}
+                  loading={refreshing}
+                  icon={RefreshCw}
+                  label={checkLabel}
+                  testId="detail-refresh"
+                />
                 {/* SSF-12: Sync is HIDDEN entirely — not just disabled —
                     once the conclusion is "In sync". There is nothing to
                     apply, so there is no button to grey out. Every other
@@ -2194,8 +2364,6 @@ export function SecretDetailContent({
                     onClick={() => onRequestSync(row)}
                     disabled={gate.disabled}
                     icon={RotateCcw}
-                    // HL-1: per kind — see syncActionLabel. The testid
-                    // stays detail-sync on purpose; only the words change.
                     label={syncActionLabel(row.kind)}
                     reason={gate.reason}
                     testId="detail-sync"
@@ -2267,28 +2435,17 @@ export function SecretDetailContent({
               The last check failed: {row.lastCheckError}
             </p>
           )}
-          {row.kind === 'connection' && (row.fightCount ?? 0) >= ROW_WARNING_THRESHOLD && (
-            <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="fight-warning">
-              {fightWarningSentence(row.fightCount ?? 0)}
-            </p>
-          )}
-          {row.kind === 'values' && (row.consecutiveFailures ?? 0) >= ROW_WARNING_THRESHOLD && (
+          {(row.consecutiveFailures ?? 0) >= ROW_WARNING_THRESHOLD && (
             <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="consecutive-failures-warning">
               {consecutiveFailuresSentence(row.consecutiveFailures ?? 0)}
             </p>
           )}
 
           {/* ── Comparison, only when useful (SSF-12/SSF-14) ───────────────
-              An orphaned row has nothing left to compare (its source in
-              git is gone — the conclusion above already says so), so no
-              Comparison zone renders for it at all. Every other row: the
-              toggle button is always there (SSF-14 item 2 — it never
-              disappears, so it can always be pressed the other way), a
-              match starts closed behind it, and every other verdict starts
-              open — those are exactly the states where the comparison IS
-              the answer to "is it okay". Provenance (what file/commit/store
-              this was checked against) sits ABOVE the table, never as one
-              side of it (item 3). */}
+              The key-presence check for an addon-values row. An orphaned
+              row has nothing left to compare (its source in git is gone —
+              the conclusion above already says so), so no Comparison zone
+              renders for it at all. */}
           {row.state !== 'orphaned' && (
             <div>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -2306,11 +2463,6 @@ export function SecretDetailContent({
               {comparisonOpen && (
                 <div className="space-y-3 rounded-md border border-border bg-card p-3">
                   <ComparisonProvenance row={row} />
-                  {/* The table sits INSIDE the role guard, so a viewer sees a
-                      sentence about access rather than a permission error
-                      where the safe fields should be — and the read is
-                      never fired for them either (useLiveSecret's
-                      `allowed`). */}
                   <RoleGuard
                     roles={['admin', 'operator']}
                     fallback={
@@ -2319,29 +2471,107 @@ export function SecretDetailContent({
                       </p>
                     }
                   >
-                    {row.kind === 'connection' ? (
-                      <ConnectionLabelComparison diffLoading={diffLoading} diffError={diffError} diffData={diffData} live={live} />
-                    ) : (
-                      <ValuesKeyComparison live={live} onRetry={retry} />
-                    )}
+                    <ValuesKeyComparison live={live} onRetry={retry} />
                   </RoleGuard>
                 </div>
               )}
             </div>
           )}
 
-          {/* ── Related events (SSF-14 item 6) — replaces the old "Recent
-              activity" accordion. No new history: this is one quiet link
-              into the SAME audit log AuditViewer already shows, scoped to
-              this row's cluster via a URL param it now reads on mount. Any
-              CURRENT problem is still visible above (the health conclusion
-              and, for connection rows, the last-check-error line) — this
-              link never has to be opened to see an active failure. */}
+          {/* ── Related events (SSF-14 item 6) — one quiet link into the
+              SAME audit log AuditViewer already shows, scoped to this row's
+              cluster via a URL param it reads on mount. */}
           <RelatedEventsLink row={row} />
         </>
       )}
     </div>
   )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The connection row's status cell (B5) and its verification indicator.
+//
+// The WORD is the server's `headline`, rendered verbatim — the same string
+// the connection page's own headline shows. A values row keeps <StatusMark>,
+// whose six-word vocabulary still fits a "does the cluster copy match its
+// backend" question exactly.
+//
+// The DOT and the left edge strip read rowStatus(), which is the server's
+// projection with the fail-closed guard on top, so the colour beside the word
+// can never be greener than the word.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RowStatusCell({ row }: { row: UnifiedRow }) {
+  if (row.kind !== 'connection') return <StatusMark status={row.state} />
+  const status = rowStatus(row)
+  const label = connectionRowLabel(row)
+  return (
+    <span
+      data-testid="status-mark"
+      data-status={status}
+      // H2: colour lives on the dot only — the word is always plain dark
+      // ink, whatever the state.
+      className="inline-flex min-w-0 items-center gap-1.5 text-sm font-medium text-[#0a3a5a] dark:text-gray-200"
+      // The qualifier is the server's own sentence and can be a paragraph
+      // (the legacy-inline one is). It belongs on hover, not in a 12% column.
+      title={row.qualifier ? `${label} — ${row.qualifier}` : label}
+    >
+      <StatusDot status={status} />
+      <span className="truncate">{label}</span>
+    </span>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W3-3 (AC9), reworked for B5: the row-level verification indicator.
+//
+// The old badge had FOUR states read off `credential_check`, a field that has
+// nothing to do with the canonical answer beside it — which is how "Synced"
+// and "Not compared" ended up on the same row. Two of those states are gone:
+//
+//   - "Not compared" is now "Credential not compared" and comes from the
+//     CANONICAL verification_scope, the same field the headline is derived
+//     from server-side. It cannot contradict the word next to it anymore.
+//   - "Check failed" is gone entirely — the headline says "Unknown — check
+//     failed" in that state, and a badge repeating it is noise.
+//
+// "Credential drift" stays: it names WHICH domain drifted, which the headline
+// ("Out of sync — approval required") deliberately does not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CREDENTIAL_DRIFT_BADGE_LABEL = 'Credential drift'
+
+function CredentialCheckBadge({ row }: { row: UnifiedRow }) {
+  if (row.kind !== 'connection') return null
+
+  if (row.credentialCheck === 'drifted') {
+    return (
+      <span
+        data-testid="credential-check-badge"
+        data-credential-check="drifted"
+        title={row.credentialCheckDetail}
+        className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+      >
+        {CREDENTIAL_DRIFT_BADGE_LABEL}
+      </span>
+    )
+  }
+
+  // B13 item 7 — THE PARTIAL-VERIFICATION CHIP IS GONE, and it is not coming
+  // back as different words.
+  //
+  // It read "Credential not compared" and sat in the same table cell as the
+  // Status word, which on exactly these rows is the server headline
+  // "Configuration matches; credential content not compared". So the cell
+  // said the same fact twice, once from the server and once invented here.
+  // The server already deduplicates this sentence across its own fields
+  // (saidOnce, internal/api/connection_reconciliation.go); a browser chip
+  // repeating the headline puts the repeat back after the server removed it.
+  //
+  // Nothing is lost. The headline carries the fact, and the connection page
+  // states it as a condition with the full explanation. A chip whose only
+  // job is to echo the word beside it is not an indicator.
+  return null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2354,6 +2584,7 @@ function SecretTableRow({
   row,
   indented,
   busy,
+  healthColumn,
   onSelect,
   onRefresh,
   onRequestSync,
@@ -2363,6 +2594,8 @@ function SecretTableRow({
   /** true when the row sits under a group parent — a small left inset, nothing else changes. */
   indented?: boolean
   busy: boolean
+  /** B5: the connections subpage shows Health where the addons subpage shows "Compared with". */
+  healthColumn?: boolean
   onSelect: () => void
   onRefresh: () => void
   onRequestSync: () => void
@@ -2418,7 +2651,7 @@ function SecretTableRow({
           the row's own <StatusMark> dot and the filter chips, via
           statusStripClassName — it cannot disagree with the dot next to
           it. */}
-      <TableCell className={`py-2 px-1.5 ${statusStripClassName(row.state)} ${indented ? 'pl-2' : ''}`}>
+      <TableCell className={`py-2 px-1.5 ${statusStripClassName(rowStatus(row))} ${indented ? 'pl-2' : ''}`}>
         <div className="flex min-w-0 items-center gap-1.5">
           {indented && <span aria-hidden="true" className="h-4 w-px shrink-0 bg-[#c0ddf0] dark:bg-gray-700" />}
           {row.kind === 'connection' ? (
@@ -2452,7 +2685,10 @@ function SecretTableRow({
           putting a resource's health right at the start of its row instead
           of buried at the end. */}
       <TableCell className="py-2 px-1.5">
-        <StatusMark status={row.state} />
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <RowStatusCell row={row} />
+          <CredentialCheckBadge row={row} />
+        </div>
       </TableCell>
       {/*
         Addon (G1): values rows show the addon they carry values for.
@@ -2480,21 +2716,38 @@ function SecretTableRow({
       >
         {row.cluster}
       </TableCell>
-      {/* Compared with (G1/H3, design-secret-sync-visual-pass section 2):
-          the S3 honesty lock, sortable/filterable/searched on every row.
-          The RELATION ("compared with" — SSF-8 item 3, was "checked
-          against") now lives once in the sticky column header — this cell
-          states just the place name, so the longest demo name
-          (kube-prometheus-stack-grafana-admin, 35 chars) can render uncut
-          at 1280px. The full sentence — the same one the panel's Resource
-          details says — is one hover away. */}
-      <TableCell
-        className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
-        data-testid="cell-source"
-        title={row.kind === 'connection' ? 'Compared with git.' : `Compared with ${row.sourceLabel} — git only holds a pointer to it.`}
-      >
-        {sourceShortLabel(row.sourceLabel)}
-      </TableCell>
+      {/* B5, the product owner's stated preference: on the connections
+          subpage this column is HEALTH, not "Compared with".
+
+          "Compared with: git" was a hard-coded word — the server writes it
+          on every connection row regardless of whether any comparison
+          happened — and it only ever meant "git holds the addon labels".
+          Sitting beside "Not compared" it read as a completed comparison
+          that had not happened. The fleet now answers the same two
+          independent questions the connection page does: does the live
+          resource match the Git-defined state Sharko manages (the Status
+          column), and does ArgoCD report the connection works (this one).
+
+          The addon-secrets subpage keeps "Compared with" — there the
+          question is real and the answer differs per row (S3's honesty
+          lock: git only ever holds a pointer for a values row). */}
+      {healthColumn ? (
+        <TableCell
+          className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+          data-testid="cell-health"
+          title="What ArgoCD reports about this connection. Independent of the Git state beside it."
+        >
+          {row.kind === 'connection' ? healthColumnWord(row.health) : '—'}
+        </TableCell>
+      ) : (
+        <TableCell
+          className="truncate py-2 px-1.5 text-sm text-[#2a5a7a] dark:text-gray-300"
+          data-testid="cell-source"
+          title={row.kind === 'connection' ? 'Compared with Git.' : `Compared with ${row.sourceLabel} — Git only holds a pointer to it.`}
+        >
+          {sourceShortLabel(row.sourceLabel)}
+        </TableCell>
+      )}
       {/* SSF-2 follow-up (browser verification): this cell holds the h-8
           (32px) row-menu trigger — RowActionsMenu's own touch target, not
           shrunk here. py-2 on this cell (matching the text cells) pushed
@@ -2666,13 +2919,26 @@ export type SecretsArea = 'connections' | 'addons'
 const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> = {
   connections: {
     title: 'Cluster connections',
-    description: 'Secrets Sharko uses to register clusters with Argo CD.',
+    // B5, the product owner's exact replacement. The old sentence
+    // ("Secrets Sharko uses to register clusters with Argo CD.") described
+    // the mechanism; the locked model is that Git defines the connection and
+    // Sharko maintains the resulting Secret, and the subtitle now says that.
+    description: 'Git-defined cluster connections Sharko maintains for Argo CD.',
   },
   addons: {
     title: 'Addon secrets',
     description: 'Secrets Sharko delivers from configured backends to addons on remote clusters.',
   },
 }
+
+// W3-5 discoverability: the published engine + Secret Sync architecture
+// page, linked once from the Secrets area's own header — the same
+// readthedocs pattern AuditViewer's retention banner and
+// ClusterIdentityPanel's own doc link already use.
+// /en/latest/ is the readthedocs language/version prefix — the unprefixed
+// form of a published page hard-404s.
+const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/en/latest/architecture/engine-and-secret-sync/'
+const SECRETS_ARCHITECTURE_DOC_LINK_TEXT = 'How Sharko manages secrets'
 
 export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   const navigate = useNavigate()
@@ -2681,6 +2947,11 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   // happen to match (both empty is the common case). The legacy unified
   // mode keeps the pre-split key shape.
   const areaScope = area ? `${area}:` : ''
+  // B5: the connections subpage answers "does ArgoCD report this connection
+  // as working?" in its own column, in place of the hard-coded "Compared
+  // with: git". The addon-secrets subpage keeps "Compared with" — there the
+  // answer is real and differs per row.
+  const healthColumn = area === 'connections'
   const { data, loading, load } = useManagedSecretsData()
   // SSF-9 — the table's own scroll container (see the "max-h-[65vh]
   // overflow-y-auto" wrapper below), so openRowDetail can read its current
@@ -2958,6 +3229,14 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
     [data, valuesSourceLabel],
   )
 
+  // W3-3 (AC9): the "Cluster connections" tile's own count — read off the
+  // same unifiedRows every row badge reads off, so the tile and the row
+  // badges can never disagree about how many connections have drifted.
+  const driftedConnectionCount = useMemo(
+    () => unifiedRows.filter((r) => r.kind === 'connection' && r.credentialCheck === 'drifted').length,
+    [unifiedRows],
+  )
+
   // SN-3: the subpage's own rows. Cluster connections shows kind
   // 'connection'; Addon secrets shows kind 'values' — which includes the
   // leftover ("orphaned") rows, folded in as 'values' on purpose exactly
@@ -2983,7 +3262,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
 
   const counts = useMemo(() => {
     const c: Record<ResourceStatus, number> = { in_sync: 0, out_of_sync: 0, missing: 0, orphaned: 0, foreign: 0, unknown: 0 }
-    for (const r of searchFiltered) c[toResourceStatus(r.state)]++
+    for (const r of searchFiltered) c[rowStatus(r)]++
     return c
   }, [searchFiltered])
 
@@ -3004,7 +3283,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
 
   const filtered = useMemo(() => {
     let rows = searchFiltered
-    if (stateFilter !== 'all') rows = rows.filter((r) => toResourceStatus(r.state) === stateFilter)
+    if (stateFilter !== 'all') rows = rows.filter((r) => rowStatus(r) === stateFilter)
     if (addonFilter) rows = rows.filter((r) => r.addon === addonFilter)
     if (sourceFilter) rows = rows.filter((r) => r.sourceLabel === sourceFilter)
     if (kindFilter) rows = rows.filter((r) => r.kind === kindFilter)
@@ -3256,6 +3535,20 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
             ? AREA_HEADER[area].description
             : 'Sharko keeps these secrets in sync automatically. Git defines what should exist. Values come from your secret store.'}
         </p>
+        {/* W3-5 discoverability: one quiet pointer to the published
+            architecture page, never an inline essay on this page itself
+            (UI Voice rule 3). */}
+        <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+          <a
+            href={SECRETS_ARCHITECTURE_DOC_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="secrets-architecture-doc-link"
+            className="underline decoration-dotted underline-offset-2 hover:text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 dark:hover:text-teal-300"
+          >
+            {SECRETS_ARCHITECTURE_DOC_LINK_TEXT}
+          </a>
+        </p>
       </div>
 
       {/* SN-3: the navigation between the two subpages — real links that
@@ -3270,7 +3563,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
               engine's stats belong to the other subpage now. Legacy
               unified mode shows both, as before. */}
           {(!area || area === 'connections') && (
-            <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} />
+            <EngineStat label="Cluster connections" kind="connection" info={data?.engines.cluster_connection} onErrorClick={filterToCluster} driftedCount={driftedConnectionCount} />
           )}
           {(!area || area === 'addons') && (
             <EngineStat label="Addon values" kind="values" info={data?.engines.addon_values} onErrorClick={filterToCluster} />
@@ -3292,6 +3585,12 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
           </div>
         </RoleGuard>
       </div>
+
+      {/* B13 item 6: on the connections subpage, the one line that explains
+          why every row might read "Not checked yet". Connections only — the
+          background connection check has nothing to do with addon values,
+          and the legacy unified mode shows both kinds so it shows it too. */}
+      {(!area || area === 'connections') && <BackgroundChecksNotice status={data?.background_connection_checks} />}
 
       <div className="flex flex-wrap items-center gap-2">
         <FilterChip status="all" label="All" count={searchFiltered.length} active={stateFilter === 'all'} onClick={() => setStateFilter('all')} />
@@ -3583,7 +3882,11 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
                 <SortableTh label="Status" sortKeyName="state" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
                 <SortableTh label="Addon" sortKeyName="addon" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[12%] px-1.5" />
                 <SortableTh label="Cluster" sortKeyName="cluster" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[13%] px-1.5" />
-                <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                {healthColumn ? (
+                  <SortableTh label="Health" sortKeyName="health" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                ) : (
+                  <SortableTh label="Compared with" sortKeyName="source" activeKey={sortKey} dir={sortDir} onSort={handleSort} className="w-[20%] px-1.5" />
+                )}
                 <TableHead className="w-[4%] px-1.5" />
               </TableRow>
             </TableHeader>
@@ -3602,6 +3905,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
                             key={row.key}
                             row={row}
                             indented
+                            healthColumn={healthColumn}
                             busy={!!busyRows[row.key]}
                             onSelect={() => openRowDetail(row)}
                             onRefresh={() => handleRefreshRow(row)}
@@ -3615,6 +3919,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
                     <SecretTableRow
                       key={row.key}
                       row={row}
+                      healthColumn={healthColumn}
                       busy={!!busyRows[row.key]}
                       // `row` here is a plain element of `sorted` (a
                       // useMemo'd array, no ref involved); the identical
@@ -3650,9 +3955,10 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
         onClose={() => setSyncTarget(null)}
         onConfirm={handleConfirmSync}
         title={
-          // HL-1: the connection confirm carries the action's real name.
+          // HL-1, renamed by the Round 3 ruling (2026-08-16): the connection
+          // confirm carries the action's real name.
           syncTarget?.kind === 'connection'
-            ? `Re-apply addon labels on "${syncTarget.cluster}"?`
+            ? `Sync addon labels on "${syncTarget.cluster}"?`
             : syncTarget?.kind === 'values'
               ? `Sync secret for cluster "${syncTarget.cluster}", addon "${syncTarget.addon}"?`
               : 'Sync?'

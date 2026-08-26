@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -500,14 +501,22 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		// Never "%w" here (BF12). net/http returns a *url.Error whose text
+		// is the whole address it was handed, unmasked, and the address is
+		// c.baseURL — an operator-supplied value. The Do branch below has
+		// been address-free since unreachable.go was written; this one was
+		// the leftover. The verb and the endpoint are Sharko's own words.
+		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
+			http.MethodGet, path, credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		slog.Error("argocd call failed", "error", err, "endpoint", path)
-		return nil, fmt.Errorf("executing request to %s: %w", path, err)
+		// The address Sharko dialled does not travel out of here — see
+		// unreachable.go. The cause still goes to the log sink, which prints
+		// it through credsafe.LogClass by type.
+		return nil, unreachableCallError(http.MethodGet, path, err)
 	}
 	defer resp.Body.Close()
 
@@ -517,7 +526,15 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Error("argocd call failed", "endpoint", path, "status", resp.StatusCode, "body", string(body))
+		// The response BODY is deliberately not logged (B9). ArgoCD quotes
+		// whatever it was working on inside its error payloads, and that
+		// routinely includes a repository address with the access token in it
+		// — https://x-access-token:<token>@host/org/repo.git. A body is a
+		// plain string by the time it reaches slog, so the log sink's
+		// error-classifier cannot see a type to strip; the only safe place to
+		// drop it is here. The endpoint and the status code say which call
+		// failed and how, which is what triage actually needs.
+		slog.Error("argocd call failed", "endpoint", path, "status", resp.StatusCode)
 		// Translate common errors into user-friendly messages
 		switch resp.StatusCode {
 		case 401:

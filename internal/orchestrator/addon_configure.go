@@ -17,6 +17,11 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 	if req.Name == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
+	// Every repository address this request could put into the catalog file,
+	// checked before Sharko touches Git.
+	if err := checkConfigureAddonRepoURLs(req); err != nil {
+		return nil, err
+	}
 
 	// Same v3-catalog-file write as AddAddon, same refusal on a v4 repo.
 	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "changing an addon's catalog entry through this endpoint", V4CatalogWriteDoor); err != nil {

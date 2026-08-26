@@ -10,6 +10,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -65,18 +66,27 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "addon version is required")
 		return
 	}
+	// The technical preview supports credential-free chart repository
+	// addresses only. Checked here so the caller gets a 400 with the rule in
+	// it before Sharko goes anywhere near the chart repository or Git. The
+	// orchestrator and the catalog writer ask the same function; this is the
+	// early word, not a second rule.
+	if err := credsafe.ValidateSupportedRepoURL(req.RepoURL); err != nil {
+		writeCodedError(w, http.StatusBadRequest, CodeUnsupportedRepoURL, err.Error(), nil)
+		return
+	}
 
 	// Now that the request is well-formed, resolve the upstream connections.
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 2: configuration change — prefer per-user PAT, fall back to service token.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -238,7 +248,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 // handleRemoveAddon godoc
 //
 // @Summary Remove addon (v3 layout only)
-// @Description Removes an addon from the v3 catalog file. Without ?confirm=true returns a dry-run impact report. On a repo in the v4 layout this returns 409 with code `repo_layout` — the approved list lives in catalog.yaml there, and it is edited through a pull request (POST /api/v1/catalog/addons, or by hand in git).
+// @Description Removes an addon from the v3 catalog file. Without ?confirm=true returns a dry-run impact report. On a repo in the v4 layout this returns 409 with code `repo_layout` — the approved list lives in catalog.yaml there, and it is edited through a pull request (POST /api/v1/catalog/addons, or by hand in Git).
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
@@ -269,14 +279,14 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 2: configuration change.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -392,14 +402,14 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 2: configuration change.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 

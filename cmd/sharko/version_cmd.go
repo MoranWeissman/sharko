@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 func init() {
@@ -23,27 +25,46 @@ var versionCmd = &cobra.Command{
 			return nil
 		}
 
-		// Honour the global --server override when reporting which server we're talking to.
-		server := effectiveServer(cfg.Server)
+		// Honour the global --server override when reporting which server
+		// we're talking to — and refuse an address that must not be shown
+		// at all (BF10). This command was the worst of the leaks: it
+		// printed the resolved address raw, so it put on screen every part
+		// of a credential written into it, including the password half
+		// that Go's own transport error had already masked one line down.
+		//
+		// The refusal is RETURNED rather than printed beside a "Server:"
+		// line, so there is no version of this output that shows an
+		// address Sharko has declined to use.
+		server, err := effectiveServer(cfg.Server)
+		if err != nil {
+			return err
+		}
+
+		// The address has passed the structural check, so there is nothing
+		// in it to hide. It still goes through credsafe on the way to the
+		// screen: this is the last step before the terminal, and a display
+		// path that trusts an earlier check is a display path that leaks
+		// the day the earlier check moves.
+		shown := credsafe.SafeServerAddressPhrase(server)
 
 		respBody, status, err := apiGet("/api/v1/health")
 		if err != nil {
-			fmt.Printf("Server: %s (unreachable: %v)\n", server, err)
+			fmt.Printf("Server: %s (unreachable: %v)\n", shown, err)
 			return nil
 		}
 
 		if status != 200 {
-			fmt.Printf("Server: %s (unhealthy, HTTP %d)\n", server, status)
+			fmt.Printf("Server: %s (unhealthy, HTTP %d)\n", shown, status)
 			return nil
 		}
 
 		detail, ok := formatHealthDetail(respBody)
 		if !ok {
-			fmt.Printf("Server: %s (invalid health response)\n", server)
+			fmt.Printf("Server: %s (invalid health response)\n", shown)
 			return nil
 		}
 
-		fmt.Printf("Server: %s (%s)\n", server, detail)
+		fmt.Printf("Server: %s (%s)\n", shown, detail)
 		return nil
 	},
 }

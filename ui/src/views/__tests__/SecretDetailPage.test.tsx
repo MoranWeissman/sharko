@@ -23,6 +23,9 @@ import { AuthContext } from '@/hooks/useAuth'
 import type { ManagedSecretsResponse } from '@/services/models'
 
 const mockShowToast = vi.fn()
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -34,10 +37,24 @@ const mockGetConnectionSecretResource = vi.fn()
 const mockGetAddonValuesSecretResource = vi.fn()
 const mockDeleteOrphanedSecret = vi.fn()
 const mockFetchAuditLog = vi.fn()
+const mockGetConnectionReconciliation = vi.fn()
 
 vi.mock('@/services/api', () => ({
-  api: { getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args) },
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  api: {
+    getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: (...args: unknown[]) => mockGetConnectionReconciliation(...args),
+  },
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   deleteOrphanedSecret: (...args: unknown[]) => mockDeleteOrphanedSecret(...args),
@@ -143,6 +160,23 @@ beforeEach(() => {
   mockGetConnectionSecretResource.mockResolvedValue({ ...blankedResource, name: 'prod-eu', namespace: 'argocd' })
   mockGetAddonValuesSecretResource.mockResolvedValue(blankedResource)
   mockFetchAuditLog.mockResolvedValue({ entries: [] })
+  // Story 2: a connection row's page consumes the reconciliation endpoint.
+  mockGetConnectionReconciliation.mockResolvedValue({
+    cluster: 'prod-eu',
+    management_mode: 'sharko_managed',
+    managed_scope: 'full_connection',
+    mode_statement: CONNECTION_SENTENCES.modeStatementSharkoManaged,
+    definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+    sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-13T12:00:00Z' },
+    health: { state: 'connected' },
+    conditions: [
+      { id: 'git_definition', status: 'ok', detail: CONNECTION_SENTENCES.condGitDefinitionOK },
+      { id: 'argocd_connection', status: 'ok', detail: CONNECTION_SENTENCES.condArgoCDConnected },
+    ],
+    drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+    plan: { action: 'none', action_scopes: [] },
+    values_never_returned: true,
+  })
 })
 
 describe('direct load and refresh', () => {
@@ -293,43 +327,38 @@ describe('SSF-11 — the page uses the workspace, not a narrow column', () => {
     expect(screen.getByTestId('secret-detail-container')).toHaveClass('max-w-screen-2xl')
   })
 
-  it('Check now and Sync sit in the header, next to the title — visible on the YAML tab too, not only on Overview', async () => {
-    // staging-us is out_of_sync — SSF-12 hides Sync entirely once a row is
-    // healthy, so a row that still needs repair is the one that proves
-    // both actions render in the header and survive a tab switch.
+  // Story 2 (connection-reconciliation epic): a connection row's page is
+  // the reconciliation view — no Overview|YAML pill, no permanent header
+  // write buttons; the title stays and read-only checking lives inside the
+  // view itself.
+  it('a connection row keeps its title and renders the reconciliation view, with no Overview|YAML pill', async () => {
     renderApp(['/secret-sync/connection-staging-us'])
     const panel = await screen.findByTestId('secret-detail-panel')
 
-    // The title and the actions are both reachable before ever touching a
-    // tab — proving they render in the always-visible header, not inside
-    // the Overview-only body below the tab strip.
     expect(within(panel).getByRole('heading', { name: 'staging-us connection' })).toBeInTheDocument()
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
-
-    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    await screen.findByTestId('detail-yaml-hidden')
-
-    // Still there on the YAML tab — the header doesn't belong to Overview.
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).getByTestId('detail-sync')).toBeInTheDocument()
+    expect(await within(panel).findByTestId('recon-view')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-overview')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-tab-yaml')).not.toBeInTheDocument()
   })
 
-  it('SSF-12: Sync is hidden entirely (not disabled) for a healthy row — only Check now stays', async () => {
-    renderApp(['/secret-sync/connection-prod-eu']) // in_sync -> match
-    const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('detail-refresh')).toBeInTheDocument()
-    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
-  })
-
-  it('the status/compared-with/last-checked row is visible on both tabs, not hidden behind Overview', async () => {
+  it('Story 2: a connection row has no permanent write buttons — read-only checking stays inside the view', async () => {
     renderApp(['/secret-sync/connection-prod-eu'])
     const panel = await screen.findByTestId('secret-detail-panel')
-    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+    await within(panel).findByTestId('recon-view')
+    expect(within(panel).queryByTestId('detail-refresh')).not.toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-sync')).not.toBeInTheDocument()
+    expect(within(panel).getByTestId('recon-check')).toBeInTheDocument()
+  })
 
-    fireEvent.click(within(panel).getByTestId('detail-tab-yaml'))
-    await screen.findByTestId('detail-yaml-hidden')
-    expect(within(panel).getByTestId('detail-checked-line')).toBeInTheDocument()
+  // Story 2: the summary is up front; the redacted YAML sits behind the
+  // collapsed Technical evidence toggle, never as primary content.
+  it('the reconciliation summary is visible, with the redacted YAML behind collapsed Technical evidence', async () => {
+    renderApp(['/secret-sync/connection-prod-eu'])
+    const panel = await screen.findByTestId('secret-detail-panel')
+    expect(await within(panel).findByTestId('recon-summary')).toBeInTheDocument()
+    expect(within(panel).queryByTestId('detail-yaml-content')).not.toBeInTheDocument()
+    fireEvent.click(within(panel).getByTestId('recon-technical-evidence-toggle'))
+    expect(await within(panel).findByTestId('detail-yaml-content')).toBeInTheDocument()
   })
 
   it('an orphaned row still shows only Delete in the header, no Check now / Sync', async () => {

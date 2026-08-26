@@ -486,3 +486,52 @@ func TestSyncManagedClusterLabels_NeverEatsPreservedLabels(t *testing.T) {
 		t.Error("the preserved label must survive convergence forever, until it is dropped explicitly")
 	}
 }
+
+// B15. Re-running a takeover against a connection SHARKO ITSELF set up must
+// not write a preserved-labels record, because there was no previous owner to
+// preserve anything from.
+//
+// This is where Sharko's own addon labels used to end up on the hands-off
+// list. On a v3-shaped fleet an addon label is written as the bare addon name
+// ("datadog: enabled"), which is the same shape as a foreign label like
+// "env: prod" — the classifier cannot tell them apart, so it called Sharko's
+// own label the previous owner's. From then on the converger refused to
+// converge it (the preserved-key skip in SyncManagedClusterLabels) and the
+// connection check left it out of the comparison. Git said the addon was on,
+// the cluster said it was off, and the connection page said "synced".
+//
+// The adopted marker is the proof there WAS a previous owner. Sharko stamps it
+// on connections it adopts or takes over and on nothing it creates itself.
+func TestTakeOverClusterSecret_AlreadyOwnedNeverRecordsOnAConnectionSharkoCreated(t *testing.T) {
+	s := brownfieldSecret()
+	s.Labels[LabelManagedBy] = ManagedByValue
+	// Sharko's own v3-shaped addon labels, plus the ordinary fleet metadata
+	// Sharko writes. No adopted marker: Sharko set this connection up.
+	delete(s.Labels, "env")
+	delete(s.Labels, "team")
+	s.Labels["datadog"] = models.LabelEnabled
+	s.Labels["cert-manager"] = models.LabelEnabled
+	m, client := newTakeoverManager(s)
+
+	res, err := m.TakeOverClusterSecret(context.Background(), "prod-eu", true, "2026-08-20T10:00:00Z", legacyKey)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.AlreadyOwned {
+		t.Fatalf("AlreadyOwned = false, want true (res = %+v)", res)
+	}
+	if res.ProtectionRepaired || len(res.PreservedLabels) > 0 {
+		t.Errorf("Sharko's own addon labels were recorded as the previous owner's: %+v", res)
+	}
+
+	after := getSecret(t, client, "prod-eu")
+	if got, ok := after.Annotations[AnnotationTakeoverPreservedLabels]; ok {
+		t.Fatalf("a preserved-labels record was written on a connection Sharko created: %q.\n"+
+			"Anything named there stops being compared and stops being converged, so an addon Git "+
+			"turns on would never reach the cluster and the connection would still read as synced.", got)
+	}
+	// The labels themselves are untouched either way.
+	if after.Labels["datadog"] != models.LabelEnabled || after.Labels["cert-manager"] != models.LabelEnabled {
+		t.Errorf("the addon labels changed: %v", after.Labels)
+	}
+}

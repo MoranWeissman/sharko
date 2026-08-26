@@ -3,7 +3,7 @@
 **Secrets** is the area of the UI where Sharko shows the Secrets it works with. One sidebar item, two subpages, each with its own URL:
 
 - **Cluster connections** (`/secrets/connections`) — Secrets Sharko uses to register clusters with Argo CD. One cluster connection Secret per cluster.
-- **Addon secrets** (`/secrets/addons`) — Secrets Sharko delivers from configured backends to addons on remote clusters. This page also shows leftover ("orphaned") Secrets whose source is gone from git.
+- **Addon secrets** (`/secrets/addons`) — Secrets Sharko delivers from configured backends to addons on remote clusters. This page also shows leftover ("orphaned") Secrets whose source is gone from Git.
 
 Each subpage lists one row per Secret, worst-first, and a row opens its own detail page showing what Sharko compares it against and what it found. Older links to `/secret-sync` and `/secrets` still work — they redirect into the right subpage.
 
@@ -18,7 +18,7 @@ The Secrets area exists to make Sharko's own GitOps behavior legible, row by row
 | **Declarative** | The **Source** column states what a row is checked against — connection rows read `checked against git`, addon-values rows read `checked against <the real backend name>` (AWS Secrets Manager, a Kubernetes Secret, and so on). Opening a row shows the exact file path in Git (for a connection) or the store key/pointer path (for a values secret) — the desired state always has one named, checkable location, never an implied one. |
 | **Versioned** | Every connection row's detail card shows the Git commit it was last checked against — a short hash with the full commit available on hover, next to the file path in the repo. Nothing about what Sharko applied is undocumented history; it's a specific commit you can look up. |
 | **Pulled automatically** | The engine strip at the top of each page states its engine's cadence in plain words ("Sharko re-checks it every 30 seconds, and right after each merge" / "Sharko checks it every 5 minutes and repairs it automatically") and the last time a check actually ran. Nothing is pushed to Sharko — it pulls on its own schedule, and the page says what that schedule is. |
-| **Continuously reconciled** | Sharko treats **drift** and **a failed check** as two different facts, never conflated. A connection row that's out of sync says plainly whether *git moved* (a newer commit changed what the secret should be) or *the cluster moved* (something changed it outside git) — that's drift, a real mismatch Sharko can act on. A row whose `last_check_error` is set is a different fact entirely: the check itself didn't finish, so there's nothing yet to compare. And reconciliation itself is scoped: Sharko only repairs a row that carries its own label (`app.kubernetes.io/managed-by: sharko`) — a secret it created or was handed ownership of. A secret somebody else owns shows as **foreign** and Sharko never touches it, reconcile tick or not. |
+| **Continuously reconciled** | Sharko treats **drift** and **a failed check** as two different facts, never conflated. A connection row that's out of sync says plainly whether *Git moved* (a newer commit changed what the secret should be) or *the cluster moved* (something changed it outside Git) — that's drift, a real mismatch Sharko can act on. A row whose `last_check_error` is set is a different fact entirely: the check itself didn't finish, so there's nothing yet to compare. And reconciliation itself is scoped: Sharko only repairs a row that carries its own label (`app.kubernetes.io/managed-by: sharko`) — a secret it created or was handed ownership of. A secret somebody else owns shows as **foreign** and Sharko never touches it, reconcile tick or not. |
 
 ## Secret delivery tools — you may already have one
 
@@ -49,7 +49,7 @@ What Sharko *does* show — a secret's name, namespace, the commit or store key 
 
 ## Orphaned leftovers
 
-An **orphaned** row is a secret Sharko wrote to a cluster at some point, whose source someone later deleted from git — the addon definition (or cluster registration) that once asked for this secret is gone, but the secret itself is still sitting on the cluster, still carrying Sharko's own labels. Nothing asks for it anymore.
+An **orphaned** row is a secret Sharko wrote to a cluster at some point, whose source someone later deleted from Git — the addon definition (or cluster registration) that once asked for this secret is gone, but the secret itself is still sitting on the cluster, still carrying Sharko's own labels. Nothing asks for it anymore.
 
 Sharko never deletes an orphaned secret on its own. It shows up on the Addon secrets page with its own **Orphaned** status (a violet dot, distinct from every other state on the page) so you know it's there, and it stays there — same as any other row — until you decide what to do with it.
 
@@ -58,7 +58,7 @@ Sharko never deletes an orphaned secret on its own. It shows up on the Addon sec
 Delete carries its own safety gates, checked again at the moment you confirm, not just when the row was last refreshed:
 
 - Only a secret that still carries **Sharko's own ownership label and provenance marker** is eligible — the same labels that make a row show up as Sharko-managed anywhere else on this page.
-- The secret is **re-checked against git right then** — if something in git has started asking for it again since the row last loaded, or if its ownership marker changed, the delete is refused and nothing is touched.
+- The secret is **re-checked against Git right then** — if something in Git has started asking for it again since the row last loaded, or if its ownership marker changed, the delete is refused and nothing is touched.
 - The action is **audited**, the same as every other write Sharko makes.
 
 If a delete is refused, the UI shows the server's plain-English reason — never a raw error — so you know exactly why nothing happened.
@@ -67,7 +67,7 @@ If a delete is refused, the UI shows the server's plain-English reason — never
 
 Nothing in this area will ever delete a live secret out from under you *automatically*, but that protection isn't a special lock these pages add — it's the two protections Sharko already has everywhere, plus the one explicit, human-confirmed exception described above:
 
-1. **The pull request gate.** Every change to what Sharko manages goes through Git as a PR — nothing is removed from a cluster because someone clicked something in the UI without that change first landing in a reviewed commit. (Deleting an orphaned leftover is the one action on this page that doesn't go through this gate, precisely because there's no git file left to open a PR against — that's the whole reason it needs its own confirm dialog and its own re-check at delete time.)
+1. **The pull request gate.** Every change to what Sharko manages goes through Git as a PR — nothing is removed from a cluster because someone clicked something in the UI without that change first landing in a reviewed commit. (Deleting an orphaned leftover is the one action on this page that doesn't go through this gate, precisely because there's no Git file left to open a PR against — that's the whole reason it needs its own confirm dialog and its own re-check at delete time.)
 2. **ArgoCD's `preserveResourcesOnDeletion`.** Sharko's ArgoCD Applications are configured so that removing an addon from Git does not delete the Kubernetes Secrets that addon's values live in — the Secret is orphaned from Sharko's bookkeeping, not deleted from the cluster. This is exactly how an orphaned row comes to exist in the first place.
 
 Both of those are deliberate, existing GitOps behavior — not something bolted onto the Secrets area specifically. These pages just show you the result: a secret that's no longer in Git's plan shows up honestly (as **orphaned**, or **not on the cluster** once Sharko itself stops tracking it), never as a surprise deletion Sharko performed on its own.

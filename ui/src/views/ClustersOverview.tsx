@@ -183,9 +183,19 @@ const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
 // keeps the addon labels on it in sync.
 export type ConnOwnership = 'sharko' | 'user';
 export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
+  // WHAT THIS SAID BEFORE, AND WHY IT CHANGED. It read "Sharko creates the
+  // ArgoCD cluster secret and keeps its credentials up to date." Both halves
+  // are the browser making a promise about what the server does — the
+  // "keeps … up to date" half is a claim of ongoing work this form has no way
+  // to know is happening — and it used the retired word "cluster secret"
+  // where the product now says "connection". The product owner ruled it out
+  // under "zero browser-authored promises about server behaviour".
+  //
+  // A hint under a radio button describes THE CHOICE, which is a fact about
+  // this form and nothing else. That is what it says now.
   sharko: (
     <>
-      Sharko creates the ArgoCD cluster secret and keeps its credentials up to date. The usual choice.
+      Hand this cluster&apos;s connection to Sharko. The usual choice.
     </>
   ),
   user: (
@@ -381,11 +391,13 @@ export function ClustersOverview() {
   const TEST_BUTTON_DISABLED_TOOLTIP =
     'Cluster connectivity test is unavailable: no secrets backend (Vault / AWS Secrets Manager / file-store) is configured on the active connection. Configure one in Settings → Connections to enable.';
 
-  // Admin kill switch for the "Paste a kubeconfig" registration path
-  // (V2-cleanup-89.6). Defaults to true (today's behavior) so the option
-  // stays visible until the setting is confirmed off — matches the
-  // safe-default polarity used server-side.
-  const [allowInlineCredentials, setAllowInlineCredentials] = useState(true);
+  // Legacy escape hatch for the "Paste a kubeconfig" registration path
+  // (V2-cleanup-89.6; default flipped off by the connection-reconciliation
+  // epic, product correction 5). Starts hidden and only appears once the
+  // server confirms the setting is on — matches the fail-closed polarity
+  // used server-side, and the server refuses pasted credentials with a 403
+  // when the setting is off regardless.
+  const [allowInlineCredentials, setAllowInlineCredentials] = useState(false);
 
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
@@ -632,7 +644,8 @@ export function ClustersOverview() {
         }
       })
       .catch(() => {
-        /* keep optimistic default (allowed) */
+        /* keep the fail-closed default (hidden) — the server refuses
+         * pasted credentials anyway when the setting is off */
       });
     return () => {
       cancelled = true;
@@ -2213,7 +2226,7 @@ export function ClustersOverview() {
             </span>
           </h3>
           <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
-            Registering a cluster creates its connection secret in ArgoCD right away — that&apos;s how Sharko tests the connection — while the PR records the cluster in git. If that PR is closed without merging, the secret stays behind with nothing using it. Everything listed here carries Sharko&apos;s own ownership label, is not in git, and has no open PR. Discard removes just this leftover secret.
+            Registering a cluster creates its connection secret in ArgoCD right away — that&apos;s how Sharko tests the connection — while the PR records the cluster in Git. If that PR is closed without merging, the secret stays behind with nothing using it. Everything listed here carries Sharko&apos;s own ownership label, is not in Git, and has no open PR. Discard removes just this leftover secret.
           </p>
           <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-amber-50/40 shadow-sm dark:ring-amber-900/40 dark:bg-gray-800">
             <table className="w-full text-left text-sm">

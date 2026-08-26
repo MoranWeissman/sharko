@@ -14,7 +14,7 @@ import (
 // negotiation, Helm chart values fetch, AI annotate pass).
 //
 // Pre-V124-4 the handler dialled out to ArgoCD + Git first, so an empty `{}`
-// POST returned a confusing 502 (`no active ArgoCD connection: …`) AND
+// POST returned a confusing 502 about the ArgoCD connection AND
 // burned external API quota on every empty / invalid attempt. This is a
 // resource-leak amplification pattern: a single misbehaving operator/script
 // could drain Helm registry + Git provider quota with O(N) zero-payload
@@ -33,7 +33,7 @@ func TestAddAddon_EmptyBody_Returns400_NoUpstreamDialled(t *testing.T) {
 	// connection wired, so a successful "fail-fast on bad body" path will
 	// return 400 BEFORE the upstream resolver is invoked. Conversely, if
 	// validation is skipped, the handler hits GetActiveArgocdClient first
-	// and returns 502 / 503 with `no active ArgoCD connection` body —
+	// and returns 502 / 503 with the no-usable-ArgoCD-connection body —
 	// exactly the BUG-019 symptom. We assert the status AND the body shape.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/addons", bytes.NewReader([]byte("{}")))
 	req.Header.Set("Content-Type", "application/json")
@@ -53,9 +53,21 @@ func TestAddAddon_EmptyBody_Returns400_NoUpstreamDialled(t *testing.T) {
 	// Negative regression guard: the OLD bug returned a 502 with the
 	// upstream error string. A future refactor that re-orders these checks
 	// would surface that string again.
-	if strings.Contains(strings.ToLower(resp["error"]), "no active argocd") ||
-		strings.Contains(strings.ToLower(resp["error"]), "no active git") {
-		t.Errorf("V124-4.3 regression: empty body must NOT report upstream connection errors, got: %q", resp["error"])
+	//
+	// B1 changed the sentence those handlers say. The old prefixes stay in
+	// this list — a revert would bring them back — and the sentences that
+	// replaced them are added, because a tripwire that only names retired
+	// wording stops tripping the moment the wording moves on.
+	lowered := strings.ToLower(resp["error"])
+	for _, upstreamWords := range []string{
+		"no active argocd",
+		"no active git",
+		"sharko has no usable argocd connection",
+		"sharko has no usable git connection",
+	} {
+		if strings.Contains(lowered, upstreamWords) {
+			t.Errorf("V124-4.3 regression: empty body must NOT report upstream connection errors (found %q), got: %q", upstreamWords, resp["error"])
+		}
 	}
 }
 

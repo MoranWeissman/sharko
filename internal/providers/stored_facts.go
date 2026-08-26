@@ -13,10 +13,11 @@ package providers
 // The read-only connection comparison does not want credentials that work. It
 // wants to know what the connection SHOULD look like. And for an EKS cluster it
 // has already decided, in internal/connectioncompare's mode policy, that the
-// credential blob cannot be compared at all: a freshly minted token differs
-// from the live one every time with nothing having drifted. So the comparison
-// was paying for a real credential, and tripping every log line on the minting
-// path, to produce a value it then threw away.
+// credential blob cannot be compared at all: the configured credentials source
+// stores no credential, so there is nothing on the expected side to compare the
+// live one against. So the comparison was paying for a real credential, and
+// tripping every log line on the creation path, to produce a value it then
+// threw away.
 //
 // This file is the fix. StoredConnectionFacts returns only what the backend has
 // STORED — the API address, the CA bundle, and a fixed credential when and only
@@ -38,7 +39,7 @@ type StoredConnectionFacts struct {
 	CAData []byte
 
 	// Token is a FIXED bearer token that was stored in the backend, or empty.
-	// It is never a minted one — see CredentialMintedPerFetch.
+	// It is never one this code created — see CredentialMintedPerFetch.
 	Token string
 
 	// CertData and KeyData are a stored client certificate pair, or empty. Set
@@ -46,15 +47,26 @@ type StoredConnectionFacts struct {
 	CertData []byte
 	KeyData  []byte
 
-	// CredentialMintedPerFetch is true when the stored payload does not contain
-	// a usable credential at all — it contains the metadata needed to CREATE
-	// one, and a new one is created on every fetch. An EKS metadata payload is
-	// the case that matters.
+	// CredentialMintedPerFetch is true when the stored payload contains no
+	// usable credential at all — only the metadata needed to CREATE one. An EKS
+	// metadata payload is the case that matters.
 	//
-	// When this is true, Token / CertData / KeyData are empty on purpose: there
-	// is no stored credential to report, and this reader will not make one.
-	// A caller comparing a connection must treat the credential blob as a field
-	// it cannot honestly compare rather than fetching it some other way.
+	// The name is about GetCredentials, not about this reader. GetCredentials
+	// hands back credentials that WORK, so on such a payload it creates a new
+	// short-lived one every time it is called. That is exactly why a caller
+	// that only wants to know what the connection should look like must come
+	// through here instead: this reader creates nothing, on any branch.
+	//
+	// So when this is true, Token / CertData / KeyData are empty on purpose:
+	// there is no stored credential to report, and none is made up. There is
+	// no credential on the expected side, which means a comparison has nothing
+	// to compare the live credential blob against — it reports that field as
+	// one it did not check, and it does NOT reach for the credential by
+	// another route.
+	//
+	// A WRITE is the other half of the story: repairing such a connection does
+	// create a credential, once, at the moment it writes. A check creates
+	// none.
 	CredentialMintedPerFetch bool
 }
 

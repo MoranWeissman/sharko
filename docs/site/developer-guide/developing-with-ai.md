@@ -2,7 +2,7 @@
 
 Sharko is built with the help of an AI coding agent (Claude Code). This page
 describes how that works in practice, so a new contributor — human or AI —
-can be productive without having to reverse-engineer the setup from git
+can be productive without having to reverse-engineer the setup from Git
 history. None of this is required to contribute: you can open a PR by hand
 like any other open-source project. If you do want to use an AI agent on
 this repo, this is the workflow it follows.
@@ -72,7 +72,7 @@ agent work.
 
 ## Worktree-isolated agent dispatch
 
-Every agent that writes code runs in its own git worktree, on its own
+Every agent that writes code runs in its own Git worktree, on its own
 branch. This means an agent can never accidentally commit to `main`, push
 to a shared branch, or leave the main checkout in a dirty state — it
 physically cannot reach those refs from inside its worktree.
@@ -137,7 +137,7 @@ the repo, not from a private history nobody else can see:
 - **`.claude/checkpoints/`** (gitignored, per-machine) can hold a short
   snapshot written before a context reset — current branch, recent
   commits, what's mid-flight. If `.claude/checkpoints/LATEST.md` exists,
-  read it first; if it doesn't, orient from git history and open PRs
+  read it first; if it doesn't, orient from Git history and open PRs
   instead. Either path gets you to the same place.
 - **`.claude/team/project-manager.md`** tracks sprint/phase status for
   anyone (or anything) picking up work mid-stream.

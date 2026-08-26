@@ -6,9 +6,9 @@
 > V2-cleanup-60.2 implementation; the v2.1.x-reads-v2.2.0-file failure
 > mode itself was verified during the 2026-07-05 post-feature review.
 
-This page covers what can go wrong **across Sharko versions** — upgrading,
-rolling back, and running more than one Sharko instance against the same
-Git repo. Read it before your first upgrade to v2.2.0 or later.
+This page covers what can go wrong **across Sharko versions** when you
+upgrade or roll back. Read it before your first upgrade to v2.2.0 or
+later.
 
 ## Why version transitions need care
 
@@ -55,13 +55,19 @@ to start instead of silently misreading the file. That's a safe failure
 (no empty-list misread, no sweep), but it's still one more reason not to
 roll back to an older binary once you've written anything.
 
-## Rule 2 — multiple instances on one repo upgrade together
+## Rule 2 — one Sharko per Git repo, upgraded in one go
 
-Two Sharko instances sharing one Git repo must run the same major.minor
-line across the v2.1 → v2.2 boundary. A not-yet-upgraded instance reading
-a file written by an upgraded one is exactly the rollback scenario above,
-with the same result. Upgrade all instances in one maintenance window,
-before any of them writes.
+The technical preview runs **one** Sharko. The chart ships
+`replicaCount: 1` and you leave it there, and there is no supported way
+to point a second Sharko at a Git repo another one already writes to —
+see [the preview limits](../technical-preview.md).
+
+That is also what keeps upgrading simple. The danger in Rule 1 is an
+older binary reading a file a newer binary wrote: it reads the file as an
+empty cluster list and sweeps the fleet's ArgoCD cluster secrets away.
+With one Sharko on the repo there is only one binary that can do that, so
+upgrade it in one step, and never let an older Sharko read a repo a newer
+one has already written to.
 
 ## Connectivity check after upgrading (pre-v2.2.0 templates)
 

@@ -285,8 +285,12 @@ export function AuditViewer() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Audit Log</h1>
-          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-            Recent API events and operations across all clusters.
+          {/* Ruling 6 (connection-reconciliation epic): this log lives in
+              memory and does not survive a restart, so the page says what
+              it honestly holds — the same label the connection page's
+              activity feed carries. */}
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="audit-honest-label">
+            Recent activity since Sharko started — API events and operations across all clusters.
           </p>
         </div>
         <div className="flex items-center gap-2">

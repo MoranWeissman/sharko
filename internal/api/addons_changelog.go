@@ -143,7 +143,7 @@ func (s *Server) handleGetAddonChangelog(w http.ResponseWriter, r *http.Request)
 	// Get catalog to resolve chart name and repo URL
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveGitConnectionUnavailable(w, r)
 		return
 	}
 
@@ -166,7 +166,9 @@ func (s *Server) handleGetAddonChangelog(w http.ResponseWriter, r *http.Request)
 	fetcher := helm.NewFetcher()
 	chartVersions, err := fetcher.ListVersions(r.Context(), repoURL, chartName)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("listing chart versions: %v", err))
+		// B13: err is a *url.Error whose text keeps a token written in the
+		// username position. The gate classifies it and says a fixed sentence.
+		writeChartRepoError(w, r, chartRepoListVersions, err)
 		return
 	}
 

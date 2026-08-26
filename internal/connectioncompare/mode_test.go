@@ -33,7 +33,7 @@ func TestClassify_SevenModes(t *testing.T) {
 			wantRepair: RepairScopeFullConnection,
 		},
 		{
-			name: "EKS token -> limited (fresh token every fetch) but full repair",
+			name: "EKS token -> limited (the configured credentials source stores no credential) but full repair",
 			in: ClassifyInput{
 				CredsSource:                  models.CredsSourceEKSToken,
 				BackendCanProvideStoredFacts: true,
@@ -93,10 +93,14 @@ func TestClassify_SevenModes(t *testing.T) {
 				LiveSecretFound:              true,
 				LiveManagedBy:                "some-other-tool",
 			},
-			wantMode:        ModeForeignOwned,
-			wantScope:       ScopeOwnershipConflict,
-			wantRepair:      RepairScopeNone,
-			wantLimitReason: true,
+			wantMode:   ModeForeignOwned,
+			wantScope:  ScopeOwnershipConflict,
+			wantRepair: RepairScopeNone,
+			// NO limit sentence, deliberately. The mode and the scope are the
+			// whole answer; every surface states the ownership boundary once
+			// from those typed facts, and the take-over action carries the
+			// decision. A sentence here would be a third copy of both.
+			wantLimitReason: false,
 		},
 		{
 			name: "empty credsSource -> unknown source, limited, labels-only repair",
@@ -129,7 +133,8 @@ func TestClassify_SevenModes(t *testing.T) {
 				t.Error("LimitReason is empty, want a sentence explaining the narrower scope")
 			}
 			if !tt.wantLimitReason && got.LimitReason != "" {
-				t.Errorf("LimitReason = %q, want empty for a full-scope mode", got.LimitReason)
+				t.Errorf("LimitReason = %q, want empty for this mode — either it is full scope, "+
+					"or the narrower scope is stated from typed facts instead of a sentence", got.LimitReason)
 			}
 		})
 	}
@@ -237,9 +242,10 @@ func TestClassify_UnknownSourceNeverFullNeverFullRepair(t *testing.T) {
 // identifier together.
 //
 // The mode used to be called eks_exec, and that was not true: the writer for
-// this source supplies a minted bearer token, so BuildClusterSecret emits the
-// bearerToken shape, not an execProviderConfig. The name now says what the code
-// actually produces, and the wire value and the Go name agree.
+// this source supplies a bearer token it creates at write time, so
+// BuildClusterSecret emits the bearerToken shape, not an execProviderConfig. The
+// name now says what the code actually produces, and the wire value and the Go
+// name agree.
 func TestClassify_EKSModeIsCalledTokenNotExec(t *testing.T) {
 	if got := string(ModeEKSToken); got != "eks_token" {
 		t.Errorf("the EKS mode's wire value = %q, want %q", got, "eks_token")
@@ -262,12 +268,23 @@ func TestClassify_EKSModeIsCalledTokenNotExec(t *testing.T) {
 // character. The product owner signed off this exact wording; a paraphrase is a
 // change to the product, not a tidy-up.
 //
-// The old sentence ended "Everything else about the connection is checked",
-// which was not true — the annotation set is deliberately empty and the guest
-// rules narrow the label set, so "everything else" was a claim wider than the
-// code. The new one names what was actually checked.
+// Two earlier versions of this sentence were wrong in two different ways, and
+// this test guards against both coming back.
+//
+// The first ended "Everything else about the connection is checked", which was
+// not true — the annotation set is deliberately empty and the guest rules narrow
+// the label set, so "everything else" was a claim wider than the code. That is
+// why the sentence still names what was actually checked.
+//
+// The second explained the missing comparison by saying the sign-in token
+// changes every time it is created. That reading suggested the check creates a
+// token, which it does not: the read-only path stops at the stored payload and
+// creates nothing (proved with a call counter on the token function — a write
+// creates one, exactly once; a check creates none). The product owner replaced
+// that clause on 2026-08-13 with the wording below, and this test was updated in
+// the same commit as the wording, exactly as its own failure message asks.
 func TestClassify_EKSTokenLimitReasonIsExact(t *testing.T) {
-	const want = "Sharko checked the Secret identity, type, server, and owned labels. It did not compare `data.config`, because the EKS sign-in token changes every time it is created."
+	const want = "Sharko checked the Secret identity, type, server, and owned labels. The backend stores EKS cluster details, not a reusable sign-in credential. Sharko therefore has no stored credential to compare with `data.config`."
 
 	p := Classify(ClassifyInput{
 		CredsSource:                  models.CredsSourceEKSToken,
@@ -278,11 +295,19 @@ func TestClassify_EKSTokenLimitReasonIsExact(t *testing.T) {
 	if p.LimitReason != want {
 		t.Errorf("the EKS limit reason was changed.\n got: %q\nwant: %q\n\nThis wording was signed off exactly as it is. If it really needs to change, change it with the product owner and update this test in the same commit.", p.LimitReason, want)
 	}
-	if LimitReasonEKSTokenChangesEveryTime != want {
-		t.Errorf("the constant no longer holds the signed-off sentence: %q", LimitReasonEKSTokenChangesEveryTime)
+	if LimitReasonEKSNoStoredCredential != want {
+		t.Errorf("the constant no longer holds the signed-off sentence: %q", LimitReasonEKSNoStoredCredential)
 	}
 	if strings.Contains(p.LimitReason, "Everything else about the connection is checked") {
 		t.Error("the old, untrue \"everything else\" claim is back")
+	}
+	// The removed framing, banned by idea and not only by exact text. Pinning
+	// the new sentence alone would let the old story back in through a
+	// re-wording of it.
+	for _, banned := range []string{"changes every time", "issued fresh"} {
+		if strings.Contains(p.LimitReason, banned) {
+			t.Errorf("the EKS limit reason says %q again.\n\nThat framing was removed on purpose: it suggests the check creates a sign-in token, and the read-only check creates nothing. Say there is no stored credential to compare with instead.", banned)
+		}
 	}
 }
 

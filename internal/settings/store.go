@@ -164,23 +164,31 @@ func (e *InvalidProbeModeError) Error() string {
 	return fmt.Sprintf("invalid probe_mode %q: must be %q or %q", e.Value, ProbeModeCheckApp, ProbeModeAPITest)
 }
 
-// allow_inline_credentials (V2-cleanup-89.6) — admin-level kill switch for
-// the "Paste a kubeconfig" registration path. Defaults to true (today's
-// behavior, unchanged): inline credential paste stays available for day-1
-// onboarding until an admin explicitly turns it off install-wide.
+// allow_inline_credentials (V2-cleanup-89.6; default flipped by the
+// connection-reconciliation epic, product correction 5, 2026-08-18) — the
+// legacy escape hatch for pasting credentials directly at registration.
+//
+// Defaults to FALSE: a pasted credential's only copy ends up inside the live
+// ArgoCD Secret, where Sharko can never verify it against Git or rebuild it
+// if the Secret is lost. New registrations should point at a supported
+// credentials provider (a Kubernetes Secret or AWS Secrets Manager) instead.
+// An admin may explicitly enable this setting to allow legacy inline
+// credentials install-wide. The default-off switch blocks only NEW inline
+// registrations — existing inline clusters keep working untouched (the
+// read/compare/label paths never consult this setting).
 //
 // Sharko has no user RBAC today — there is a single admin login, so this is
 // necessarily an install-wide switch rather than a per-user permission. When
 // V2.x scoped RBAC lands (see project_attribution_design), this setting is
-// expected to become a per-role permission (e.g. "who may paste inline
-// credentials") instead of a single global bool.
-const defaultAllowInlineCredentials = true
+// expected to become a per-role permission instead of a single global bool.
+const defaultAllowInlineCredentials = false
 
 // GetAllowInlineCredentials returns the persisted allow_inline_credentials
-// value, defaulting to true (inline paste allowed) when the ConfigMap does
-// not exist yet, the key was never set, or the stored value is not a bool
-// (e.g. written by a future Sharko version). The safe default matches
-// today's behavior — installs that never touch this setting see no change.
+// value, defaulting to false (legacy inline credentials refused) when the
+// ConfigMap does not exist yet, the key was never set, or the stored value
+// is not a bool (e.g. written by a future Sharko version). Fail-closed is
+// the safe default here: the switch only gates NEW registrations, so an
+// unreadable value never breaks an existing cluster.
 func (s *Store) GetAllowInlineCredentials(ctx context.Context) (bool, error) {
 	data, err := s.cm.Read(ctx)
 	if err != nil {
@@ -229,8 +237,8 @@ func (s *Store) SetAllowInlineCredentials(ctx context.Context, allow bool) error
 // back to the last successfully-read (or written) value; only before any
 // successful read/write has ever happened, or when s is nil (settings store
 // not wired, e.g. out-of-cluster dev mode), does it fall back to the static
-// default (true, allowed) — matching today's behavior for installs that
-// never touch this setting.
+// default (false, refused — legacy inline credentials are opt-in, product
+// correction 5).
 func (s *Store) IsInlineCredentialsAllowed(ctx context.Context) bool {
 	if s == nil {
 		return defaultAllowInlineCredentials

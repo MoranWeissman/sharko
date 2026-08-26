@@ -33,7 +33,7 @@ At startup and on every refresh interval, Sharko merges both lists (deduplicatin
 
 | Variable | Required | Default | Notes |
 |----------|----------|---------|-------|
-| `SHARKO_CATALOG_URLS` | No | *(unset)* | Comma-separated list of HTTPS URLs pointing at catalog YAML files. Unset or empty = **no env-var sources** (git file or embedded-only mode). |
+| `SHARKO_CATALOG_URLS` | No | *(unset)* | Comma-separated list of HTTPS URLs pointing at catalog YAML files. Unset or empty = **no env-var sources** (Git file or embedded-only mode). |
 | `SHARKO_CATALOG_REFRESH_INTERVAL` | No | `1h` | Go duration (e.g. `30m`, `2h`). Bounded to `[1m, 24h]`. Values outside that range fail at startup. Applies to both env-var and git-file sources. |
 | `SHARKO_CATALOG_URLS_ALLOW_PRIVATE` | No | `false` | Set to `true` only on trusted networks (home-lab, dev) to disable the SSRF guard. **See the warning below.** Applies to both env-var and git-file sources. |
 
@@ -128,7 +128,7 @@ SHARKO_CATALOG_URLS_ALLOW_PRIVATE=true
 Values outside the `[1m, 24h]` range cause a startup error so the
 operator notices the misconfiguration immediately.
 
-## What happens when both env and git file are absent?
+## What happens when both env and Git file are absent?
 
 Sharko logs `no third-party catalogs configured, using embedded only`
 and skips the fetch loop entirely. The embedded curated catalog is the

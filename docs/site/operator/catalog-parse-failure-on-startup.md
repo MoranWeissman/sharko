@@ -121,7 +121,7 @@ kubectl -n <sharko-ns> get pod -l app=sharko -o custom-columns=NAME:.metadata.na
 # If the pod is running, fetch the source-status report:
 curl -sS http://sharko/api/v1/catalog/sources \
   -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.[] | select(.status=="failed") | {url, source_fp, last_error}'
+  | jq '.[] | select(.status=="failed") | {url, status, last_fetched}'
 ```
 
 Case 1 (embedded) → pod is CrashLoopBackoff. Case 2 (third-party) →
@@ -368,12 +368,13 @@ actual `.yaml` file rather than an API endpoint).
 
 ## Prevention
 
-- **Monitoring — embedded catalog load gate.** A V2-3.x follow-up
-  metric `sharko_catalog_embedded_load_success` exposed as a binary
-  gauge would let operators alert on Case 1 immediately. Today, the
-  signal is the pod crash itself; Kubernetes-level monitoring
-  (CrashLoopBackoff) catches it but doesn't identify the catalog as
-  the cause.
+- **Monitoring — embedded catalog load gate.** Sharko does not export
+  this metric today. The alert below is a design sketch for a future
+  release, not something you can deploy now. The sketch: expose
+  `sharko_catalog_embedded_load_success` as a binary gauge so operators
+  could alert on Case 1 immediately. Today, the signal is the pod crash
+  itself; Kubernetes-level monitoring (CrashLoopBackoff) catches it but
+  doesn't identify the catalog as the cause.
 
 - **Gating — CI smoke test on the embedded catalog.** The Sharko CI
   pipeline runs `go test ./internal/catalog/...` which includes a

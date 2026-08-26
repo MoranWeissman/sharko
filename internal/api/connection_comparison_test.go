@@ -277,7 +277,7 @@ func comparisonFixture(t *testing.T, managedYAML string, live *corev1.Secret, va
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        vault,
+		Vault:        staticVault(vault),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour, // never auto-fires: this endpoint reads only
@@ -478,7 +478,7 @@ func TestConnectionComparison_LogsAndErrorsCarryNoSentinel(t *testing.T) {
 			recon := clusterreconciler.New(clusterreconciler.Deps{
 				GitProvider:  func() gitprovider.GitProvider { return gp },
 				ArgoClient:   fake.NewSimpleClientset(live),
-				Vault:        tc.vault,
+				Vault:        staticVault(tc.vault),
 				AuditFn:      func(audit.Entry) {},
 				Namespace:    "argocd",
 				TickInterval: time.Hour,
@@ -784,7 +784,7 @@ func TestConnectionComparison_EKSPath_NeverMintsATokenAndLeaksNothing(t *testing
 	if mint.calls != 0 {
 		t.Fatalf(`the read-only comparison minted %d EKS sign-in token(s); it must mint ZERO.
 
-WHY ZERO: a minted EKS token is a real credential that can sign in as Sharko for as long as it lives. The mode policy has already ruled that an EKS credential blob cannot be compared — a fresh token differs from the live one every time with nothing having drifted — so a token minted here is created and thrown away. All of the risk, none of the use.
+WHY ZERO: a minted EKS token is a real credential that can sign in as Sharko for as long as it lives. The mode policy has already ruled that an EKS credential blob cannot be compared — the stored EKS payload holds cluster metadata, not a credential, so there is nothing on the expected side to compare against — so a token minted here is created and thrown away. All of the risk, none of the use.
 
 If this is above zero, the comparison path now reaches GetCredentials somewhere. Find it and take it out; do not raise the expected count.`, mint.calls)
 	}
@@ -1035,7 +1035,7 @@ func TestConnectionComparison_GitReadFailureIsCheckFailed(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(),
-		Vault:        comparisonFakeVault{},
+		Vault:        staticVault(comparisonFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1223,7 +1223,7 @@ func TestResyncStillBehavesTheSameAfterTheComparisonLanded(t *testing.T) {
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   argoClient,
-		Vault:        comparisonFakeVault{},
+		Vault:        staticVault(comparisonFakeVault{}),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
@@ -1459,7 +1459,7 @@ WHY IT IS NOT COSMETIC: step 3 reads repair_scope off this policy. A full-connec
 	// exempting anything else has to be an argued decision rather than a quiet
 	// widening of this check.
 	if view.Status == "limited" && view.RepairScope == "full_connection" && view.OwnershipMode != "eks_token" {
-		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (its token changes every time) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
+		t.Errorf("%s: a limited answer with ownership_mode %q offered a full_connection repair. A repair that rewrites the whole connection must not be offered off a check that could not read the connection's details at all.\n\nThe one exception is ownership_mode eks_token, which is limited by design (the backend stores EKS cluster details, not a reusable sign-in credential, so there is no stored credential to compare against) while a rewrite from the backend is still the right fix. Every other limited mode got there because Sharko has nothing independent to rewrite from.",
 			where, view.OwnershipMode)
 	}
 }
@@ -1700,4 +1700,338 @@ func TestConnectionComparison_SelfManagedThroughTheEndpoint(t *testing.T) {
 		}
 	}
 	assertNoSentinel(t, "response body", w.Body.String())
+}
+
+// ============================================================================
+// R3-8: Empty-commit gating
+// ============================================================================
+
+// TestComparison_RefusesRepairWhenCommitUnknown proves that when
+// ResolveComparedRevision returns empty (the git provider cannot report a
+// commit), the comparison endpoint reports repair_available=false and
+// repair_scope=none with a safe reason explaining that Sharko cannot name the
+// commit it would be matching. The read-only comparison still runs and reports
+// everything it could check — only the repair offer is withdrawn.
+func TestComparison_RefusesRepairWhenCommitUnknown(t *testing.T) {
+	// Set up a cluster in managed-clusters.yaml with a live Secret that drifted.
+	managedYAML := backendManagedYAML
+	live := driftedOwnedSecret()
+
+	// The git provider reports NO commit (empty headSHA).
+	gp := &comparisonGP{managedYAML: []byte(managedYAML), headSHA: ""}
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   argoClient,
+		Vault:        staticVault(comparisonFakeVault{}),
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Hour,
+		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, comparisonFakeVault{}, nil, nil)
+
+	// Call the comparison endpoint.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters/"+comparisonCluster+"/connection-comparison", nil)
+	req.Header.Set("X-Sharko-User", "operator")
+	req.Header.Set("X-Sharko-Role", "operator")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Assert: the endpoint returned 200 (not an error — the comparison ran).
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// Parse the response.
+	var view struct {
+		Cluster         string `json:"cluster"`
+		Status          string `json:"status"`
+		ComparedCommit  string `json:"compared_commit"`
+		RepairAvailable bool   `json:"repair_available"`
+		RepairScope     string `json:"repair_scope"`
+		LimitReason     string `json:"limit_reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+
+	// Assert: the compared_commit is empty (the git provider couldn't report it).
+	if view.ComparedCommit != "" {
+		t.Errorf("compared_commit = %q, want empty (git provider returned no commit)", view.ComparedCommit)
+	}
+
+	// Assert: repair_available is false.
+	if view.RepairAvailable {
+		t.Error("repair_available = true, want false when the commit is unknown")
+	}
+
+	// Assert: repair_scope is "none".
+	if view.RepairScope != "none" {
+		t.Errorf("repair_scope = %q, want 'none' when repair is not available", view.RepairScope)
+	}
+
+	// Assert: limit_reason explains why the repair offer was withdrawn.
+	if !strings.Contains(view.LimitReason, "cannot tell which commit") {
+		t.Errorf("limit_reason does not explain the empty-commit refusal:\n%s", view.LimitReason)
+	}
+	if !strings.Contains(view.LimitReason, "can name the exact commit") {
+		t.Errorf("limit_reason does not mention the requirement:\n%s", view.LimitReason)
+	}
+
+	// Assert: the comparison still ran (status is not check_failed).
+	if view.Status == "check_failed" {
+		t.Error("status = check_failed, but the comparison should have run and reported what it could check")
+	}
+}
+
+// --- R3-17(a): the WIRE says "none", not an empty string -------------------
+//
+// The core fixed Compare so every exit sets RepairScope explicitly to
+// RepairScopeNone rather than leaving the zero value "". These tests assert the
+// MARSHALLED JSON BODY from the real endpoint, because a struct-level test is
+// exactly what missed this last round: connectioncompare.Result carries a typed
+// RepairScope whose zero value is the empty string, `repair_scope` has no
+// omitempty, and a test reading the struct field sees "" and compares it against
+// RepairScopeNone — which is also "" if you forget the constant has a value. The
+// wire is where a UI and a script actually read this, so the wire is what is
+// pinned.
+
+// TestConnectionComparison_WireSaysRepairScopeNoneWhenAddonLabelsAreUnknown
+// drives the real endpoint into the unknown-addon-labels exit and reads
+// repair_scope out of the raw response body.
+//
+// A v4 cluster whose cluster-addons file cannot be read means Sharko does not
+// know which addons should be on. It cannot call the labels wrong, so the check
+// is check_failed and no repair may be offered — a repair in that state would
+// strip every addon label git "no longer declares".
+func TestConnectionComparison_WireSaysRepairScopeNoneWhenAddonLabelsAreUnknown(t *testing.T) {
+	managedYAML := "clusters:\n- name: " + comparisonCluster + "\n  version: v4\n  credsSource: secret-kubeconfig\n"
+	live := liveConnectionSecret(nil, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"tlsClientConfig":{"insecure":false,"caData":"dGVzdA=="}}`,
+	}, nil)
+
+	gp := &v4GitProviderNoClusterAddons{
+		managedYAML: []byte(managedYAML),
+		headSHA:     "2222222222222222222222222222222222222222",
+	}
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+	}, http.StatusOK)
+	srv, router := reconcileTestServer(t, gp, argo.URL)
+
+	argoClient := fake.NewSimpleClientset(live)
+	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+	recon := clusterreconciler.New(clusterreconciler.Deps{
+		GitProvider:  func() gitprovider.GitProvider { return gp },
+		ArgoClient:   argoClient,
+		Vault:        staticVault(comparisonFakeVault{}),
+		AuditFn:      func(audit.Entry) {},
+		Namespace:    "argocd",
+		TickInterval: time.Hour,
+		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+	})
+	srv.SetClusterReconciler(recon)
+	installCredProvider(srv, comparisonFakeVault{}, nil, nil)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, comparisonReq(comparisonCluster))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	// The RAW body, decoded into a map, so what is asserted is the JSON a caller
+	// receives and not a Go struct field.
+	var body map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding the response body: %v", err)
+	}
+
+	// First: this really is the exit under test. A test that landed somewhere
+	// else and found "none" there would prove nothing about this one.
+	if got := body["status"]; got != "check_failed" {
+		t.Fatalf(`status = %v, want check_failed — this test did not reach the unknown-addon-labels exit, so it proves nothing about it.
+
+body: %s`, got, w.Body.String())
+	}
+
+	scope, present := body["repair_scope"]
+	if !present {
+		t.Fatalf(`the response body has no "repair_scope" key at all.
+
+A caller reading the wire cannot tell "no repair" from "the server forgot to say", and an absent key is what an empty string plus omitempty would produce.
+body: %s`, w.Body.String())
+	}
+	if scope != "none" {
+		t.Errorf(`"repair_scope" on the wire is %q, want "none".
+
+The zero value of the typed RepairScope is the empty string, and repair_scope has no omitempty, so a forgotten assignment reaches a caller as "". A struct-level test compares that "" against RepairScopeNone and passes if the constant's value is not itself checked — which is why this reads the marshalled body.
+body: %s`, scope, w.Body.String())
+	}
+	if avail := body["repair_available"]; avail != false {
+		t.Errorf(`"repair_available" on the wire is %v, want false — a check that did not finish must not advertise a repair.`, avail)
+	}
+}
+
+// TestConnectionComparison_WireNeverSaysRepairScopeEmptyOnAnyReachableExit
+// sweeps every exit this endpoint can be driven into from the outside and asserts
+// the same thing about all of them: repair_scope is present and is never the empty
+// string.
+//
+// A per-exit test proves one exit. This proves the property, so a NEW exit added
+// later that forgets the assignment is caught by a test nobody had to remember to
+// extend.
+func TestConnectionComparison_WireNeverSaysRepairScopeEmptyOnAnyReachableExit(t *testing.T) {
+	const headSHA = "3333333333333333333333333333333333333333"
+
+	ownedLive := func() *corev1.Secret {
+		return liveConnectionSecret(map[string]string{"datadog": "enabled"}, map[string]string{
+			"name":   comparisonCluster,
+			"server": "https://" + comparisonCluster + ".invalid",
+			"config": `{"bearerToken":"whatever"}`,
+		}, nil)
+	}
+
+	cases := []struct {
+		name       string
+		managed    string
+		live       *corev1.Secret
+		readErr    bool
+		wantStatus string
+	}{
+		{
+			name:       "the git read failed",
+			managed:    backendManagedYAML,
+			live:       ownedLive(),
+			readErr:    true,
+			wantStatus: "check_failed",
+		},
+		{
+			name:       "another tool owns the connection",
+			managed:    backendManagedYAML,
+			live:       foreignOwnedLiveSecret(),
+			wantStatus: "ownership_conflict",
+		},
+		{
+			name:       "there is no connection Secret yet",
+			managed:    backendManagedYAML,
+			live:       nil,
+			wantStatus: "missing",
+		},
+		{
+			name:       "the connection matches",
+			managed:    backendManagedYAML,
+			live:       ownedLive(),
+			wantStatus: "", // whatever it is, only repair_scope is under test
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gp := &comparisonGP{managedYAML: []byte(tc.managed), headSHA: headSHA}
+			if tc.readErr {
+				gp.readErr = fmt.Errorf("the git provider is unreachable")
+			}
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": comparisonCluster, "server": "https://" + comparisonCluster + ".invalid"},
+			}, http.StatusOK)
+			srv, router := reconcileTestServer(t, gp, argo.URL)
+
+			var argoClient *fake.Clientset
+			if tc.live != nil {
+				argoClient = fake.NewSimpleClientset(tc.live)
+			} else {
+				argoClient = fake.NewSimpleClientset()
+			}
+			settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
+			recon := clusterreconciler.New(clusterreconciler.Deps{
+				GitProvider:  func() gitprovider.GitProvider { return gp },
+				ArgoClient:   argoClient,
+				Vault:        staticVault(comparisonFakeVault{}),
+				AuditFn:      func(audit.Entry) {},
+				Namespace:    "argocd",
+				TickInterval: time.Hour,
+				SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
+			})
+			srv.SetClusterReconciler(recon)
+			installCredProvider(srv, comparisonFakeVault{}, nil, nil)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, comparisonReq(comparisonCluster))
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+			}
+
+			var body map[string]interface{}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decoding the response body: %v", err)
+			}
+			if tc.wantStatus != "" && body["status"] != tc.wantStatus {
+				t.Fatalf("status = %v, want %s — this case reached a different exit than intended.\nbody: %s",
+					body["status"], tc.wantStatus, w.Body.String())
+			}
+
+			scope, present := body["repair_scope"]
+			if !present {
+				t.Fatalf("the response has no \"repair_scope\" key.\nbody: %s", w.Body.String())
+			}
+			if scope == "" {
+				t.Errorf(`"repair_scope" on the wire is the empty string.
+
+Every exit must say what a repair would be allowed to touch, in words: none, addon_labels_only or full_connection. An empty string is the typed zero value leaking to a caller who cannot tell it from "the server forgot".
+status: %v
+body: %s`, body["status"], w.Body.String())
+			}
+			// And when no repair is offered, the scope must be the word "none".
+			if body["repair_available"] == false && scope != "none" {
+				t.Errorf(`repair_available is false but repair_scope is %q, want "none".`, scope)
+			}
+		})
+	}
+}
+
+// THE ONE EXIT NOT COVERED AT THE WIRE, AND WHY NOT.
+//
+// connectioncompare.Compare has one more exit that sets repair_scope: the
+// expectedSides BUILD FAILURE. It is not reachable through this endpoint, and no
+// fixture here pretends otherwise.
+//
+// It fires only when argosecrets.BuildClusterSecret returns an error, and that
+// happens only when json.MarshalIndent fails on one of the three connection-config
+// structs (certTLSConfig, bearerTokenConfig, execProviderConfig in
+// internal/argosecrets/manager.go). Every field of all three is a string, a bool
+// or a []string of strings — there is no channel, no func, no NaN, no cyclic
+// pointer, nothing json can refuse. A caller cannot put anything into that spec
+// either: this endpoint takes a cluster name and nothing else.
+//
+// So there is no honest way to drive it from the outside. Faking one would mean a
+// test that passes while proving nothing about the real path, which is the exact
+// failure mode this whole round is cleaning up.
+//
+// It is covered where it can be: the core's
+// TestCompare_EveryReturnInCompareSetsRepairScopeExplicitly reads the SOURCE of
+// Compare and fails if any return in it is not preceded by an explicit
+// res.RepairScope assignment, which holds that exit to the contract without
+// needing to reach it. The sweep above covers every exit the endpoint CAN reach —
+// including any new one, since it asserts the property rather than a list.
+
+// foreignOwnedLiveSecret is a connection whose ownership marker names another
+// tool, which is what drives the ownership-conflict exit.
+func foreignOwnedLiveSecret() *corev1.Secret {
+	s := liveConnectionSecret(nil, map[string]string{
+		"name":   comparisonCluster,
+		"server": "https://" + comparisonCluster + ".invalid",
+		"config": `{"bearerToken":"theirs"}`,
+	}, nil)
+	s.Labels[clusterreconciler.LabelManagedBy] = "another-tool"
+	return s
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // maxBundleBytes caps how much we'll read from a sidecar HTTP body.
@@ -200,13 +200,13 @@ func (v *Verifier) verifyBundleBytes(
 	payload []byte,
 	bundleBytes []byte,
 	trustPolicy sources.TrustPolicy,
-	urlForFingerprint string,
+	sourceURL string,
 ) (bool, string, error) {
 	b := &bundle.Bundle{}
 	if err := b.UnmarshalJSON(bundleBytes); err != nil {
 		return false, "", fmt.Errorf("parse bundle: %w", err)
 	}
-	return v.verifyEntity(ctx, b, payload, trustPolicy, urlForFingerprint)
+	return v.verifyEntity(ctx, b, payload, trustPolicy, sourceURL)
 }
 
 // verifyEntity runs the verification primitive against any
@@ -236,17 +236,17 @@ func (v *Verifier) verifyBundleBytes(
 //  8. Match subject against compiled TrustPolicy regexes. No match →
 //     (false, "", nil) (untrusted identity).
 //  9. Match → (true, subject, nil). Log success at INFO with the
-//     subject and the URL fingerprint.
+//     subject and the safe form of the source address.
 func (v *Verifier) verifyEntity(
 	ctx context.Context,
 	entity verify.SignedEntity,
 	payload []byte,
 	trustPolicy sources.TrustPolicy,
-	urlForFingerprint string,
+	sourceURL string,
 ) (bool, string, error) {
 	// Step 1: fail-closed when no identities are configured.
 	if len(trustPolicy.Identities) == 0 {
-		v.logFailure(urlForFingerprint, "no trusted identities configured (fail-closed)")
+		v.logFailure("no trusted identities configured (fail-closed)")
 		return false, "", nil
 	}
 
@@ -295,7 +295,7 @@ func (v *Verifier) verifyEntity(
 	// these are NOT infrastructure errors; they're "this signature
 	// doesn't verify" → (false, "", nil).
 	if _, verr := sev.Verify(entity, policy); verr != nil {
-		v.logFailure(urlForFingerprint, "bundle verification failed: "+verr.Error())
+		v.logFailure("bundle verification failed: " + verr.Error())
 		return false, "", nil
 	}
 
@@ -323,8 +323,8 @@ func (v *Verifier) verifyEntity(
 
 	// Step 8: match against trust policy regexes.
 	if !matchAnyPattern(subject, patterns) {
-		v.logFailure(urlForFingerprint,
-			"signature verified but identity not in trust policy: "+subject)
+		v.logFailure(
+			"signature verified but identity not in trust policy: " + subject)
 		return false, "", nil
 	}
 
@@ -337,7 +337,7 @@ func (v *Verifier) verifyEntity(
 	// (back-compat for callers that construct TrustPolicy directly,
 	// e.g. unit tests).
 	if reason, ok := assertWorkflowRef(cert, trustPolicy.WorkflowRef); !ok {
-		v.logFailure(urlForFingerprint, reason)
+		v.logFailure(reason)
 		return false, "", nil
 	}
 
@@ -345,7 +345,7 @@ func (v *Verifier) verifyEntity(
 	// URL-related, so logging it is fine — it's the operator's whole
 	// point in configuring the trust policy).
 	v.log.Info("catalog signature verified",
-		"source_fp", urlFingerprint(urlForFingerprint),
+		"source", credsafe.PublicSourceLabel(),
 		"identity", subject)
 	return true, subject, nil
 }
@@ -382,24 +382,17 @@ func (v *Verifier) fetchBundle(ctx context.Context, bundleURL string) ([]byte, e
 }
 
 // logFailure emits a WARN log for a verification failure on a bundle
-// the caller actually fetched. Uses the URL fingerprint, never the URL
-// itself (paths may encode auth tokens).
-func (v *Verifier) logFailure(rawURL, reason string) {
+// the caller actually fetched. The `source` field is always the fixed
+// word from credsafe.PublicSourceLabel — a catalog source address (and
+// the sidecar addresses derived from it) may carry a token in its own
+// path, so the address is sensitive by type and never appears here in
+// any form: not raw, and nothing derived from it either (no hash, no
+// length, no partial). The function does not even take the address —
+// there is nothing it would be allowed to do with it.
+func (v *Verifier) logFailure(reason string) {
 	v.log.Warn("catalog signature verification failed",
-		"source_fp", urlFingerprint(rawURL),
+		"source", credsafe.PublicSourceLabel(),
 		"reason", reason)
-}
-
-// urlFingerprint returns a 10-char SHA-256 prefix of the URL — same
-// convention as internal/catalog/sources/fetcher.go's urlFingerprint
-// helper. Kept local rather than re-exported from sources to preserve
-// the one-way dependency direction.
-func urlFingerprint(u string) string {
-	if u == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(u))
-	return hex.EncodeToString(sum[:])[:10]
 }
 
 // compileIdentityPatterns turns each TrustPolicy.Identities entry into

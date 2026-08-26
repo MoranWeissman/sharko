@@ -25,18 +25,77 @@ Sharko applies rate limiting to both authentication endpoints and admin write en
 | Auth endpoints (`/api/v1/auth/*`) | Per-IP burst limit |
 | Write endpoints (admin POST/DELETE/PATCH) | 30 requests/minute per IP |
 
-Rate limiting relies on the client's real IP address, which requires correct **trusted proxy** configuration.
+Rate limiting counts requests per client address. Which address that is depends on **trusted proxy** configuration.
 
-If Sharko is behind a reverse proxy or ingress controller, set the `SHARKO_TRUSTED_PROXIES` environment variable to the proxy's IP CIDR or `"*"` to trust all proxies (only safe in controlled environments):
+If Sharko sits behind a reverse proxy or ingress controller, list that proxy's own address in `SHARKO_TRUSTED_PROXIES`. Several entries are separated by commas:
 
 ```yaml
 extraEnv:
   - name: SHARKO_TRUSTED_PROXIES
-    value: "10.0.0.0/8"
+    value: "192.0.2.10,2001:db8::10"
 ```
 
+The chart has no value of its own for this. It goes in through the generic `extraEnv` list above, which is the only way to set it.
+
+**Those two addresses are placeholders. Replace them.** `192.0.2.10` and
+`2001:db8::10` come out of ranges the internet standards reserve for
+writing examples, so no real machine anywhere has them. That is why they
+are here: copy this block unchanged and you trust nothing, which is safe.
+Put in the addresses your own ingress or reverse proxy actually answers on
+— the ones you would see as the source if you looked at a connection
+arriving at Sharko's port.
+
+!!! danger "Upgrading? If you have `SHARKO_TRUSTED_PROXIES=*`, Sharko will not start"
+    Older versions of this page told you that you could write `"*"` here
+    to trust every proxy, and called it safe in a controlled environment.
+    **It was never safe, and it now stops the server.**
+
+    What you will see: Sharko exits during startup instead of serving. The
+    pod log ends with
+
+    ```
+    SHARKO_TRUSTED_PROXIES: entry 1 trusts every address; list each proxy address or CIDR range explicitly
+    ```
+
+    and the pod goes into `CrashLoopBackOff`. No request is ever answered.
+
+    What it means: `*` told Sharko to believe a forwarding header from
+    **anybody** who could reach its port. Anyone who could open a
+    connection could then claim to be a different client on every request
+    and never hit the login rate limit. Sharko now refuses to run with a
+    setting it cannot enforce, rather than run and pretend.
+
+    What to put there instead: the addresses your ingress or reverse proxy
+    answers on, exactly as in the block above. If you are not behind a
+    proxy at all, delete the setting — leaving it out trusts no proxy,
+    which is the right answer and needs no configuration. `0.0.0.0/0` and
+    `::/0` are refused for the same reason as `*`; there is no spelling of
+    "trust everyone" that Sharko will accept.
+
+### Write the proxy's address, not the range it happens to sit in
+
+This setting accepts CIDR ranges as well as single addresses, and a broad private range is the wrong thing to put in it.
+
+In an ordinary Kubernetes cluster every pod gets an address out of the same private range. A value like `10.0.0.0/8` therefore does not name your ingress controller — it names **every pod on the cluster**. Anything running there, including a compromised addon or another team's workload, can reach Sharko's port directly, set its own `X-Forwarded-For`, and hand out a different address on every request. Sharko would believe each one, count each as a separate caller, and never refuse any of them. That is the login rate limit gone, and it is gone for the one caller you would most want it to stop.
+
+So write the addresses your proxy actually answers on. Use a range only when you genuinely run several proxies inside it **and** nothing else on the network can reach Sharko's port — a dedicated ingress subnet, not the pod network.
+
+The rules Sharko follows:
+
+- Sharko starts from the address of whoever actually opened the connection. It never starts from a header.
+- If that address is **not** on the list, `X-Forwarded-For` and `X-Real-IP` are ignored completely, and the caller is counted by the address it really came from.
+- If it **is** on the list, Sharko reads the forwarded chain from your proxy inward and takes the first address that is not itself a listed proxy. The leftmost value in the header is never trusted just because it is there.
+- `X-Real-IP` is read only when there is no `X-Forwarded-For` header at all, and then the **last** one wins — the same right-to-left rule as the chain. A request that carries `X-Forwarded-For` is answered from the chain and nothing else, even when the chain names no outside caller. That stops a caller behind your proxies from sending a chain of your own proxy addresses and then naming itself in the simpler header.
+- Leaving the setting empty trusts no proxy at all. There is no wildcard, and loopback, private and Kubernetes ranges get no automatic trust — the list is exactly what you write.
+- A value that is not an address or CIDR range stops the server at startup rather than starting with a setting that cannot be enforced. So does any value that would trust every address — `*`, `0.0.0.0/0` and `::/0` are all refused by name, because trusting everyone is the exact hole this setting closes. An older version of this page told you to use `"*"`; if you copied it, change it to your proxy's real address or range before you upgrade, or the server will not start.
+
+The same resolved address is used for rate limiting and for the client address recorded in security log lines, so the two can never disagree. Note that the **audit log records no client address at all** — a refused request does not leave an audit entry naming the caller.
+
 !!! warning
-    Without a trusted proxy configuration, the rate limiter sees the proxy's IP instead of the real client IP, which means a single attacker could exhaust the rate limit for all users.
+    List only proxies you control. A proxy you list is one you trust to overwrite whatever forwarding header its own client sent; if it passes the client's header through untouched, that client is choosing its own address again.
+
+!!! tip
+    Put an ingress in front of Sharko and terminate TLS there as well. That is worth doing on its own, but it is defense in depth — it does not replace setting `SHARKO_TRUSTED_PROXIES`, and Sharko will not believe an ingress it has not been told about.
 
 ## Authentication
 
@@ -190,6 +249,77 @@ securityContext:
 
 This is compliant with the Kubernetes **Restricted** Pod Security Standard. No privileged containers, no root access, no capability escalation.
 
+## ArgoCD's own permissions
+
+Everything under [RBAC](#rbac) below is *Kubernetes* permissions. ArgoCD keeps
+a separate set of its own, in the `argocd-rbac-cm` ConfigMap, and **installing
+Sharko does not change them.** The chart ships no job, no install hook and no
+template that edits that ConfigMap. Sharko talks to ArgoCD as the account whose
+token you configured, and what that account may do is settled by you inside
+ArgoCD.
+
+An earlier version of the chart did edit `argocd-rbac-cm` from an install hook,
+granting itself a role. It has been removed rather than documented: an
+installer for one product narrowing another product's shared policy is fragile
+whichever way it is written, and this preview is not the place for it.
+
+### What Sharko needs from ArgoCD
+
+Reading, mostly. Applications, AppProjects and clusters — without those the
+dashboard and the cluster list have nothing in them. Registering a cluster and
+first-run setup also write: they add a cluster, an AppProject, a repository
+connection and the bootstrap Application.
+
+Sharko does **not** need permission to sync applications for addons to be
+deployed. Sharko writes to your Git repository and opens a pull request; when
+it merges, ArgoCD notices and applies it on its own schedule. Git holds the
+desired state and ArgoCD enforces it — that path does not pass through Sharko
+at all, so an account with no sync permission still runs a complete fleet.
+
+### Letting Sharko restart a sync
+
+One feature asks ArgoCD to sync an application directly: **Restart sync** on an
+addon, and the same recovery Sharko runs by itself after one of its pull
+requests merges. It exists for a single stuck situation — an ArgoCD operation
+that started before your change and keeps failing — and it saves a trip to the
+ArgoCD UI. It is not how addons get deployed.
+
+It is unavailable unless you grant it. Sharko asks ArgoCD whether it is allowed
+before it touches anything; when the answer is no, the action returns a message
+saying so, nothing is terminated, nothing is retried, and nothing is recorded
+as having worked.
+
+To grant it, an ArgoCD administrator adds the following to `argocd-rbac-cm`,
+replacing `sharko` with the ArgoCD account whose token Sharko uses:
+
+```yaml
+data:
+  policy.csv: |
+    p, role:sharko-sync, applications, sync, sharko-addons/*, allow
+    g, sharko, role:sharko-sync
+```
+
+`sharko-addons` is the AppProject the Sharko engine chart creates for the addon
+Applications it generates — `project.name` in
+`charts/sharko-engine/values.yaml`. If you changed that name, use yours. The
+`*` after it means every Application in that project and nothing outside it, so
+this grants sync on Sharko's own addons and on nothing else in your ArgoCD.
+
+The same permission also covers cancelling a running operation, which is the
+first half of what Restart sync does. There is no separate verb for it.
+
+**Do not write `applications, sync, */*`.** That is sync on every Application
+in every project, including everything that has nothing to do with Sharko. It
+is what the removed install hook used to grant itself, and it is the reason the
+hook was removed rather than kept.
+
+**Repositories still on the older layout.** A repository on the v3 layout gets
+one AppProject per addon, each named after its addon, with no shared name to
+match on. There is no narrow policy that covers that shape — the only pattern
+wide enough is one that is wide enough for everything else too. On a v3
+repository, do not grant this: use the ArgoCD UI for the stuck-sync case
+instead.
+
 ## RBAC
 
 Sharko's default install grants **no cluster-wide access to Secrets**. As of
@@ -212,9 +342,19 @@ rbac:
 | Object | Scope | What it's for |
 |---|---|---|
 | `ClusterRole` (`sharko`) | cluster-wide | `get/list/watch` on ArgoCD CRDs (Applications, AppProjects, ApplicationSets) — read-only, no write access to the Kubernetes API. Also `get/list` on Nodes if `config.nodeAccess: true` (default). **No Secrets rule.** |
-| `Role` (`sharko-argocd-secrets`), in `rbac.argocdNamespace` | one namespace | Full CRUD on Secrets in the ArgoCD namespace — this is where Sharko reads and writes the ArgoCD cluster-connection Secrets (`internal/argosecrets`, `internal/clusterreconciler`). |
-| `Role` (`sharko-secrets-provider`), one per namespace in `k8sSecretsProviderNamespaces` (the release namespace is always included) | one namespace each | `get/list` on Secrets — read-only, for the **k8s-secrets** cluster-credential provider and/or the **k8s-secrets** addon-secret provider (`internal/providers/k8s_secrets.go`), when either is configured to use that backend. |
-| `Role` (`sharko-auth`), in the release namespace | one namespace, name-scoped | Sharko's own operational Secrets (auth store, connections, API tokens) — restricted to specific `resourceNames`, not a blanket read/list. |
+| `Role` (`sharko-argocd-secrets`), in `rbac.argocdNamespace` | one namespace | Full CRUD on **every** Secret in the ArgoCD namespace, not only the ones Sharko created — this is where Sharko reads and writes the ArgoCD cluster-connection Secrets (`internal/argosecrets`, `internal/clusterreconciler`). |
+| `Role` (`sharko-secrets-provider`), one per namespace in `k8sSecretsProviderNamespaces` (the release namespace is always included, whether or not you list it) | one namespace each | `get/list` on **every** Secret in that namespace — there is no `resourceNames` restriction, so this is not limited to the Secrets Sharko manages. It exists for the **k8s-secrets** cluster-credential provider and/or the **k8s-secrets** addon-secret provider (`internal/providers/k8s_secrets.go`), but it is granted even when neither is configured. |
+| `Role` (`sharko-auth`), in the release namespace | one namespace, mostly name-scoped | **Write** access to Sharko's own operational Secrets (auth store, connections, API tokens), restricted to specific `resourceNames`. Two rules in it are not name-scoped: `create` on Secrets (Kubernetes cannot scope `create` by name) and `get/list/create/update/delete` on ConfigMaps. |
+
+**Read this row twice if you install Sharko into a shared namespace.**
+Because the release namespace is always in the `sharko-secrets-provider`
+list, Sharko can `get` and `list` every Secret in the namespace it runs in
+— not just its own. Kubernetes documents `list` on Secrets as exposing
+their contents, not only their names. So anything else parked in that
+namespace is readable by Sharko, and by anyone who takes over the Sharko
+pod. Give Sharko a namespace of its own and keep nothing else in it, and
+keep unrelated Secrets out of every namespace you add to
+`rbac.k8sSecretsProviderNamespaces`.
 
 If you use the **k8s-secrets** backend for `connection.provider` or
 `connection.addonSecretProvider` and leave its `namespace` field empty, the
@@ -270,6 +410,100 @@ post its stored secrets to any address the caller cares to name. All four
 connectivity tests (`/connections/test`, `/connections/test-credentials`,
 `/providers/test`, `/providers/test-config`) also require `operator` — they
 reach out with real credentials, which is not a read.
+
+## Catalog repository addresses carry no credentials
+
+A catalog entry names the Helm repository its chart comes from. That address is
+written into a YAML file and committed to your Git repository, which makes it
+the one place in Sharko where an address is *stored durably and replicated*.
+Git keeps history: a token in a commit is in every clone, fork, CI cache and
+backup, and a later edit does not remove it.
+
+So Sharko refuses to save an address that has anywhere in it for a credential
+to sit. The rule, in the words an operator sees:
+
+> Catalog repository URLs in the technical preview must be ones Sharko can
+> read in full: a host, an optional port, and an optional path. User
+> information in the address, a query string, and a fragment are all refused,
+> and so is an address Sharko cannot read. Use a credential-free base URL.
+
+### The shapes that are refused
+
+| Shape | Example | Why |
+|---|---|---|
+| User information, with a password | `https://user:pw@charts.example/org/charts` | The classic place a token goes. |
+| User information, no password | `https://a-token@charts.example/org/charts` | A token in the username slot. `url.Redacted()` does not hide this — which is why Sharko does not use it. |
+| A query string | `https://charts.example/org/charts?access_token=…` | A token as a parameter. |
+| A fragment | `https://charts.example/org/charts#…` | Same. |
+| Any query string at all | `https://charts.example/org/charts?ref=main` | **Refused on purpose.** See below. |
+| An empty forced query | `https://charts.example/org/charts?` | Same. |
+| An address Sharko cannot read | `https://charts.example:notaport/org/charts` | **Refused on purpose.** If Sharko cannot read the address it cannot tell what is in it, and "I could not tell" is not a yes. |
+
+The last three carry nothing secret. The two query ones are refused because the
+check is about the *shape* of the address and never about whether the text in
+it looks like a secret. A check that reads the text stops working the first
+time somebody writes a credential in a shape nobody predicted, and it fails
+silently. A check on the shape cannot. The cost is a refused `?ref=main`; take
+the query string off the address and it is accepted.
+
+Because the check cannot know whether a credential is really there, the message
+states the rule and never claims Sharko found one.
+
+### The shapes that are accepted
+
+A scheme is optional, and an `@` inside the path is not user information. All
+of these are accepted:
+
+| Shape | Example |
+|---|---|
+| An ordinary address | `https://charts.example/org/charts` |
+| No scheme | `charts.example/org/charts` |
+| A host and a port | `localhost:8080` |
+| An `@` in the path | `https://charts.example/org/charts@v1` |
+
+### Where it is applied
+
+The same one rule is asked at every point that matters, and nothing holds a
+copy of it:
+
+- the API doors that add or edit a catalog entry, and the paste-a-URL
+  validator, so you are told while you are still typing;
+- the CLI's `add-addon`;
+- the two functions every catalog file write in Sharko funnels through, so a
+  new caller cannot get around the doors;
+- the migration from the older repository layout to the current one;
+- the one place Sharko dials a chart repository, so a refused address is never
+  contacted even if it is already in a file.
+
+### If your repository already has one
+
+Sharko keeps running. The catalog file still loads and every other addon still
+works. The one entry comes back marked unusable with the file and field named
+— never the address, never part of it, never its length. Sharko will not
+deploy that addon, will not reach out using the address, and will not put the
+address in any answer or log line.
+
+Every write to the catalog file is refused while that entry is there, because
+writing the file again would put the credential into a fresh commit. Sharko
+will not quietly strip the address and will not quietly drop the entry —
+either would be Sharko editing your repository behind your back.
+
+**Fixing it takes three steps, and the first one is the important one:**
+
+1. **Revoke or rotate that credential** at whatever issued it. The token is in
+   your Git history, so it is in every clone, fork, build cache and backup.
+   Treat it as public.
+2. **Remove it from the history**, not just from the current file — for
+   example with `git filter-repo`. Editing the file leaves the token one
+   `git log -p` away.
+3. **Put a credential-free address in the entry** and commit that.
+
+### Private chart repositories
+
+There is no supported way to use a chart repository that needs a sign-in in
+this preview. Naming a Kubernetes Secret or an AWS Secrets Manager entry from
+the catalog entry — the same value-or-pointer shape the cluster credentials
+use — is the right answer and is work for after the preview.
 
 ## Network Policy
 
@@ -455,16 +689,27 @@ before relying on it in production.
 
 ## Webhook Security
 
-`POST /api/v1/webhooks/git` accepts push events from your Git provider to trigger secrets reconciliation. Protect this endpoint with HMAC-SHA256 signature verification:
+`POST /api/v1/webhooks/git` accepts push events from your Git provider so
+Sharko notices a change sooner. It is the one route that takes no login and no
+API token, so a shared secret is the only thing in front of it.
+
+**It ships closed.** `secrets.webhookSecret` is empty by default, and while it
+is empty Sharko refuses every call to this endpoint. There is no setting that
+turns the signature check off and leaves the endpoint answering — an empty
+value closes the door rather than opening it.
+
+To switch it on:
 
 1. Generate a random secret: `openssl rand -hex 32`
-2. Configure it in Sharko: `secrets.webhookSecret: "<secret>"` (or `SHARKO_WEBHOOK_SECRET` env var)
-3. Configure the same secret in your Git provider's webhook settings
+2. Set it in Sharko: `secrets.webhookSecret: "<secret>"` (or the `SHARKO_WEBHOOK_SECRET` env var)
+3. Set the same secret in your Git provider's webhook settings
 
-Sharko verifies the `X-Hub-Signature-256` header. Requests without a valid signature return `401 Unauthorized`.
+Sharko then checks the `X-Hub-Signature-256` header on every call. Anything
+that does not match is refused with `401 Unauthorized`.
 
-!!! warning
-    If `SHARKO_WEBHOOK_SECRET` is empty, HMAC verification is skipped. Always set a webhook secret in production.
+Every refusal reads the same, whether no secret is set, no signature arrived,
+or a signature did not match. That is deliberate: it means nobody can use the
+endpoint to find out how your server is configured.
 
 ## Secrets Provider Security Model
 
@@ -484,8 +729,8 @@ This means the blast radius of a Sharko compromise is limited to the window betw
 - Enable **RBAC audit logging** in your cluster to track Sharko's API calls
 - Rotate GitHub PATs and ArgoCD tokens periodically via the Settings UI
 - Do not set `SHARKO_DEV_MODE=true` in production — it allows credential fallback via environment variables
-- Set `SHARKO_WEBHOOK_SECRET` when exposing the webhook endpoint to the internet
-- **Turn off `allow_inline_credentials` in production** (Settings → same section as Connectivity Probe, default `true`). This closes the one registration path where sensitive kubeconfig bytes travel inside the request itself — with it off, registration only accepts a pointer to an already-stored secret, an EKS token mint, or no credentials at all, enforcing GitOps-clean secret-store pointers for every cluster. Every other registration path (and enabling addons) is unaffected. Once scoped RBAC ships (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than one server-wide switch — until then, it's all-or-nothing for every admin.
+- Set `SHARKO_WEBHOOK_SECRET` before you expect the webhook endpoint to do anything — until it is set, Sharko refuses every call to it
+- **Leave "Allow legacy inline credentials" off** (`allow_inline_credentials`, Settings → same section as Connectivity Probe, default **false**). With the default in place, registration only accepts a pointer to an already-stored secret, an EKS token mint, or no credentials at all — GitOps-clean secret-store pointers for every cluster, and no path where sensitive kubeconfig bytes travel inside the request itself. Enabling the setting is the legacy escape hatch for installs that still depend on pasted registrations; know what it costs: a pasted credential exists only in the live ArgoCD cluster Secret and **cannot be recovered from Git** if that Secret is lost. To move existing pasted connections onto a supported provider, follow [Migrating Off Pasted (Inline) Credentials](migrate-inline-credentials.md). Once scoped RBAC ships (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than one server-wide switch — until then, it's all-or-nothing for every admin. Note that the switch only exists where a settings store does, which means in-cluster: run Sharko out of cluster and pasted registration is refused with no way to enable it, which is the correct fail-closed behaviour and is spelled out in [Connections → Allow legacy inline credentials](../user-guide/connections.md#allow-legacy-inline-credentials).
 
 ## Tiered Git Attribution (v1.20+)
 

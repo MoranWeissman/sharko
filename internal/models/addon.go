@@ -1,6 +1,10 @@
 package models
 
-import "github.com/invopop/jsonschema"
+import (
+	"github.com/invopop/jsonschema"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+)
 
 // AddonSecretRef describes a Kubernetes Secret that an addon needs on remote clusters.
 // Keys maps the secret data key (as it will appear in the K8s Secret) to the
@@ -268,4 +272,124 @@ type VersionMatrixRow struct {
 type VersionMatrixResponse struct {
 	Clusters []string           `json:"clusters"` // Column headers (cluster names)
 	Addons   []VersionMatrixRow `json:"addons"`   // Rows
+}
+
+// --- B11: the response copy of a catalog entry ------------------------------
+//
+// AddonCatalogEntry above carries BOTH json and yaml tags, because it is the
+// shape of the file on disk: Sharko reads addons-catalog.yaml into it, mutates
+// one field, and writes the whole thing back out (internal/gitops
+// AddCatalogEntry / UpdateCatalogEntry / UpdateCatalogVersion, and
+// internal/orchestrator addon_configure.go, all via
+// config.ParseAddonsCatalog + config.MarshalAddonCatalog).
+//
+// RepoURL on that struct is routinely written with the credential inside it:
+//
+//	https://x-access-token:<token>@github.example/org/charts
+//
+// and GET /api/v1/addons/list used to marshal the parsed entries straight onto
+// the response, token and all.
+//
+// Stripping the credential on the struct itself would have been a DATA-LOSS
+// bug, not a fix: the very next catalog write would have marshalled the
+// stripped value back over the operator's file and thrown their password away.
+// The same value is also what internal/helm dials to fetch the chart index, so
+// a stripped copy in the parse path would break every version lookup too.
+//
+// So the response gets its OWN type. AddonCatalogEntryView has json tags only —
+// nothing marshals it to yaml, nothing writes it to git, and the compiler is
+// what keeps the two apart. This is the same asymmetry AddonCatalogItem
+// already has against this struct, made explicit for the raw-entry endpoint.
+//
+// The json tags are byte-for-byte the ones AddonCatalogEntry emitted, so the
+// wire shape of /addons/list does not move — only the credential leaves.
+
+// AddonSourceView is the response copy of AddonSource. Same reason, same
+// shape: an additional source carries its own repository address, and
+// AddonSource is a json+yaml on-disk type that round-trips through the
+// catalog file.
+type AddonSourceView struct {
+	RepoURL    string            `json:"repoURL,omitempty"`
+	Path       string            `json:"path,omitempty"`
+	Chart      string            `json:"chart,omitempty"`
+	Version    string            `json:"version,omitempty"`
+	Parameters map[string]string `json:"parameters,omitempty"`
+	ValueFiles []string          `json:"valueFiles,omitempty"`
+}
+
+// AddonCatalogEntryView is the read-only copy of AddonCatalogEntry that goes
+// out on a response. Every field is carried across unchanged except the two
+// repository addresses, which go through internal/credsafe.
+type AddonCatalogEntryView struct {
+	Name      string `json:"name"`
+	RepoURL   string `json:"repoURL"`
+	Chart     string `json:"chart"`
+	Version   string `json:"version"`
+	Namespace string `json:"namespace,omitempty"`
+
+	SelfHeal    *bool    `json:"selfHeal,omitempty"`
+	SyncOptions []string `json:"syncOptions,omitempty"`
+
+	AdditionalSources []AddonSourceView `json:"additionalSources,omitempty"`
+
+	IgnoreDifferences []map[string]interface{} `json:"ignoreDifferences,omitempty"`
+
+	ExtraHelmValues map[string]string `json:"extraHelmValues,omitempty"`
+
+	Secrets []AddonSecretRef `json:"secrets,omitempty"`
+}
+
+// NewAddonCatalogEntryView builds the response copy of one catalog entry.
+//
+// It never touches the entry it was handed: the caller keeps the raw value for
+// everything that has to fetch from it or write it back.
+func NewAddonCatalogEntryView(e AddonCatalogEntry) AddonCatalogEntryView {
+	v := AddonCatalogEntryView{
+		Name:              e.Name,
+		RepoURL:           credsafe.SafeRepoURL(e.RepoURL),
+		Chart:             e.Chart,
+		Version:           e.Version,
+		Namespace:         e.Namespace,
+		SelfHeal:          e.SelfHeal,
+		SyncOptions:       append([]string(nil), e.SyncOptions...),
+		IgnoreDifferences: append([]map[string]interface{}(nil), e.IgnoreDifferences...),
+		Secrets:           append([]AddonSecretRef(nil), e.Secrets...),
+	}
+	if len(e.ExtraHelmValues) > 0 {
+		v.ExtraHelmValues = make(map[string]string, len(e.ExtraHelmValues))
+		for k, val := range e.ExtraHelmValues {
+			v.ExtraHelmValues[k] = val
+		}
+	}
+	for _, s := range e.AdditionalSources {
+		v.AdditionalSources = append(v.AdditionalSources, NewAddonSourceView(s))
+	}
+	return v
+}
+
+// NewAddonSourceView builds the response copy of one additional source.
+func NewAddonSourceView(s AddonSource) AddonSourceView {
+	out := AddonSourceView{
+		RepoURL:    credsafe.SafeRepoURL(s.RepoURL),
+		Path:       s.Path,
+		Chart:      s.Chart,
+		Version:    s.Version,
+		ValueFiles: append([]string(nil), s.ValueFiles...),
+	}
+	if len(s.Parameters) > 0 {
+		out.Parameters = make(map[string]string, len(s.Parameters))
+		for k, v := range s.Parameters {
+			out.Parameters[k] = v
+		}
+	}
+	return out
+}
+
+// NewAddonCatalogEntryViews is the slice form, for a list endpoint.
+func NewAddonCatalogEntryViews(entries []AddonCatalogEntry) []AddonCatalogEntryView {
+	out := make([]AddonCatalogEntryView, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, NewAddonCatalogEntryView(e))
+	}
+	return out
 }

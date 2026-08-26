@@ -370,9 +370,12 @@ func alreadyAnnotated(lines []string, i int, desc string) bool {
 
 // recordAnnotate updates the Prometheus metrics for the AI annotate
 // pass. `outcome` is one of: "ok", "not_configured", "empty_input",
-// "oversize", "secret_blocked", "timeout", "llm_error", "parse_error",
-// "opted_out". `latency` is the wall-clock time from AnnotateValues
-// entry to return.
+// "oversize", "secret_blocked", "timeout", "llm_error", "parse_error" —
+// and that is the WHOLE set, because this function is the only writer of
+// sharko_ai_annotate_total and every call site above is in this file.
+// "opted_out" used to be listed here and in the metric's own Help string;
+// nothing has ever passed it. `latency` is the wall-clock time from
+// AnnotateValues entry to return.
 func recordAnnotate(outcome string, latency time.Duration) {
 	metrics.AIAnnotateTotal.WithLabelValues(outcome).Inc()
 	metrics.AIAnnotateLatencySeconds.WithLabelValues(outcome).Observe(latency.Seconds())

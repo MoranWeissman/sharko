@@ -208,7 +208,7 @@ SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
 AWS_REGION=$(kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AWS_REGION")].value}')
 PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER_PREFIX")].value}')
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_PREFIX")].value}')
 
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   aws --region "$AWS_REGION" secretsmanager get-secret-value \
@@ -512,10 +512,11 @@ the cluster's mode).
 
 ## Prevention
 
-- **Monitoring — per-cluster STS mint failure counter.** A V2-3.x
-  follow-up metric
+- **Monitoring — per-cluster STS mint failure counter.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch:
   `sharko_provider_eks_token_errors_total{cluster, stage}` with stages
-  `config_load` / `presign` / `assume_role` would surface this failure
+  `config_load` / `presign` / `assume_role`, surfacing this failure
   without any triage work. The stage label would be the same `step`
   value the log line already carries. Note the label set deliberately
   has no `reason` dimension taken from the AWS error: a metric label

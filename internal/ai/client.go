@@ -8,7 +8,27 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
+
+// # Addresses in errors (BF12)
+//
+// Every call in this file and in agent.go builds a request and then sends it,
+// and BOTH steps hand back a *url.Error when they fail. That type prints the
+// whole address it was given: on the send it masks the password half of any
+// user information, and on the build it masks nothing at all.
+//
+// Two of the addresses are operator-supplied — the Ollama URL and the custom
+// OpenAI base URL, both editable from the AI settings page — and an operator
+// can perfectly well write a key into one. The errors from here are not kept
+// inside the process either: POST /ai/test-config and POST /ai/test put the
+// error's own text straight into their JSON reply.
+//
+// So no request-building or transport error is wrapped or quoted anywhere in
+// these two files. Sharko names the call in its own words and asks
+// credsafe.PlainFailureReason why it failed; that function is built from error
+// types and sentinels and never reads a message.
 
 // Provider identifies which AI backend to use.
 type Provider string
@@ -158,13 +178,16 @@ func (c *Client) ollamaSummarize(ctx context.Context, prompt string) (string, er
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return "", fmt.Errorf("the ollama request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ollama request failed: %w", err)
+		return "", fmt.Errorf("the ollama request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -197,7 +220,9 @@ func (c *Client) claudeSummarize(ctx context.Context, prompt string) (string, er
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return "", fmt.Errorf("the claude request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.config.APIKey)
@@ -205,7 +230,8 @@ func (c *Client) claudeSummarize(ctx context.Context, prompt string) (string, er
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("claude request failed: %w", err)
+		return "", fmt.Errorf("the claude request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -244,14 +270,17 @@ func (c *Client) openaiSummarize(ctx context.Context, prompt string) (string, er
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return "", fmt.Errorf("the openai request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openai request failed: %w", err)
+		return "", fmt.Errorf("the openai request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -300,14 +329,17 @@ func (c *Client) geminiSummarize(ctx context.Context, prompt string) (string, er
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return "", fmt.Errorf("the gemini request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", c.config.APIKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("gemini request failed: %w", err)
+		return "", fmt.Errorf("the gemini request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -365,7 +397,9 @@ func (c *Client) customOpenAISummarize(ctx context.Context, prompt string) (stri
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return "", fmt.Errorf("the custom-openai request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	authHeader, authValue := c.customOpenAIAuthHeader()
@@ -373,7 +407,8 @@ func (c *Client) customOpenAISummarize(ctx context.Context, prompt string) (stri
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("custom-openai request failed: %w", err)
+		return "", fmt.Errorf("the custom-openai request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -434,13 +469,16 @@ func (c *Client) chatOllama(ctx context.Context, messages []ChatMessage, tools [
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.config.OllamaURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the ollama chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ollama chat request failed: %w", err)
+		return nil, fmt.Errorf("the ollama chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -488,7 +526,9 @@ func (c *Client) chatClaude(ctx context.Context, messages []ChatMessage, tools [
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the claude chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", c.config.APIKey)
@@ -496,7 +536,8 @@ func (c *Client) chatClaude(ctx context.Context, messages []ChatMessage, tools [
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("claude chat request failed: %w", err)
+		return nil, fmt.Errorf("the claude chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -556,14 +597,17 @@ func (c *Client) chatOpenAI(ctx context.Context, messages []ChatMessage, tools [
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the openai chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("openai chat request failed: %w", err)
+		return nil, fmt.Errorf("the openai chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -655,14 +699,17 @@ func (c *Client) chatGemini(ctx context.Context, messages []ChatMessage, tools [
 	apiURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", model)
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the gemini chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", c.config.APIKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini chat request failed: %w", err)
+		return nil, fmt.Errorf("the gemini chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -734,7 +781,9 @@ func (c *Client) chatCustomOpenAI(ctx context.Context, messages []ChatMessage, t
 
 	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		// Address-free: see "Addresses in errors" at the top of client.go.
+		return nil, fmt.Errorf("the custom-openai chat request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	authHeader, authValue := c.customOpenAIAuthHeader()
@@ -742,7 +791,8 @@ func (c *Client) chatCustomOpenAI(ctx context.Context, messages []ChatMessage, t
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("custom-openai chat request failed: %w", err)
+		return nil, fmt.Errorf("the custom-openai chat request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 

@@ -12,6 +12,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 )
 
 // V2-cleanup-21 (decision #7) — five write endpoints that previously skipped
@@ -77,7 +78,7 @@ type itemCallArgs struct{ cluster, addon string }
 
 func (f *fakeSecretReconciler) Trigger()                         { f.triggered++ }
 func (f *fakeSecretReconciler) IsEnabled(_ context.Context) bool { return !f.disabled }
-func (f *fakeSecretReconciler) GetStats() interface{}            { return map[string]int{} }
+func (f *fakeSecretReconciler) GetStats() secrets.ReconcileStats { return secrets.ReconcileStats{} }
 func (f *fakeSecretReconciler) LastRunTime() time.Time           { return time.Time{} }
 func (f *fakeSecretReconciler) LastError() string                { return f.lastError }
 func (f *fakeSecretReconciler) LastErrorCluster() string {

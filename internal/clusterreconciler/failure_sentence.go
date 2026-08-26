@@ -34,10 +34,21 @@ import "strings"
 // raw string" choice, applied here to the connection engine's per-cluster
 // and whole-pass failures.
 //
-// The raw error text is never dropped — every call site above still logs
-// it via slog at warn/error with full detail, and the audit entry's Error
-// field still carries it too. This function only governs what reaches the
-// browser.
+// This function governs what reaches the browser. It is NOT the only thing
+// standing between a provider's words and a reader any more: since B9 the log
+// sink replaces any error handed to slog with a type-derived classification,
+// so the call sites above no longer put the raw text in the log either. The
+// audit entry's Error field still carries it, and that is a separate surface
+// with its own row.
+// DefaultFailureSentence is the generic fallback FailureSentence returns
+// when a Failed record's message does not match any of the recognized fixed
+// prefixes below — R2-2: promoted from an inline literal so a caller (and a
+// test) can reference this exact sentence by name instead of copying the
+// string, in particular to assert it can never appear paired with
+// OutcomeSucceeded (see applyLastReconcile in api/clusters_reconcile.go).
+// The text itself is unchanged.
+const DefaultFailureSentence = "The last check didn't finish. Click Refresh to try again."
+
 func FailureSentence(raw string) string {
 	switch {
 	case raw == "":
@@ -52,9 +63,9 @@ func FailureSentence(raw string) string {
 	// differently ("git read failed" vs "git_read failed", using the
 	// desiredStateReadKind constant directly) — match both spellings.
 	case strings.Contains(raw, "git_read failed") || strings.Contains(raw, "git read failed"):
-		return "Sharko could not read git, so this check did not finish. Check that Sharko can reach your git host, then click Refresh."
+		return "Sharko could not read Git, so this check did not finish. Check that Sharko can reach your Git host, then click Refresh."
 	case strings.Contains(raw, "schema_validation failed") || strings.Contains(raw, "schema validation failed"):
-		return "The managed-clusters file in git failed validation, so this check did not finish. Fix the file in git, then click Refresh."
+		return "The managed-clusters file in Git failed validation, so this check did not finish. Fix the file in Git, then click Refresh."
 	case strings.Contains(raw, "reconciler pass aborted"):
 		// Any other whole-pass abort reason (today: listing the ArgoCD
 		// cluster secrets failed) — the cluster API, not git, is what
@@ -83,6 +94,6 @@ func FailureSentence(raw string) string {
 		// messages ("self-heal did not fully converge…", "…WITHOUT its
 		// Sharko ownership label") — with one safe, generic sentence rather
 		// than teaching this function every internal wording by hand.
-		return "The last check didn't finish. Click Refresh to try again."
+		return DefaultFailureSentence
 	}
 }

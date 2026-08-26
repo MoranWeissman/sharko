@@ -225,3 +225,142 @@ func TestDiscoverClusters_CrossReference(t *testing.T) {
 		t.Error("expected staging to NOT be registered")
 	}
 }
+
+// TestRegisterClusterBatch_EveryClusterPartial_IsNotCountedAsAllFailed is the
+// R2-7 regression pin.
+//
+// A "partial" cluster is not a failure. Its pull request was opened (and here
+// the merge is what broke), its Secrets were written, and nothing was rolled
+// back — real things changed in Git and in the operator's cluster. The batch
+// counters used to have nowhere to put that, so every partial was added to
+// Failed and nothing else. A batch where EVERY cluster came back partial then
+// looked identical to a batch where nothing at all had happened, which is what
+// the audit trail went on to report.
+//
+// The merge failure is the real production path: RegisterCluster opens the PR,
+// the merge throws, and it returns status "partial" with FailedStep "pr_merge"
+// (see TestRegisterCluster_AutoMergeFails).
+func TestRegisterClusterBatch_EveryClusterPartial_IsNotCountedAsAllFailed(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.mergeErr = fmt.Errorf("merge conflict")
+
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"prod-eu": {Server: "https://eu.example.com:6443", CAData: []byte("ca"), Token: "tok"},
+			"prod-us": {Server: "https://us.example.com:6443", CAData: []byte("ca"), Token: "tok"},
+		},
+	}
+	orch := New(nil, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result := orch.RegisterClusterBatch(context.Background(), []RegisterClusterRequest{
+		{Name: "prod-eu", Addons: map[string]bool{"monitoring": true}, Region: "eu-west-1"},
+		{Name: "prod-us", Addons: map[string]bool{"monitoring": true}, Region: "us-east-1"},
+	})
+
+	// The fixture has to actually produce partials, or this test proves
+	// nothing at all.
+	for i, r := range result.Results {
+		if r.Status != "partial" {
+			t.Fatalf("result[%d] is %q, not \"partial\" — the fixture no longer produces the shape this test exists for (error: %s)",
+				i, r.Status, r.Error)
+		}
+	}
+
+	if result.Total != 2 {
+		t.Errorf("total = %d, want 2", result.Total)
+	}
+	if result.Partial != 2 {
+		t.Errorf("partial = %d, want 2 — both clusters opened a pull request and changed real things", result.Partial)
+	}
+	if result.HardFailed() != 0 {
+		t.Errorf("hard failures = %d, want 0 — nothing failed before it had done any work", result.HardFailed())
+	}
+	if !result.AnythingApplied() {
+		t.Error("AnythingApplied() = false, but two pull requests were opened — this is the false \"nothing changed\" the audit trail reported")
+	}
+
+	// The wire meaning of `failed` is unchanged: it has always counted
+	// hard failures AND partials, the 207 status is derived from it, and
+	// POST /api/v1/clusters/batch is a stable endpoint.
+	if result.Failed != 2 {
+		t.Errorf("failed = %d, want 2 — the wire field must keep counting failures plus partials", result.Failed)
+	}
+	if result.Succeeded+result.Failed != result.Total {
+		t.Errorf("succeeded(%d) + failed(%d) != total(%d) — partial must stay a subset of failed, not a third bucket",
+			result.Succeeded, result.Failed, result.Total)
+	}
+}
+
+// TestRegisterClusterBatch_MixOfPartialAndHardFailure separates the two things
+// Failed lumps together: one cluster that changed something before stopping,
+// and one that never got off the ground.
+func TestRegisterClusterBatch_MixOfPartialAndHardFailure(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.mergeErr = fmt.Errorf("merge conflict")
+
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"prod-eu": {Server: "https://eu.example.com:6443", CAData: []byte("ca"), Token: "tok"},
+		},
+	}
+	orch := New(nil, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	// prod-us asks for an addon that is not in the seeded catalog, which is
+	// a referential-integrity rejection before any Git work — the same lever
+	// TestRegisterClusterBatch_OneFailure uses.
+	result := orch.RegisterClusterBatch(context.Background(), []RegisterClusterRequest{
+		{Name: "prod-eu", Addons: map[string]bool{"monitoring": true}, Region: "eu-west-1"},
+		{Name: "prod-us", Addons: map[string]bool{"nonexistent-addon": true}, Region: "us-east-1"},
+	})
+
+	statuses := map[string]int{}
+	for _, r := range result.Results {
+		statuses[r.Status]++
+	}
+	if statuses["partial"] != 1 || statuses["failed"] != 1 {
+		t.Fatalf("fixture produced %v, want one partial and one failed", statuses)
+	}
+
+	if result.Partial != 1 {
+		t.Errorf("partial = %d, want 1", result.Partial)
+	}
+	if result.HardFailed() != 1 {
+		t.Errorf("hard failures = %d, want 1", result.HardFailed())
+	}
+	if result.Failed != 2 {
+		t.Errorf("failed = %d, want 2 — unchanged wire meaning: failures plus partials", result.Failed)
+	}
+	if !result.AnythingApplied() {
+		t.Error("AnythingApplied() = false, but prod-eu opened a pull request")
+	}
+}
+
+// TestRegisterClusterBatch_AllHardFailed_AppliesNothing pins the other
+// direction, so the fix cannot be "call everything partial".
+func TestRegisterClusterBatch_AllHardFailed_AppliesNothing(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, &mockCredProvider{creds: map[string]*providers.Kubeconfig{}}, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result := orch.RegisterClusterBatch(context.Background(), []RegisterClusterRequest{
+		{Name: "prod-eu", Addons: map[string]bool{"nonexistent-addon": true}},
+		{Name: "prod-us", Addons: map[string]bool{"nonexistent-addon": true}},
+	})
+
+	for i, r := range result.Results {
+		if r.Status != "failed" {
+			t.Fatalf("result[%d] is %q, not \"failed\" — fixture no longer produces hard failures", i, r.Status)
+		}
+	}
+	if result.Partial != 0 {
+		t.Errorf("partial = %d, want 0", result.Partial)
+	}
+	if result.HardFailed() != 2 {
+		t.Errorf("hard failures = %d, want 2", result.HardFailed())
+	}
+	if result.AnythingApplied() {
+		t.Error("AnythingApplied() = true, but nothing was written anywhere")
+	}
+}

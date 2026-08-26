@@ -1,6 +1,6 @@
 # EKS Live-Test Runbook
 
-> **Verified:** Part 3 was walked against a real EKS hub + spoke on 2026-07-06 (V2-cleanup-62.3 live run) and reached a working hub-on-EKS environment. Getting there surfaced four script bugs — `json_field` boolean/nested-field parsing, `api-smoke` treating an already-in-catalog 409 as a failure, missing `root-app.yaml` placeholder substitution, and a missing `sts:TagSession` grant for the Pod Identity assume-role hop — which were worked around by hand during that run and are now fixed in the script itself as of this commit (V2-cleanup-62.3 live-run fixes), so a future run shouldn't need the same manual patching. This notice reflects that live run, not a fresh cold-start pass of the now-patched script — update it again the next time this runbook is walked end-to-end from a clean checkout.
+> **Verified:** Part 3 was walked against a real EKS hub + spoke on 2026-07-06 (V2-cleanup-62.3 live run) and reached a working hub-on-EKS environment. Getting there surfaced four script bugs — `json_field` boolean/nested-field parsing, `api-smoke` treating an already-in-catalog 409 as a failure, missing `root-app.yaml` placeholder substitution, and a missing `sts:TagSession` grant for the Pod Identity assume-role hop — which were worked around by hand during that run and are now fixed in the script itself as of this commit (V2-cleanup-62.3 live-run fixes), so a future run shouldn't need the same manual patching. This notice reflects that live run, not a fresh cold-start pass of the now-patched script — update it again the next time this runbook is walked end-to-end from a clean checkout. **Not re-verified since:** the 2026-08-25 change adding the required `EKS_TEST_SHARKO_IMAGE_TAG` export was proven by stubbed tests (`tests/ekslivescript/`), not by a fresh live AWS run — no cloud call was made for it.
 
 A hands-on, half-day procedure for proving Sharko's `eks-token` credential path against a **real** EKS cluster. This is **not** a reference doc — it's a checklist you walk yourself, on your own AWS account, when you decide it's worth spending an afternoon and a couple of dollars to close an honesty gap.
 
@@ -164,15 +164,23 @@ Parts 1 and 2 kept the hub (Sharko + ArgoCD) on your local kind cluster, with yo
 
 ### One command up
 
-Set the three env vars, then go:
+Set the four env vars, then go:
 
 ```bash
 export SHARKO_EKS_TEST_ACCOUNT_ID=<your-12-digit-AWS-account-id>
 export SHARKO_GITOPS_REPO_URL=https://github.com/<owner>/<your-gitops-repo>
 export SHARKO_GITHUB_TOKEN="$(gh auth token)"   # or your own PAT with repo scope
+export EKS_TEST_SHARKO_IMAGE_TAG=<candidate-image-tag>
 
 ./scripts/eks-live-test.sh env-up
 ```
+
+`EKS_TEST_SHARKO_IMAGE_TAG` has no default and the script will not start
+without it. Name the exact build you mean to test — the image has to be in the
+registry already (`ghcr.io/<owner>/sharko` by default, or whatever
+`EKS_TEST_SHARKO_IMAGE_REPO` points at), because this script never builds or
+publishes an image itself. Naming an older tag on purpose is fine; the script
+only insists that you pick one.
 
 Reusing the same gitops repo your local kind Sharko manages is fine — the hub simply becomes another consumer of it. (If the repo carries clusters from old kind sessions, the hub's reconciler will log warnings about credentials it can't resolve for them; noisy but harmless for a test env. A dedicated test repo is cleaner if you have one.)
 

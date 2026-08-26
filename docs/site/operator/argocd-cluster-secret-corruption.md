@@ -407,12 +407,14 @@ Fix: Mitigation step 1 with the new server URL.
 
 ## Prevention
 
-- **Monitoring — per-cluster `test_status` history.** A V2-3.x
-  follow-up metric `sharko_cluster_test_status{cluster, status}`
-  exposed as a gauge would let operators alert on any cluster that
-  flips from `healthy` to `failed` without a corresponding Sharko
-  write event (i.e. external corruption). Today, the only signal
-  is the per-cluster `test_status` in `/api/v1/fleet/status`.
+- **Monitoring — per-cluster `test_status` history.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch:
+  `sharko_cluster_test_status{cluster, status}` as a gauge, alerting on
+  any cluster that flips from `healthy` to `failed` without a
+  corresponding Sharko write event — that is, external corruption.
+  Today, the only signal is the per-cluster `test_status` in
+  `/api/v1/fleet/status`.
 
 - **Gating — Sharko-side Secret-shape validation on every read.**
   Sharko's ArgoCDProvider already validates the three corruption
@@ -423,12 +425,18 @@ Fix: Mitigation step 1 with the new server URL.
   have empty server URLs"). Today, the failure only surfaces on the
   first operation that touches the cluster.
 
-- **Documentation — never `kubectl edit` an ArgoCD cluster
-  Secret.** The operator guide should explicitly call this out: if
-  the cluster needs new credentials, re-register through Sharko
-  (`sharko remove-cluster && sharko add-cluster`) so the Secret is
-  rebuilt cleanly from the provider. `kubectl edit` is the most
-  common corruption source per the root-cause patterns.
+- **Documentation — never `kubectl edit` a Sharko-managed ArgoCD
+  cluster Secret.** The operator guide should explicitly call this
+  out for Secrets Sharko owns: if the cluster needs new credentials,
+  update the referenced value in the credentials backend and apply it
+  through the guarded **Repair connection** action, or re-register
+  through Sharko (`sharko remove-cluster && sharko add-cluster`) so
+  the Secret is rebuilt from the Git definition plus the resolved
+  credential values. `kubectl edit` is the most common corruption
+  source per the root-cause patterns. (A **self-managed** connection
+  is different: there, you own the Secret and editing it yourself is
+  the supported workflow — Sharko only reconciles its addon-label
+  keys onto it.)
 
 - **Gating — webhook admission control on the Secret resource.**
   Platform engineering teams that run their own admission webhook

@@ -279,6 +279,13 @@ func LoadAddonCatalog(body []byte) (AddonCatalogSpec, error) {
 // SaveAddonCatalog renders spec as a catalog.yaml document, schema header
 // line first.
 func SaveAddonCatalog(spec AddonCatalogSpec) ([]byte, error) {
+	// A repository address that carries sign-in details never reaches Git.
+	// Same boundary, same reasoning as MarshalAddonCatalog — see
+	// internal/config/catalog_repo_url.go.
+	if err := checkV4CatalogRepoURLs(spec); err != nil {
+		return nil, err
+	}
+
 	body, err := schema.EncodeFlat(schema.KindAddonCatalog, spec)
 	if err != nil {
 		return nil, err

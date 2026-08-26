@@ -806,7 +806,7 @@ Same shape as Track A's API checklist (A.4), but against `http://localhost:8080`
   **Observed:**
 
   ```json
-  {"error":"no active ArgoCD connection: no active connection configured"}
+  {"error":"Sharko has no usable ArgoCD connection. Open Settings and check the active connection: the ArgoCD server address and the ArgoCD token."}
   status: 502
   ```
 

@@ -172,7 +172,7 @@ switch for the values engine and a docs page naming the boundary promise.
 
 #### Native Gitea support
 
-Gitea is now a first-class git provider option alongside GitHub and Azure
+Gitea is now a first-class Git provider option alongside GitHub and Azure
 DevOps, with both read and write support (branches, files, pull requests,
 merges).
 ([#607](https://github.com/MoranWeissman/sharko/pull/607),
@@ -191,7 +191,7 @@ fixes to list here one by one.
 
 #### Faster pages
 
-The server stopped rebuilding its ArgoCD and git clients on every single
+The server stopped rebuilding its ArgoCD and Git clients on every single
 request, and the UI now shows last-known data immediately and refreshes in
 the background instead of blanking the screen while it waits.
 ([#673](https://github.com/MoranWeissman/sharko/pull/673)) Two slow

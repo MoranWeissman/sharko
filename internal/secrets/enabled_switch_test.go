@@ -45,7 +45,7 @@ func TestReconcile_Disabled_RunsNoPass(t *testing.T) {
 	if got := writeActions(client); len(got) != 0 {
 		t.Fatalf("reconcile() wrote while the engine was switched off: %v", got)
 	}
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Checked != 0 || stats.Created != 0 || stats.Updated != 0 || stats.Errors != 0 {
 		t.Errorf("expected all-zero stats while switched off, got %+v", stats)
 	}
@@ -77,7 +77,7 @@ func TestReconcile_EnabledFn_Nil_RunsNormally(t *testing.T) {
 
 	r.reconcile()
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Created != 1 {
 		t.Errorf("expected the normal pass to create the missing secret when no enabledFn is wired, got stats %+v", stats)
 	}
@@ -93,7 +93,7 @@ func TestReconcile_EnabledFn_ExplicitlyTrue_RunsNormally(t *testing.T) {
 
 	r.reconcile()
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Created != 1 {
 		t.Errorf("expected the pass to create the missing secret when enabledFn reports true, got stats %+v", stats)
 	}

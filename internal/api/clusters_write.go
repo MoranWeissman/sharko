@@ -182,14 +182,14 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 1: operational action — service token + co-author trailer.
 	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -328,14 +328,14 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 1: operational action — service token + co-author trailer.
 	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -409,7 +409,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 //
 // @Summary Update cluster addons or settings
 // @Description Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster.
-// @Description On a v4 repo, the addon selections are written to cluster-addons/{name}.yaml (every addon named in the request must already be in catalog.yaml) in one pull request — PR-only, the cluster reconciler applies the resulting labels to the ArgoCD cluster Secret from git once it merges. secret_path is written to the v4 root managed-clusters.yaml instead of the v3 configuration/managed-clusters.yaml.
+// @Description On a v4 repo, the addon selections are written to cluster-addons/{name}.yaml (every addon named in the request must already be in catalog.yaml) in one pull request — PR-only, Sharko applies the resulting labels to the ArgoCD cluster Secret from Git once it merges. secret_path is written to the v4 root managed-clusters.yaml instead of the v3 configuration/managed-clusters.yaml.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -442,14 +442,14 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	// Tier 1: operational action — service token + co-author trailer.
 	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -463,7 +463,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 
 	serverURL, err := resolveClusterServer(ctx, name, ac)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to list ArgoCD clusters: "+err.Error())
+		writeError(w, http.StatusBadGateway, argoListFailureSentence(argoReadClusters, err))
 		return
 	}
 	if serverURL == "" {
@@ -654,13 +654,13 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
 	serverURL, err := resolveClusterServer(r.Context(), name, ac)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to list ArgoCD clusters: "+err.Error())
+		writeError(w, http.StatusBadGateway, argoListFailureSentence(argoReadClusters, err))
 		return
 	}
 	if serverURL == "" {

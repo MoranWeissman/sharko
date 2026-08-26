@@ -295,7 +295,7 @@ func TestSentinel_Reconcile_PartialFetchFailure_AlreadyFetchedValueNeverLeaks(t 
 
 	logs := captureLogs(t, func() { r.reconcile() })
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Errors == 0 {
 		t.Fatal("expected the second key's fetch to fail")
 	}

@@ -16,7 +16,7 @@ COPY ui/ .
 RUN npm run build
 
 # Stage 2: Build Go binary, cross-compiled for the target arch
-FROM --platform=$BUILDPLATFORM golang:1.25.12-alpine AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS go-build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /app

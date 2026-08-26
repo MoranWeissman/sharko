@@ -34,9 +34,12 @@
 //     bundle bytes unparseable, cert chain malformed. The caller surfaces
 //     this in logs but typically retains the prior snapshot.
 //
-// No URL is ever logged in this package. Sidecar URLs may encode auth
-// tokens. Use the 10-char SHA-256 fingerprint helper urlFingerprint
-// when an identifier is genuinely needed.
+// No URL is ever logged in this package, in any form. Sidecar URLs may
+// encode auth tokens — the documented private-catalog shape hides the
+// token in the address's own path, where no grammar can spot it — so the
+// address is sensitive by type. Where a log line needs a source field,
+// it carries credsafe.PublicSourceLabel(): the fixed word "redacted",
+// the same for every source. Nothing derived from the address goes out.
 package signing
 
 import (

@@ -157,7 +157,7 @@ func (s *Server) handleMigrationStatus(w http.ResponseWriter, r *http.Request) {
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -193,7 +193,7 @@ func (s *Server) handleMigrationPreview(w http.ResponseWriter, r *http.Request) 
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -259,7 +259,7 @@ func (s *Server) handleMigrateRepo(w http.ResponseWriter, r *http.Request) {
 	// repo — the same tier as the catalog and values writes.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -342,7 +342,7 @@ func (s *Server) handleMigrationComplete(w http.ResponseWriter, r *http.Request)
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -375,7 +375,12 @@ func (s *Server) CompleteMigrationHandoffOnMerge(ctx context.Context, operation 
 	}
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		slog.Warn("migration handoff: no git connection after merge", "error", err)
+		// B1: the error value used to go on this line. It is the same
+		// connection-build failure the sixty-four response-body sites were
+		// leaking, and a log line is one of the sinks the ban covers — on
+		// the Git side the reason the client could not be built may BE the
+		// repository token. The step is named instead.
+		slog.Warn("migration handoff: no usable Git connection after merge")
 		return
 	}
 	report, err := s.migrationOrchestrator(git).CompleteRuntimeHandoff(ctx)

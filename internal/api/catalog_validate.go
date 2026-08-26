@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/security"
 )
 
@@ -94,9 +95,13 @@ func (s *Server) handleValidateCatalogChart(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := validateRepoURL(repo); err != nil {
+		// The address is echoed through credsafe, never raw. One of the
+		// things validateRepoURL now refuses is an address with sign-in
+		// details written into it, and handing that straight back would put
+		// it in a response body — the exact place it must not go.
 		writeJSON(w, http.StatusOK, catalogValidateResponse{
 			Valid:     false,
-			Repo:      repo,
+			Repo:      credsafe.SafeRepoURL(repo),
 			Chart:     chart,
 			ErrorCode: validateErrInvalidInput,
 			Message:   err.Error(),
@@ -180,6 +185,15 @@ func validateRepoURL(raw string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("repo URL is missing a host")
+	}
+	// The technical preview supports credential-free repository addresses
+	// only. This is the API edge's copy of the CALL, not of the rule — the
+	// rule itself lives in credsafe and the canonical writers ask the same
+	// function, so an address refused here would be refused there too. The
+	// point of asking at the edge is that the operator hears it straight
+	// away instead of after Sharko has been to the network.
+	if err := credsafe.ValidateSupportedRepoURL(raw); err != nil {
+		return err
 	}
 	return nil
 }

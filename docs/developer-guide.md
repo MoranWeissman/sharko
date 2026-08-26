@@ -142,8 +142,10 @@ sharko/
       diagnose.go       DiagnoseCluster() — runs permission checks, returns DiagnosticReport
       fixes.go          generateFix() — copy-paste-ready K8s RBAC YAML for failures
 
-    metrics/            Prometheus metrics (20 metric definitions, auto-registered via promauto)
-      metrics.go        All metric vars (cluster, addon, reconciler, PR, HTTP, auth)
+    metrics/            Prometheus metrics (44 families: 32 via promauto + 12 SLO)
+      metrics.go        33 metric vars auto-registered via promauto (cluster, addon,
+                        reconciler, catalog, PR, HTTP, auth, AI, Scorecard)
+      slo_registry.go   The 12 SLO families, names assembled at runtime from SLOPaths
       middleware.go     HTTP middleware for request counting/duration, NormalizePath()
 
     cmstore/            ConfigMap-based JSON state store helper
@@ -476,7 +478,13 @@ case "get_argocd_cluster_connection":
 
 3. Implement the handler method on the agent struct. The method should call the relevant service or API and return a string result (or an error that the agent surfaces as a tool error).
 
-The `get_argocd_cluster_connection` tool (added in v1.16.0) calls the cluster comparison endpoint and extracts `argocd_connection_status` and `argocd_connection_message`, giving the AI specific error context for diagnosing cluster-level ArgoCD connectivity failures rather than relying on the user to copy-paste error messages.
+The `get_argocd_cluster_connection` tool (added in v1.16.0) calls
+`argocd.Service.GetClusterConnectionInfo` directly and reports the cluster's connection
+status. It reports Sharko's own fixed sentence rather than ArgoCD's connection message:
+that message is the credentials layer's words quoted in full, and whatever goes into the
+assistant's context comes back out in an answer (B8). The same rule covers every ArgoCD
+string the AI tools render — see `internal/ai/tools.go`'s `safeOperationMessage` and
+`internal/credsafe/argotext.go`.
 
 ### verify
 
@@ -549,16 +557,11 @@ For each failed check, `generateFix()` produces copy-paste-ready K8s RBAC YAML (
 
 ### metrics
 
-Prometheus metrics for the entire Sharko server. All metrics are auto-registered with the default registry via `promauto`. 20 metric definitions across 6 categories:
+Prometheus metrics for the entire Sharko server. 32 metric families are auto-registered with the default registry via `promauto` in `internal/metrics/metrics.go`. A further 12 are built at runtime from the four SLO surfaces in `internal/metrics/slo_registry.go`, and `/metrics` serves both registries together — 44 families in total.
 
-| Category | Metrics | Example |
-|----------|---------|---------|
-| Cluster | count, status, last_verified, test_duration, test_failures | `sharko_cluster_count{status="Connected"}` |
-| Addon | sync_status, health, version, catalog_entries_count | `sharko_addon_sync_status{cluster,addon,status}` |
-| Reconciler | runs, duration, last_run, items_checked, items_changed | `sharko_reconciler_runs_total{reconciler,result}` |
-| PR | tracked, merge_duration | `sharko_pr_merge_duration_seconds` |
-| HTTP | requests_total, request_duration | `sharko_api_requests_total{method,path,status}` |
-| Auth | login_total, active_sessions | `sharko_auth_login_total{result}` |
+The 12 SLO names are assembled from strings at runtime (`"sharko_" + path + "_duration_seconds"` and friends), so searching the tree for a metric name will not find them. Call `Describe()` on the two registries if you need the real list.
+
+The full list — every metric name, its type, its labels, and what it means — is kept in one place: [Reference — Metrics, Alerts, and the Grafana Dashboard](site/operator/metrics.md). There used to be a shortened copy of the list here, and it drifted out of date. One list, one page.
 
 `Middleware(next)` is an HTTP middleware that records request count and duration for every request (except `/metrics` itself). `NormalizePath()` replaces dynamic path segments (cluster names, addon names, etc.) with placeholders like `{name}` to prevent cardinality explosion.
 

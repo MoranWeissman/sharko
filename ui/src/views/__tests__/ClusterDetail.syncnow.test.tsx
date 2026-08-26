@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
 
 // HD1 (V3) — "Sync now" button redesign + sync-status pill. Renamed to
 // "Refresh" as part of the Managed cluster secret panel rebuild (walk day 4
@@ -192,7 +193,7 @@ describe('ClusterDetail — sync now primary + status pill (HD1, V3)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Not checked yet')).toBeInTheDocument();
+    expect(screen.getByText(CONNECTION_SENTENCES.headlineNotCheckedYet)).toBeInTheDocument();
   });
 
   it('renders a succeeded Last sync item with a relative time and "— OK"', async () => {

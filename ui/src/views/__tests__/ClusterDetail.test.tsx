@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 import type { TestClusterUnavailable } from '@/services/api';
+import { ApiError } from '@/services/api';
 
 // V125-1-10.5: render the view inside a fake admin AuthContext so admin-only
 // actions (Test, Diagnose, Remove) are visible. The Test button lives behind
@@ -2372,15 +2373,18 @@ describe('ClusterDetail', () => {
    * argocd_operation_message in a scrollable monospace block.
    */
   describe('V2-cleanup-38.2: full sync-error text in expanded row', () => {
-    const shortIssue = 'one or more synchronization tasks completed unsuccessfully';
+    // B8: these two fixtures are what the SERVER sends now. They used to be
+    // ArgoCD's own operationState.message — the short first line in issues[]
+    // and the full 4000-char text here — which quotes the repository ArgoCD was
+    // syncing from, access token and all. The server no longer passes that text
+    // through, so a fixture that still held it would be testing a contract that
+    // no longer exists. The short/long split the row relies on is unchanged.
+    const shortIssue = 'ArgoCD could not finish syncing this addon — open it in ArgoCD for the full error.';
     const fullMessage =
-      'one or more synchronization tasks completed unsuccessfully, reason: ' +
-      'failed to create typed patch object (keda/keda-admission-webhooks; apps/v1, Kind=Deployment): ' +
-      '.spec.template.spec.containers[name="keda-admission-webhooks"].resources.metricServer: ' +
-      'field not declared in schema,failed to create typed patch object ' +
-      '(keda/keda-operator; apps/v1, Kind=Deployment): ' +
-      '.spec.template.spec.containers[name="keda-operator"].resources.metricServer: ' +
-      'field not declared in schema';
+      "ArgoCD could not finish syncing this addon. Sharko does not repeat ArgoCD's own message here: " +
+      'that message quotes whatever ArgoCD was working on, which includes the repository address ' +
+      'with its access token inside it. Open this application in ArgoCD to read the full error. ' +
+      '(phase=Failed sync=OutOfSync health=Degraded repo=https://github.example/sharko-org/addons.git)';
 
     const responseWithFullMsg = {
       ...comparisonResponse,
@@ -2429,8 +2433,16 @@ describe('ClusterDetail', () => {
       // The full-message block should now be visible in the popover
       const block = await screen.findByTestId('full-operation-message');
       expect(block).toBeInTheDocument();
-      // It must contain the tail of the error
-      expect(block.textContent).toContain('field not declared in schema');
+      // B8 inversion. This assertion used to read
+      //   expect(block.textContent).toContain('field not declared in schema')
+      // — it demanded that ArgoCD's own operationState.message reach the
+      // browser untruncated. That message quotes the repository ArgoCD was
+      // syncing from, access token and all, so the assertion was holding a
+      // credential leak in place on an ordinary 200 response. It is inverted,
+      // not deleted: the block is still rendered, still in the popover, and
+      // still carries what the server sent — but ArgoCD's words must be gone.
+      expect(block.textContent).not.toContain('field not declared in schema');
+      expect(block.textContent).toContain(fullMessage);
     });
   });
 
@@ -3007,8 +3019,9 @@ describe('ClusterDetail', () => {
       ).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^Refresh$/ })).toBeInTheDocument();
       // HL-1: the action is named for what it does — re-apply Sharko's own
-      // addon labels — not "Sync".
-      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeInTheDocument();
+      // addon labels — not "Sync". Round 3 ruling (2026-08-16) renamed it
+      // again, from "Re-apply addon labels" to "Sync addon labels".
+      expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^Diff$/ })).toBeInTheDocument();
     });
 
@@ -3019,7 +3032,7 @@ describe('ClusterDetail', () => {
       expect(screen.queryByText(/—\s*argocd\//)).not.toBeInTheDocument();
     });
 
-    it('disables Re-apply addon labels when there is nothing to apply (no drift)', async () => {
+    it('disables Sync addon labels when there is nothing to apply (no drift)', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...comparisonResponse,
         cluster: {
@@ -3029,11 +3042,11 @@ describe('ClusterDetail', () => {
       });
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeDisabled();
       expect(screen.getByText('Synced')).toBeInTheDocument();
     });
 
-    it('enables Re-apply addon labels and shows the "Out of sync — N addon differences" status once the secret has drifted from git', async () => {
+    it('enables Sync addon labels and shows the "Out of sync — N addon differences" status once the secret has drifted from git', async () => {
       mockGetClusterComparison.mockResolvedValueOnce({
         ...comparisonResponse,
         cluster: {
@@ -3047,7 +3060,7 @@ describe('ClusterDetail', () => {
       });
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByRole('button', { name: /^Re-apply addon labels$/ })).toBeEnabled();
+      expect(screen.getByRole('button', { name: /^Sync addon labels$/ })).toBeEnabled();
       expect(screen.getByText('Out of sync — 2 addon differences')).toBeInTheDocument();
     });
 
@@ -3069,8 +3082,8 @@ describe('ClusterDetail', () => {
 
       await user.click(screen.getByRole('button', { name: /^Diff$/ }));
 
-      expect(screen.getByText(/This secret is missing 1 addon label that git expects/)).toBeInTheDocument();
-      expect(screen.getByText(/This secret has 1 addon label that git doesn't expect/)).toBeInTheDocument();
+      expect(screen.getByText(/This secret is missing 1 addon label that Git expects/)).toBeInTheDocument();
+      expect(screen.getByText(/This secret has 1 addon label that Git doesn't expect/)).toBeInTheDocument();
       // The raw ArgoCD/reconciler vocabulary must never appear as visible text.
       expect(screen.queryByText('OutOfSync')).not.toBeInTheDocument();
       expect(screen.queryByText('Label Drift Detected')).not.toBeInTheDocument();
@@ -3090,7 +3103,7 @@ describe('ClusterDetail', () => {
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
       await user.click(screen.getByRole('button', { name: /^Diff$/ }));
-      expect(screen.getByText(/No differences — this secret's addon labels match git/)).toBeInTheDocument();
+      expect(screen.getByText(/No differences — this secret's addon labels match Git/)).toBeInTheDocument();
     });
   });
 
@@ -3153,5 +3166,68 @@ describe('ClusterDetail', () => {
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
       expect(screen.getByText('Connected')).toBeInTheDocument();
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R2-5: the "cluster not found" screen is chosen by the STATUS CODE.
+//
+// This page used to pick between the not-found empty state and the ordinary
+// error state by lower-casing the server's error sentence and looking in it
+// for "not found", "404" and "cluster not found" — its own comment admitted it
+// was guessing. The producer is `writeError(w, 404, "cluster not found")` in
+// four handlers, so rewording that one sentence, or a 404 arriving phrased any
+// other way, silently rendered the wrong screen.
+//
+// NOTHING COVERED THE BRANCH AT ALL before these tests: the empty state had no
+// test, so the substring version was not "safe code with a stale guard", it was
+// unguarded. Both directions are asserted here, and each fixture deliberately
+// carries the sentence the OTHER outcome's search would have wanted, so
+// neither can pass while the page is still reading words.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ClusterDetail — the not-found screen follows the status code', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+    mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+  });
+
+  it('shows the not-found empty state on a 404, whatever the sentence says', async () => {
+    mockGetClusterComparison.mockRejectedValue(
+      // A 404 whose wording carries none of the three phrases the old search
+      // hunted for. This is the case that used to render the ordinary error
+      // screen — no link back to the clusters list, no mention of a pending
+      // registration — for a cluster that simply is not there.
+      new ApiError(404, { error: 'no such cluster in this repository' }, 'failed'),
+    );
+    renderView();
+
+    expect(await screen.findByText(/Cluster "prod-eu" not found/i)).toBeInTheDocument();
+  });
+
+  it('does NOT show it on a non-404, however much the sentence reads like one', async () => {
+    mockGetClusterComparison.mockRejectedValue(
+      // Every phrase the old search looked for, on a status that means
+      // something else entirely. Under the old code this rendered the
+      // "this cluster does not exist" screen for a cluster that does.
+      new ApiError(502, { error: 'cluster not found in ArgoCD (404 from upstream): not found' }, 'failed'),
+    );
+    renderView();
+
+    await waitFor(() =>
+      expect(screen.getByText(/cluster not found in ArgoCD/i)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Cluster "prod-eu" not found/i)).not.toBeInTheDocument();
+  });
+
+  it('does NOT show it when the request never reached the server at all', async () => {
+    // A dropped connection is not a 404. There is no status, so there is no
+    // grounds for saying the cluster does not exist.
+    mockGetClusterComparison.mockRejectedValue(new TypeError('Failed to fetch'));
+    renderView();
+
+    await waitFor(() =>
+      expect(screen.queryByText(/Cluster "prod-eu" not found/i)).not.toBeInTheDocument(),
+    );
   });
 });

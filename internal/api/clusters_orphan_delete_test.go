@@ -212,7 +212,7 @@ func orphanTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL string, 
 		fakeRecon := clusterreconciler.New(clusterreconciler.Deps{
 			GitProvider: func() gitprovider.GitProvider { return nil },
 			ArgoClient:  k8sClient,
-			Vault:       nil,
+			Vault:       staticVault(nil),
 			AuditFn:     func(_ audit.Entry) {},
 		})
 		srv.SetClusterReconciler(fakeRecon)

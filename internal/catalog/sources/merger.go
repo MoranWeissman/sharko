@@ -54,8 +54,10 @@ const (
 
 // MergedCatalog is the effective in-memory index the API/UI handlers
 // read from. Entries is the sorted, de-duplicated list exposed to
-// callers; Conflicts is a diagnostic list surfaced on the future
-// /catalog/sources endpoint.
+// callers; Conflicts is an in-memory diagnostic list with NO outward
+// consumer today — and its Winner/Losers fields hold raw configured
+// source addresses, which are sensitive by type (see Conflict's
+// comment) and must never reach an outward surface as-is.
 type MergedCatalog struct {
 	// Entries are sorted by Name, deterministic.
 	Entries []MergedEntry
@@ -94,16 +96,30 @@ type MergedEntry struct {
 // Conflict records a name collision. Winner is either OriginEmbedded
 // or a third-party URL; Losers is the alphabetically-sorted list of
 // the other source URLs that tried to claim the same Name.
+//
+// SENSITIVE BY TYPE: Winner and Losers hold the RAW configured source
+// address. The configured catalog source address is ruled sensitive by
+// type — the documented private-catalog form writes an auth token into
+// the address's own path, and no grammar check can tell that apart from
+// an ordinary path. These fields are fine to keep IN MEMORY for merge
+// bookkeeping, but any code that puts them on an outward surface (API
+// response, log, audit record, event, metric label, anything an
+// operator or user can read) MUST first replace each address with
+// credsafe.PublicSourceLabel(). Do not serialize them as-is.
 type Conflict struct {
 	// Name is the colliding entry name.
 	Name string
 
-	// Winner is OriginEmbedded or the winning third-party URL.
+	// Winner is OriginEmbedded or the winning third-party URL — a raw
+	// configured address when third-party. Sensitive by type; replace
+	// with credsafe.PublicSourceLabel() before any outward surface.
 	Winner string
 
 	// Losers is the list of source URLs (always third-party — the
 	// embedded catalog can only win, never lose) that also defined
-	// this name. Sorted alphabetically.
+	// this name. Sorted alphabetically. Raw configured addresses:
+	// sensitive by type; replace each with
+	// credsafe.PublicSourceLabel() before any outward surface.
 	Losers []string
 
 	// Reason is ReasonEmbeddedWins or ReasonAlphabeticalURLTiebreak.
@@ -177,7 +193,11 @@ func Merge(embedded []catalog.CatalogEntry, snapshots []*SourceSnapshot) MergedC
 	// every embedded entry (they always win), then add third-party
 	// winners that don't collide with embedded.
 	entries := make([]MergedEntry, 0, len(embeddedByName)+len(thirdPartyWinners))
-	conflicts := make([]Conflict, 0) // len==0 slice preferred over nil for JSON-friendly output downstream
+	// len==0 slice preferred over nil so range/len behave uniformly.
+	// NOT for serialization: Conflict carries raw configured addresses,
+	// which are sensitive by type — see the Conflict type's comment
+	// before ever putting this list on an outward surface.
+	conflicts := make([]Conflict, 0)
 
 	// Embedded entries → always in the output with OriginEmbedded.
 	for _, e := range embedded {

@@ -211,8 +211,20 @@ func TestHandleRestartAddonSync_NoArgoConnection_502(t *testing.T) {
 	if w.Code != http.StatusBadGateway {
 		t.Errorf("expected 502 when no ArgoCD connection, got %d; body: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "no active ArgoCD connection") {
-		t.Errorf("expected error message about no connection; got: %s", w.Body.String())
+	// B1. This test used to accept the retired prefix, which is the leak
+	// written down as a contract: the body was that prefix followed by
+	// err.Error(), and the error comes from building a client out of the
+	// saved connection. It now demands Sharko's own fixed sentence and
+	// refuses the retired prefix outright.
+	body := w.Body.String()
+	if !strings.Contains(body, "Sharko has no usable ArgoCD connection") {
+		t.Errorf("expected Sharko's fixed no-usable-ArgoCD-connection sentence; got: %s", body)
+	}
+	if strings.Contains(strings.ToLower(body), "no active argocd connection:") {
+		t.Errorf("the retired prefix is back, and with it whatever error text followed it; got: %s", body)
+	}
+	if strings.Contains(strings.ToLower(body), "sharko has no usable git connection") {
+		t.Errorf("the ArgoCD failure answered with the Git half's sentence; got: %s", body)
 	}
 }
 
@@ -376,23 +388,9 @@ func TestHandleRestartAddonSync_V2cleanup38(t *testing.T) {
 	}
 }
 
-// TestIsBenignTerminateError verifies the helper matches the exact ArgoCD error
-// message shapes we expect from the live environment.
-func TestIsBenignTerminateError(t *testing.T) {
-	cases := []struct {
-		err  error
-		want bool
-	}{
-		{nil, false},
-		{fmt.Errorf("no operation is in progress"), true},
-		{fmt.Errorf("unexpected status 400 from DELETE /api/v1/applications/keda-test/operation: {\"error\":\"Unable to terminate operation. No operation is in progress\"}"), true},
-		{fmt.Errorf("unexpected status 500 from DELETE /api/v1/applications/keda-test/operation: internal error"), false},
-		{fmt.Errorf("connection refused"), false},
-	}
-	for _, tc := range cases {
-		got := isBenignTerminateError(tc.err)
-		if got != tc.want {
-			t.Errorf("isBenignTerminateError(%v) = %v, want %v", tc.err, got, tc.want)
-		}
-	}
-}
+// The old TestIsBenignTerminateError lived here. It pinned a helper that
+// lowercased the error and searched it for "no operation" — Sharko deciding
+// what to do next by reading ArgoCD's prose. The helper is gone; what replaced
+// it is pinned end to end by TestRestartSync_BenignTerminateIsDecidedByType in
+// argocd_write_leak_test.go, and at the boundary itself by
+// TestTerminateOperation_NoOperationIsATypeNotAPhrase in internal/argocd.

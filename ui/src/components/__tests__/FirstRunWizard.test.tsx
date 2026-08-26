@@ -1279,6 +1279,11 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
       state: 'partial',
       detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
       repairable: false,
+      // The TYPED fact the panel is chosen by. The wizard used to work this
+      // out by asking whether `detail` contained the substring "sync=", so
+      // this fixture used to say "the app exists" only by accident of how the
+      // diagnostic happens to be phrased.
+      bootstrap_app_resolved: true,
     })
     renderWizard(4)
 
@@ -1437,6 +1442,11 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
       state: 'partial',
       detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
       repairable: false,
+      // The TYPED fact the panel is chosen by. The wizard used to work this
+      // out by asking whether `detail` contained the substring "sync=", so
+      // this fixture used to say "the app exists" only by accident of how the
+      // diagnostic happens to be phrased.
+      bootstrap_app_resolved: true,
     })
     renderWizard(4)
 
@@ -1458,17 +1468,65 @@ describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
     ).not.toBeInTheDocument()
   })
 
+  // ── The panel is chosen by the TYPED FIELD, and by nothing else ────────
+  //
+  // Two tests, one either side of the line the old substring test drew. Each
+  // carries the `detail` text the OTHER outcome would have needed, so neither
+  // can pass while the wizard is still reading the sentence.
+  //
+  // What was at stake: the "already exists" panel sends an operator to ArgoCD
+  // to look at an Application. Saying that when the probe never found one
+  // wastes their time on a thing that is not there — and the only thing
+  // standing between the right panel and the wrong one was the exact wording
+  // of a server diagnostic whose own comment asks readers not to reorder it.
+
+  it('says the app EXISTS when the probe resolved it, even though the detail carries no "sync=" wording', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'the bootstrap application is Degraded',
+      repairable: false,
+      bootstrap_app_resolved: true,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko engine application already exists but is not healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does NOT claim the app exists when the probe never resolved one, however much the detail reads like it did', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      // The exact shape the old substring test looked for. It proves nothing
+      // about whether an Application was found.
+      detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+      repairable: false,
+      bootstrap_app_resolved: false,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Sharko engine application already exists but is not healthy/i),
+    ).not.toBeInTheDocument()
+  })
+
   // Error review package 1 — a genuinely UNRESOLVED probe (the ArgoCD LIST
-  // call itself failed, so Sharko never got as far as reading the app's
-  // sync/health) must NOT claim the engine app "already exists" — that
-  // assumes a fact Sharko never observed. detail here deliberately has no
-  // "sync=" substring, mirroring the guard in internal/api/init.go's
-  // unhealthyRepairRefusalMessage.
-  it('partial + not repairable, with a LIST-failed detail (no sync=) → shows the honest could-not-check copy', async () => {
+  // call itself failed, so Sharko never got as far as finding the app) must
+  // NOT claim the engine app "already exists" — that assumes a fact Sharko
+  // never observed. The typed field says so, mirroring the same answer in
+  // internal/api/init.go's unhealthyRepairRefusalMessage.
+  it('partial + not repairable, with an unresolved probe → shows the honest could-not-check copy', async () => {
     getInitStatusMock().mockResolvedValueOnce({
       state: 'partial',
       detail: 'listing argocd applications failed: dial tcp: i/o timeout',
       repairable: false,
+      bootstrap_app_resolved: false,
     })
     renderWizard(4)
 

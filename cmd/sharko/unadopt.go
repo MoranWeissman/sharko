@@ -6,7 +6,13 @@ import (
 	"net/url"
 
 	"github.com/spf13/cobra"
+
+	"github.com/MoranWeissman/sharko/internal/fanout"
 )
+
+// unadoptOperation names what `sharko unadopt-cluster` attempted, for the
+// headline, the review warning and the exit message.
+const unadoptOperation = "Un-adopting the cluster"
 
 func init() {
 	unadoptClusterCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
@@ -64,10 +70,6 @@ secret intact. The cluster must have the sharko.sharko.dev/adopted annotation.`,
 			return printAPIError(respBody, status)
 		}
 
-		if !dryRun {
-			fmt.Println("done")
-		}
-
 		var result struct {
 			Name    string `json:"name"`
 			Status  string `json:"status"`
@@ -81,25 +83,41 @@ secret intact. The cluster must have the sharko.sharko.dev/adopted annotation.`,
 			DryRun *cliDryRunResult `json:"dry_run,omitempty"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
+			if !dryRun {
+				fmt.Println("no readable answer")
+			}
 			return fmt.Errorf("invalid response: %w", err)
+		}
+
+		// The same one decision the fan-out commands take, on a fan-out of
+		// one. It also decides the word that finishes the progress line,
+		// which used to be "done" the moment the HTTP call came back.
+		outcome := fanout.SingleStatus(result.Status, status == 207)
+		if !dryRun {
+			fmt.Println(outcome.ProgressWord())
 		}
 
 		fmt.Println()
 
-		if dryRun && result.DryRun != nil {
+		// A preview un-adopts nothing, so there is no completion to confirm
+		// and nothing for an exit code to warn about — the same exception
+		// `sharko adopt --dry-run` gets.
+		if dryRun {
 			printDryRun(result.DryRun)
+			if result.Message != "" {
+				fmt.Printf("  %s\n", result.Message)
+			}
 			return nil
 		}
 
-		isPartial := result.Status == "partial" || status == 207
-
-		if isPartial {
-			fmt.Println("Cluster un-adopted with warnings (partial success).")
+		if outcome.Completed() {
+			fmt.Printf("Cluster %s un-adopted.\n", name)
+		} else {
+			fmt.Print(outcome.TroubleHeadline(unadoptOperation, name))
+			fmt.Print(outcome.ReviewWarning())
 			if result.Error != "" {
 				fmt.Printf("  Error: %s\n", result.Error)
 			}
-		} else {
-			fmt.Printf("Cluster %s un-adopted.\n", name)
 		}
 
 		if result.Git != nil && result.Git.PRUrl != "" {
@@ -114,6 +132,9 @@ secret intact. The cluster must have the sharko.sharko.dev/adopted annotation.`,
 			fmt.Printf("  %s\n", result.Message)
 		}
 
-		return nil
+		// Used to be a bare `return nil`, so an un-adoption that stopped
+		// half-way — Sharko's labels already gone from the ArgoCD secret,
+		// the pull request still open — exited 0.
+		return outcome.ExitError(unadoptOperation, name)
 	},
 }

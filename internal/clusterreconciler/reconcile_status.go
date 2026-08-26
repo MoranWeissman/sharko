@@ -419,6 +419,24 @@ const ManagedSecretNotCreatedMessage = "This cluster's ArgoCD secret has not bee
 // somebody else's, and adopting it is a separate, deliberate action.
 const UnlabeledSecretExistsMessage = "A secret with this cluster's name already exists and Sharko did not create it — adopt the cluster instead of overwriting it."
 
+// AssignmentFileUnreadableCheckMessage and AssignmentFileUnreadableTickMessage
+// are the exact ClusterReconcileRecord.Message values recorded when a v4
+// repo's cluster-addons file for one cluster could not be read.
+//
+// Both are OutcomeSkipped, and a skipped record's message is handed to the
+// browser EXACTLY AS RECORDED — only a Failed record goes through
+// FailureSentence (see lastReconcileMessage in api/clusters_reconcile.go).
+// So these two strings are text a person reads, and they are constants here
+// rather than literals in the middle of two reconcile loops so that a test
+// can pin each one against a literal it types itself.
+//
+// They say different things on purpose. The check pass compares and reports;
+// the write tick also decides whether to touch the labels, and its sentence
+// has to say that it left them alone.
+const AssignmentFileUnreadableCheckMessage = "Sharko couldn't read this cluster's addon assignment file in Git, so it can't say whether the cluster secret matches."
+
+const AssignmentFileUnreadableTickMessage = "Sharko couldn't read this cluster's addon assignment file in Git this tick, so it left the addon labels on your ArgoCD cluster secret exactly as they are."
+
 // pruneStaleReconcileRecords removes lastReconcile and fightState entries
 // for cluster names that were neither desired (in managed-clusters.yaml)
 // nor observed live in ArgoCD during this pass (V2-cleanup-90.2, fix M3).

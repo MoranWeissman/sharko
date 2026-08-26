@@ -38,6 +38,9 @@ const adminAuth = {
 }
 
 const mockShowToast = vi.fn()
+import { withCanonicalConnectionRows } from './connectionRowCanonical'
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
+
 vi.mock('@/components/ToastNotification', async () => {
   const actual = await vi.importActual('@/components/ToastNotification')
   return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) }
@@ -58,8 +61,34 @@ const mockDeleteOrphanedSecret = vi.fn()
 vi.mock('@/services/api', () => ({
   api: {
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+    getConnectionComparison: () => Promise.resolve({ cluster: "test-cluster", status: "synced", scope: "full", ownership_mode: "sharko_managed", checked_at: "2026-08-13T12:00:00Z", branch: "main", differences: [], not_checked: [], checked_field_count: 10, repair_available: false, repair_scope: "none", values_never_returned: true }),
+    getConnectionReconciliation: () => Promise.resolve({
+      cluster: 'prod-eu',
+      management_mode: 'sharko_managed',
+      managed_scope: 'full_connection',
+      mode_statement: CONNECTION_SENTENCES.modeStatementSharkoManaged,
+      definition: { file: 'configuration/managed-clusters.yaml', branch: 'main', desired_revision: 'abcdef1234567890abcdef1234567890abcdef12', credential_source_type: 'secret-kubeconfig' },
+      sync: { state: 'synced', verification_scope: 'full', approval_required: false, checked_at: '2026-08-13T12:00:00Z' },
+      health: { state: 'connected' },
+      conditions: [
+        { id: 'git_definition', status: 'ok', detail: CONNECTION_SENTENCES.condGitDefinitionOK },
+        { id: 'argocd_connection', status: 'ok', detail: CONNECTION_SENTENCES.condArgoCDConnected },
+      ],
+      drift: { connection_configuration: [], credential_material: [], addon_labels: [], not_checked: [] },
+      plan: { action: 'none', action_scopes: [] },
+      values_never_returned: true,
+    }),
   },
-  getManagedSecrets: (...args: unknown[]) => mockGetManagedSecrets(...args),
+  // TakeoverDialog's own imports — inert here.
+  takeoverPreflight: vi.fn(),
+  takeoverCluster: vi.fn(),
+  dropLegacyLabels: vi.fn(),
+  getManagedSecrets: async (...args: unknown[]) =>
+    // B5: every fixture in this file goes through the canonical mapping, so
+    // its connection rows carry what a real server now sends (sync_state,
+    // verification_scope, headline, health, ...). A fixture that states any
+    // of those itself is left untouched — see connectionRowCanonical.ts.
+    withCanonicalConnectionRows(await mockGetManagedSecrets(...args)),
   getConnectionSecretResource: (...args: unknown[]) => mockGetConnectionSecretResource(...args),
   getAddonValuesSecretResource: (...args: unknown[]) => mockGetAddonValuesSecretResource(...args),
   checkAllAddonValuesSecrets: (...args: unknown[]) => mockCheckAllAddonValuesSecrets(...args),
@@ -175,7 +204,11 @@ describe('the two inventories are separate subpages (SN-3)', () => {
     renderApp(['/secrets/connections'])
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Cluster connections' })).toBeInTheDocument()
-    expect(screen.getByText('Secrets Sharko uses to register clusters with Argo CD.')).toBeInTheDocument()
+    // B5: the product owner's exact replacement subtitle. The old sentence
+    // described the mechanism; the locked model is that Git defines the
+    // connection and Sharko maintains the resulting Secret.
+    expect(screen.getByText('Git-defined cluster connections Sharko maintains for Argo CD.')).toBeInTheDocument()
+    expect(screen.queryByText('Secrets Sharko uses to register clusters with Argo CD.')).not.toBeInTheDocument()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
     // No addon rows and no leftover rows on this subpage.

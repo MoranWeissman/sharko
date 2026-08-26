@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"github.com/MoranWeissman/sharko/internal/fanout"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
@@ -184,9 +185,23 @@ type FilePreview struct {
 }
 
 // SecretError records a secret that failed to create on the remote cluster.
+//
+// Error is a SafeSecretMessage, not a string, and that is a security property
+// rather than a style choice: the sentence can only come from the catalog in
+// secret_failure.go, so a backend's own error text cannot be put here by any
+// package — see SafeSecretMessage. Build one with newSecretFetchFailure or
+// newSecretWriteFailure; neither takes an error.
+//
+// Addon, Key and Code are new alongside it. They carry what the raw error
+// text used to carry that was actually worth having — which addon, which key,
+// and which step failed — from Sharko's own configuration rather than from a
+// backend response.
 type SecretError struct {
-	Name  string `json:"name"`
-	Error string `json:"error"`
+	Name  string            `json:"name"`
+	Addon string            `json:"addon,omitempty"`
+	Key   string            `json:"key,omitempty"`
+	Code  SecretFailureCode `json:"code,omitempty"`
+	Error SafeSecretMessage `json:"error"`
 }
 
 // ClusterResult holds cluster details in operation results.
@@ -345,7 +360,29 @@ type AdoptClusterResult struct {
 
 // AdoptClustersResult is the aggregate response from adopting multiple clusters.
 type AdoptClustersResult struct {
+	// Outcome is the accurate trio: how many clusters fully completed, how
+	// many stopped part-way, and how many failed outright. This response
+	// used to carry NO aggregate counts at all — a client had to walk
+	// results[] and classify each status itself to find out whether the
+	// adoption had worked, and HTTP 200 told it nothing, because an
+	// adoption in which every cluster failed also answers 200.
+	//
+	// Counted from results[].status by fanout.Count, the same function the
+	// audit trail, the printed summary and the CLI's exit code read.
+	Outcome fanout.Outcome       `json:"outcome"`
 	Results []AdoptClusterResult `json:"results"`
+}
+
+// Summarize recounts the accurate trio from the per-cluster results and
+// stores it on Outcome. A recount, never an increment, so it is safe to call
+// again anywhere that wants to be sure the counts match the results.
+func (r *AdoptClustersResult) Summarize() fanout.Outcome {
+	statuses := make([]string, 0, len(r.Results))
+	for _, res := range r.Results {
+		statuses = append(statuses, res.Status)
+	}
+	r.Outcome = fanout.Count(statuses)
+	return r.Outcome
 }
 
 // UnadoptClusterRequest is the input for un-adopting a cluster.

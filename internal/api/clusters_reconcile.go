@@ -12,6 +12,15 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
+// reconcileFailNotRunning is the 503 a person reads when no cluster-connection
+// machinery is wired on this server. Same rule and same voice as
+// resyncFailNotRunning in clusters_resync.go — see the note there.
+//
+// The second sentence is kept because it is the one fact in the old text that
+// was about the reader's install rather than about Sharko's internals: on this
+// deployment nothing is keeping the ArgoCD addon labels in step with Git.
+const reconcileFailNotRunning = "The part of Sharko that manages cluster connections is not running on this server, so it cannot check this cluster's connection. On this deployment nothing is keeping the ArgoCD addon labels in step with Git."
+
 // clusters_reconcile.go — per-cluster reconcile visibility + manual "sync
 // now" (V2-cleanup-89.4). Before this, a failed cluster-secret reconcile
 // (a vault fetch error, a rejected K8s API call) was visible only in the
@@ -26,6 +35,22 @@ import (
 //  2. handleReconcileCluster — POST /clusters/{name}/reconcile, a manual
 //     "sync now" the UI can call instead of waiting for the reconciler's
 //     30s safety-net tick.
+
+// lastReconcileMessage is applyLastReconcile's outcome gate (R2-2). Copies
+// the shape connectionSecretCheckError (system_managed_secrets.go) and
+// Reconciler.LastError (reconcile_status.go) already use: only a Failed
+// record's message is safe to run through clusterreconciler.FailureSentence,
+// because only a Failed record's message can carry wrapped error text.
+// Succeeded and skipped records are recorded from a fixed, closed set of
+// product sentences (verified call site by call site for R2-2 — see the
+// story report) — including the empty string a bare "created" success
+// leaves — so their message is returned exactly as recorded.
+func lastReconcileMessage(rec clusterreconciler.ClusterReconcileRecord) string {
+	if rec.Outcome == clusterreconciler.OutcomeFailed {
+		return clusterreconciler.FailureSentence(rec.Message)
+	}
+	return rec.Message
+}
 
 // applyLastReconcile sets c.LastReconcile from the reconciler's in-memory
 // per-cluster record, if one exists. A no-op when recon is nil (reconciler
@@ -45,19 +70,26 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 	lastRec := &models.ClusterLastReconcile{
 		Time:    rec.Time.Format(time.RFC3339),
 		Outcome: string(rec.Outcome),
-		// M8 (code review): rec.Message can carry a wrapped git/K8s error
-		// verbatim (several call sites in clusterreconciler build it by
-		// appending err.Error() onto a fixed English prefix — see
-		// clusterreconciler.FailureSentence's own doc comment). This used to
-		// be copied straight into the GET /clusters response. Mapped through
-		// the SAME choke point system_managed_secrets.go's
-		// connectionSecretCheckError already uses for the Managed Secrets
-		// page's per-row error — the two surfaces now agree on what a
-		// cluster's last-reconcile failure is allowed to say. The raw text
-		// is not lost: it stays in rec.Message server-side (clusterreconciler
-		// still logs it in full), and RawMessage below carries it forward
-		// internally too — never returned here as Message.
-		Message:          clusterreconciler.FailureSentence(rec.Message),
+		// R2-2: outcome-gated, matching the two callers that already got
+		// this right — connectionSecretCheckError
+		// (system_managed_secrets.go) and Reconciler.LastError
+		// (reconcile_status.go). Only a Failed record's message can carry a
+		// wrapped git/K8s error verbatim (several call sites in
+		// clusterreconciler build it by appending err.Error() onto a fixed
+		// English prefix — see clusterreconciler.FailureSentence's own doc
+		// comment), so only Failed is mapped through FailureSentence.
+		// Succeeded and skipped records already carry a fixed, safe product
+		// sentence (or an empty string) — see the R2-2 call-site audit — so
+		// their Message passes through untouched. Before this gate, EVERY
+		// outcome was mapped, which replaced a succeeded/skipped record's
+		// genuine sentence with FailureSentence's generic default (the
+		// product owner's finding, 2026-08-14): a healthy cluster could show
+		// "The last check didn't finish. Click Refresh to try again." The
+		// raw text is not lost either way: it stays in rec.Message
+		// server-side (clusterreconciler still logs it in full), and
+		// RawMessage below carries it forward internally too — never
+		// returned here as Message.
+		Message:          lastReconcileMessage(rec),
 		RawMessage:       rec.Message,
 		ComparedRevision: rec.ComparedRevision,
 		ComparedPath:     rec.ComparedPath,
@@ -114,8 +146,8 @@ func (s *Server) applyManagedSecretFields(ctx context.Context, c *models.Cluster
 
 // handleReconcileCluster godoc
 //
-// @Summary Check cluster connection secrets against git
-// @Description Asks the cluster-secret reconciler to CHECK right now instead of waiting for its periodic pass: it reads git, reads the live ArgoCD cluster secrets, compares them, and records what it found. Nothing is created, changed or deleted.
+// @Summary Check cluster connection secrets against Git
+// @Description Runs the cluster-connection check right now instead of waiting for the next automatic one: it reads Git, reads the live ArgoCD cluster secrets, compares them, and records what it found. Nothing is created, changed or deleted.
 // @Description This check covers every cluster, not only the one named in the path — see the 202 response message.
 // @Description To actually apply what a check found, use POST /clusters/{name}/resync.
 // @Description Returns 202 as soon as the check is accepted — the check itself runs asynchronously.
@@ -128,7 +160,7 @@ func (s *Server) applyManagedSecretFields(ctx context.Context, c *models.Cluster
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden — requires operator role or higher"
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
-// @Failure 503 {object} map[string]interface{} "Reconciler not running on this server"
+// @Failure 503 {object} map[string]interface{} "The part of Sharko that manages cluster connections is not running on this server"
 // @Router /clusters/{name}/reconcile [post]
 // handleReconcileCluster handles POST /api/v1/clusters/{name}/reconcile.
 //
@@ -178,7 +210,7 @@ func (s *Server) handleReconcileCluster(w http.ResponseWriter, r *http.Request) 
 
 	if s.reconcilerCheckTrigger == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "the cluster reconciler is not running on this server (no in-cluster Kubernetes client or credentials provider configured) — addon labels are not auto-synced to ArgoCD on this deployment",
+			"error": reconcileFailNotRunning,
 		})
 		return
 	}

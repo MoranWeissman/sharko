@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -67,6 +68,26 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// AttentionItem is one row of the Dashboard's needs-attention feed
+// (GET /api/v1/dashboard/attention).
+//
+// It was a type declared INSIDE the handler until B10. It is a package-level
+// type now for one reason: internal/api/cluster_comparison_leak_test.go's
+// field-by-field guard walks a response struct with reflection and fails on
+// any field it has not been told about, and it cannot see a type that only
+// exists inside a function body. The `error` field on this struct carried
+// ArgoCD's own condition text, which is exactly the kind of addition the
+// guard exists to catch, and the guard could not have caught it here.
+type AttentionItem struct {
+	AppName   string `json:"app_name"`
+	AddonName string `json:"addon_name"`
+	Cluster   string `json:"cluster"`
+	Health    string `json:"health"`
+	Sync      string `json:"sync"`
+	Error     string `json:"error,omitempty"`
+	ErrorType string `json:"error_type,omitempty"`
+}
+
 // handleGetAttentionItems godoc
 //
 // @Summary Get attention items
@@ -74,7 +95,7 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{} "Attention items"
+// @Success 200 {array} AttentionItem "Attention items"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Failure 503 {object} map[string]interface{} "Service unavailable"
 // @Router /dashboard/attention [get]
@@ -126,16 +147,6 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 		clusterNames[c.Name] = true
 	}
 
-	type AttentionItem struct {
-		AppName   string `json:"app_name"`
-		AddonName string `json:"addon_name"`
-		Cluster   string `json:"cluster"`
-		Health    string `json:"health"`
-		Sync      string `json:"sync"`
-		Error     string `json:"error,omitempty"`
-		ErrorType string `json:"error_type,omitempty"`
-	}
-
 	var items []AttentionItem
 	for _, app := range apps {
 		// Sharko's own ArgoCD system apps (bootstrap root + per-cluster
@@ -156,12 +167,26 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 		// did).
 		addonName, cluster := service.ExtractAddonCluster(app.Name, clusterNames)
 
+		// B10: `error` used to be the ArgoCD application condition's own
+		// message, quoted whole, on an ordinary 200 that the Dashboard calls
+		// every time it opens. A ComparisonError condition is the one that
+		// says "repository not accessible: authentication required" followed
+		// by the repository address it was handed — token and all — so this
+		// travelled to the browser with nothing having gone wrong. The prose
+		// does not travel any more; the condition TYPE does, because that is
+		// a closed enum, and so do the facts internal/credsafe will vouch for.
 		errMsg := ""
 		errType := ""
 		for _, c := range app.Conditions {
-			if errMsg == "" {
-				errMsg = c.Message
-				errType = c.Type
+			if errMsg == "" && c.Message != "" {
+				errMsg = credsafe.SafeReportedDetail(true,
+					credsafe.ArgocdAppConditionMessage, credsafe.OperationFacts{
+						Phase:        app.OperationPhase,
+						SyncStatus:   app.SyncStatus,
+						HealthStatus: app.HealthStatus,
+						RepoURL:      app.SourceRepoURL,
+					})
+				errType = credsafe.SafeConditionType(c.Type)
 			}
 		}
 
@@ -169,9 +194,11 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 			items = append(items, AttentionItem{
 				AppName:   app.Name,
 				AddonName: addonName,
+				// B10: the two status words go through the same allow-lists
+				// the cluster-comparison response uses.
 				Cluster:   cluster,
-				Health:    app.HealthStatus,
-				Sync:      app.SyncStatus,
+				Health:    credsafe.SafeHealthStatus(app.HealthStatus),
+				Sync:      credsafe.SafeSyncStatus(app.SyncStatus),
 				Error:     errMsg,
 				ErrorType: errType,
 			})

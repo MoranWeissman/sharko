@@ -2,6 +2,7 @@ package argocd
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,8 +44,13 @@ func TestTerminateOperation_Non200ReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-200 response")
 	}
-	if !strings.Contains(err.Error(), "403") {
-		t.Errorf("expected error to contain '403', got: %v", err)
+	// A 403 on a write is now the same sentinel a 403 on a read has always
+	// been, so callers can tell "not allowed" apart from "ArgoCD is broken"
+	// with errors.Is. The status code is no longer spelled out in the
+	// message, and neither is ArgoCD's response body — what ArgoCD quotes
+	// inside an error payload is its own business.
+	if !errors.Is(err, ErrPermissionDenied) {
+		t.Errorf("expected ErrPermissionDenied, got: %v", err)
 	}
 }
 

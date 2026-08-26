@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo demo-big dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-gitea test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
+.PHONY: help demo demo-big dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-gitea test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-connection-sentences generate-notification-codes generate-lifecycle-events generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
 
 PORT ?= 8080
 DEMO_BIG_PORT ?= 8090
@@ -129,6 +129,64 @@ lint: ## Go vet + UI build check
 # textually adjacent in the file but logically independent.
 generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
 	go run ./cmd/gen-provider-types
+
+# The server-owned message catalog. cmd/gen-connection-sentences imports
+# internal/api and reads api.ConnectionSentences AND
+# api.ConnectionFailureMessages AT RUNTIME — it parses no Go source, because
+# several sentences are aliased across a package boundary and a source parser
+# sees an identifier where a sentence should be. Output is
+# ui/src/generated/connection-sentences.ts, which the connection page renders
+# BY IDENTIFIER so no sentence is ever typed into browser code.
+#
+# The second catalog is the PARAMETERIZED family (story P2c): the
+# connection-test failure sentence, which the server assembles from a per-kind
+# fragment and a runtime hint. The finished sentences are emitted; the
+# fragment, the hint and the join are NOT, because the browser must never
+# reproduce the concatenation. One generator and one output file cover both,
+# so one drift gate covers both.
+#
+# CI's "Connection Sentences Up To Date" check runs this target then
+# `git diff --exit-code` on the output. Same shape as generate-provider-types
+# and generate-schemas: edit the Go sentence, run this target, commit both.
+generate-connection-sentences: ## Regenerate ui/src/generated/connection-sentences.ts from internal/api/connection_sentences.go
+	go run ./cmd/gen-connection-sentences
+
+# The notification identifiers. cmd/gen-notification-codes imports
+# internal/notifications and reads notifications.DeclaredCodes() AT RUNTIME —
+# same argument as generate-connection-sentences: what it needs is a slice of
+# strings that IS a runtime value, so it reads the value rather than parsing Go
+# source, and therefore holds no copy of any identifier. Output is
+# ui/src/generated/notification-codes.ts, which the bell routes on.
+#
+# Why its own generator rather than folding into generate-connection-sentences:
+# that one emits SENTENCES for the connection page; this one emits IDENTIFIERS
+# for the notification bell. Putting display text and routing keys in one file
+# would mix the two things the product owner's ruling exists to keep apart.
+#
+# CI's "Notification Codes Up To Date" check runs this target then
+# `git diff --exit-code` on the output.
+generate-notification-codes: ## Regenerate ui/src/generated/notification-codes.ts from internal/notifications/codes.go
+	go run ./cmd/gen-notification-codes
+
+# The connection-lifecycle audit event names. cmd/gen-lifecycle-events imports
+# internal/lifecycleevents and reads lifecycleevents.Declared() AT RUNTIME —
+# same argument as its two siblings above: what it needs is a slice of strings
+# that IS a runtime value, so it reads the value rather than parsing Go source,
+# and therefore holds no copy of any name. Output is
+# ui/src/generated/lifecycle-events.ts, which the connection page's activity
+# feed keys its title table on.
+#
+# Why it matters more than it looks: the feed renders these events by name from
+# a table with NO fallback, so a rename on the server used to turn a visible
+# lifecycle event into silence — and enough of them empty the feed out, leaving
+# the page stating as a fact that nothing was recorded when things did happen.
+# The browser's copy of the list was hand-written, and so was the copy its own
+# test compared it against, so nothing anywhere noticed a rename.
+#
+# CI's "Lifecycle Events Up To Date" check runs this target then
+# `git diff --exit-code` on the output.
+generate-lifecycle-events: ## Regenerate ui/src/generated/lifecycle-events.ts from internal/lifecycleevents/events.go
+	go run ./cmd/gen-lifecycle-events
 
 # V125-1-9.3 + 9.4 — schema generator. Reflects the envelope Go types in
 # internal/models (ManagedClustersSpec) and internal/config

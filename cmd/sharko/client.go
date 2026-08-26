@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // SharkoConfig holds CLI configuration (~/.sharko/config).
@@ -257,6 +259,21 @@ func saveConfig(cfg *SharkoConfig) error {
 	if err != nil {
 		return err
 	}
+	// Refuse BEFORE anything is written (BF10). A server address that
+	// carries user information, a query string or a fragment is credential
+	// material, and a config file is durable: once it is on disk it is read
+	// back by every later command, quoted into transport errors, and copied
+	// into whatever backup or dotfile repository the operator keeps. The
+	// only moment it can still be stopped cheaply is now, while the person
+	// who typed it is still at the keyboard.
+	//
+	// It is refused rather than quietly cleaned up: saving an address the
+	// operator did not type would mean the first they hear of the change is
+	// a CLI that talks to the wrong place.
+	if err := credsafe.ValidateServerAddressAt(serverConfigSetting, cfg.Server); err != nil {
+		return err
+	}
+
 	path := filepath.Join(dir, "config")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
@@ -310,11 +327,35 @@ func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
 		reqBody = bytes.NewReader(data)
 	}
 
-	server := effectiveServer(cfg.Server)
+	// Refuse before the dial (BF10). A legacy config written before the
+	// rule existed reaches this line, and nothing below it may happen with
+	// an address that carries a credential: no connection, no printing, no
+	// partial masking, no pulling pieces out of it for an error message,
+	// and no silent rewrite to a cleaned-up address the operator never
+	// chose.
+	server, err := effectiveServer(cfg.Server)
+	if err != nil {
+		return nil, 0, err
+	}
 	url := server + path
 	req, err := http.NewRequest(method, url, reqBody)
 	if err != nil {
-		return nil, 0, fmt.Errorf("cannot create request: %w", err)
+		// The same rule as the transport error below, and this line is
+		// worse than that one was (BF12). net/http hands back a *url.Error
+		// here too, and on the build path that type prints the address in
+		// full with NOTHING masked — not even the password half that Go
+		// hides once a dial has started. A saved address the check above
+		// lets through can still be one net/url will not build a request
+		// from, such as the scheme-less IPv6 endpoint "[::1]:8080", and
+		// under a "%w" the whole thing came back out on the terminal.
+		//
+		// So the error is described, never wrapped and never quoted. The
+		// method and the API path are Sharko's own words. The reason comes
+		// from credsafe.PlainFailureReason, which is built from types and
+		// sentinels and never reads the error's message.
+		return nil, 0, fmt.Errorf(
+			"the %s request to %s could not be built (%s)",
+			method, path, credsafe.PlainFailureReason(err))
 	}
 
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
@@ -324,7 +365,31 @@ func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
 	client := buildHTTPClient(insecure)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("request failed: %w", err)
+		// Sharko owns this sentence; the transport's own error is neither
+		// wrapped nor quoted (BF10).
+		//
+		// A failed request from net/http comes back as a *url.Error, and
+		// that type prints the address it was dialling. It masks the
+		// password half of the userinfo and nothing else — so a token
+		// written in the username position, which is how a bare token is
+		// normally carried, came back out verbatim under a "%w".
+		//
+		// What the operator gets instead is everything that is useful and
+		// nothing that came off the wire: which call was being made, and
+		// credsafe.PlainFailureReason's description of the failure. That
+		// function never reads the error's message — it reports sentinel
+		// and interface matches, all written in source — so it can say
+		// "the connection was refused" or "it timed out" without the
+		// address travelling with it.
+		//
+		// It used to be credsafe.LogClass here, which ends every answer
+		// with the Go type names of the error chain (BF12). Those belong
+		// in a log line and not on an operator's screen: they teach a
+		// person nothing and they put Sharko's internals into every
+		// screenshot of a failure.
+		return nil, 0, fmt.Errorf(
+			"the %s request to %s did not complete (%s)",
+			method, path, credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 

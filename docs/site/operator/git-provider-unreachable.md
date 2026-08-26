@@ -2,11 +2,13 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The 502 error
-> string `"no active Git connection"` is verified verbatim against
-> `internal/api/addon_ops.go:79,196`, `internal/api/addons_write.go:74,248,338`,
-> `internal/api/ai_annotate.go:102,252`, `internal/api/clusters_adopt.go:55,165`,
-> and `internal/api/cluster_secrets.go:143` as shipped. The
+> **Verified:** Authored 2026-06-01, re-verified 2026-08-20 (B1). The 502
+> body is now one fixed sentence, `credsafe.NoActiveGitConnectionMessage`,
+> written by the single shared helper `writeNoActiveGitConnection` in
+> `internal/api/connection_gate.go`. Every handler in the set routes through
+> it; `internal/api/connection_gate_guard_test.go` holds the list of which,
+> and `internal/credsafe/connmessage_test.go` pins the sentence by exact
+> text. The
 > `request_id` correlation pattern referenced in Diagnosis is the V2-2.2
 > shipped surface ([`../developer-guide/logging.md`](../developer-guide/logging.md)).
 > Re-verify before changing the `writeError` body string or the V2-3
@@ -40,10 +42,21 @@ What an operator sees when this fires:
   `POST /api/v1/addons`, `DELETE /api/v1/addons/{name}`,
   `PATCH /api/v1/addons/{name}`, `POST /api/v1/addons/{name}/upgrade`,
   `POST /api/v1/addons/upgrade-batch`, `POST /api/v1/ai/annotate-values`.
-- Response body verbatim: `{"error":"no active Git connection: <err>"}`
-  where `<err>` is the underlying transport / auth error (DNS resolution,
-  TCP refused, TLS handshake, 401/403, 429 rate limit, or context
-  timeout).
+- Response body verbatim, one fixed sentence with no underlying error in
+  it (changed by B1, 2026-08-20):
+  `{"error":"Sharko has no usable Git connection. Open Settings and check the active connection: the Git provider, the repository it points at, and the access token."}`
+  The underlying transport / auth reason (DNS resolution, TCP refused, TLS
+  handshake, 401/403, 429 rate limit, context timeout) used to be appended
+  here and is **not** any more — a Git repository URL is routinely written
+  with the access token inside it, and the parse error quotes the whole URL.
+  It is **not** on the server-side log line either (changed by B9,
+  2026-08-20) — the log was carrying the same token the response body
+  stopped carrying. What the log line does give you, per request id, is
+  the operation, the route the server registered, the status code, and
+  Sharko's own classification of the failure (for example
+  `unclassified chain=*url.Error`, which says the repository URL would
+  not parse). For the underlying provider's own words, reproduce the
+  call against the provider directly with the same credentials.
 - UI: the Cluster create/update/delete buttons fail with a banner
   "Git connection lost — cannot open PR." The Marketplace and Catalog
   read pages still render (catalog is local-state), but every action
@@ -446,17 +459,19 @@ For Mitigation step 5 (break-glass account) — after the incident:
 
 ## Prevention
 
-- **Monitoring — pre-page on PAT rate-limit headroom.** Add a Sharko
+- **Monitoring — pre-page on PAT rate-limit headroom.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch: a
   recording rule that scrapes `X-RateLimit-Remaining` from the most
-  recent provider call and alerts when it drops below 20%:
+  recent provider call and alerts when it drops below 20% —
 
-  ```promql
+  ```
   sharko_github_rate_limit_remaining_ratio < 0.20
   ```
 
-  This pages before exhaustion, not after. Wiring requires Sharko to
-  surface the rate-limit headers as a metric — a P1 follow-up under
-  the V2-3.x metric backlog.
+  — which would page before exhaustion rather than after. Wiring
+  requires Sharko to surface the rate-limit headers as a metric, a P1
+  follow-up under the V2-3.x metric backlog.
 
 - **Gating — make the PAT no-expiry, and document the rotation cadence.**
   Set the PAT to "no expiry" at creation, and put a 90-day rotation

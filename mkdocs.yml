@@ -39,6 +39,7 @@ extra_css:
 
 nav:
   - Home: index.md
+  - 'Technical Preview — Read This First': technical-preview.md
   - Release Notes: release-notes.md
   - Getting Started:
     - Quick Start: getting-started/quickstart.md
@@ -69,6 +70,7 @@ nav:
     - 'Upgrading & Rollback Safety': operator/upgrading-and-rollback.md
     - 'Taking Over a Fleet That Is Already Running': operator/takeover-playbook.md
     - 'Migrating a Repo to the New Format': operator/migrating-to-the-new-format.md
+    - 'Migrating Off Pasted (Inline) Credentials': operator/migrate-inline-credentials.md
     - 'If You Remove Sharko (no lock-in)': operator/removing-sharko.md
     - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
     - 'Reference — Connection Doctor': operator/connection-doctor.md
@@ -84,7 +86,7 @@ nav:
     - 'Reference — Marketplace Sources (git-native config)': operator/marketplace-sources-config.md
     - 'Reference — Cluster Connectivity Model': operator/cluster-connectivity-model.md
     - 'Reference — EKS Hub-and-Spoke Identity (IAM Setup)': operator/eks-hub-and-spoke-identity.md
-    - 'Reference — Audit Log Retention Model': operator/audit-log.md
+    - 'Reference — Activity History (in memory only)': operator/audit-log.md
     - 'Reference — Perf Baselines': operator/perf-baselines.md
     - 'Reference — SLOs': operator/slos.md
     - 'Reference — Metrics, Alerts, and Grafana Dashboard': operator/metrics.md

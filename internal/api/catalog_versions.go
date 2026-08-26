@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/helm"
 )
 
@@ -91,12 +93,22 @@ var (
 // @Security BearerAuth
 // @Param name path string true "Curated catalog addon name"
 // @Param include_prereleases query boolean false "Include prerelease versions in the response (default true; the UI filters by the per-entry prerelease flag)"
-// @Success 200 {object} catalogVersionsResponse "Sorted chart versions for the addon"
+// @Success 200 {object} catalogVersionsResponse "Sorted chart versions for the addon. `repo` and `no_data_reason` carry the chart repository address with any embedded credential removed."
+// @Failure 403 {object} map[string]interface{} "Forbidden — requires catalog.freshness.read"
 // @Failure 404 {object} map[string]interface{} "Addon not found in curated catalog"
 // @Failure 502 {object} map[string]interface{} "Upstream Helm repo unreachable"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
 // @Router /marketplace/addons/{name}/versions [get]
 func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Request) {
+	// B14: this route was registered with no role gate at all. It serves the
+	// freshness scheduler's version snapshot — the same data
+	// GET /catalog/freshness serves — so it takes that endpoint's action,
+	// catalog.freshness.read. Same viewer-and-above requirement, so no
+	// caller loses access; the route stops being invisible to the role table.
+	if !authz.RequireWithResponse(w, r, "catalog.freshness.read") {
+		return
+	}
+
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")
 		return
@@ -137,9 +149,10 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 		if snap, ok := s.freshness.VersionSnapshot(entry.Name); ok {
 			if snap.Unknown {
 				resp := catalogVersionsResponse{
-					Addon:               entry.Name,
-					Chart:               entry.Chart,
-					Repo:                entry.Repo,
+					Addon: entry.Name,
+					Chart: entry.Chart,
+					// B14 — see the note on buildVersionsResponse.
+					Repo:                credsafe.SafeRepoURL(entry.Repo),
 					CachedAt:            snap.CheckedAt.UTC().Format(time.RFC3339),
 					VersionCheckUnknown: true,
 					NoDataReason:        snap.NoDataReason,
@@ -172,13 +185,18 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 		// fetch failure (classic repo unreachable, malformed index, chart
 		// not found) is still a genuine 502.
 		if errors.Is(err, helm.ErrOCIVersionCheckUnsupported) {
+			// B14: both the field and the sentence named the repository
+			// address as the operator wrote it, and catalog.yaml is
+			// routinely written with the access token inside it. The
+			// sentence is rendered verbatim in the browser, so it needs
+			// the phrase form that is never empty.
 			resp := catalogVersionsResponse{
 				Addon:               entry.Name,
 				Chart:               entry.Chart,
-				Repo:                entry.Repo,
+				Repo:                credsafe.SafeRepoURL(entry.Repo),
 				CachedAt:            time.Now().UTC().Format(time.RFC3339),
 				VersionCheckUnknown: true,
-				NoDataReason:        "no freshness data for this source — " + entry.Repo + " has no version index Sharko can read",
+				NoDataReason:        "no freshness data for this source — " + credsafe.SafeRepoURLPhrase(entry.Repo) + " has no version index Sharko can read",
 			}
 			// Deliberately NOT cached — a registry that gains credentials
 			// later (Story 3.4) should be re-checked on the next call
@@ -186,7 +204,8 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
-		writeError(w, http.StatusBadGateway, "failed to list versions: "+err.Error())
+		// B13 — same outbound *url.Error, same token, same fix.
+		writeChartRepoError(w, r, chartRepoListVersions, err)
 		return
 	}
 
@@ -267,9 +286,14 @@ func buildVersionsResponse(addon, chart, repo string, in []helm.ChartVersion) ca
 	})
 
 	resp := catalogVersionsResponse{
-		Addon:    addon,
-		Chart:    chart,
-		Repo:     repo,
+		Addon: addon,
+		Chart: chart,
+		// B14: `repo` is the chart repository address out of the org's
+		// catalog.yaml, and it goes onto an ordinary 200 body. That address
+		// is routinely written with the token inside it, so the raw value is
+		// somebody's saved secret. SafeRepoURL keeps host and path — enough
+		// to recognise the repository, with the userinfo section gone.
+		Repo:     credsafe.SafeRepoURL(repo),
 		Versions: out,
 		CachedAt: time.Now().UTC().Format(time.RFC3339),
 	}

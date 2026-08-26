@@ -197,11 +197,21 @@ spec:
 // logic and passes now."
 func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 	cases := []struct {
-		name          string
-		app           models.ArgocdApplication
-		wantStatus    string
-		wantIssueMsg  string // empty = no issue expected
-		oldLogicWould string // what classifyHealth(health, sync) would have returned — proves failure on old logic
+		name       string
+		app        models.ArgocdApplication
+		wantStatus string
+		// wantSyncFailing replaces the old wantIssueMsg field (B8).
+		//
+		// The old field asserted that ArgoCD's own operationState.message came
+		// BACK OUT of classifyAddonApp, and the call site put that straight
+		// into issues[] on a 200 response. That assertion was the leak's
+		// keeper: any fix had to break it. It is inverted, not deleted — the
+		// classification still has to fire on exactly the same inputs, and the
+		// message must no longer come out. The app fixture above still carries
+		// the real ArgoCD text, so the absence check below has something real
+		// to be absent.
+		wantSyncFailing bool
+		oldLogicWould   string // what classifyHealth(health, sync) would have returned — proves failure on old logic
 	}{
 		{
 			// (i) LIVE keda incident: Running + SyncFailed task + "completed unsuccessfully" message.
@@ -216,9 +226,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 					"is invalid: metadata.annotations: Too long: must have at most 262144 bytes",
 				HasSyncFailedResource: true,
 			},
-			wantStatus:    "sync_failing",
-			wantIssueMsg:  "one or more synchronization tasks completed unsuccessfully",
-			oldLogicWould: "healthy",
+			wantStatus:      "sync_failing",
+			wantSyncFailing: true,
+			oldLogicWould:   "healthy",
 		},
 		{
 			// (ii) Mid-rollout: Running phase, no failures yet.
@@ -233,9 +243,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				OperationMessage:      "",
 				HasSyncFailedResource: false,
 			},
-			wantStatus:    "deploying",
-			wantIssueMsg:  "",
-			oldLogicWould: "healthy",
+			wantStatus:      "deploying",
+			wantSyncFailing: false,
+			oldLogicWould:   "healthy",
 		},
 		{
 			// (ii-b) Health=Progressing, no op.
@@ -244,9 +254,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				SyncStatus:   "Synced",
 				HealthStatus: "Progressing",
 			},
-			wantStatus:    "deploying",
-			wantIssueMsg:  "",
-			oldLogicWould: "progressing",
+			wantStatus:      "deploying",
+			wantSyncFailing: false,
+			oldLogicWould:   "progressing",
 		},
 		{
 			// (iii) PIN: Synced + Healthy → healthy (must not change).
@@ -255,9 +265,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				SyncStatus:   "Synced",
 				HealthStatus: "Healthy",
 			},
-			wantStatus:    "healthy",
-			wantIssueMsg:  "",
-			oldLogicWould: "healthy",
+			wantStatus:      "healthy",
+			wantSyncFailing: false,
+			oldLogicWould:   "healthy",
 		},
 		{
 			// (iv) PIN: Degraded → unhealthy.
@@ -266,9 +276,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				SyncStatus:   "Synced",
 				HealthStatus: "Degraded",
 			},
-			wantStatus:    "unhealthy",
-			wantIssueMsg:  "",
-			oldLogicWould: "unhealthy",
+			wantStatus:      "unhealthy",
+			wantSyncFailing: false,
+			oldLogicWould:   "unhealthy",
 		},
 		{
 			// (iv-b) PIN: Unknown health → unknown_health.
@@ -277,9 +287,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				SyncStatus:   "Synced",
 				HealthStatus: "Unknown",
 			},
-			wantStatus:    "unknown_health",
-			wantIssueMsg:  "",
-			oldLogicWould: "unknown_health",
+			wantStatus:      "unknown_health",
+			wantSyncFailing: false,
+			oldLogicWould:   "unknown_health",
 		},
 		{
 			// Phase=Failed (no running confusion).
@@ -290,9 +300,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				OperationPhase:   "Failed",
 				OperationMessage: "rpc error: code = Unknown desc = sync operation failed",
 			},
-			wantStatus:    "sync_failing",
-			wantIssueMsg:  "rpc error: code = Unknown desc = sync operation failed",
-			oldLogicWould: "unhealthy",
+			wantStatus:      "sync_failing",
+			wantSyncFailing: true,
+			oldLogicWould:   "unhealthy",
 		},
 		{
 			// Phase=Error.
@@ -303,9 +313,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				OperationPhase:   "Error",
 				OperationMessage: "context deadline exceeded",
 			},
-			wantStatus:    "sync_failing",
-			wantIssueMsg:  "context deadline exceeded",
-			oldLogicWould: "unknown_health",
+			wantStatus:      "sync_failing",
+			wantSyncFailing: true,
+			oldLogicWould:   "unknown_health",
 		},
 		{
 			// Running + "completed unsuccessfully" in message but no SyncFailed resource.
@@ -318,9 +328,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				OperationMessage:      "one or more synchronization tasks completed unsuccessfully",
 				HasSyncFailedResource: false,
 			},
-			wantStatus:    "sync_failing",
-			wantIssueMsg:  "one or more synchronization tasks completed unsuccessfully",
-			oldLogicWould: "healthy",
+			wantStatus:      "sync_failing",
+			wantSyncFailing: true,
+			oldLogicWould:   "healthy",
 		},
 		{
 			// Running + SyncFailed resource but benign message.
@@ -333,30 +343,36 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 				OperationMessage:      "Syncing",
 				HasSyncFailedResource: true,
 			},
-			wantStatus:    "sync_failing",
-			wantIssueMsg:  "Syncing",
-			oldLogicWould: "healthy",
+			wantStatus:      "sync_failing",
+			wantSyncFailing: true,
+			oldLogicWould:   "healthy",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotStatus, gotIssue := classifyAddonApp(tc.app)
+			gotStatus, gotSyncFailing := classifyAddonApp(tc.app)
 
 			if gotStatus != tc.wantStatus {
 				t.Errorf("classifyAddonApp status = %q, want %q (old logic would give %q)",
 					gotStatus, tc.wantStatus, tc.oldLogicWould)
 			}
 
-			// For issue message we check prefix rather than exact equality to
-			// allow trimming and capping without making the test brittle.
-			if tc.wantIssueMsg != "" {
-				if !strings.Contains(gotIssue, tc.wantIssueMsg[:min(len(tc.wantIssueMsg), 40)]) {
-					t.Errorf("classifyAddonApp issue = %q, want to contain %q",
-						gotIssue, tc.wantIssueMsg)
+			if gotSyncFailing != tc.wantSyncFailing {
+				t.Errorf("classifyAddonApp syncFailing = %v, want %v", gotSyncFailing, tc.wantSyncFailing)
+			}
+
+			// The inversion (B8): whatever comes back out of the whole path,
+			// none of ArgoCD's own message may be in it. safeAddonFailure is
+			// what the call site now puts on the response, so that is what is
+			// swept — not the bool, which cannot carry text by construction.
+			if tc.app.OperationMessage != "" {
+				detail := safeAddonFailure(tc.app)
+				for _, chunk := range messageChunks(tc.app.OperationMessage) {
+					if strings.Contains(detail, chunk) {
+						t.Errorf("argocd_operation_message would carry ArgoCD's own words (%q).\n\nthe detail was:\n%s", chunk, detail)
+					}
 				}
-			} else if gotIssue != "" {
-				t.Errorf("classifyAddonApp issue = %q, want empty", gotIssue)
 			}
 
 			// Prove the old logic fails on the new cases (regression guard).
@@ -377,34 +393,7 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 	}
 }
 
-// TestTrimOperationMessage_V2cleanup36 verifies that first-line extraction and
-// the 300-char cap work as specified.
-func TestTrimOperationMessage_V2cleanup36(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty", "", ""},
-		{"single line short", "sync failed", "sync failed"},
-		{"multi-line takes first line", "line one\nline two\nline three", "line one"},
-		{"exactly 300 chars stays", strings.Repeat("a", 300), strings.Repeat("a", 300)},
-		{"over 300 chars gets trimmed", strings.Repeat("b", 350), strings.Repeat("b", 300)},
-		{"trailing spaces stripped", "  sync failed  ", "sync failed"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := trimOperationMessage(tc.in)
-			if got != tc.want {
-				t.Errorf("trimOperationMessage(%q) = %q, want %q", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
-// min is a helper for Go versions that predate the builtin min (Go 1.21+).
-// The module is already on Go 1.25.8 so this is just a local helper to keep
-// the test self-contained without importing math.
+// min is a helper for keeping the assertions below self-contained.
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -412,107 +401,140 @@ func min(a, b int) int {
 	return b
 }
 
-// TestFullOperationMessage_V2cleanup38 verifies that fullOperationMessage
-// preserves newlines + full text and only caps at 4000 chars.
-func TestFullOperationMessage_V2cleanup38(t *testing.T) {
-	// The live keda error — multi-line, > 300 chars but < 4000.
-	// trimOperationMessage would cut this at the first comma (first newline) + 300
-	// chars, but fullOperationMessage must keep ALL of it.
+// messageChunks cuts an ArgoCD operation message into overlapping pieces long
+// enough that finding one in an output is proof the message was copied, and
+// short enough that a truncating or first-line-only "fix" cannot hide behind
+// them.
+//
+// It is the sweep the three retired tests are replaced by. Those tests —
+// TestTrimOperationMessage_V2cleanup36, TestFullOperationMessage_V2cleanup38
+// and TestClassifyAddonApp_V2cleanup38_FullVsShort — each asserted that
+// ArgoCD's own text SURVIVED onto the response: the first pinned the 300-char
+// first-line form, the second required the tail "field not declared in schema"
+// to still be present after a 4000-char cap, and the third forbade the short
+// and full forms from being equal. All three were the leak's keepers. They are
+// inverted here rather than deleted, so the same inputs are still exercised and
+// the same outputs are still checked — for absence instead of presence.
+func messageChunks(msg string) []string {
+	var out []string
+	const width = 24
+	for i := 0; i+width <= len(msg); i += width / 2 {
+		out = append(out, msg[i:i+width])
+	}
+	if len(out) == 0 && msg != "" {
+		out = append(out, msg)
+	}
+	return out
+}
+
+// TestSafeAddonFailure_KeepsNoneOfArgocdsOwnWords is the direct replacement for
+// the three retired tests. It uses the same live keda payload they used.
+func TestSafeAddonFailure_KeepsNoneOfArgocdsOwnWords(t *testing.T) {
+	// The live keda error, verbatim from the incident those tests captured —
+	// multi-line, past 300 characters, and with a repository URL embedded in
+	// it the way a Git-transport failure surfacing through ArgoCD writes one.
+	const token = "K3pQ-status-classify-token-sentinel-7h2v-never-leaves-the-server"
 	liveKedaErr := "one or more synchronization tasks completed unsuccessfully, reason: " +
 		"failed to create typed patch object (keda/keda-admission-webhooks; apps/v1, Kind=Deployment): " +
 		".spec.template.spec.containers[name=\"keda-admission-webhooks\"].resources.metricServer: " +
-		"field not declared in schema,failed to create typed patch object " +
-		"(keda/keda-operator; apps/v1, Kind=Deployment): " +
-		".spec.template.spec.containers[name=\"keda-operator\"].resources.metricServer: " +
-		"field not declared in schema"
-
-	cases := []struct {
-		name         string
-		in           string
-		wantLen      int // 0 = check exact equality
-		wantContains string
-	}{
-		{
-			name:         "empty",
-			in:           "",
-			wantLen:      0,
-			wantContains: "",
-		},
-		{
-			name:         "live_keda_error_preserved_fully",
-			in:           liveKedaErr,
-			wantContains: "field not declared in schema",
-		},
-		{
-			name:         "multiline_preserved",
-			in:           "line one\nline two\nline three",
-			wantContains: "line two", // newlines kept
-		},
-		{
-			name:    "over_4000_chars_capped",
-			in:      strings.Repeat("x", 5000),
-			wantLen: 4000,
-		},
-		{
-			name:    "exactly_4000_stays",
-			in:      strings.Repeat("y", 4000),
-			wantLen: 4000,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := fullOperationMessage(tc.in)
-			if tc.wantLen > 0 && len(got) != tc.wantLen {
-				t.Errorf("fullOperationMessage len = %d, want %d", len(got), tc.wantLen)
-			}
-			if tc.wantContains != "" && !strings.Contains(got, tc.wantContains) {
-				t.Errorf("fullOperationMessage = %q, want to contain %q", got[:min(len(got), 100)], tc.wantContains)
-			}
-		})
-	}
-}
-
-// TestClassifyAddonApp_V2cleanup38_FullVsShort verifies that classifyAddonApp
-// returns only the SHORT first-line message (issues[]) while the call site
-// separately fetches the full message for argocd_operation_message.
-// This test pins the contract: issues carries short text.
-func TestClassifyAddonApp_V2cleanup38_FullVsShort(t *testing.T) {
-	// Live keda error with multi-line / comma-separated content past 300 chars.
-	longMsg := "one or more synchronization tasks completed unsuccessfully, reason: " +
-		"failed to create typed patch object (keda/keda-admission-webhooks; apps/v1, Kind=Deployment): " +
-		".spec.template.spec.containers[name=\"keda-admission-webhooks\"].resources.metricServer: " +
-		"field not declared in schema,failed to create typed patch object " +
-		"(keda/keda-operator; apps/v1, Kind=Deployment): " +
-		strings.Repeat("additional error detail ", 15)
+		"field not declared in schema\nwhile fetching https://x-access-token:" + token +
+		"@github.example/sharko-org/addons.git"
 
 	app := models.ArgocdApplication{
 		SyncStatus:       "OutOfSync",
-		HealthStatus:     "Healthy",
+		HealthStatus:     "Degraded",
 		OperationPhase:   "Failed",
-		OperationMessage: longMsg,
+		OperationMessage: liveKedaErr,
+		SourceRepoURL:    "https://x-access-token:" + token + "@github.example/sharko-org/addons.git",
 	}
 
-	status, issueMsg := classifyAddonApp(app)
-	if status != "sync_failing" {
-		t.Fatalf("expected sync_failing, got %q", status)
+	// The fixture must genuinely carry the token, or the absence below is an
+	// absence of nothing.
+	if !strings.Contains(app.OperationMessage, token) {
+		t.Fatal("the fixture does not carry the token — this test proves nothing")
 	}
 
-	// issueMsg must be the SHORT first-line version (≤300 chars, single line).
-	if len(issueMsg) > 300 {
-		t.Errorf("issueMsg len %d exceeds 300 char cap", len(issueMsg))
+	detail := safeAddonFailure(app)
+
+	// The safe repository address is deliberately still in the detail, and the
+	// message quotes that same repository, so chunks that fall entirely inside
+	// it are not evidence of the message being copied. Everything else is.
+	const safeRepo = "https://github.example/sharko-org/addons.git"
+
+	if strings.Contains(detail, token) {
+		t.Errorf("argocd_operation_message carries the repository token:\n%s", detail)
 	}
-	if strings.Contains(issueMsg, "\n") {
-		t.Errorf("issueMsg must not contain newlines")
+	for _, chunk := range messageChunks(liveKedaErr) {
+		if strings.Contains(safeRepo, chunk) {
+			continue
+		}
+		if strings.Contains(detail, chunk) {
+			t.Errorf("argocd_operation_message carries ArgoCD's own words (%q):\n%s", chunk, detail)
+		}
+	}
+	// The retired test's own marker, named so a reviewer can see which
+	// assertion was flipped.
+	if strings.Contains(detail, "field not declared in schema") {
+		t.Error("the tail TestFullOperationMessage_V2cleanup38 demanded be preserved is still being passed through")
 	}
 
-	// fullOperationMessage must return the whole thing.
-	full := fullOperationMessage(longMsg)
-	if !strings.HasPrefix(full, issueMsg[:min(len(issueMsg), 50)]) {
-		// issueMsg should be the first chunk of the full message.
-		t.Errorf("full message prefix mismatch: full=%q, issue=%q", full[:min(len(full), 80)], issueMsg[:min(len(issueMsg), 80)])
+	// And it still tells an operator something true. A fix that returned an
+	// empty string would pass every check above and help nobody.
+	const wantSentence = "ArgoCD could not finish syncing this addon. Sharko does not repeat ArgoCD's own message here: that message quotes whatever ArgoCD was working on, which includes the repository address with its access token inside it. Open this application in ArgoCD to read the full error."
+	if !strings.HasPrefix(detail, wantSentence) {
+		t.Errorf("the detail is\n  %q\nwant it to start with exactly\n  %q", detail, wantSentence)
 	}
-	if len(full) <= len(issueMsg) && len(longMsg) > 300 {
-		t.Errorf("expected full (%d) to be longer than issue (%d) for long message", len(full), len(issueMsg))
+	// The repository is still named, with the credential gone — the same trade
+	// the init-status probe made.
+	if !strings.Contains(detail, "repo=https://github.example/sharko-org/addons.git") {
+		t.Errorf("the detail no longer names the repository, so an operator cannot tell which repo is failing:\n%s", detail)
+	}
+	for _, want := range []string{"phase=Failed", "sync=OutOfSync", "health=Degraded"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the detail dropped the safe fact %q:\n%s", want, detail)
+		}
+	}
+	_ = min // kept for the assertions above and any future truncation check
+}
+
+// TestSafeAddonFailure_UnreadableRepoURLIsNotNamedAtAll: when SafeRepoURL
+// cannot take a URL apart it says nothing, and so must this. Falling back to
+// the original string would be the whole leak again.
+func TestSafeAddonFailure_UnreadableRepoURLIsNotNamedAtAll(t *testing.T) {
+	const token = "K3pQ-unreadable-url-sentinel-8j4c-never-leaves-the-server"
+	app := models.ArgocdApplication{
+		SyncStatus:     "OutOfSync",
+		HealthStatus:   "Degraded",
+		OperationPhase: "Failed",
+		SourceRepoURL:  "https://x-access-token:" + token + "@github.example/org/repo.git\x7f",
+	}
+	detail := safeAddonFailure(app)
+	if strings.Contains(detail, token) {
+		t.Errorf("an unreadable repo URL put the token into the detail:\n%s", detail)
+	}
+	if strings.Contains(detail, "repo=") {
+		t.Errorf("an unreadable repo URL must leave no repo= artifact at all:\n%s", detail)
+	}
+}
+
+// TestSafeAddonFailure_UnknownArgocdWordsAreNotEchoed: the phase, sync and
+// health values are ArgoCD's words arriving over the wire. Only the ones Sharko
+// knows come through; anything else is named as unrecognised rather than
+// repeated.
+func TestSafeAddonFailure_UnknownArgocdWordsAreNotEchoed(t *testing.T) {
+	const token = "K3pQ-unknown-enum-sentinel-2w9k-never-leaves-the-server"
+	app := models.ArgocdApplication{
+		SyncStatus:     "OutOfSync " + token,
+		HealthStatus:   "Degraded " + token,
+		OperationPhase: "Failed " + token,
+	}
+	detail := safeAddonFailure(app)
+	if strings.Contains(detail, token) {
+		t.Errorf("an unrecognised ArgoCD status word was echoed with the sentinel in it:\n%s", detail)
+	}
+	for _, want := range []string{"phase=unrecognised", "sync=unrecognised", "health=unrecognised"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("expected %q in the detail:\n%s", want, detail)
+		}
 	}
 }

@@ -64,12 +64,16 @@ const (
 //
 // State is one of "empty" | "initialized" | "partial" | "unreachable" |
 // "forbidden" | "auth_failed" | "unknown". Detail carries a human-readable
-// explanation — empty for the clean "empty"/"initialized" cases, and
-// ArgoCD's diagnostic string for every other state. "auth_failed" carries
-// the actionable invalid-token message; "unknown" carries whatever detail
-// the failed LIST call produced — Sharko genuinely could not determine the
-// bootstrap app's health, so the UI must not claim it is missing or
-// degraded for this state.
+// explanation — empty for the clean "empty"/"initialized" cases, and one of
+// Sharko's own fixed sentences for every other state. "auth_failed" carries
+// the actionable invalid-token sentence; "unknown" says only that Sharko
+// could not determine the bootstrap app's health, so the UI must not claim
+// it is missing or degraded for this state.
+//
+// Detail NEVER carries an underlying error's own words (B4). The sentences
+// are constants in init.go, picked by which failure this is; a Git,
+// Kubernetes, ArgoCD or credentials-store error message never reaches this
+// field, because on the Git side that text can carry a repository token.
 // Format (additive) names the repo layout the probe recognised — "v4" when
 // the engine pin is present, "v3" when it is not but a v3 marker is, empty
 // when the repo really is un-bootstrapped.
@@ -80,11 +84,26 @@ const (
 // the Application already exists but is degraded (bootstrapUnhealthy) —
 // re-running Initialize cannot fix a live app, so the wizard must not
 // promise a repair.
+// BootstrapAppResolved (additive) says whether the probe actually FOUND the
+// ArgoCD bootstrap Application object. True means ArgoCD answered and the
+// Application is there, whatever its health; false means it is not there, or
+// the probe never got far enough to know.
+//
+// It exists because the wizard needs that one fact and had been INFERRING it
+// by searching Detail for the substring "sync=" — the shape ProbeBootstrapApp
+// happens to emit once it has resolved an app. That made a copy edit to a
+// diagnostic string silently change which panel the wizard rendered: one
+// panel says "this application already exists but is not healthy" and the
+// other says "Sharko could not check", and asserting the first one when it is
+// not true tells an operator to go and look at an Application that is not
+// there. The product owner's ruling is that presentation structure follows
+// typed facts, never text. This is the typed fact.
 type InitStatusResponse struct {
-	State      string `json:"state"`
-	Detail     string `json:"detail"`
-	Format     string `json:"format,omitempty"`
-	Repairable bool   `json:"repairable,omitempty"`
+	State                string `json:"state"`
+	Detail               string `json:"detail"`
+	Format               string `json:"format,omitempty"`
+	Repairable           bool   `json:"repairable,omitempty"`
+	BootstrapAppResolved bool   `json:"bootstrap_app_resolved,omitempty"`
 }
 
 // probeRepoState is the single source of truth for classifying the GitOps
@@ -222,16 +241,39 @@ func classifyBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (st
 	}
 }
 
+// bootstrapAppResolved reports whether ProbeBootstrapApp actually found the
+// bootstrap Application object.
+//
+// The three statuses listed here are exactly the ones ProbeBootstrapApp can
+// only reach with a non-nil `found` in hand — it returns healthy, unhealthy or
+// unreachable after matching an Application by name, and returns absent,
+// forbidden, auth_failed or unknown without ever having one. A switch over the
+// closed set rather than a "not one of these" test, so a NEW status has to be
+// classified here instead of quietly inheriting an answer.
+func bootstrapAppResolved(bootstrapStatus string) bool {
+	switch bootstrapStatus {
+	case bootstrapHealthy, bootstrapUnhealthy, bootstrapUnreachable:
+		return true
+	case bootstrapAbsent, bootstrapForbidden, bootstrapAuthFailed, bootstrapUnknown, "":
+		return false
+	default:
+		// A status nobody classified. Say no: the only sentence this answer
+		// unlocks is "the application already exists", and asserting that
+		// without knowing is the defect this function was written to remove.
+		return false
+	}
+}
+
 // handleInitStatus godoc
 //
 // @Summary Probe GitOps repo initialization state
-// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), "auth_failed" when the file is present but ArgoCD rejected the read with a 401 because the token is invalid or expired (detail carries an actionable token message), "unreachable" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), "partial" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail carries the ArgoCD diagnostic), and "unknown" when the file is present but Sharko could not determine the bootstrap application's health at all (the ArgoCD read failed for a reason that is neither a permission problem nor an invalid token, or no ArgoCD connection is configured) — this state never claims the bootstrap is missing or degraded, only that Sharko could not check. When state is "partial", repairable is true only if the bootstrap application was simply never created (POST /init can repair it with no PR) and false if it already exists but is degraded (re-init cannot fix a live app). Performs no writes and creates no operation session. Requires an active Git connection.
+// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), "auth_failed" when the file is present but ArgoCD rejected the read with a 401 because the token is invalid or expired (detail carries an actionable token message), "unreachable" when the file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD cannot reach/evaluate the Git repo (a connection problem re-init cannot fix), "partial" when the file is present but the ArgoCD bootstrap is missing or genuinely degraded (detail names the application and its sync/health status), and "unknown" when the file is present but Sharko could not determine the bootstrap application's health at all (the ArgoCD read failed for a reason that is neither a permission problem nor an invalid token, or no ArgoCD connection is configured) — this state never claims the bootstrap is missing or degraded, only that Sharko could not check. When state is "partial", repairable is true only if the bootstrap application was simply never created (POST /init can repair it with no PR) and false if it already exists but is degraded (re-init cannot fix a live app). Performs no writes and creates no operation session. Requires an active Git connection.
 // @Tags init
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} api.InitStatusResponse "Repo state probe result"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 502 {object} map[string]interface{} "No active Git connection. A missing or broken ArgoCD connection does NOT 502 here — it surfaces as state \"unknown\" in a 200 response, since the Git-side probe can still run."
+// @Failure 502 {object} map[string]interface{} "No usable Git connection. The message is one fixed Sharko sentence pointing at Settings — never the underlying error's own text, which can carry the repository token. A missing or broken ArgoCD connection does NOT 502 here — it surfaces as state \"unknown\" in a 200 response, since the Git-side probe can still run."
 // @Router /init/status [get]
 func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "init.status") {
@@ -240,7 +282,15 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		// B4. This line used to send the words of whatever error came back,
+		// after a short prefix of its own, and it was the worst of the set.
+		// The error comes from building a Git provider out of the saved
+		// connection, and one of the ways that fails is net/url refusing the
+		// repository URL — whose error value quotes the whole URL, token and
+		// all. So a signed-in viewer asking a read-only probe got the
+		// repository's access token in the 502 body. The sentence is now
+		// Sharko's own and fixed; see the block at the top of init.go.
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -270,5 +320,6 @@ func (s *Server) handleInitStatus(w http.ResponseWriter, r *http.Request) {
 	repairable := state == RepoStatePartial && bootstrapStatus == bootstrapAbsent
 	writeJSON(w, http.StatusOK, InitStatusResponse{
 		State: state, Detail: detail, Format: format, Repairable: repairable,
+		BootstrapAppResolved: bootstrapAppResolved(bootstrapStatus),
 	})
 }

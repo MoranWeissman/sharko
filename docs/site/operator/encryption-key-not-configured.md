@@ -89,9 +89,11 @@ What an operator sees when this fires:
   `secretKeyRef` = the env var IS set but the referenced secret /
   key is missing.
 
-- **No specific Prometheus alert fires today.** A V2-4.x follow-up
-  is to surface this as a `sharko_personal_token_500_total` counter
-  with an alert on >0 for >5 minutes.
+- **No specific Prometheus alert fires today.** Sharko does not export
+  this metric today. The alert below is a design sketch for a future
+  release, not something you can deploy now. The sketch: surface a
+  `sharko_personal_token_500_total` counter with an alert on more than 0
+  for more than 5 minutes.
 
 If the symptom is HTTP 500 with a **different** body
 (`"decryption failed"`, `"invalid encryption key"`,

@@ -856,6 +856,313 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	return true, true, nil
 }
 
+// RepairAddonLabelsWithOwnershipCheck repairs ONLY addon labels on a cluster
+// Secret, using pinned desired labels and an expected ownership mode. This is
+// the write primitive for the connection repair endpoint's labels-only path
+// (R3-9).
+//
+// Unlike the existing label sync functions:
+//   - SyncLabelsOnly: strips ownership label (guest primitive, not suitable)
+//   - SyncManagedClusterLabels: does its own git read + defensively re-stamps
+//     managed-by for non-adopted (correct for self-heal, wrong for guest repair)
+//   - Ensure: rewrites full connection (not labels-only)
+//
+// This function does NO git read — the caller already verified the reviewed
+// commit and computed the desired labels from it. It re-reads the Secret,
+// confirms the ownership mode matches what the caller classified, and only then
+// Updates using that same object's resourceVersion. Nothing but in-memory work
+// sits between the re-read and the Update — the same rule RepairOwnedConnection
+// follows for the full-connection path.
+//
+// Two things refuse, both writing nothing:
+//
+//   - Another tool's ownership marker, whatever expectedOwned says. A
+//     non-empty managed-by that is not Sharko's value is somebody else's
+//     connection, and an adopted marker alongside it does not change that.
+//     Returns ErrRepairOwnershipChanged.
+//   - An ownership mismatch: the Secret has become Sharko-owned when a guest
+//     repair was expected, or the other way round. Also
+//     ErrRepairOwnershipChanged, so the endpoint has one mapping for both
+//     paths.
+//
+// A Kubernetes version conflict on the Update returns
+// ErrRepairSecretChangedUnderneath — the same error the full-connection path
+// uses for the same situation.
+//
+// ADDON LABELS AND NOTHING ELSE, IN EITHER STANCE (R4-1).
+//
+// Whatever ownership mode the caller expected, this function converges only the
+// keys IsAddonLabelKey accepts: an unqualified addon-enablement key, or Sharko's
+// own v4 addons.sharko.dev/<addon> vocabulary. That filter is applied to the
+// pinned input BEFORE anything is written, so it binds the apply side and not
+// only the delete side.
+//
+// Every system label is therefore untouchable here, structurally rather than by
+// a rule somebody has to remember — they are all DNS-qualified, so the predicate
+// rejects them:
+//
+//   - app.kubernetes.io/managed-by
+//   - argocd.argoproj.io/secret-type
+//   - sharko.dev/connectivity-check (and its legacy sharko.io/ spelling)
+//
+// None of the three is added, changed or removed on any path, at either stance.
+// A Secret comes out of a labels-only repair carrying exactly the values it
+// carried on those keys going in.
+//
+// A key in pinnedAddonLabels that is not an addon key is IGNORED, not an error.
+// The caller asked for something outside what this writer promises, so the
+// writer declines quietly rather than failing a repair that is otherwise fine.
+//
+// A missing ownership label is not fixed here — it is reported. The
+// reconciler's connection drift notice raises ShapeProblemOwnershipLabelMissing
+// for that shape, and re-stamping the label inside a label repair would hide
+// the very thing the notice exists to surface.
+//
+// Parameters:
+//   - pinnedAddonLabels: the desired addon labels, already computed from the
+//     reviewed git commit by the caller. Passed in, not re-resolved. Non-addon
+//     keys in it are skipped.
+//   - expectedOwned: the ownership mode the comparison classified. true means
+//     Sharko-owned (managed or adopted), false means guest (self-managed).
+//
+// Returns:
+//   - outcome: what the repair actually changed — the same RepairOutcome shape
+//     the full-connection path returns, so a caller reports a repair ONE way
+//     whichever path ran. Changed says whether a write happened; FieldsWritten
+//     names the label paths that really changed, additions, value changes and
+//     removals alike, sorted; the two Preserved counts say how much was left
+//     alone. Field paths and counts only — never a label value, never a
+//     foreign key's name.
+//   - found: false if the Secret does not exist. That is NOT an error on this
+//     path: the labels-only repair is asked for on connections Sharko does not
+//     necessarily own, and "there is nothing there" is an answer rather than a
+//     failure. This is the one place the two repair paths' contracts differ.
+//   - error: ErrRepairOwnershipChanged for a foreign owner or an ownership
+//     mismatch, ErrRepairSecretChangedUnderneath for a version conflict, other
+//     errors as-is
+func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
+	ctx context.Context,
+	name string,
+	pinnedAddonLabels map[string]string,
+	expectedOwned bool,
+) (outcome RepairOutcome, found bool, err error) {
+	// R3-9 rule 2: re-read the Secret and confirm ownership mode matches what
+	// was classified. This Get and the Update below have nothing but in-memory
+	// map work between them — no git read, no backend fetch, no lock.
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return RepairOutcome{}, false, nil
+	}
+	if getErr != nil {
+		return RepairOutcome{}, false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+
+	// ── ANOTHER TOOL'S CONNECTION IS NEVER WRITTEN ────────────────────────
+	// This runs BEFORE the expected-mode comparison below, and it does not
+	// consult expectedOwned at all, because "somebody else owns this" is not a
+	// mode Sharko can be in — it is a refusal whatever the caller expected.
+	//
+	// The mode comparison alone cannot catch it. It asks only "does Sharko's
+	// own marker match what the caller classified", and it reads any foreign
+	// marker as simply "not Sharko's". So a Secret labelled
+	// managed-by: another-tool looked exactly like an unlabelled connection to
+	// it, and a guest-scope request (expectedOwned: false) matched and wrote.
+	//
+	// Those two are not the same thing, and only one of them is writable:
+	//
+	//   - no marker at all: a connection the user manages, where the addon
+	//     labels really are Sharko's to converge. This is the guest
+	//     arrangement, it is legitimate, and it keeps working.
+	//   - a marker naming another tool: that tool's connection. Sharko writes
+	//     nothing on it, not even a label inside its own vocabulary.
+	//
+	// An adopted marker does not change the answer. Adoption is a record of an
+	// arrangement between the user and Sharko; it cannot launder an ownership
+	// label that names somebody else. So the foreign check comes first and an
+	// adopted annotation underneath it is never reached.
+	if liveManagedBy := existing.Labels[LabelManagedBy]; liveManagedBy != "" && liveManagedBy != ManagedByValue {
+		return RepairOutcome{}, true, ErrRepairOwnershipChanged
+	}
+
+	// Confirm ownership mode matches expected. Sharko-owned means: has the
+	// managed-by label OR the adopted annotation (covers both Sharko-owned
+	// modes: managed and adopted). Guest means neither — an ABSENT or EMPTY
+	// marker, since a foreign one was already refused above.
+	hasManagedByLabel := existing.Labels != nil && existing.Labels[LabelManagedBy] == ManagedByValue
+	hasAdoptedAnnotation := IsAdopted(existing.Annotations)
+	actualOwned := hasManagedByLabel || hasAdoptedAnnotation
+
+	if actualOwned != expectedOwned {
+		// R3-9 rule 3: ownership mismatch refuses and writes nothing.
+		return RepairOutcome{}, true, ErrRepairOwnershipChanged
+	}
+
+	// Normalize addon labels to canonical vocabulary, and drop anything that is
+	// not an addon key.
+	//
+	// R4-1 rule 1: the filter is on the APPLY side, not only the delete side.
+	// This function promises addon labels and nothing else, and the promise has
+	// to hold at the writer — a promise only its callers enforce is not
+	// enforced. IsAddonLabelKey is the boundary, and it excludes every system
+	// label structurally: they are all DNS-qualified, so managed-by,
+	// argocd.argoproj.io/secret-type and sharko.dev/connectivity-check all
+	// carry a "/" and none of them can arrive through here. The one qualified
+	// key that IS Sharko's own, the v4 addons.sharko.dev/<addon> vocabulary,
+	// is accepted by that same predicate.
+	//
+	// A key outside the boundary is IGNORED, not an error. The caller asked for
+	// something this writer does not promise; declining quietly is better than
+	// failing a repair that is otherwise correct and complete.
+	desired := make(map[string]string, len(pinnedAddonLabels))
+	for k, v := range pinnedAddonLabels {
+		if !IsAddonLabelKey(k) {
+			continue
+		}
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			v = normalized
+		}
+		desired[k] = v
+	}
+
+	// Guest stance (expectedOwned: false): the connectivity-check label is
+	// never Sharko's on a connection the user manages, so it is not in the
+	// desired set and is therefore never ADDED. The filter above already
+	// excludes that key (it is DNS-qualified); this stays as the explicit
+	// statement of the guest stance rather than an effect of the filter.
+	//
+	// It strips the DESIRED set only. It must never strip updated.Labels — that
+	// map is what gets written, so removing the key there would DELETE a system
+	// label that was already on the Secret, which this function does not
+	// promise and must not do (R4-1 rule 4).
+	if !expectedOwned {
+		models.RemoveConnectivityCheckLabels(desired)
+	}
+
+	// Build converged label set on a DeepCopy, starting from live labels so
+	// every foreign label is preserved verbatim.
+	updated := existing.DeepCopy()
+	if updated.Labels == nil {
+		updated.Labels = make(map[string]string, len(desired))
+	}
+
+	// Labels a takeover carried over from the previous owner are never
+	// convergence candidates — same rule SyncLabelsOnly and RepairOwnedConnection
+	// follow. A legacy key like "env: prod" has no "/" in it, so IsAddonLabelKey
+	// would call it Sharko's, and the delete loops below would quietly undo the
+	// takeover's "every legacy label preserved" promise.
+	preserved := make(map[string]struct{})
+	for _, k := range PreservedLabelKeys(existing.Annotations) {
+		preserved[k] = struct{}{}
+	}
+
+	// Remove stale addon keys that git no longer declares. Both unqualified keys
+	// (no "/") and v4-vocabulary keys (addons.sharko.dev/<addon>) are Sharko's
+	// own namespace and full-convergence candidates.
+	for k := range existing.Labels {
+		if _, isPreserved := preserved[k]; isPreserved {
+			continue
+		}
+		if !IsAddonLabelKey(k) {
+			continue
+		}
+		if _, stillWanted := desired[k]; !stillWanted {
+			delete(updated.Labels, k)
+		}
+	}
+
+	// Apply every label the pinned set declares. A preserved takeover key is
+	// skipped even here: the pinned set cannot know about it, so a collision
+	// means git independently declared a key that matches a legacy one. The
+	// takeover promise overrides git.
+	for k, v := range desired {
+		if _, isPreserved := preserved[k]; isPreserved {
+			continue
+		}
+		updated.Labels[k] = v
+	}
+
+	// NO OWNERSHIP LABEL IS WRITTEN HERE, IN EITHER STANCE.
+	//
+	// R4-1 rule 3. This used to re-stamp managed-by and secret-type on the
+	// owned, non-adopted path — a defensive re-stamp copied from
+	// SyncManagedClusterLabels. It is right THERE, because that writer owns the
+	// whole managed label set and converging it is its job. It is wrong HERE for
+	// two reasons that both stand on their own:
+	//
+	//   - This function CHECKS ownership (see the recheck above). Writing an
+	//     ownership label back is CHANGING ownership, which is the one thing a
+	//     check must never do. The recheck and the re-stamp contradicted each
+	//     other inside the same function.
+	//   - A connection that really lost its managed-by label is the reconciler's
+	//     business on its normal pass, and it is already REPORTED:
+	//     clusterreconciler's connection drift notice raises
+	//     ShapeProblemOwnershipLabelMissing for exactly that shape
+	//     (connection_drift_notice.go). Quietly fixing it inside a label repair
+	//     hides the thing that notice exists to surface.
+	//
+	// The apply-side filter above makes this structural rather than a rule to
+	// remember: managed-by, secret-type and the connectivity-check label are all
+	// DNS-qualified, so IsAddonLabelKey rejects them and no path through this
+	// function can add, change or remove one. Whatever the Secret carried on
+	// those three keys, it still carries, byte for byte, value included.
+
+	// What actually changed, and what was left alone. Both come from the shared
+	// helpers in repair.go, so the two repair paths report the same way.
+	//
+	// The changed set is a DIFF of the label map about to be written against
+	// the one that was read, so it covers additions, value changes AND
+	// removals. It is computed here, once, and it is also what decides whether
+	// to write at all — so the answer in the response and the decision to write
+	// cannot disagree. Reporting used to be the caller's guess from a bare
+	// bool, which listed every desired label whenever any one of them changed
+	// and never mentioned a removal at all.
+	outcome = RepairOutcome{FieldsWritten: changedLabelPaths(existing.Labels, updated.Labels)}
+	outcome.PreservedForeignLabels, outcome.PreservedForeignDataKeys =
+		foreignPreservationCounts(updated.Labels, updated.Data, preserved)
+
+	// No-op when the converged set already matches. len(FieldsWritten) == 0 and
+	// labelsEqual are the same question asked two ways; the diff is the one that
+	// is reported, so the diff is the one that decides.
+	if len(outcome.FieldsWritten) == 0 {
+		slog.Debug("[argosecrets] cluster secret addon labels already converged (pinned repair), skipping",
+			"cluster", name, "namespace", m.namespace, "expectedOwned", expectedOwned,
+		)
+		outcome.Changed = false
+		return outcome, true, nil
+	}
+
+	// R3-9 rule 2 continued: Update using the resourceVersion from the Get
+	// above. The API server does a compare-and-swap behind this — if ownership
+	// changed between our Get and this Update, the Update fails with a
+	// conflict error.
+	//
+	// Data / StringData / Annotations are deliberately NOT touched — DeepCopy
+	// preserved them all.
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		// A version conflict is the compare-and-swap doing its job: something
+		// else wrote the Secret between the Get above and this Update, so
+		// nothing was written. It is the SAME situation the full-connection
+		// path names, so it returns the SAME error —
+		// ErrRepairSecretChangedUnderneath, mapped by the endpoint to 409. A
+		// second error type for one situation would mean two answers for one
+		// cause, which is how this path came to report a conflict as a bad
+		// gateway in the first place.
+		if apierrors.IsConflict(updateErr) {
+			return RepairOutcome{}, true, ErrRepairSecretChangedUnderneath
+		}
+		return RepairOutcome{}, true, fmt.Errorf("repairing addon labels on secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+
+	outcome.Changed = true
+	slog.Info("[argosecrets] cluster secret addon labels repaired with ownership check",
+		"cluster", name, "namespace", m.namespace, "expectedOwned", expectedOwned,
+		"fields_written", len(outcome.FieldsWritten),
+		"foreign_labels_preserved", outcome.PreservedForeignLabels,
+		"foreign_data_keys_preserved", outcome.PreservedForeignDataKeys,
+	)
+	return outcome, true, nil
+}
+
 // IsAddonLabelKey reports whether a cluster-Secret label key is one of
 // Sharko's own addon-enablement keys — the keys Sharko is allowed to
 // ADD / UPDATE / DELETE when converging a Sharko-MANAGED cluster's addon

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 func init() {
@@ -241,6 +244,15 @@ or the timeout expires (exit 2). Polls every 5 seconds.`,
 
 			respBody, status, err := apiPost("/api/v1/prs/"+url.PathEscape(id)+"/refresh", nil)
 			if err != nil {
+				// A refused server address is not a blip — it is a
+				// setting that is wrong, and waiting will never make it
+				// right. This loop treats every error as transient, so
+				// without this it would sit there re-reading the same
+				// unusable config every five seconds until the timeout,
+				// telling the operator nothing (BF10).
+				if errors.Is(err, credsafe.ErrServerAddressUnsupported) {
+					return err
+				}
 				// Transient error — retry
 				time.Sleep(5 * time.Second)
 				continue

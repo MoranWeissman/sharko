@@ -20,11 +20,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -36,7 +38,19 @@ import (
 func (s *Server) CheckEnginePinLive(ctx context.Context) (*orchestrator.EnginePinCheckResult, error) {
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		return nil, fmt.Errorf("no active Git connection: %w", err)
+		// B1. This is the one site in the set that RETURNS the failure
+		// instead of writing a response, and its return value did reach a
+		// caller's screen: handleCheckEnginePin below passes it to
+		// writeError as err.Error(). The %w wrap it used to carry was the
+		// leak — the wrapped error is whatever building a Git provider out
+		// of the saved connection produced, and on the Git side that can be
+		// net/url quoting a repository URL with the token inside it.
+		//
+		// So the cause is dropped rather than wrapped: this returns the
+		// fixed sentence and nothing under it, and the real reason is named
+		// on the log line here, at the point of failure.
+		slog.Warn("engine pin check: no usable Git connection for the active connection")
+		return nil, credsafe.ErrNoActiveGitConnection
 	}
 	orch := orchestrator.New(&s.gitMu, nil, nil, git, s.gitopsConfig(), s.repoPaths, nil)
 	return orch.CheckEnginePin(ctx)
@@ -132,7 +146,7 @@ func (s *Server) handleUpgradeEnginePin(w http.ResponseWriter, r *http.Request) 
 	// service token. Same tier addon-write and addon-configure use.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 

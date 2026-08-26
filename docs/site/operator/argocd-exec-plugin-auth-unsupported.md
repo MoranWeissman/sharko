@@ -322,9 +322,11 @@ recognized command name.
 
 ## Prevention
 
-- **Monitoring — per-cluster test failure count.** A metric
-  `sharko_cluster_test_errors_total{code="argocd_provider_exec_unsupported"}`
-  would surface the count of exec-plugin-rejected clusters proactively.
+- **Monitoring — per-cluster test failure count.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch:
+  `sharko_cluster_test_errors_total{code="argocd_provider_exec_unsupported"}`,
+  surfacing the count of exec-plugin-rejected clusters proactively.
   Today, the only signal is the per-cluster `test_status` in
   `/api/v1/fleet/status`.
 - **Documentation — pre-install cluster-secret survey.** During Sharko

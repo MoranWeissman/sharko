@@ -6,6 +6,15 @@
 
 <p align="center"><em>Declarative addon management for Kubernetes clusters, built on ArgoCD.</em></p>
 
+!!! warning "Sharko is a technical preview. It is not production ready."
+    There are no known credential leaks, permission bypasses, or places
+    where Sharko says work finished when it did not — but nobody outside
+    this project has assessed its security, the activity history is lost
+    on every restart, and only one copy of Sharko can run at a time.
+    Please read
+    [Technical preview — read this before you point Sharko at a cluster](technical-preview.md)
+    before you give it real cluster credentials.
+
 Sharko manages the addons on your Kubernetes fleet — cert-manager, monitoring, logging, and anything else you run everywhere — from a single dashboard, CLI, or REST API. It rests on two simple ideas.
 
 **The engine is Sharko's. The repo is yours.** All the logic that turns "which addons go where" into real ArgoCD Applications lives in one place: [`sharko-engine`](https://github.com/MoranWeissman/sharko/tree/main/charts/sharko-engine), a versioned, signed Helm chart published right next to the Sharko server image. Your repo pins one version of that chart. When Sharko ships new deploy logic, you get a small pin-bump pull request to review and merge — never a live migration you have to plan around.
@@ -28,7 +37,7 @@ And if you ever want to stop using Sharko, you can. Remove it and every addon ke
 
     ---
 
-    Install Sharko and register your first cluster in 5 minutes.
+    Install Sharko and register your first cluster.
 
     [:octicons-arrow-right-24: Quickstart](getting-started/quickstart.md)
 

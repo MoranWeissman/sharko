@@ -102,7 +102,7 @@ func assertNoSecretMaterial(t *testing.T, message string) {
 		"eyJ",          // JWT / base64 header
 		"AKIA",         // AWS access key id prefix
 		"kubeconfig",   // kubeconfig material
-		"704909879244", // the forbidden real account id
+		"123456789012", // synthetic forbidden-account-ID sentinel, not a real account id
 	}
 	for _, b := range banned {
 		if strings.Contains(message, b) {

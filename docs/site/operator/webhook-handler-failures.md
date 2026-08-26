@@ -2,17 +2,19 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The handler
-> response codes (`400`, `401`, `200`) and exact error bodies (`"invalid
-> webhook signature"`, `"missing X-Hub-Signature-256 header"`, `"could
-> not read request body"`, `"invalid push event payload"`) are verified
-> verbatim against `internal/api/webhooks.go:45-126` as shipped. The
-> HMAC-SHA256 signature verification at `verifyGitHubSignature` uses
-> `hmac.Equal` for constant-time comparison; the secret is read from
-> `SHARKO_WEBHOOK_SECRET` env var. Re-verify before changing the
-> response-body strings or the signature header name (currently
-> `X-Hub-Signature-256` for GitHub) — both are anchors for the
-> grep-by-error-message diagnosis below.
+>  **Verified:** Re-checked 2026-08-21 against `main` HEAD. The handler
+> response codes (`400`, `401`, `200`) and exact error bodies are verified
+> verbatim against `internal/api/webhooks.go`. There is now exactly ONE
+> refusal message — `"the Git webhook accepts only a request signed with
+> the shared secret set by an operator"` — and it is what a caller gets
+> whether no shared secret is set, no signature arrived, or a signature
+> did not match. Those three cases used to answer differently, which let
+> anyone ask the endpoint whether it was protected; they are one answer
+> now on purpose, so **you cannot tell them apart from the response**.
+> The 400s (`"could not read request body"`, `"invalid push event
+> payload"`) are unchanged. HMAC-SHA256 verification at
+> `verifyGitHubSignature` uses `hmac.Equal` for constant-time comparison;
+> the shared secret is read from the `SHARKO_WEBHOOK_SECRET` env var.
 
 The Git provider's webhook delivery is reaching Sharko but the
 handler is rejecting it. The provider's webhook-management UI shows
@@ -24,9 +26,8 @@ This runbook covers two adjacent failure-mode rows from the
 [failure-mode index](failure-mode-index.md):
 
 - "Webhook handler returns 401 (Git provider webhook signature didn't
-  validate)" — `internal/api/webhooks.go` writes
-  `"invalid webhook signature"` or `"missing X-Hub-Signature-256
-  header"` with `HTTP 401`.
+  validate)" — `internal/api/webhooks.go` writes the single refusal
+  message with `HTTP 401`.
 - "Webhook receive error (any code path)" — the broader bucket
   covering 400s (`"could not read request body"`,
   `"invalid push event payload"`) and any other non-2xx response.
@@ -59,8 +60,7 @@ What an operator sees when this fires:
   delivery row — is one of:
 
   ```json
-  {"error":"missing X-Hub-Signature-256 header"}
-  {"error":"invalid webhook signature"}
+  {"error":"the Git webhook accepts only a request signed with the shared secret set by an operator"}
   {"error":"could not read request body"}
   {"error":"invalid push event payload"}
   ```
@@ -140,10 +140,11 @@ curl -i -sS -X POST "$WEBHOOK_URL" \
   --data-binary '{}'
 ```
 
-Expected response: **HTTP 401 with `"missing X-Hub-Signature-256
-header"`** when `SHARKO_WEBHOOK_SECRET` is set, or **HTTP 200 with
-`{"status":"pong"}`** when the secret is unset. Either response
-confirms the URL is reachable and the handler is running.
+Expected response: **HTTP 401 with the refusal message**. An unsigned
+probe is always refused — including a `ping`, which your Git provider
+signs like anything else. That response confirms the URL is reachable
+and the handler is running; it says nothing about whether a shared
+secret is configured, and it is not meant to.
 
 If you get DNS failure, TCP refused, TLS handshake error, or HTTP
 5xx, the webhook delivery isn't reaching the handler. Check ingress
@@ -159,12 +160,11 @@ click the most-recent failed delivery. The panel shows:
   `X-Hub-Signature-256`) and JSON body.
 - The **Response** tab: status code and body Sharko returned.
 
-The response body's `error` field tells you exactly which lane:
+The response body's `error` field narrows it to one of three lanes:
 
 | Response body | Lane |
 |---|---|
-| `"missing X-Hub-Signature-256 header"` | Webhook configured without a secret, but `SHARKO_WEBHOOK_SECRET` is set on the server |
-| `"invalid webhook signature"` | Secret mismatch — webhook's secret vs Sharko's env var |
+| `"the Git webhook accepts only a request signed with the shared secret set by an operator"` | The signature did not satisfy the server. One message covers all of: no shared secret set on Sharko, no signature sent, signature does not match. Tell them apart from the server side (step 3), not from the response |
 | `"could not read request body"` | TLS termination or proxy is mangling the body |
 | `"invalid push event payload"` | Non-JSON or schema-incompatible body (e.g. webhook is configured for an event other than `push`) |
 
@@ -192,10 +192,10 @@ Two outcomes:
   ```
 
 - **Field missing entirely or value empty** — the server is running
-  with no secret. The handler accepts any payload (no signature
-  check). If the symptom is 401 anyway, the env var is non-empty
-  in the running pod but the secret-ref isn't resolving; check
-  `kubectl -n <sharko-ns> exec <pod> -- env | grep SHARKO_WEBHOOK`.
+  with no shared secret, so the webhook is closed and every call to it
+  is refused. That is the expected state on a fresh install; it is not
+  a fault, and nothing else is broken by it. Set the shared secret on
+  both sides (Mitigation step 1) if you want the endpoint to work.
 
 In the GitHub UI: `Settings -> Webhooks -> Edit -> Secret`. The
 field shows `••••••••••• (Click to change)`. You cannot read the
@@ -205,8 +205,10 @@ match. The mitigation lane assumes you regenerate.
 For the signature math, GitHub computes
 `hmac.sha256(secret).hexdigest(body)` and sends
 `sha256=<hex>` in `X-Hub-Signature-256`. Sharko's
-`verifyGitHubSignature` (in `internal/api/webhooks.go:131`) does the
-same computation and `hmac.Equal`s the result.
+`verifyGitHubSignature` (in `internal/api/webhooks.go`) does the same
+computation and `hmac.Equal`s the result. With no shared secret set on
+Sharko there is nothing to compute against, and the call is refused
+rather than waved through.
 
 ---
 
@@ -256,26 +258,32 @@ same computation and `hmac.Equal`s the result.
    Success indicator: same as step 1 — successful redeliveries show
    HTTP 200.
 
-3. **Disable webhook signing temporarily.** If you cannot
-   immediately rotate the secret (e.g. you need to confirm the body
-   is reaching Sharko before fixing the signature), unset
-   `SHARKO_WEBHOOK_SECRET` on Sharko — the handler then accepts any
-   signed or unsigned payload. **This is a temporary diagnostic
-   measure**; the resulting webhook has no auth, so any caller can
-   trigger reconciliation.
+3. **Check the body separately, without turning the check off.**
+   There is no way to make Sharko accept an unsigned call — clearing
+   `SHARKO_WEBHOOK_SECRET` closes the endpoint, it does not open it, so
+   the old "unset it and see" trick tells you nothing. To find out
+   whether the body is reaching Sharko intact, sign it yourself with
+   the value Sharko actually has and send it from outside:
 
    ```sh
-   kubectl -n "$SHARKO_NS" set env deployment/sharko SHARKO_WEBHOOK_SECRET-
-   kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
+   SECRET=<the value read in Diagnosis step 3>
+   BODY='{"ref":"refs/heads/main","commits":[]}'
+   SIG="sha256=$(printf '%s' "$BODY" \
+     | openssl dgst -sha256 -hmac "$SECRET" -r | cut -d' ' -f1)"
+
+   curl -i -sS -X POST "$WEBHOOK_URL" \
+     -H "X-GitHub-Event: push" \
+     -H "X-Hub-Signature-256: $SIG" \
+     -H "Content-Type: application/json" \
+     --data-binary "$BODY"
    ```
 
-   With signing off, redeliver the failing webhook. If it now succeeds
-   (HTTP 200), the body was reaching Sharko fine — only the signature
-   was wrong. Re-enable signing immediately (step 1) once the diagnosis
-   is done.
+   If that returns HTTP 200 but real deliveries do not, the body is
+   being changed in transit — go to the ingress / proxy cause below.
+   If it is refused too, Sharko's copy of the shared secret is not what
+   you think it is; go back to step 1.
 
-   Success indicator: webhook delivers HTTP 200 with signing
-   disabled. Then re-apply step 1 to lock signing back on.
+   Success indicator: the hand-signed call returns HTTP 200.
 
 4. **Last resort — wait for reconciler convergence.** The cluster-
    secret reconciler runs its 30s safety-net tick regardless of
@@ -306,24 +314,21 @@ part of a security review) but didn't update Sharko's
 `SHARKO_WEBHOOK_SECRET` env var. Every subsequent delivery returns
 401.
 
-Diagnostic signature: Diagnosis step 2 shows
-`"invalid webhook signature"`. The webhook delivery log shows
-successful 200 responses up to a specific timestamp, then
-continuous 401s after — corresponding to when the secret was
-rotated.
+Diagnostic signature: the webhook delivery log shows successful 200
+responses up to a specific timestamp, then continuous 401s after —
+corresponding to when the secret was rotated.
 
 Fix lane: Mitigation step 1 (rotate both sides to a fresh secret).
 
 ### Webhook was created without specifying a secret
 
 The webhook was set up in the GitHub UI without filling in the
-Secret field, but `SHARKO_WEBHOOK_SECRET` is set on Sharko. Sharko
-expects a signature header that GitHub never sends, so the handler
-returns 401 `"missing X-Hub-Signature-256 header"`.
+Secret field. GitHub then sends no signature header at all, and every
+delivery is refused with the single 401 message.
 
-Diagnostic signature: Diagnosis step 2 shows the exact string
-`"missing X-Hub-Signature-256 header"`. The GitHub UI shows the
-Secret field as empty.
+Diagnostic signature: the GitHub UI shows the Secret field as empty.
+The response body cannot tell you this on its own — one message covers
+every refusal — so this one is diagnosed from the provider side.
 
 Fix lane: Mitigation step 1 (set the secret on both sides).
 
@@ -349,10 +354,9 @@ re-encoding JSON), then re-emitting it. The HMAC is computed over
 the original body; the re-encoded body produces a different HMAC;
 the signature check fails.
 
-Diagnostic signature: Diagnosis step 1's `ping` probe works (the
-handler is reachable), but signed `push` events fail with
-`"invalid webhook signature"`. Direct webhook delivery from
-GitHub's UI's "Redeliver" button also fails. The TLS / ingress
+Diagnostic signature: the hand-signed call in Mitigation step 3
+succeeds when sent from close to the pod but fails through the
+ingress, and provider deliveries fail with the 401. The TLS / ingress
 configuration was changed recently.
 
 Fix lane: configure the ingress / proxy to pass the body through
@@ -368,19 +372,23 @@ ingress configuration issue, not a Sharko issue.
 How to make this failure mode less likely going forward. Three
 levers:
 
-- **Monitoring — expose a webhook delivery success metric.** Sharko
-  should record per-status-code rates on the webhook handler
-  (e.g. `sharko_webhook_requests_total{status="200|400|401"}`) and
-  alert on sustained 4xx rate >5% over 5 minutes. Wiring this into
-  `internal/metrics/` and `prometheusrules.yaml` is a V2-4.x
-  follow-up. The bounded-impact nature (reconciler self-heals) keeps
-  this at P1 even with full webhook breakage; the alert would catch
-  the silent state-divergence earlier.
+- **Monitoring — expose a webhook delivery success metric.** Sharko does
+  not export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch: record
+  per-status-code rates on the webhook handler (e.g.
+  `sharko_webhook_requests_total{status="200|400|401"}`) and alert on a
+  sustained 4xx rate above 5% over 5 minutes. Wiring this into
+  `internal/metrics/` and `prometheusrules.yaml` is a V2-4.x follow-up.
+  The bounded-impact nature (the reconciler self-heals) keeps this at P1
+  even with full webhook breakage; the alert would catch the silent
+  state-divergence earlier.
 
-- **Gating — webhook secret in installation runbook.** When operators
-  install Sharko, the installation runbook should explicitly call
-  out: "Set `SHARKO_WEBHOOK_SECRET` in your secret, and use the same
-  value in the GitHub webhook's Secret field." A pre-flight check at
+- **Gating — webhook secret in installation runbook.** The chart ships
+  `secrets.webhookSecret` empty, and while it is empty the webhook is
+  closed — so an operator who never sets it has a closed endpoint, not
+  an open one. The installation runbook should still call out: "Set
+  `SHARKO_WEBHOOK_SECRET` in your secret, and use the same value in the
+  GitHub webhook's Secret field." A pre-flight check at
   Sharko startup that says "webhook secret is set; webhook is
   configured with matching secret? (run a self-test)" would catch
   rotation drift at the moment it happens. The self-test belongs in

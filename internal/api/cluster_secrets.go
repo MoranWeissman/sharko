@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
@@ -52,7 +54,14 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 
 	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "connecting to cluster: "+err.Error())
+		// PUBLIC BOUNDARY, and it was safe only by luck: every return in
+		// NewClientFromKubeconfig happens to be credsafe.Mark'd today, so
+		// err.Error() was already the fixed sentence. That is a property of
+		// the function being called, not of this call — one unmarked return
+		// added there and this line starts leaking, with nothing here to
+		// notice. credsafe.Sentence makes the intent local and checkable, and
+		// matches what clusters_doctor.go already does for the same call.
+		writeError(w, http.StatusBadGateway, "connecting to cluster: "+credsafe.Sentence(err))
 		return
 	}
 
@@ -83,7 +92,14 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		slog.Warn("no addon secret definitions — listing all managed secrets")
 		secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, "")
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "listing secrets: "+err.Error())
+			// PUBLIC BOUNDARY. Unlike the client build above, this one was
+			// genuinely leaking: ListManagedSecrets is a plain Kubernetes
+			// List against the remote cluster and nothing marks its error, so
+			// a raw *apierrors.StatusError went into the response body. It is
+			// classified by type — the same three outcomes the doctor's
+			// connection-Secret read uses.
+			slog.Error("[cluster-secrets] listing managed secrets failed", "cluster", name, "step", "list-secrets")
+			writeError(w, http.StatusBadGateway, listManagedSecretsSentence(name, err))
 			return
 		}
 		allSecrets = secrets
@@ -95,10 +111,27 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// listManagedSecretsSentence is the safe sentence for a failed
+// "list the secrets Sharko manages on this cluster" read. Classified by TYPE
+// (the typed Kubernetes Status code), never by matching the message's words,
+// so it keeps working when client-go rephrases itself. The Kubernetes error's
+// own text — which can name the ServiceAccount out of a 403 or the API server
+// host — goes to the log line at the call site and no further.
+func listManagedSecretsSentence(cluster string, err error) string {
+	switch {
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return fmt.Sprintf("Sharko is not allowed to list secrets on cluster %q. Grant its service account permission to list secrets there and try again.", cluster)
+	case apierrors.IsNotFound(err):
+		return fmt.Sprintf("Sharko could not find the namespace it manages secrets in on cluster %q. Check that the addon secret definitions name a namespace that exists.", cluster)
+	default:
+		return fmt.Sprintf("Sharko could not list the secrets it manages on cluster %q. Check that the cluster is reachable from Sharko and try again.", cluster)
+	}
+}
+
 // handleRefreshClusterSecrets godoc
 //
 // @Summary Refresh cluster secrets from Git
-// @Description Delivers every addon-values secret the GIT CATALOG defines for this cluster, right now, through the same git-backed engine the periodic reconciler runs (task #152). What to deliver — backend paths, destination namespaces, Secret names, key lists — comes exclusively from Git; any request body is ignored entirely. Pass ?addon= to narrow the push to one addon, which must already be defined in Git for this cluster or the call is refused.
+// @Description Delivers every addon-values secret the GIT CATALOG defines for this cluster, right now, through the same Git-backed engine the automatic delivery uses (task #152). What to deliver — backend paths, destination namespaces, Secret names, key lists — comes exclusively from Git; any request body is ignored entirely. Pass ?addon= to narrow the push to one addon, which must already be defined in Git for this cluster or the call is refused.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -109,7 +142,7 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "The cluster or addon is not defined in Git"
-// @Failure 503 {object} map[string]interface{} "Secrets reconciler not configured"
+// @Failure 503 {object} map[string]interface{} "The part of Sharko that delivers addon secrets is not running on this server"
 // @Failure 502 {object} map[string]interface{} "Git or upstream error"
 // @Router /clusters/{name}/secrets/refresh [post]
 func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Request) {
@@ -135,9 +168,9 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 		// the git-backed secrets reconciler, which only exists once a
 		// secrets provider is configured.
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "secrets reconciler not configured",
-			"code":  "secrets_reconciler_not_configured",
-			"hint":  "configure a secrets provider via Settings → Connections (UI), or POST /api/v1/connections/ with provider config (API) — the git-backed secrets engine starts with it",
+			"error": secretsEngineNotRunning,
+			"code":  secretsEngineNotConfiguredCode,
+			"hint":  secretsEngineNotRunningHint,
 		})
 		return
 	}
@@ -197,7 +230,7 @@ func clusterSecretsRefreshRefusal(cluster, addon, errMsg string) (int, string) {
 	case strings.Contains(errMsg, "no Git connection is configured"):
 		return http.StatusBadGateway, "Sharko has no Git connection configured — there is nothing to refresh."
 	case strings.Contains(errMsg, "could not read the addon catalog or managed clusters list"):
-		return http.StatusBadGateway, "Sharko couldn't read the addon catalog or managed-clusters file in git. Check that Sharko can reach your git host, then try again."
+		return http.StatusBadGateway, "Sharko couldn't read the addon catalog or managed-clusters file in Git. Check that Sharko can reach your Git host, then try again."
 	default:
 		return http.StatusBadGateway, "Sharko could not refresh this cluster's secrets. The Managed Secrets page shows the reason for each row."
 	}

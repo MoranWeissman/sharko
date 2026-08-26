@@ -76,7 +76,7 @@ fully in-process; no kind required.
 | `upgrade_global`   | 30 |    0.296 |    0.411 |    0.641 |    0.276 |    0.733 |
 
 The dry-run paths short-circuit before any ArgoCD dial; the upgrade
-path rewrites the catalog file via the in-memory mock git provider
+path rewrites the catalog file via the in-memory mock Git provider
 and opens a PR — sub-millisecond throughout because nothing crosses
 the process boundary.
 
@@ -107,7 +107,7 @@ clusters × addons (the dispatch + connection-lookup floor).
 | `repo_status`      | 30 |    0.142 |    0.215 |    0.281 |    0.107 |    0.296 |
 
 `fleet_status` is the slowest of the trio because the handler joins
-git availability + argocd availability + cluster slice into one
+Git availability + argocd availability + cluster slice into one
 response shape; the other two read a single subsystem each.
 
 ## Refreshing baselines

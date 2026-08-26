@@ -9,6 +9,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 func init() {
@@ -46,6 +48,13 @@ var addAddonCmd = &cobra.Command{
 		repo, _ := cmd.Flags().GetString("repo")
 		ver, _ := cmd.Flags().GetString("version")
 		namespace, _ := cmd.Flags().GetString("namespace")
+
+		// Refused right here so the operator is told the rule before
+		// anything is sent. The server refuses too, by asking this same
+		// function — the CLI is not carrying its own copy of the rule.
+		if err := credsafe.ValidateSupportedRepoURL(repo); err != nil {
+			return err
+		}
 
 		body := map[string]interface{}{
 			"name":      name,

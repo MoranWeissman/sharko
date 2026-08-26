@@ -80,7 +80,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 // handleUpdateConnection godoc
 //
 // @Summary Update connection
-// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose git or argocd block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored git/argocd config is kept as-is instead of being overwritten with empty values.
+// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values.
 // @Tags connections
 // @Accept json
 // @Produce json
@@ -366,12 +366,12 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		"argocd": map[string]interface{}{"status": "ok"},
 	}
 	if gitErr != nil {
-		result["git"] = connectionErrorFields("git", gitErr)
+		result["git"] = connectionErrorFields(connectionKindGit, gitErr)
 	} else if authInfo.GitSource != "" {
 		result["git"] = map[string]interface{}{"status": "ok", "auth": authInfo.GitSource}
 	}
 	if argocdErr != nil {
-		result["argocd"] = connectionErrorFields("argocd", argocdErr)
+		result["argocd"] = connectionErrorFields(connectionKindArgoCD, argocdErr)
 	} else if authInfo.ArgocdSource != "" {
 		result["argocd"] = map[string]interface{}{"status": "ok", "auth": authInfo.ArgocdSource}
 	}
@@ -421,7 +421,7 @@ func backfillSavedCredentials(w http.ResponseWriter, conn, saved *models.Connect
 
 	// --- ArgoCD ---
 	if conn.Argocd.Token == "" && saved.Argocd.Token != "" && conn.Argocd.ServerURL != "" {
-		if !sameEndpoint(conn.Argocd.ServerURL, saved.Argocd.ServerURL) {
+		if !sameArgocdEndpoint(conn.Argocd.ServerURL, saved.Argocd.ServerURL) {
 			writeError(w, http.StatusUnprocessableEntity, savedCredentialRefusal("ArgoCD server"))
 			return false
 		}
@@ -466,6 +466,38 @@ func sameGitAddress(submitted, saved models.GitRepoConfig) bool {
 		return false
 	}
 	return sameEndpoint(probe.RepoURL, saved.RepoURL)
+}
+
+// sameArgocdEndpoint is sameEndpoint for the ArgoCD address, with the
+// credential taken off both sides first.
+//
+// # Why the credential must not count towards "same address"
+//
+// An operator who saved an address with a token written into it — which
+// Sharko used to accept — now reads that address back with the token removed,
+// because that is all any screen may show. So the address they send back is
+// not byte-identical to the one Sharko stored, and a plain comparison would
+// call it a different ArgoCD and refuse to lend them their own saved token.
+// The two addresses point at the same server; only the part nobody may see is
+// different.
+//
+// # Why this does not weaken the pin
+//
+// The pin exists so the stored token is not sent somewhere the caller chose.
+// Where a request goes is decided by the scheme, the host and the port — the
+// userinfo section, the query and the fragment redirect nothing. Those three
+// are exactly what is stripped, so a caller cannot use them to point the
+// stored token at a server of their own.
+//
+// When either side cannot be taken apart with confidence, the raw comparison
+// is used instead: an address Sharko cannot parse must match exactly, which is
+// the stricter of the two answers.
+func sameArgocdEndpoint(a, b string) bool {
+	safeA, safeB := models.SafeArgocdServerURL(a), models.SafeArgocdServerURL(b)
+	if safeA == "" || safeB == "" {
+		return sameEndpoint(a, b)
+	}
+	return sameEndpoint(safeA, safeB)
 }
 
 // sameEndpoint compares two addresses the way a Git host or an ArgoCD server
@@ -530,10 +562,10 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if gitErr != nil {
-		result["git"] = connectionErrorFields("git", gitErr)
+		result["git"] = connectionErrorFields(connectionKindGit, gitErr)
 	}
 	if argocdErr != nil {
-		result["argocd"] = connectionErrorFields("argocd", argocdErr)
+		result["argocd"] = connectionErrorFields(connectionKindArgoCD, argocdErr)
 	}
 
 	audit.Enrich(r.Context(), audit.Fields{

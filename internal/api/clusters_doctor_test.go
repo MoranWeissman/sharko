@@ -20,8 +20,10 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -785,8 +787,59 @@ func TestDoctorCheckSecretOwnership_Fail_RBACError(t *testing.T) {
 	if strings.Contains(check.Fix, "still exists") {
 		t.Errorf("Fix = %q, must NOT use the misleading missing-secret advice for a real read failure", check.Fix)
 	}
-	if !strings.Contains(check.Fix, "forbidden") {
-		t.Errorf("Fix = %q, want it to include the underlying reason", check.Fix)
+	// SECURITY (S2). This assertion used to be
+	//   if !strings.Contains(check.Fix, "forbidden")
+	// — it REQUIRED the Kubernetes error's own words in a field that carries
+	// `json:"fix,omitempty"` and is rendered in a browser, so the leak was
+	// pinned as the design in the same way FriendlyMessage's doc comment was.
+	// Inverted: the underlying reason belongs in the server log, never here.
+	// "User cannot get resource" is the part of the fake error that stands in
+	// for what a real 403 discloses — the identity Sharko runs as.
+	for _, leaked := range []string{"forbidden", "User cannot get resource"} {
+		if strings.Contains(check.Fix, leaked) {
+			t.Errorf("Fix = %q, must not carry the Kubernetes error's own words (%q)", check.Fix, leaked)
+		}
+		if strings.Contains(check.Detail, leaked) {
+			t.Errorf("Detail = %q, must not carry the Kubernetes error's own words (%q)", check.Detail, leaked)
+		}
+	}
+}
+
+// TestDoctorCheckSecretOwnership_TypedForbidden_SaysSoWithoutQuoting proves
+// the classifier reads the TYPED Kubernetes status rather than the message
+// wording: a real apierrors Forbidden gets the permission-specific sentence,
+// and none of the error's own words come with it.
+func TestDoctorCheckSecretOwnership_TypedForbidden_SaysSoWithoutQuoting(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "byo-conn", Namespace: "argocd"},
+	})
+	// A real typed 403, carrying the kind of identity detail a live cluster
+	// puts in one.
+	forbidden := apierrors.NewForbidden(
+		schema.GroupResource{Resource: "secrets"}, "byo-conn",
+		errors.New(`User "system:serviceaccount:sharko:sharko-sa" cannot get resource "secrets"`),
+	)
+	client.PrependReactor("get", "secrets", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, forbidden
+	})
+	srv.SetArgoSecretManager(argosecrets.NewManager(client, "argocd"))
+
+	check := srv.doctorCheckSecretOwnership(context.Background(), "byo-conn")
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail (detail=%s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "not allowed") {
+		t.Errorf("Detail = %q, want the permission-specific sentence chosen by the typed status", check.Detail)
+	}
+	if !strings.Contains(check.Fix, "RBAC") {
+		t.Errorf("Fix = %q, want the RBAC next step", check.Fix)
+	}
+	// The identity out of a 403 is the whole reason this check exists.
+	for _, leaked := range []string{"system:serviceaccount", "sharko-sa", "cannot get resource"} {
+		if strings.Contains(check.Detail+check.Fix, leaked) {
+			t.Errorf("the 403's own words (%q) reached the doctor response: detail=%q fix=%q", leaked, check.Detail, check.Fix)
+		}
 	}
 }
 
@@ -840,7 +893,7 @@ func newConnectivityDoctorServer(t *testing.T, f doctorConnectivityFixture) *Ser
 	srv.SetClusterReconciler(clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider: func() gitprovider.GitProvider { return nil },
 		ArgoClient:  k8sClient,
-		Vault:       nil,
+		Vault:       staticVault(nil),
 		AuditFn:     func(_ audit.Entry) {},
 	}))
 	srv.SetArgoSecretManager(argosecrets.NewManager(k8sClient, "argocd"))
@@ -1072,8 +1125,15 @@ func TestDoctorCheckConnectivityApp_Fail_ManagedZeroAddonsMissingLabel(t *testin
 	if !strings.Contains(check.Detail, "zero enabled addons") {
 		t.Errorf("Detail = %q, want it to name zero enabled addons as the reason", check.Detail)
 	}
-	if !strings.Contains(check.Fix, "reconciler") {
-		t.Errorf("Fix = %q, want it to point at the reconciler self-healing this automatically", check.Fix)
+	// The Fix is written out as a literal. It used to be asserted as
+	// `strings.Contains(check.Fix, "reconciler")` — which pinned the DEFECT:
+	// user-facing text never names Sharko's own plumbing, and the sentence it
+	// was protecting also promised "within ~30 seconds" for an interval the
+	// operator sets. Both are now caught by
+	// TestBannedWordings_UserFacingTextNamesNoPlumbingAndPromisesNoClock.
+	const wantFix = "Sharko automatically adds this label. If it does not appear, check that the part of Sharko that manages cluster connections is running on this server."
+	if check.Fix != wantFix {
+		t.Errorf("Fix drifted:\n got: %q\nwant: %q", check.Fix, wantFix)
 	}
 }
 

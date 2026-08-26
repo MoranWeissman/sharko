@@ -45,7 +45,7 @@ flowchart TB
 
 ### Sharko's loop
 
-Git (`managed-clusters.yaml`) → Sharko's cluster reconciler → the **addon-assignment labels** on the ArgoCD cluster Secret (in the `argocd` namespace).
+Git (`managed-clusters.yaml`) → the part of Sharko that keeps cluster connections in step with Git → the **addon-assignment labels** on the ArgoCD cluster Secret (in the `argocd` namespace).
 
 Those labels say which addons belong on which cluster. For example:
 
@@ -133,9 +133,9 @@ versions, on which clusters) is something a person reviews and approves
 in a pull request, and Kubernetes objects are not the natural place to
 put something you want reviewed before it takes effect. Git already is
 that place. So the plain sentence for what Sharko actually is: **Sharko
-is an operator whose desired state lives in git, not in a CustomResource.**
-The reconcile loop is real (the cluster reconciler, the ApplicationSet
-generators) — only the "state lives in a CRD" part was tried and dropped.
+is an operator whose desired state lives in Git, not in a CustomResource.**
+The loop that keeps everything in step is real (the part of Sharko that
+manages cluster connections, and the ApplicationSet generators) — only the "state lives in a CRD" part was tried and dropped.
 
 **So why keep the Kubernetes-looking header at all, if there's no CRD
 behind it?** Because the header answers a real question even without a
@@ -184,7 +184,7 @@ would make the secret-*value* path kubectl-visible without touching how
 the rest of desired state is stored. This is not built; it is tracked in
 [Roadmap](../community/roadmap.md).
 
-Today's transparency model (UI + API + events, plus a git history you can
+Today's transparency model (UI + API + events, plus a Git history you can
 read yourself) is honest about what it is.
 
 ## Who is Sharko for?

@@ -1,5 +1,13 @@
 # Third-party Catalog Source Smoke Runbook
 
+> **Verified:** Updated 2026-08-25 — the failed-fetch example log lines
+> in Step 3 now show what the log pipeline actually writes into the
+> `err` field (a fixed type-derived label, never the error's own words);
+> verified on that date by rendering real fetch and schema failures
+> through the production log handler (`logging.NewHandler`) and by
+> running `sharko validate-catalog` on a schema-invalid body. The rest
+> of the walk is as originally authored.
+
 Operator-facing smoke procedure for the third-party catalog fetcher
 configured via `SHARKO_CATALOG_URLS`. Walk this once on a fresh Sharko
 deployment when you first turn the feature on — it confirms that the
@@ -127,31 +135,46 @@ deployments and `level=ERROR`-worthy on anything else.
 
 Successful fetches are intentionally silent in the log (the API +
 Prometheus metrics are the operational surface). Failed fetches log
-a single `WARN` line at component `catalog-sources` with a 10-character
-**source fingerprint** instead of the URL:
+a single `WARN` line at component `catalog-sources` naming the source in
+a `source` field:
 
 ```
-level=WARN msg="catalog source fetch failed" component=catalog-sources source_fp=a1b2c3d4e5 err="http 404"
-level=WARN msg="catalog source schema validation failed" component=catalog-sources source_fp=a1b2c3d4e5 err="schema validation: ..."
-level=WARN msg="catalog source blocked by runtime SSRF guard" component=catalog-sources source_fp=a1b2c3d4e5 err="resolves to private address 10.0.0.5"
+level=WARN msg="catalog source fetch failed" component=catalog-sources source=redacted err="unclassified chain=*errors.errorString"
+level=WARN msg="catalog source schema validation failed" component=catalog-sources source=redacted err="unclassified chain=*errors.errorString"
+level=WARN msg="catalog source blocked by runtime SSRF guard" component=catalog-sources source=redacted err="unclassified chain=..."
 ```
 
-The fingerprint is a 10-character prefix of `SHA-256(url)`. It is
-stable across restarts for the same URL, so you can correlate a WARN
-line to a specific entry in your `SHARKO_CATALOG_URLS` list by
-hashing the URL yourself:
+The `source` field is always the single word `redacted` — never the
+address, whatever it looks like, and nothing about the address is
+worked into it: no hash of it, no part of it, no hint of how long it
+was. That is deliberate: this log has no login in front of it, and a
+private catalog is addressed by writing a token into the address's own
+path, where nothing can tell it apart from an ordinary path segment —
+so even an address that looks clean is treated as a secret. Every
+configured source therefore reads `redacted`, and a line cannot tell
+you which one it is about. The `err` field is also rewritten before it
+is stored: the log pipeline replaces an error's own words with a fixed
+description built from its Go types, because the raw words of a fetch
+error routinely quote the address.
 
-```bash
-printf '%s' "https://gist.githubusercontent.com/youruser/<gist-id>/raw/catalog.yaml" | shasum -a 256 | head -c 10
-```
+To work out which source a failure is about, read
+`GET /api/v1/catalog/sources` (Step 4), which is behind a login. Its
+rows all say `redacted` too, so tell them apart by their `status`,
+`entry_count` and `last_fetched` values, and by the order of the list —
+the rows follow the order of the configured addresses sorted
+alphabetically.
 
-If you see a `WARN` line and the API response (Step 4) reports
-`status: "failed"`, the entry under that fingerprint is the
-problem. The most common causes are `http 404` (URL typo or the
-gist/asset went away), `http 403` (the URL requires auth Sharko
-isn't sending), `schema validation: ...` (the YAML is malformed
-or violates the addon schema), and the SSRF block when a hostname
-resolves to a private IP — set
+Because the `err` field is a type label, the log does not tell you
+WHY the fetch failed — check the URL yourself. The most common causes
+are an HTTP 404 (URL typo or the gist/asset went away), an HTTP 403
+(the URL requires auth Sharko isn't sending), a schema-invalid body
+(the YAML is malformed or violates the addon schema), and the SSRF
+block when a hostname resolves to a private IP. To tell them apart:
+`curl -sS -o /dev/null -w '%{http_code} %{content_type}\n'` on the
+address shows the HTTP status; `sharko validate-catalog` on the
+fetched body prints the exact schema complaint (the same loader rules
+the fetcher runs); and for the SSRF case, resolve the hostname and
+check for a private IP — set
 `SHARKO_CATALOG_URLS_ALLOW_PRIVATE=true` on trusted networks if that
 is intentional, otherwise fix the URL.
 
@@ -172,7 +195,10 @@ curl -fsSL -H "Authorization: Bearer $TOKEN" \
 
 The expected response shape is a **JSON array** with at least two
 elements after you have added a third-party source — `embedded`
-first, then one element per configured URL, sorted by URL:
+first, then one element per configured URL. The configured address
+itself never appears; every third-party row's `url` is the fixed word
+`redacted`, and the rows follow the configured addresses sorted
+alphabetically:
 
 ```json
 [
@@ -184,7 +210,7 @@ first, then one element per configured URL, sorted by URL:
     "verified": true
   },
   {
-    "url": "https://gist.githubusercontent.com/youruser/<gist-id>/raw/catalog.yaml",
+    "url": "redacted",
     "status": "ok",
     "last_fetched": "2026-05-20T12:34:56Z",
     "entry_count": 1,
@@ -197,7 +223,7 @@ Field reference (from `internal/api/catalog_sources.go`):
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `url` | string | Either the literal `"embedded"` (binary-shipped catalog, always first) or the third-party URL verbatim. |
+| `url` | string | Either the literal `"embedded"` (binary-shipped catalog, always first) or the fixed word `"redacted"` for every configured third-party source. The configured address never comes back in any form — a private catalog's token can sit in the address's own path, where nothing can tell it apart from an ordinary path segment, so the whole address is treated as a secret. `SHARKO_CATALOG_URLS` exists precisely so tokened/private URLs need not be committed to Git, and this endpoint is readable by any signed-in account including a viewer. Tell rows apart by `status`, `entry_count` and `last_fetched`; the rows follow the configured addresses sorted alphabetically. |
 | `status` | string | `"ok"` = most recent fetch parsed cleanly. `"stale"` = most recent fetch failed but a previous one succeeded; entries are last-known-good. `"failed"` = fresh-start failure or schema violation; entries may be empty. Always `"ok"` for the embedded row. |
 | `last_fetched` | string \| null | RFC3339 timestamp of the most recent **successful** fetch (not the most recent attempt). `null` when never succeeded. Always `null` for the embedded row. |
 | `entry_count` | integer | Number of addon entries this source contributes to the merged catalog. |
@@ -206,14 +232,15 @@ Field reference (from `internal/api/catalog_sources.go`):
 
 **Success means:**
 
-- Your third-party URL appears as an array element.
+- A `"url": "redacted"` element appears for your third-party source.
 - `status` is `"ok"`.
 - `last_fetched` is a recent RFC3339 timestamp.
 - `entry_count` matches the number of `addons:` entries in your
   YAML file.
 
-If `status` is `"failed"`, scroll back through the pod log for the
-matching `source_fp` (Step 3) and read the `err` value.
+If `status` is `"failed"`, scroll back through the pod log (Step 3)
+and read the `err` value — with one source configured, every
+catalog-source `WARN` line is about it.
 
 ## Step 5 — Verify the Browse UI
 
@@ -223,8 +250,9 @@ confirm:
 - The addons from your third-party catalog appear alongside the
   embedded ones.
 - Each addon tile shows a **source badge** indicating where the
-  entry came from — "Embedded" vs the third-party source label.
-  Hover the badge to see the source URL.
+  entry came from — "Embedded" vs the third-party source label,
+  which always reads `redacted` (the configured address is never
+  shown, not even on hover).
 - The third-party entries that did **not** carry a valid signature
   bundle show an **Unverified** badge alongside the source badge.
   This is the expected state for a freshly-stood-up smoke source —
@@ -252,7 +280,8 @@ The response is the same shape as `GET /catalog/sources`, but built
 **after** the refresh completes. Use this to confirm that an
 edit-and-republish loop against your gist is picked up without a
 full Sharko restart. The endpoint is Tier-2 audit-logged — the
-audit detail records the list of attempted URLs and per-URL status.
+audit detail records how many sources were attempted and a count per
+outcome, never the addresses themselves.
 
 ## Step 7 — Tear down
 

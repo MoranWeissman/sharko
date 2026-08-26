@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/fanout"
 	"github.com/spf13/cobra"
 )
 
@@ -30,10 +31,27 @@ type batchClusterEntry struct {
 
 // batchResponse is the JSON response from POST /api/v1/clusters/batch.
 type batchResponse struct {
-	Total     int           `json:"total"`
-	Succeeded int           `json:"succeeded"`
-	Failed    int           `json:"failed"`
-	Results   []batchResult `json:"results"`
+	Total     int `json:"total"`
+	Succeeded int `json:"succeeded"`
+	// Failed counts every cluster that did not fully succeed — hard
+	// failures AND partials. That is what it has always meant on the wire
+	// and it is deliberately unchanged, which is exactly why printing it as
+	// "failed" on its own is a lie: a batch where both clusters merged a
+	// pull request and then stopped halfway printed "0 succeeded, 2 failed".
+	Failed int `json:"failed"`
+	// Partial is how many of Failed were partials — clusters that changed
+	// something real before stopping. A subset of Failed, not a third
+	// bucket. Added by the server in R2-7; an older server omits it and it
+	// reads as 0, which prints the exact line this CLI always printed.
+	Partial int `json:"partial"`
+	// Outcome is the accurate trio the server added in R2-9: how many
+	// clusters fully completed, how many stopped part-way, and how many
+	// failed outright. An older server omits it, and every count reads 0 —
+	// which is why this CLI recounts from results[].status rather than
+	// trusting it. Kept on the struct so the field is visible to anyone
+	// reading what the wire carries.
+	Outcome fanout.Outcome `json:"outcome"`
+	Results []batchResult  `json:"results"`
 }
 
 type batchResult struct {
@@ -130,7 +148,6 @@ var addClustersCmd = &cobra.Command{
 		// Split into batches of 10 if needed.
 		const maxBatch = 10
 		var allResults []batchResult
-		totalSucceeded, totalFailed := 0, 0
 
 		for i := 0; i < len(names); i += maxBatch {
 			end := i + maxBatch
@@ -166,21 +183,35 @@ var addClustersCmd = &cobra.Command{
 				fmt.Println("failed")
 				return printAPIError(respBody, status)
 			}
-			fmt.Println("done")
 
 			var resp batchResponse
 			if err := json.Unmarshal(respBody, &resp); err != nil {
+				fmt.Println("no readable answer")
 				return fmt.Errorf("invalid response: %w", err)
 			}
 
-			totalSucceeded += resp.Succeeded
-			totalFailed += resp.Failed
+			// "done" used to be printed here unconditionally, the moment the
+			// HTTP call came back — so a batch in which every cluster failed
+			// still said "done". The word is only true when this page of
+			// clusters really did all finish.
+			if chunkOutcome := outcomeOf(resp.Results); chunkOutcome.EverythingCompleted() {
+				fmt.Println("done")
+			} else {
+				fmt.Println("not all clusters finished")
+			}
+
 			allResults = append(allResults, resp.Results...)
 		}
 
+		// One count, made from the per-cluster answers, drives the summary
+		// line, the review warning and the exit code — so they cannot say
+		// three different things.
+		outcome := outcomeOf(allResults)
+
 		// Print summary.
 		fmt.Println()
-		fmt.Printf("Batch complete: %d succeeded, %d failed (of %d total)\n", totalSucceeded, totalFailed, len(names))
+		fmt.Print(outcome.SummaryLine(batchOperation))
+		fmt.Print(outcome.ReviewWarning())
 		fmt.Println()
 
 		for _, r := range allResults {
@@ -201,6 +232,26 @@ var addClustersCmd = &cobra.Command{
 			}
 		}
 
-		return nil
+		// The command used to return nil here no matter what came back, so
+		// `sharko add-clusters` exited 0 for a batch in which every single
+		// cluster failed. A script checking the exit code had no way to
+		// notice. Exit 0 now means what it says: every cluster completed.
+		return outcome.ExitError(batchOperation)
 	},
+}
+
+// batchOperation names what `sharko add-clusters` attempted, for the summary
+// line and the exit message.
+const batchOperation = "Cluster registration"
+
+// outcomeOf recounts the accurate trio from the per-cluster answers the
+// server sent, using the same function the server counts with. Recounting
+// rather than reading the server's `outcome` object means the summary and the
+// exit code are right against an older server too, which does not send it.
+func outcomeOf(results []batchResult) fanout.Outcome {
+	statuses := make([]string, 0, len(results))
+	for _, r := range results {
+		statuses = append(statuses, r.Status)
+	}
+	return fanout.Count(statuses)
 }

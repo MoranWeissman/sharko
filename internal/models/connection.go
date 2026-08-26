@@ -1,9 +1,12 @@
 package models
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // GitProviderType identifies which Git provider to use.
@@ -246,23 +249,117 @@ type SetActiveConnectionRequest struct {
 	ConnectionName string `json:"connection_name"`
 }
 
-// MaskToken masks a token/PAT for display, showing first 4 and last 4 characters.
+// FixedTokenMask is what a saved token looks like on the way out. It is a
+// constant: the same eight characters for every token there has ever been.
+const FixedTokenMask = "********"
+
+// MaskToken reports whether a token is saved, and nothing else.
+//
+// # Why it gives back none of the token
+//
+// It used to show the first four and last four characters, with the middle
+// starred out one star per character. Both halves of that were a leak:
+//
+//   - eight real characters of a secret are eight real characters of a
+//     secret, and the first four of a token are usually its issuer prefix, so
+//     what was left was the four that identify the account;
+//   - the number of stars was the token's exact length, which narrows what a
+//     guess has to cover and says which kind of token this is.
+//
+// Neither is worth anything to the person reading the screen. The only thing
+// they need from this field is "yes, a token is saved here" — and that is
+// exactly what a fixed mask says, on a response that every signed-in viewer
+// can read.
+//
+// Empty in, empty out: "no token saved" is a different fact from "a token is
+// saved", and the screen has to be able to tell them apart.
 func MaskToken(token string) string {
 	if token == "" {
 		return ""
 	}
-	if len(token) <= 8 {
-		masked := make([]byte, len(token))
-		for i := range masked {
-			masked[i] = '*'
-		}
-		return string(masked)
+	return FixedTokenMask
+}
+
+// SafeArgocdServerURL is the ArgoCD server address as a person may see it: the
+// scheme, host, port and path, with any credential written into it removed.
+//
+// # Why an address needs this at all
+//
+// Operators write credentials into the ArgoCD address, and until BF8 nothing
+// stopped them:
+//
+//	https://<token>@argocd.example            the token is the username
+//	https://user:<token>@argocd.example       the token is the password
+//	https://argocd.example?access_token=...   the token is a query parameter
+//	https://argocd.example#<token>            the token is a fragment
+//
+// This field is on the connection list, and listing connections is something
+// every signed-in viewer may do. So on a perfectly successful response, with
+// nothing broken and no error anywhere, the credential came back to anyone
+// with an account.
+//
+// # Why the address is not simply removed
+//
+// Because the host is not the secret and it is genuinely useful: an operator
+// looking at Settings needs to see which ArgoCD this connection points at.
+// credsafe.SafeRepoURL already draws that line for Git repository addresses —
+// it drops the whole userinfo section, both halves, plus the query and the
+// fragment, and keeps the rest. The same line is the right one here, and
+// having one function draw it is what stops two copies of the rule from
+// drifting apart.
+//
+// When the address cannot be taken apart with confidence, SafeRepoURL gives
+// back "" and this field is blank. Blank means "Sharko will not vouch for any
+// part of this", never "there is no address".
+func SafeArgocdServerURL(raw string) string {
+	return credsafe.SafeRepoURL(raw)
+}
+
+// ErrArgocdServerURLCarriesCredential is the refusal an operator gets when the
+// ArgoCD server address they are saving has a credential written into it.
+//
+// # Why saving is refused rather than quietly cleaned up
+//
+// Silently stripping it would mean the operator's saved connection did not
+// match what they typed, and the first they would hear of it is a connection
+// that no longer works. Refusing says what is wrong while their hands are
+// still on the keyboard.
+//
+// # Why the sentence never quotes the address back
+//
+// Because the address is the thing being refused for carrying a secret, and an
+// error message is read in more places than the screen it was written for.
+var ErrArgocdServerURLCarriesCredential = errors.New(
+	`The ArgoCD server address must be the address only: a host, an optional port, and an optional path. Take out any user information, any query string and any fragment — Sharko signs in with the ArgoCD token you set separately, never with sign-in details written into the address. An address Sharko cannot read is refused too.`)
+
+// ValidateArgocdServerURL is the ONE rule about what may be saved as an ArgoCD
+// server address. Every writer calls this — the API create and update
+// handlers by way of the connection request validator, and the Git-declared
+// environment merge — so there is one rule and one sentence, not one per door.
+//
+// It asks credsafe.ClassifyAddress, which is the same structural reading
+// SafeRepoURL uses: is there user information, a query or a fragment in an
+// address Sharko can read all the way through. Structural, never a scan for
+// text that looks secret — a scanner fails on the first shape nobody
+// predicted. An address that cannot be read is refused rather than assumed
+// harmless, which is the whole of BF12.
+//
+// An empty address is not this function's business; the connection is simply
+// incomplete, and other code says so.
+func ValidateArgocdServerURL(raw string) error {
+	if raw == "" {
+		return nil
 	}
-	middle := make([]byte, len(token)-8)
-	for i := range middle {
-		middle[i] = '*'
+	// Saving is allowed only on the one explicitly safe verdict.
+	switch credsafe.ClassifyAddress(raw) {
+	case credsafe.AddressCredentialFree:
+		return nil
+	case credsafe.AddressCarriesCredential, credsafe.AddressUnclassifiable:
+		return ErrArgocdServerURLCarriesCredential
+	default:
+		// A verdict this build has never heard of is not a safe one.
+		return ErrArgocdServerURLCarriesCredential
 	}
-	return token[:4] + string(middle) + token[len(token)-4:]
 }
 
 // ToResponse converts a Connection to a ConnectionResponse with masked tokens.
@@ -287,7 +384,7 @@ func (c *Connection) ToResponse(isActive bool) ConnectionResponse {
 		GitProvider:         c.Git.Provider,
 		GitRepoIdentifier:   repoID,
 		GitTokenMasked:      MaskToken(token),
-		ArgocdServerURL:     c.Argocd.ServerURL,
+		ArgocdServerURL:     SafeArgocdServerURL(c.Argocd.ServerURL),
 		ArgocdTokenMasked:   MaskToken(c.Argocd.Token),
 		ArgocdNamespace:     c.Argocd.Namespace,
 		ArgocdInsecure:      c.Argocd.Insecure,

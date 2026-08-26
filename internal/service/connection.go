@@ -404,6 +404,17 @@ func validateConnectionRequest(req models.CreateConnectionRequest) error {
 	// The read-side guard uses missingRequiredConnectionFields directly and
 	// DOES enforce the name check (because at read time there's no
 	// auto-derive — the FileStore already passed it through).
+	// The ArgoCD server address is credential material: operators write
+	// tokens into it, as the userinfo section, as a query parameter or as a
+	// fragment. models.ValidateArgocdServerURL is the ONE rule about that,
+	// and this is the request validator every API save goes through — create
+	// and update, from the wizard, from Settings, from the CLI and from the
+	// API directly. Pinning it here rather than at each handler is what stops
+	// the next door from being added without it.
+	if err := models.ValidateArgocdServerURL(req.Argocd.ServerURL); err != nil {
+		return wrapValidationError(err.Error(), err)
+	}
+
 	probe := models.Connection{Name: "_probe", Git: req.Git}
 	if missing := missingRequiredConnectionFields(probe); len(missing) > 0 {
 		// First missing field becomes the message — keeps the existing

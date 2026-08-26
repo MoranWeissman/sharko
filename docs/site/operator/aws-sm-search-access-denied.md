@@ -390,11 +390,12 @@ the Sharko IRSA role in account A).
 
 ## Prevention
 
-- **Monitoring — AccessDenied counter on SearchSecrets path.** A
-  V2-3.x follow-up metric
+- **Monitoring — AccessDenied counter on SearchSecrets path.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. The sketch:
   `sharko_provider_search_errors_total{provider="aws-sm",
-  reason="access_denied"}` would let operators see at a glance that
-  IAM is degraded. Today the only signal is the Warn log line, which
+  reason="access_denied"}`, letting operators see at a glance that IAM
+  is degraded. Today the only signal is the Warn log line, which
   silently fires on every call. Note the label set has no dimension
   taken from the AWS error text — a metric label built from provider
   error text is both unbounded cardinality and a leak.

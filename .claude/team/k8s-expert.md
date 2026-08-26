@@ -339,7 +339,8 @@ secrets:
   reconciler:
     enabled: true
     interval: 5m           # SHARKO_SECRET_RECONCILE_INTERVAL
-  webhookSecret: ""        # SHARKO_WEBHOOK_SECRET — HMAC key for /webhooks/git
+  webhookSecret: ""        # SHARKO_WEBHOOK_SECRET — shared secret for /webhooks/git.
+                           # Empty (the default) = that endpoint refuses every call.
 ```
 
 ## Phase 3-6 ArgoCD and Cluster Changes

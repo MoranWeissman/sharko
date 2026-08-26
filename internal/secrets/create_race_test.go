@@ -64,7 +64,7 @@ func TestReconcile_CheckThenCreateRace_RecordsForeignNotError(t *testing.T) {
 	if msg, hasErr := r.LastItemError("prod-cluster", "datadog"); hasErr {
 		t.Errorf("a raced-foreign secret recorded an error: %q", msg)
 	}
-	if stats := r.GetStats().(ReconcileStats); stats.Errors != 0 || stats.Created != 0 || stats.Updated != 0 {
+	if stats := r.GetStats(); stats.Errors != 0 || stats.Created != 0 || stats.Updated != 0 {
 		t.Errorf("stats = %+v, want no writes and no errors for a raced-foreign secret", stats)
 	}
 

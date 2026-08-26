@@ -233,10 +233,11 @@ export function SecretDetailPage() {
         onClose={() => setSyncTarget(null)}
         onConfirm={handleConfirmSync}
         title={
-          // HL-1: the connection confirm carries the action's real name —
-          // same per-kind treatment as the list page's own confirm.
+          // HL-1, renamed by the Round 3 ruling (2026-08-16): the connection
+          // confirm carries the action's real name — same per-kind
+          // treatment as the list page's own confirm.
           syncTarget?.kind === 'connection'
-            ? `Re-apply addon labels on "${syncTarget.cluster}"?`
+            ? `Sync addon labels on "${syncTarget.cluster}"?`
             : syncTarget?.kind === 'values'
               ? `Sync secret for cluster "${syncTarget.cluster}", addon "${syncTarget.addon}"?`
               : 'Sync?'

@@ -6,12 +6,37 @@ import type { Cluster } from '@/services/models'
 import * as api from '@/services/api'
 import type { TestClusterUnavailable } from '@/services/api'
 
-// Mock the API module
-vi.mock('@/services/api', () => ({
-  testClusterConnection: vi.fn(),
-  adoptClusters: vi.fn(),
-  isTestClusterUnavailable: vi.fn(),
-}))
+// Mock the API module.
+//
+// isCredentialLookupFailure is deliberately NOT a vi.fn(). The whole decision
+// under test here — does an unverifiable cluster stay adoptable — is that one
+// predicate, so stubbing it would leave these tests asserting things about the
+// stub. The real one is imported and passed straight through.
+vi.mock('@/services/api', async () => {
+  const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api')
+  return {
+    testClusterConnection: vi.fn(),
+    adoptClusters: vi.fn(),
+    isTestClusterUnavailable: vi.fn(),
+    isCredentialLookupFailure: actual.isCredentialLookupFailure,
+    VERIFY_STAGE_CREDENTIALS: actual.VERIFY_STAGE_CREDENTIALS,
+  }
+})
+
+/**
+ * The ONE sentence a credentials-backend failure carries, byte for byte as
+ * internal/credsafe declares it.
+ *
+ * The fixture that used to sit here said `secret "cluster-creds" not found in
+ * AWS Secrets Manager` — a message the server has not been able to send since
+ * the credentials hotfix, which replaced every backend's own words with this
+ * fixed sentence. That fixture was the reason this test stayed green while the
+ * shipped path was broken: the dialog was searching the message for "not
+ * found", the fixture obligingly contained it, and no real response ever did.
+ */
+const CREDENTIALS_BACKEND_SENTENCE =
+  "Sharko could not read this cluster's sign-in details from the configured credentials source. " +
+  'The server log for this request id says which step failed.'
 
 describe('AdoptClustersDialog', () => {
   const mockOnClose = vi.fn()
@@ -66,12 +91,13 @@ describe('AdoptClustersDialog', () => {
       expect(confirmButton).not.toBeDisabled()
     })
 
-    it('keeps informational-not-verified clusters selected when credentials are not found', async () => {
+    it('keeps informational-not-verified clusters selected when the credential lookup failed', async () => {
       vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
       vi.mocked(api.testClusterConnection).mockResolvedValue({
         success: false,
         stage: 'credentials',
-        error_message: 'secret "cluster-creds" not found in AWS Secrets Manager',
+        // The real sentence, not a made-up one. See the note on the constant.
+        error_message: CREDENTIALS_BACKEND_SENTENCE,
         duration_ms: 100,
         reachable: false,
       })
@@ -94,6 +120,72 @@ describe('AdoptClustersDialog', () => {
       // Check the confirm button is enabled (cluster is selected)
       const confirmButton = screen.getByRole('button', { name: /confirm adoption/i })
       expect(confirmButton).not.toBeDisabled()
+    })
+
+    // ── The decision is the STAGE, and nothing else ──────────────────────
+    //
+    // Two tests, one either side of the line the old substring search drew.
+    // Together they say: the words in error_message change nothing, and the
+    // stage changes everything. Neither of them can pass by accident, because
+    // each carries the message the OTHER outcome's search would have wanted.
+
+    it('keeps the cluster adoptable on a credential failure whose message says nothing about credentials', async () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: false,
+        stage: 'credentials',
+        // Not one of the five phrases the old search hunted for. Under the
+        // old code this cluster was shown as a failed verification and
+        // deselected — which is what every real credentials failure became
+        // once the backend's own words stopped leaving the server.
+        error_message: 'The step did not complete.',
+        duration_ms: 100,
+        reachable: false,
+      })
+
+      render(
+        <AdoptClustersDialog
+          open={true}
+          onClose={mockOnClose}
+          clusters={[mockCluster1]}
+          onSuccess={mockOnSuccess}
+          onDiagnose={mockOnDiagnose}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Not verified')).toBeInTheDocument()
+      })
+      expect(screen.getByRole('button', { name: /confirm adoption/i })).not.toBeDisabled()
+    })
+
+    it('still fails a cluster the server DID reach, however much its message reads like a credentials problem', async () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: false,
+        // The cluster was contacted and something there is wrong. Whatever
+        // this sentence says, that is a real failure and the cluster must not
+        // be carried into an adoption as if it had simply not been checked.
+        stage: 'connectivity',
+        error_message: 'secret "cluster-creds" not found — no credentials available, credential store unavailable',
+        duration_ms: 5000,
+        reachable: false,
+      })
+
+      render(
+        <AdoptClustersDialog
+          open={true}
+          onClose={mockOnClose}
+          clusters={[mockCluster1]}
+          onSuccess={mockOnSuccess}
+          onDiagnose={mockOnDiagnose}
+        />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Unreachable')).toBeInTheDocument()
+      })
+      expect(screen.queryByText('Not verified')).not.toBeInTheDocument()
     })
 
     it('marks genuine verification failures as failed and unchecked', async () => {

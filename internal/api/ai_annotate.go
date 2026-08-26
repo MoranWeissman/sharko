@@ -60,8 +60,21 @@ type annotateAddonValuesResponse struct {
 }
 
 // aiAnnotateBlockedResponse is the 422 body when the secret-leak guard
-// hard-blocks the annotate call. The matches are redacted via
-// orchestrator.SecretMatch.Field — no real secret values appear.
+// hard-blocks the annotate call.
+//
+// This is the ONE place a SecretMatch.Field goes onto a wire — the other
+// three callers of the guard (addons_write.go, catalog_v4_values_fetch.go,
+// values_editor.go) pass only the match count to their log line and only
+// the pattern names to the audit record. So what Field is allowed to
+// contain matters here and nowhere else.
+//
+// Field is built by orchestrator.redactedField and is one of exactly two
+// things: a field name that was structurally parsed off the front of the
+// line, followed by a fixed mask (`password: ***`), or the fixed
+// orchestrator.SecretFieldUnavailable sentence. The value itself is
+// discarded whole — not the part a regex matched — so no fragment of it,
+// of any length, reaches this body. The line number travels alongside, so
+// the maintainer can still open the file at the right place.
 type aiAnnotateBlockedResponse struct {
 	Code    string                     `json:"code"`
 	Message string                     `json:"message"`
@@ -111,12 +124,12 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 	isV4 := s.isV4Repo(ctx, git)
@@ -156,7 +169,8 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 
 	raw, ferr := helm.NewFetcher().FetchValues(ctx, repoURL, chart, version)
 	if ferr != nil {
-		writeError(w, http.StatusBadGateway, "fetching upstream values: "+ferr.Error())
+		// B13 — the chart download's error text carries the repo token.
+		writeChartRepoError(w, r, chartRepoFetchValues, ferr)
 		return
 	}
 
@@ -293,12 +307,12 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 	isV4 := s.isV4Repo(ctx, git)

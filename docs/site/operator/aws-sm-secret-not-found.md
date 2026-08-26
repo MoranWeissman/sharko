@@ -235,7 +235,7 @@ Four outcomes:
 
 ```sh
 SHARKO_PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER_PREFIX")].value}')
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_PREFIX")].value}')
 echo "Configured prefix: '${SHARKO_PREFIX:-<empty>}'"
 
 # Also read the Helm value if present:
@@ -293,7 +293,7 @@ the cause; either move the secret or change the Helm prefix
 
    ```sh
    PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
-     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_PROVIDER_PREFIX")].value}')
+     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_PREFIX")].value}')
    CLUSTER=<failing-cluster-name>
    PATH_=${PREFIX}${CLUSTER}
    AWS_REGION=<region>
@@ -434,11 +434,14 @@ Fix is Mitigation step 5 (temporary) followed by Mitigation step 3
 
 ## Prevention
 
-- **Monitoring — per-cluster credential-fetch failure counter.** A
-  V2-3.x follow-up metric `sharko_provider_get_credentials_errors_total{cluster,
-  provider, reason}` with `reason="not_found"` would surface this
-  failure mode directly. Alert on count > 0 sustained for >30min as
-  a P2 ticket (operator can't repair without inspecting the cluster).
+- **Monitoring — per-cluster credential-fetch failure counter.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. The sketch:
+  `sharko_provider_get_credentials_errors_total{cluster, provider,
+  reason}` with `reason="not_found"`, surfacing this failure mode
+  directly, alerting on a count above 0 sustained for more than 30
+  minutes as a P2 ticket (the operator can't repair it without
+  inspecting the cluster).
 
 - **Gating — `sharko add-cluster` should pre-flight the secret
   existence.** A v2 follow-up: before creating the values file and

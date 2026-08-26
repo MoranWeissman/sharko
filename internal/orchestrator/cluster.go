@@ -87,8 +87,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// Step 1a-gate: admin-level kill switch for inline credential paste
-	// (V2-cleanup-89.6). allow_inline_credentials defaults to true; when an
-	// admin turns it off, every registration whose EFFECTIVE creds source is
+	// (V2-cleanup-89.6; default flipped to FALSE in the reconciliation round,
+	// correction 5 — "Allow legacy inline credentials" is now an opt-in legacy
+	// escape hatch, because a pasted credential exists only in the live Secret
+	// and can never be restored from Git). While the setting is off, every
+	// registration whose EFFECTIVE creds source is
 	// inline-kubeconfig AND that actually supplied kubeconfig bytes is
 	// rejected. A connection-only registration (no kubeconfig at all, even
 	// with an inline creds source) is NOT blocked — the setting governs
@@ -306,8 +309,16 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.Cluster.ServerVersion = verifyResult.ServerVersion
 		}
 		if !verifyResult.Success {
+			// This error becomes the API response body (handleRegisterCluster
+			// passes it to writeError), so it carries the catalog sentence for
+			// the classified code. The cluster's own words go to the server
+			// log and stop there.
+			log.Info("registration: connectivity verification failed",
+				"cluster", req.Name,
+				"code", verifyResult.ErrorCode,
+				"diagnostic", verifyResult.Diagnostic())
 			return nil, fmt.Errorf("cluster %q connectivity verification failed: %s",
-				req.Name, verify.FriendlyMessage(verifyResult))
+				req.Name, verify.FriendlyMessage(verifyResult.ErrorCode))
 		}
 		steps = append(steps, "verify_stage1")
 		log.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)

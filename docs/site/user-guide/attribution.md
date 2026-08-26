@@ -48,6 +48,6 @@ If you perform a Tier 2 action without a personal PAT configured, the response i
 
 - **`git blame` works.** Tier 2 changes that landed using your personal PAT show your name in `git blame`, so post-incident debugging ("who set replicaCount to 100?") works the natural way.
 - **PR review attribution.** With per-user PATs, the GitHub PR shows your avatar instead of `Sharko Bot`'s.
-- **Compliance.** Every audit log entry now carries an attribution mode, so the report "who changed this addon catalog last quarter" doesn't rely solely on Sharko's audit log — Git history is a corroborating second source of truth.
+- **Compliance.** Every audit log entry carries an attribution mode — but Sharko's audit feed only holds entries **since Sharko started** (it lives in memory and empties on restart, see [Audit Log Retention Model](../operator/audit-log.md)). For a question like "who changed this addon catalog last quarter", Git history is the durable record, and per-user attribution is what makes it answer with a real name.
 
 For the full design rationale, see `docs/design/2026-04-16-attribution-and-permissions-model.md`.

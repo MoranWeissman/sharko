@@ -9,7 +9,10 @@ import (
 	"sync"
 	"testing"
 
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/settings"
 )
 
 // V2-cleanup-60.4 — per-cluster credential routing (review H4).
@@ -91,6 +94,54 @@ func newCredsRoutingServer(t *testing.T) (*Server, *recordingCredProvider, *reco
 	}}
 	installCredProviderWithReader(srv, backend, reader)
 	return srv, backend, reader
+}
+
+// Correction 5 acceptance: an EXISTING inline cluster still resolves its
+// credentials while allow_inline_credentials is OFF. The default-off legacy
+// switch gates NEW registrations only — no read/resolve path consults it —
+// so turning it off must not break a cluster that was registered inline
+// before the flip. Same flow as the H4 test below, with the setting
+// explicitly off.
+func TestClusterTest_InlineCluster_StillResolvesWithPasteDisabled(t *testing.T) {
+	srv, backend, reader := newCredsRoutingServer(t)
+	store := settings.NewStore(k8sfake.NewSimpleClientset(), "sharko")
+	if err := store.SetAllowInlineCredentials(t.Context(), false); err != nil {
+		t.Fatalf("SetAllowInlineCredentials(false): %v", err)
+	}
+	srv.SetSettingsStore(store)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/kind-inline/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — an existing inline cluster must keep working with the setting off (body=%s)", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Result struct {
+			Stage string `json:"stage"`
+			Steps []struct {
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"steps"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Result.Stage == "credentials" {
+		t.Fatalf("credential resolution for an existing inline cluster broke with the setting off: %+v", resp.Result)
+	}
+	if len(resp.Result.Steps) > 0 && resp.Result.Steps[0].Status != "pass" {
+		t.Errorf("fetch-credentials step = %+v, want pass with the setting off", resp.Result.Steps[0])
+	}
+	if len(reader.calls) == 0 {
+		t.Error("the ArgoCD reader was never consulted — the inline route must stay open for existing clusters")
+	}
+	if len(backend.calls) != 0 {
+		t.Errorf("backend consulted (%v) — the inline route must not fall onto the backend", backend.calls)
+	}
 }
 
 // H4 acceptance (Test): backend connection configured + cluster registered

@@ -117,7 +117,7 @@ sharko login --server https://sharko.your-cluster.com
 sharko init
 ```
 
-This creates the addons repository structure from the embedded starter templates and pushes it to Git via the configured connection. The generated structure includes bootstrap ApplicationSet templates, directory layout for cluster values, and global values. The change is made via a pull request (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`).
+This creates the addons repository structure from the embedded starter templates and pushes it to Git via the configured connection. The generated structure includes bootstrap ApplicationSet templates, directory layout for cluster values, and global values. The change is made via a pull request (auto-merged if `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`).
 
 ### Add an Addon
 
@@ -479,7 +479,7 @@ As of v3.0.0, the cluster reconciler uses a 30-second safety-net tick plus sub-5
 
 Every change you make in Sharko — adding a cluster, configuring an addon, upgrading, removing — is recorded in the Audit Log. Open Settings → Audit to filter by who, what, when, and result. Failed operations show the error.
 
-Sharko records significant events in an in-memory audit log (default capacity: 1000 entries, configurable via `SHARKO_AUDIT_BUFFER_SIZE`). Every cluster registration, adoption, removal, upgrade, PR merge, and configuration change is logged.
+Sharko records significant events in an in-memory audit log. The buffer holds the last 1000 entries and that size is fixed — there is no setting or environment variable to change it. Every cluster registration, adoption, removal, upgrade, PR merge, and configuration change is logged.
 
 ### Query the Audit Log
 
@@ -618,16 +618,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ## Prometheus Metrics
 
-Sharko exposes Prometheus metrics at `GET /metrics`. 20 metrics across 6 categories:
+Sharko exposes Prometheus metrics at `GET /metrics`. There are 44 metric families in total: 32 registered in `internal/metrics/metrics.go`, plus 12 more built from the four SLO surfaces (`cluster_registration`, `addon_cycle`, `catalog_scan`, `dashboard_read`).
 
-| Category | Example Metric |
-|----------|---------------|
-| Cluster | `sharko_cluster_count{status="Connected"}`, `sharko_cluster_test_duration_seconds` |
-| Addon | `sharko_addon_sync_status{cluster,addon,status}`, `sharko_addon_health` |
-| Reconciler | `sharko_reconciler_runs_total{reconciler,result}` |
-| PR | `sharko_pr_merge_duration_seconds` |
-| HTTP | `sharko_api_requests_total{method,path,status}` |
-| Auth | `sharko_auth_login_total{result}` |
+The full list — every metric name, its type, its labels, and what it means — is kept in one place: [Reference — Metrics, Alerts, and the Grafana Dashboard](site/operator/metrics.md). There used to be a shortened copy of the list here, and it drifted out of date. One list, one page.
 
 Dynamic path segments (cluster names, addon names) are normalized to placeholders (e.g., `/clusters/{name}`) to prevent cardinality explosion.
 
@@ -719,10 +712,10 @@ Each upgrade creates a PR (or multiple PRs for per-cluster upgrades). Use the ve
 
 Every write operation (cluster registration, addon changes, upgrades) creates a Git pull request. Sharko never commits directly to the base branch.
 
-**With `SHARKO_GITOPS_PR_AUTO_MERGE=false` (default):**
+**With `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false` (default):**
 The PR is created and left open. A human reviews and merges it. This is the recommended workflow for production changes.
 
-**With `SHARKO_GITOPS_PR_AUTO_MERGE=true`:**
+**With `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`:**
 The PR is created and immediately merged. Suitable for automated pipelines where human review is handled elsewhere (e.g., CI policy checks).
 
 The PR URL is included in every write operation response and CLI output, so you can always navigate directly to the change.
@@ -760,7 +753,7 @@ The main dashboard shows aggregated stats: total clusters, healthy/degraded coun
 - Click a cluster to open the **Cluster Detail** page
 - Cluster Detail uses a **left navigation panel** with tabs: Overview, Addons, Config Diff, Comparison, etc.
 - Register clusters, update addon assignments, and trigger credential refreshes from the detail page
-- **ArgoCD diagnostics:** When Sharko cannot reach ArgoCD for a cluster, a single consolidated error banner appears at the top of the cluster detail page with the connection error message. This is surfaced via the `argocd_connection_status` field returned by the comparison endpoint.
+- **ArgoCD diagnostics:** When Sharko cannot reach ArgoCD for a cluster, a single consolidated error banner appears at the top of the cluster detail page. The banner says the connection failed and where to go and read the full error — it does not repeat ArgoCD's own message, because that message quotes the credentials layer's words in full and can contain an access token. This is surfaced via the `argocd_connection_status` field returned by the comparison endpoint.
 - **Auto-refresh:** Cluster Detail and Clusters Overview pages refresh every 30 seconds. A **Refresh** button is available on both pages for manual refresh.
 
 ### Addon Catalog
@@ -893,11 +886,16 @@ Sharko supports embedding external dashboards (Grafana, Datadog, etc.) in the UI
 
 ### Common Errors
 
-**"no active ArgoCD connection"**
-No ArgoCD connection is configured or set as active. Go to Settings > Connections and add/activate an ArgoCD connection.
+**"Sharko has no usable ArgoCD connection..."**
+No ArgoCD connection is configured or set as active, or the one that is
+cannot be used. Go to Settings > Connections and add/activate an ArgoCD
+connection. The message is the same for every reason on purpose — the
+reason is on the server log line for that request id, because on the Git
+side the reason can be the access token itself.
 
-**"no active Git connection"**
-Same as above, but for Git. Configure a Git connection in Settings > Connections.
+**"Sharko has no usable Git connection..."**
+Same as above, but for Git. Configure a Git connection in Settings >
+Connections.
 
 **"secrets provider not configured"**
 No secrets provider is configured. Go to **Settings > Provider** in the UI or use the API to configure a provider backend (`aws-sm` or `k8s-secrets`).
@@ -943,19 +941,21 @@ If ArgoCD or Git connections fail:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SHARKO_PORT` | HTTP server port | `8080` |
-| Provider type | Secrets provider backend (`aws-sm`, `k8s-secrets`) — configure via **Settings UI** or API | (none) |
-| `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
+| `SHARKO_HTTP_PORT` | HTTP server port | `8080` |
+| `SHARKO_PORT` | Deprecated former name for `SHARKO_HTTP_PORT`. Still works and warns once at startup | (none) |
+| `SHARKO_CONN_PROVIDER_TYPE` | Secrets provider backend (`aws-sm`, `k8s-secrets`) — can also be set in the **Settings UI** or API | (none) |
+| `SHARKO_CONN_PROVIDER_REGION` | AWS region for secrets provider | (none) |
+| `SHARKO_CONN_PROVIDER_PREFIX` | Path prefix inside the secrets provider | (none) |
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection store (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
-| `SHARKO_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
-| `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR branches | `sharko/` |
-| `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
-| `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
-| `SHARKO_GITOPS_REPO_URL` | Git repo URL for template placeholders | (none) |
-| `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
-| `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
-| `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |
+| `SHARKO_CONN_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
+| `SHARKO_CONN_GITOPS_BRANCH_PREFIX` | Branch prefix for PR branches | `sharko/` |
+| `SHARKO_CONN_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
+| `SHARKO_CONN_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
+| `SHARKO_CONN_GIT_REPO_URL` | Git repo URL for the addons repository | (none) |
+| `SHARKO_CONN_GITOPS_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
+| `SHARKO_CONN_GITOPS_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
+| `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init. **Never built — Sharko does not read this name, and setting it stops the server from starting.** Listed here only so you recognise it if you find it in an old values file | (none) |
 | `GITHUB_TOKEN` | GitHub PAT | (none) |
 | `AI_PROVIDER` | AI provider (`ollama`, `openai`, `claude`, `gemini`, `custom-openai`) | (none) |
 | `AI_API_KEY` | API key for cloud AI provider | (none) |

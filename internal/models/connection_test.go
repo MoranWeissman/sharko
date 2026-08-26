@@ -7,11 +7,17 @@ func TestMaskToken(t *testing.T) {
 		input    string
 		expected string
 	}{
+		// Empty in, empty out — "no token saved" stays a different fact
+		// from "a token is saved".
 		{"", ""},
-		{"abc", "***"},
-		{"12345678", "********"},
-		{"1234567890", "1234**7890"},
-		{"abcdefghijklmnop", "abcd********mnop"},
+		// Everything else is the same eight characters. Not one star per
+		// character of the token: the number of stars was the token's exact
+		// length, and length is a fact about a secret.
+		{"abc", FixedTokenMask},
+		{"12345678", FixedTokenMask},
+		{"1234567890", FixedTokenMask},
+		{"abcdefghijklmnop", FixedTokenMask},
+		{"ghp_1234567890abcdef", FixedTokenMask},
 	}
 
 	for _, tt := range tests {

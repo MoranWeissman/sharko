@@ -250,21 +250,34 @@ runbook.
       # auto-merge once CI green
       ```
 
-   b. **Disable the reconciler temporarily** to give the operator time
-      to debug. Patch the deployment to set
-      `SHARKO_RECONCILER_ENABLED=false` (or whatever the env-var
-      kill-switch is; verify with the engineering team):
+   b. **Stop the reconciler temporarily** to give the operator time
+      to debug. **There is no kill-switch environment variable.** Sharko
+      reads no `SHARKO_RECONCILER_ENABLED` or equivalent — the cluster
+      reconciler starts whenever Sharko has an in-cluster Kubernetes
+      client and a ConfigMap store, and there is no way to ask it not to.
+
+      Earlier versions of this page told you to set
+      `SHARKO_RECONCILER_ENABLED=false`. **Do not do that.** Sharko has
+      never read that name, and from this release a `SHARKO_` name Sharko
+      does not recognise stops the server at startup — so the command that
+      was supposed to buy you time now takes the whole server down.
+
+      The only ways to stop it are to stop the process or to take away
+      what it needs:
 
       ```sh
-      kubectl -n "$SHARKO_NS" set env deployment/sharko \
-        SHARKO_RECONCILER_ENABLED=false
-      kubectl -n "$SHARKO_NS" rollout status deployment/sharko
+      # Blunt but certain — no Sharko, no reconciler (and no API either):
+      kubectl -n "$SHARKO_NS" scale deployment/sharko --replicas=0
       ```
 
       With the reconciler off, ArgoCD's existing Secrets continue to
       work, but new registrations/deregistrations require manual
       `kubectl` patching of ArgoCD Secrets until the bug is fixed.
-      Document this as the temporary state in the audit log.
+
+      If you need Sharko's API up while the reconciler is down, that is
+      not something the product supports today — say so in the incident
+      channel rather than reaching for an env var that would stop the
+      server. Document this as the temporary state in the audit log.
 
 5. **Last resort — scale Sharko to zero and back.** A clean restart
    with no in-flight retry storm:
@@ -388,34 +401,44 @@ For Mitigation step 4a (revert a bad commit in `managed-clusters.yaml`):
 2. Open a hotfix PR that fixes the underlying parse / build issue
    instead of reverting the cluster entry.
 
-For Mitigation step 4b (disable reconciler):
+For Mitigation step 4b: there is nothing to roll back. Nothing was
+turned off, because Sharko has no switch for it. If you scaled the
+deployment to zero, scale it back up:
 
-1. Re-enable the reconciler by removing the env var:
+```sh
+kubectl -n "$SHARKO_NS" scale deployment/sharko --replicas=1
+kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
+```
 
-   ```sh
-   kubectl -n "$SHARKO_NS" set env deployment/sharko \
-     SHARKO_RECONCILER_ENABLED-
-   kubectl -n "$SHARKO_NS" rollout status deployment/sharko
-   ```
+Then verify ticks resume per Mitigation step 2.
 
-2. Verify ticks resume per Mitigation step 2.
+If someone set `SHARKO_RECONCILER_ENABLED` on the deployment before
+reading this, remove it — otherwise the server will refuse to start:
+
+```sh
+kubectl -n "$SHARKO_NS" set env deployment/sharko SHARKO_RECONCILER_ENABLED-
+kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
+```
 
 ---
 
 ## Prevention
 
-- **Monitoring — alert on absence of recent `recon-<ts>` ticks.** Add
-  a Sharko recording rule that counts reconciler ticks in the last
-  5 minutes and pages when the count drops below threshold:
+- **Monitoring — alert on absence of recent `recon-<ts>` ticks.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. The sketch: a
+  recording rule that counts reconciler ticks in the last 5 minutes and
+  pages when the count drops below threshold —
 
-  ```promql
+  ```
   rate(sharko_reconciler_ticks_total[5m]) == 0
   ```
 
-  When this is true for > 2 minutes, page. Catches the silent failure
-  mode before any user-visible cluster operation misbehaves. Wiring
-  requires Sharko to emit `sharko_reconciler_ticks_total` — a P1
-  follow-up in the V2-3.x metric backlog.
+  — paging when that stays true for more than 2 minutes. It would catch
+  the silent failure mode before any user-visible cluster operation
+  misbehaves. Wiring requires Sharko to emit
+  `sharko_reconciler_ticks_total`, a P1 follow-up in the V2-3.x metric
+  backlog.
 
 - **Gating — pprof endpoint in non-prod, opt-in in prod.** The
   goroutine dump in Diagnosis step 3 depends on
@@ -425,13 +448,13 @@ For Mitigation step 4b (disable reconciler):
   negligible; the cost of not having it during a crash-loop diagnosis
   is "we restarted before capturing the dump."
 
-- **Scheduled work — chaos drill once per quarter.** Inject a panic
-  into the reconciler in staging (set
-  `SHARKO_RECONCILER_PANIC_TEST=true` if such a hook exists, or
-  `kubectl exec` a `kill -9 <reconciler-goroutine>` if pprof allows).
-  Verify the panic-recovery wrapper catches and logs cleanly. Tests
-  the runbook end-to-end and trains the operator on Mitigation
-  step 2's "verify ticks resumed" check.
+- **Scheduled work — chaos drill once per quarter.** There is no
+  panic-injection hook in the shipped binary — no environment variable
+  turns one on. Run the drill against a staging build with a deliberate
+  panic compiled into `pollOnce`, or exercise the same recovery path by
+  deleting the Sharko pod mid-tick. Verify the panic-recovery wrapper
+  catches and logs cleanly. Tests the runbook end-to-end and trains the
+  operator on Mitigation step 2's "verify ticks resumed" check.
 
 ---
 

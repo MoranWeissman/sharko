@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
@@ -29,7 +30,9 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/lifecycleevents"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/takeover"
@@ -230,7 +233,13 @@ func (s *Server) gatherPreflightInputs(r *http.Request, name string) (takeover.I
 func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		return nil, fmt.Errorf("Sharko has no Git connection to read its own list of clusters from: %w", err)
+		// B1: the %w wrap was the leak. The sentence was Sharko's own and
+		// read well, but the error it wrapped is whatever building a Git
+		// provider out of the saved connection produced, and on the Git side
+		// that can be net/url quoting a repository URL with the token in it.
+		// One owner for the sentence now; the reason is on the log line.
+		slog.Warn("takeover preflight: no usable Git connection for the active connection")
+		return nil, credsafe.ErrNoActiveGitConnection
 	}
 	branch := s.gitopsConfig().BaseBranch
 	if branch == "" {
@@ -396,7 +405,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	// relabelled Secret nobody wrote down.
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 	// The tiered resolver is the ONLY way this commit gets attributed to the
@@ -406,7 +415,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	// this fails hard — same stance as handleMigrateRepo.
 	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -486,7 +495,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	if s.clusterRecon != nil {
 		s.clusterRecon.Trigger()
 	}
-	audit.Enrich(ctx, audit.Fields{Event: "cluster_taken_over", Resource: "cluster:" + name})
+	audit.Enrich(ctx, audit.Fields{Event: lifecycleevents.ClusterTakenOver, Resource: "cluster:" + name})
 	writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 }
 

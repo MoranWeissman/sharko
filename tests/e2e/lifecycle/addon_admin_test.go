@@ -35,7 +35,8 @@ import (
 // IMPORTANT: the in-process harness (StartSharko + SetDemoGitProvider)
 // does NOT seed an active ArgoCD connection. Eight of the ten endpoints
 // resolve `s.connSvc.GetActiveArgocdClient()` and short-circuit with
-// 502 ("no active ArgoCD connection") when no connection exists. This
+// a 502 saying Sharko has no usable ArgoCD connection, when no connection
+// exists. This
 // is by-design today — there is no Demo ArgoCD wiring in the harness
 // foundation (StartSharko's wiring deliberately omits it; see
 // tests/e2e/harness/sharko.go).
@@ -51,9 +52,15 @@ import (
 //     quota on every retry.
 //
 //   - no-active-connection contract: well-formed write requests must
-//     return 502 with a `no active ArgoCD connection` body so the UI
-//     can render a "configure your connection first" banner instead
-//     of a generic 500.
+//     return 502 with Sharko's own fixed sentence about there being no
+//     usable ArgoCD connection, so the UI can render a "configure your
+//     connection first" banner instead of a generic 500.
+//
+//     B1 changed WHICH sentence that is. It used to be a short prefix
+//     followed by the underlying error's own text, and on the Git side
+//     that text can carry the repository's access token — so the
+//     assertions below now pin the fixed sentence AND refuse the retired
+//     prefix, rather than merely accepting whichever came back.
 //
 // When story 7-1.10 (or later) lands a Demo ArgoCD wiring this file
 // can be expanded to cover the full happy path for every endpoint;
@@ -123,13 +130,16 @@ func TestAddonAdmin(t *testing.T) {
 
 	t.Run("AddCustomAddon_EmptyBody_400", func(t *testing.T) {
 		// V124-4.3 / BUG-019: empty body must fail validation BEFORE any
-		// upstream dial. If validation regresses, this returns 502 with
-		// "no active ArgoCD connection" — the negative assertion below
-		// catches that exact regression.
+		// upstream dial. If validation regresses, this returns the 502
+		// about there being no usable ArgoCD connection — the negative
+		// assertions below catch that regression, and they name BOTH the
+		// retired prefix and the sentence that replaced it, so the
+		// tripwire cannot go quiet just because the wording moved on.
 		resp := admin.AddAddonRaw(t, orchestrator.AddAddonRequest{})
 		assertStatusBody(t, resp, http.StatusBadRequest, "addon name is required",
 			"empty body must hit name-required validation",
-			"no active argocd", "no active git")
+			"no active argocd", "no active git",
+			"sharko has no usable argocd connection", "sharko has no usable git connection")
 	})
 
 	t.Run("AddCustomAddon_PartialBody_400", func(t *testing.T) {
@@ -140,14 +150,13 @@ func TestAddonAdmin(t *testing.T) {
 		resp := admin.AddAddonRaw(t, orchestrator.AddAddonRequest{Name: "kube-prometheus-stack"})
 		assertStatusBody(t, resp, http.StatusBadRequest, "chart is required",
 			"partial body must hit chart-required validation",
-			"no active argocd")
+			"no active argocd", "sharko has no usable argocd connection")
 	})
 
 	t.Run("AddCustomAddon_FullBody_502_NoConnection", func(t *testing.T) {
 		// Well-formed payload — validation passes, handler dials ArgoCD,
-		// connection lookup fails, returns 502 "no active ArgoCD
-		// connection: no active connection configured". Locks in the
-		// gateway-error contract the UI relies on.
+		// connection lookup fails, returns 502 with Sharko's fixed
+		// sentence. Locks in the gateway-error contract the UI relies on.
 		req := orchestrator.AddAddonRequest{
 			Name:    "fluent-bit",
 			Chart:   "fluent-bit",
@@ -155,8 +164,8 @@ func TestAddonAdmin(t *testing.T) {
 			Version: "0.43.0",
 		}
 		resp := admin.AddAddonRaw(t, req)
-		assertStatusBody(t, resp, http.StatusBadGateway, "no active ArgoCD connection",
-			"well-formed body must surface gateway error", "")
+		assertStatusBody(t, resp, http.StatusBadGateway, "Sharko has no usable ArgoCD connection",
+			"well-formed body must surface gateway error", "no active argocd connection:")
 	})
 
 	t.Run("GetCustomAddon_ServiceUnavailable", func(t *testing.T) {
@@ -174,24 +183,24 @@ func TestAddonAdmin(t *testing.T) {
 		resp := admin.PatchAddonRaw(t, "cert-manager", orchestrator.ConfigureAddonRequest{
 			Version: "v1.14.0",
 		})
-		assertStatusBody(t, resp, http.StatusBadGateway, "no active ArgoCD connection",
-			"PATCH /addons/{name} should 502 without active ArgoCD", "")
+		assertStatusBody(t, resp, http.StatusBadGateway, "Sharko has no usable ArgoCD connection",
+			"PATCH /addons/{name} should 502 without active ArgoCD", "no active argocd connection:")
 	})
 
 	t.Run("DeleteCustomAddon_DryRun_502", func(t *testing.T) {
 		// Without ?confirm=true the handler ALSO needs ArgoCD (catalog
 		// fetch for the impact report). 502 again.
 		resp := admin.DeleteAddonRaw(t, "cert-manager", false)
-		assertStatusBody(t, resp, http.StatusBadGateway, "no active ArgoCD connection",
-			"DELETE /addons/{name} (dry-run) should 502 without active ArgoCD", "")
+		assertStatusBody(t, resp, http.StatusBadGateway, "Sharko has no usable ArgoCD connection",
+			"DELETE /addons/{name} (dry-run) should 502 without active ArgoCD", "no active argocd connection:")
 	})
 
 	t.Run("DeleteCustomAddon_Confirmed_502", func(t *testing.T) {
 		// With ?confirm=true, same gateway error — the contract is
 		// identical regardless of confirm value when ArgoCD is down.
 		resp := admin.DeleteAddonRaw(t, "cert-manager", true)
-		assertStatusBody(t, resp, http.StatusBadGateway, "no active ArgoCD connection",
-			"DELETE /addons/{name}?confirm=true should 502 without active ArgoCD", "")
+		assertStatusBody(t, resp, http.StatusBadGateway, "Sharko has no usable ArgoCD connection",
+			"DELETE /addons/{name}?confirm=true should 502 without active ArgoCD", "no active argocd connection:")
 	})
 
 	t.Run("AddonsCatalog_503_NoConnection", func(t *testing.T) {
@@ -214,7 +223,7 @@ func TestAddonAdmin(t *testing.T) {
 		// front of the helm registry call.
 		resp := admin.GetAddonChangelogRaw(t, "cert-manager", "not-a-version", "")
 		assertStatusBody(t, resp, http.StatusBadRequest, "invalid 'from' version",
-			"semver validation must run before upstream dial", "")
+			"semver validation must run before upstream dial", "no active argocd connection:")
 	})
 
 	t.Run("AddonChangelog_AddonNotInCatalog_404", func(t *testing.T) {
@@ -223,13 +232,13 @@ func TestAddonAdmin(t *testing.T) {
 		mustSeedFile(t, mock, "configuration/addons-catalog.yaml", "applicationsets: []\n")
 		resp := admin.GetAddonChangelogRaw(t, "no-such-addon", "", "")
 		assertStatusBody(t, resp, http.StatusNotFound, "not found in catalog",
-			"changelog must 404 when addon name is unknown", "")
+			"changelog must 404 when addon name is unknown", "no active argocd connection:")
 	})
 
 	t.Run("UnwrapGlobals_502_NoConnection", func(t *testing.T) {
 		resp := admin.UnwrapGlobalsRaw(t)
-		assertStatusBody(t, resp, http.StatusBadGateway, "no active ArgoCD connection",
-			"POST /addons/unwrap-globals should 502 without active ArgoCD", "")
+		assertStatusBody(t, resp, http.StatusBadGateway, "Sharko has no usable ArgoCD connection",
+			"POST /addons/unwrap-globals should 502 without active ArgoCD", "no active argocd connection:")
 	})
 
 	t.Run("UpgradeBatch_EmptyBody_400", func(t *testing.T) {
@@ -238,7 +247,7 @@ func TestAddonAdmin(t *testing.T) {
 		resp := admin.UpgradeBatchRaw(t, map[string]string{})
 		assertStatusBody(t, resp, http.StatusBadRequest, "at least one addon upgrade is required",
 			"empty upgrade map must fail validation pre-dial",
-			"no active argocd")
+			"no active argocd", "sharko has no usable argocd connection")
 	})
 
 	t.Run("UpgradeBatch_FullBody_502_NoConnection", func(t *testing.T) {
@@ -246,8 +255,8 @@ func TestAddonAdmin(t *testing.T) {
 			"cert-manager":   "v1.14.0",
 			"metrics-server": "3.12.0",
 		})
-		assertStatusBody(t, resp, http.StatusBadGateway, "no active ArgoCD connection",
-			"well-formed batch must surface gateway error", "")
+		assertStatusBody(t, resp, http.StatusBadGateway, "Sharko has no usable ArgoCD connection",
+			"well-formed batch must surface gateway error", "no active argocd connection:")
 	})
 }
 
@@ -377,4 +386,3 @@ func assertStatusBody(t *testing.T, resp *http.Response, wantStatus int, wantSub
 		}
 	}
 }
-

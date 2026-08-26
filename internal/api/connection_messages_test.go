@@ -9,24 +9,36 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argocd"
 )
 
+// messageFor returns the sentence a connection test failure actually puts on
+// the wire, read out of the real response body.
+//
+// It goes through connectionErrorFields rather than a formatter of its own
+// because that is the production path — story P2c retired the separate
+// plainConnectionError entry point, so there is now exactly one way for a
+// failure to become words and these tests take it.
+func messageFor(kind connectionKind, err error) string {
+	msg, _ := connectionErrorFields(kind, err)["message"].(string)
+	return msg
+}
+
 func TestPlainConnectionError(t *testing.T) {
 	tests := []struct {
 		name     string
-		kind     string
+		kind     connectionKind
 		err      error
 		wantNone bool
 	}{
-		{name: "nil error returns empty", kind: "git", err: nil, wantNone: true},
-		{name: "git network failure", kind: "git", err: errors.New("dial tcp 1.2.3.4:443: connect: connection refused")},
-		{name: "git auth failure", kind: "git", err: errors.New("401 unauthorized")},
-		{name: "argocd forbidden", kind: "argocd", err: errors.New("403 forbidden")},
-		{name: "vault unknown failure", kind: "vault", err: errors.New("some AWS SDK internal error XYZ123")},
-		{name: "unrecognized kind falls back to generic wording", kind: "mystery", err: errors.New("boom")},
+		{name: "nil error returns empty", kind: connectionKindGit, err: nil, wantNone: true},
+		{name: "git network failure", kind: connectionKindGit, err: errors.New("dial tcp 1.2.3.4:443: connect: connection refused")},
+		{name: "git auth failure", kind: connectionKindGit, err: errors.New("401 unauthorized")},
+		{name: "argocd forbidden", kind: connectionKindArgoCD, err: errors.New("403 forbidden")},
+		{name: "vault unknown failure", kind: connectionKindVault, err: errors.New("some AWS SDK internal error XYZ123")},
+		{name: "unrecognized kind falls back to generic wording", kind: connectionKind("mystery"), err: errors.New("boom")},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := plainConnectionError(tt.kind, tt.err)
+			got := messageFor(tt.kind, tt.err)
 			if tt.wantNone {
 				if got != "" {
 					t.Fatalf("expected empty message for nil error, got %q", got)
@@ -55,7 +67,7 @@ func TestPlainConnectionError(t *testing.T) {
 func TestPlainConnectionError_KindAwareAuthHint(t *testing.T) {
 	authErr := errors.New("401 unauthorized")
 
-	gitMsg := plainConnectionError("git", authErr)
+	gitMsg := messageFor(connectionKindGit, authErr)
 	if strings.Contains(gitMsg, "kubeconfig") {
 		t.Errorf("git auth message must not mention kubeconfig, got %q", gitMsg)
 	}
@@ -63,7 +75,7 @@ func TestPlainConnectionError_KindAwareAuthHint(t *testing.T) {
 		t.Errorf("git auth message should point at the Git token/PAT, got %q", gitMsg)
 	}
 
-	vaultMsg := plainConnectionError("vault", authErr)
+	vaultMsg := messageFor(connectionKindVault, authErr)
 	if strings.Contains(vaultMsg, "kubeconfig") {
 		t.Errorf("vault auth message must not mention kubeconfig, got %q", vaultMsg)
 	}
@@ -79,7 +91,7 @@ func TestPlainConnectionError_KindAwareAuthHint(t *testing.T) {
 func TestConnectionErrorFields_KindAwareAuthHint(t *testing.T) {
 	authErr := errors.New("401 unauthorized")
 
-	gitBody := connectionErrorFields("git", authErr)
+	gitBody := connectionErrorFields(connectionKindGit, authErr)
 	gitHint, _ := gitBody["hint"].(string)
 	if strings.Contains(gitHint, "kubeconfig") {
 		t.Errorf("git hint field must not mention kubeconfig, got %q", gitHint)
@@ -88,7 +100,7 @@ func TestConnectionErrorFields_KindAwareAuthHint(t *testing.T) {
 		t.Errorf("git hint field should point at the Git token/PAT, got %q", gitHint)
 	}
 
-	vaultBody := connectionErrorFields("vault", authErr)
+	vaultBody := connectionErrorFields(connectionKindVault, authErr)
 	vaultHint, _ := vaultBody["hint"].(string)
 	if strings.Contains(vaultHint, "kubeconfig") {
 		t.Errorf("vault hint field must not mention kubeconfig, got %q", vaultHint)
@@ -104,7 +116,7 @@ func TestConnectionErrorFields_KindAwareAuthHint(t *testing.T) {
 // already-correct hint untouched by the git/vault override.
 func TestConnectionErrorFields_ArgocdAuthFailure_KeepsSentinelHint(t *testing.T) {
 	err := fmt.Errorf("checking token: %w", argocd.ErrTokenInvalid)
-	body := connectionErrorFields("argocd", err)
+	body := connectionErrorFields(connectionKindArgoCD, err)
 	hint, _ := body["hint"].(string)
 	if !strings.Contains(hint, "Settings") || !strings.Contains(hint, "Connections") {
 		t.Errorf("expected the existing ArgoCD-sentinel hint naming Settings → Connections, got %q", hint)

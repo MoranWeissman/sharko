@@ -101,6 +101,10 @@ func TestClusterLifecycle(t *testing.T) {
 
 	admin := harness.NewClient(t, sharko)
 
+	// This suite registers clusters by pasting kubeconfigs — opt into the
+	// default-off legacy inline path through the real settings door.
+	enableLegacyInlinePaste(t, admin)
+
 	// Seed a fully-formed active connection so the cluster handlers'
 	// dual GetActiveGitProvider / GetActiveArgocdClient path resolves.
 	// The git provider is overridden by SharkoConfig.GitProvider, so

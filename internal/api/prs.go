@@ -243,7 +243,9 @@ func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		// Genuine internal fault — no Git provider configured, or the
 		// tracker's own state store failed to read/write. writeServerError
-		// keeps the raw error out of the response body and logs it instead.
+		// keeps the raw error out of the response body, and out of the log
+		// line too (B9) — the log gets the operation, the status and a
+		// type-derived classification, never the error's own words.
 		writeServerError(w, http.StatusInternalServerError, "refresh_pr", err)
 		return
 	case pr == nil:
@@ -385,7 +387,7 @@ var (
 // @Param addon query string false "Filter by addon name (best-effort title/branch match)"
 // @Param limit query int false "Maximum entries (default 20, max 100)"
 // @Success 200 {object} MergedPRsResponse "List of merged PRs"
-// @Failure 503 {object} map[string]interface{} "No active Git connection"
+// @Failure 503 {object} map[string]interface{} "No usable Git connection. The message is one fixed Sharko sentence pointing at Settings — never the underlying error's own text, which can carry the repository token (B1)."
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /prs/merged [get]
 func (s *Server) handleListMergedPRs(w http.ResponseWriter, r *http.Request) {
@@ -411,7 +413,7 @@ func (s *Server) handleListMergedPRs(w http.ResponseWriter, r *http.Request) {
 	} else {
 		gp, err := s.connSvc.GetActiveGitProvider()
 		if err != nil {
-			writeError(w, http.StatusServiceUnavailable, err.Error())
+			writeNoActiveGitConnectionUnavailable(w, r)
 			return
 		}
 

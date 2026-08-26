@@ -75,6 +75,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
@@ -223,7 +224,14 @@ func captureSlog(t *testing.T, fn func()) string {
 	var buf bytes.Buffer
 	prev := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(prev) })
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	// logging.NewHandler is the SAME chain `sharko serve` installs — a JSON
+	// handler wrapped in redaction. It used to be spelled out here as a bare
+	// JSON handler with no redaction in it at all, which meant every "the log
+	// must not carry this" assertion in this package was being made against a
+	// pipeline nobody runs (B9). Both directions of that are wrong: it can
+	// fail on something production would have stripped, and it can pass on
+	// something production strips differently.
+	slog.SetDefault(slog.New(logging.NewHandler(&buf, slog.LevelDebug)))
 	fn()
 	return buf.String()
 }
@@ -386,14 +394,13 @@ func TestCredErrorSentinel_SentenceDoesNotVaryWithTheError(t *testing.T) {
 
 // auditEntryFromFailedCredFetch builds the audit entry a credential-fetch
 // failure produces, exactly the way the cluster reconciler does: the CALL SITE
-// runs credsafe.Is while the typed error is still alive and passes the answer as
-// a flag; Add decides what gets stored from that.
+// runs audit.Classify while the typed error is still alive and passes the
+// CATEGORY; Add builds the stored sentence from that and from nothing else.
 //
-// The Error and Detail strings are built with credsafe.Cause(...).Error() on
-// purpose — the raw backend text, the worst thing a caller could put there.
-// After Mark a caller could not get that text by accident any more, so the test
-// reaches for it deliberately, to prove Add fixes both fields rather than
-// relying on the marked error already being safe.
+// Detail is deliberately still built from the raw backend text — the worst
+// thing a caller could put there — because Detail is the one free-text field
+// left and the sink must empty it for a credentials reason without being asked.
+// Error is not settable from this package at all any more, which is the point.
 func auditEntryFromFailedCredFetch(t *testing.T) (*audit.Log, error) {
 	t.Helper()
 	_, credErr := credProviderWithFailingMint().GetCredentials("prod-eu")
@@ -410,11 +417,8 @@ func auditEntryFromFailedCredFetch(t *testing.T) (*audit.Log, error) {
 		Resource: "cluster:prod-eu",
 		Source:   "reconciler",
 		Result:   "failure",
-		// The unsafe shape on purpose: a caller that puts the raw text in both
-		// public fields. Add must fix BOTH, because both are public.
-		Error:             raw,
-		Detail:            "credential fetch failed: " + raw,
-		CredentialFailure: credsafe.Is(credErr),
+		Detail:   "credential fetch failed: " + raw,
+		Reason:   audit.Classify(credErr),
 	})
 	return log, credErr
 }
@@ -438,13 +442,13 @@ func TestCredErrorSentinel_StoredAuditEntry(t *testing.T) {
 	}
 	e := stored[0]
 
-	assertNoCredSentinel(t, "the STORED audit entry's Error field", e.Error)
+	assertNoCredSentinel(t, "the STORED audit entry's Error field", e.Error.String())
 	assertNoCredSentinel(t, "the STORED audit entry's Detail field", e.Detail)
 	assertNoCredSentinel(t, "the STORED audit entry printed with %+v", fmt.Sprintf("%+v", e))
 
 	// 1. Error is exactly the fixed safe sentence.
-	if e.Error != credsafe.Message {
-		t.Errorf("stored Error = %q, want the fixed safe sentence %q", e.Error, credsafe.Message)
+	if e.Error.String() != credsafe.Message {
+		t.Errorf("stored Error = %q, want the fixed safe sentence %q", e.Error.String(), credsafe.Message)
 	}
 	// 2. Detail is EMPTY — not the same sentence a second time.
 	if e.Detail != "" {
@@ -452,9 +456,10 @@ func TestCredErrorSentinel_StoredAuditEntry(t *testing.T) {
 
 A credential failure has one answer and it lives in Error.`, e.Detail)
 	}
-	// 3. The flag is cleared on the stored entry.
-	if e.CredentialFailure {
-		t.Error("the stored entry still has CredentialFailure set — audit.Add must clear it before storing")
+	// 3. The category is on the stored entry, so a reader still learns what
+	// kind of failure this was. That is what replaced the raw text.
+	if e.Reason != audit.ReasonCredentials {
+		t.Errorf("stored Reason = %q, want %q", e.Reason, audit.ReasonCredentials)
 	}
 	// 4. And nothing holds a live error. Reflection, so a renamed or newly-added
 	// error-typed field is caught too rather than only the one this test knows.
@@ -483,7 +488,7 @@ func TestCredErrorSentinel_AuditListEndpoint(t *testing.T) {
 		Level: "error", Event: "cluster_secret_create", User: "sharko",
 		Action: "get_credentials", Resource: "cluster:prod-eu", Source: "reconciler",
 		Result: "failure",
-		Error:  raw, Detail: raw, CredentialFailure: credsafe.Is(credErr),
+		Detail: raw, Reason: audit.Classify(credErr),
 	})
 	router := NewRouter(srv, nil)
 
@@ -567,7 +572,7 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 			Level: "error", Event: "cluster_secret_create", User: "sharko",
 			Action: "get_credentials", Resource: "cluster:prod-eu", Source: "reconciler",
 			Result: "failure",
-			Error:  raw, Detail: raw, CredentialFailure: credsafe.Is(credErr),
+			Detail: raw, Reason: audit.Classify(credErr),
 		})
 		if strings.Contains(w.String(), "cluster:prod-eu") {
 			break
@@ -582,10 +587,11 @@ func TestCredErrorSentinel_AuditStreamEndpoint(t *testing.T) {
 	if !strings.Contains(streamed, "cluster:prod-eu") {
 		t.Errorf("nothing reached the stream, so this test proved nothing; body = %q", streamed)
 	}
-	// And the flag never serializes into the stream, whatever the entry carried.
+	// The removed flag must not come back by any spelling. It was the switch a
+	// call site could get wrong; there is no switch now.
 	for _, spelling := range []string{"CredentialFailure", "credential_failure"} {
 		if strings.Contains(streamed, spelling) {
-			t.Errorf("the stream carries the internal credential-failure flag as %q", spelling)
+			t.Errorf("the stream carries a credential-failure flag as %q — that field was removed on purpose", spelling)
 		}
 	}
 }
@@ -600,9 +606,8 @@ func TestCredErrorSentinel_AuditSanitizeIsNotBypassableByAnyField(t *testing.T) 
 
 	log := audit.NewLog(10)
 	log.Add(audit.Entry{
-		Error:             raw,
-		Detail:            raw,
-		CredentialFailure: credsafe.Is(credErr),
+		Detail: raw,
+		Reason: audit.Classify(credErr),
 	})
 	stored := log.List(0)[0]
 
@@ -652,62 +657,79 @@ The marker must travel through every %w hop, and the classification must find it
 	}
 
 	log := audit.NewLog(10)
-	// Deliberately the worst caller: raw text in both fields, and a wrapper
-	// around it. The flag is what carries the answer.
+	// Deliberately the worst caller left: raw text in the one free-text field
+	// there still is. The category carries the answer.
 	log.Add(audit.Entry{
-		Error:             "reading configuration/managed-clusters.yaml from git: " + raw,
-		Detail:            "reading configuration/managed-clusters.yaml from git: " + raw,
-		CredentialFailure: credsafe.Is(wrapped),
+		Detail: "reading configuration/managed-clusters.yaml from git: " + raw,
+		Reason: audit.Classify(wrapped),
 	})
 	stored := log.List(0)[0]
 	assertNoCredSentinel(t, "a stored audit entry whose cause is a git error wrapping a credentials error", fmt.Sprintf("%+v", stored))
-	if stored.Error != credsafe.Message {
-		t.Errorf("stored Error = %q, want the fixed safe sentence — the marker must be found through the %%w chain", stored.Error)
+	if stored.Error.String() != credsafe.Message {
+		t.Errorf("stored Error = %q, want the fixed safe sentence — the marker must be found through the %%w chain", stored.Error.String())
 	}
 	if stored.Detail != "" {
 		t.Errorf("stored Detail = %q, want empty", stored.Detail)
 	}
 }
 
-// TestCredErrorSentinel_UnrelatedErrorsKeepTheirText is the other half of the
-// rule, and it is just as important.
+// TestCredErrorSentinel_UnrelatedErrorsAreProtectedTooButStayDistinguishable
+// replaces TestCredErrorSentinel_UnrelatedErrorsKeepTheirText, and the swap is
+// the whole of security story S3 in one test.
 //
-// A git or Kubernetes error that does NOT wrap a credentials error keeps its
-// full text. Blanket-redacting everything would gut the audit trail and the
-// operator-facing diagnostics for no gain — those errors are a different risk.
-// Without this test, "redact everything" would pass every other test in this
-// file.
-func TestCredErrorSentinel_UnrelatedErrorsKeepTheirText(t *testing.T) {
+// WHAT THE OLD TEST PINNED. "A git or Kubernetes error that does not wrap a
+// credentials error keeps its full text." It existed to stop an
+// over-correction from blanket-redacting the audit trail, and it was right
+// about the risk it named — but it made "nobody marked this error" mean "this
+// error is safe". Those are not the same statement, and the two ArgoCD sites in
+// internal/remediation are what the difference cost: an error nothing marks,
+// recorded verbatim, forever.
+//
+// WHAT REPLACES IT. An unmarked error gets the same protection as a marked one:
+// no text at all. The over-correction the old test guarded against is still
+// guarded against, by the two halves below — the categories must stay tellable
+// apart, and an unrelated Detail must still survive.
+func TestCredErrorSentinel_UnrelatedErrorsAreProtectedTooButStayDistinguishable(t *testing.T) {
 	gitErr := errors.New("git: reference not found: refs/heads/main")
 
 	if credsafe.Is(gitErr) {
 		t.Fatal("a plain git error must not be classified as a credentials-backend failure")
 	}
+	// credsafe.Sentence is unchanged: it is a boundary helper for messages
+	// shown to an operator, not the audit sink, and its contract still leaves
+	// non-credential errors alone.
 	if got := credsafe.Sentence(gitErr); got != gitErr.Error() {
-		t.Errorf("credsafe.Sentence(gitErr) = %q, want the error's own text %q — unrelated errors must not be redacted", got, gitErr.Error())
+		t.Errorf("credsafe.Sentence(gitErr) = %q, want the error's own text %q", got, gitErr.Error())
 	}
 
 	log := audit.NewLog(10)
 	log.Add(audit.Entry{
-		Error:             gitErr.Error(),
-		Detail:            "detail worth keeping",
-		CredentialFailure: credsafe.Is(gitErr),
+		Detail: "detail worth keeping",
+		Reason: audit.Classify(gitErr),
 	})
 	stored := log.List(0)[0]
-	if stored.Error != gitErr.Error() {
-		t.Errorf(`the stored audit entry lost an unrelated git error's text (got %q).
 
-Blanket redaction would make the audit log useless. Only a credentials-backend failure — including one another error wraps — gets the fixed sentence.`, stored.Error)
+	// 1. The git error's own words are NOT stored. This is the inversion.
+	if strings.Contains(stored.Error.String(), "refs/heads/main") {
+		t.Errorf(`the stored audit entry carries the git error's own text (%q).
+
+An unmarked error must get the same protection as a marked one. "Nobody marked
+it" only ever meant "nobody remembered", never "it is safe".`, stored.Error.String())
 	}
+	// 2. But a reader still learns what kind of thing went wrong, and the
+	// categories are tellable apart. Blanket "an error occurred" is a different
+	// failure, not a fix.
+	if stored.Reason == audit.ReasonCredentials {
+		t.Error("a plain git error was classified as a credentials failure — the categories must stay distinct")
+	}
+	if !stored.Reason.Valid() || stored.Error.IsZero() {
+		t.Errorf("the stored entry says nothing at all (reason %q, error %q) — over-correction is its own failure",
+			stored.Reason, stored.Error.String())
+	}
+	// 3. And an unrelated Detail survives. Emptying every Detail would gut the
+	// audit trail; only the two credential reasons drop it.
 	if stored.Detail != "detail worth keeping" {
-		t.Errorf(`the stored entry lost an unrelated Detail (got %q).
-
-Only a CREDENTIAL failure's Detail is emptied. Emptying every Detail would gut the audit trail.`, stored.Detail)
-	}
-	// The flag is cleared either way, so a stored entry never says how it was
-	// classified.
-	if stored.CredentialFailure {
-		t.Error("audit.Add must clear CredentialFailure on every entry, credentials-related or not")
+		t.Errorf("the stored entry lost an unrelated Detail (got %q)", stored.Detail)
 	}
 }
 

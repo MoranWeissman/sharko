@@ -414,7 +414,7 @@ Surface default: mixed.
 | GET | `/repo/status` | `stable` | Bootstrap-state read; settled. |
 | GET | `/docs/list` | `alpha` | In-app docs viewer; UI-specific. |
 | GET | `/docs/{slug}` | `alpha` | In-app docs viewer; UI-specific. |
-| POST | `/webhooks/git` | `beta` | Webhook receiver scaffolded in v2; full implementation is a v3 theme (see [roadmap](../community/roadmap.md)). |
+| POST | `/webhooks/git` | `beta` | Webhook receiver scaffolded in v2; full implementation is a v3 theme (see [roadmap](../community/roadmap.md)). Refused unless signed with the shared secret an operator configured. |
 
 ### Metrics
 

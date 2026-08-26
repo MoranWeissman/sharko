@@ -165,9 +165,16 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 				verifyResult := verify.Stage1(ctx, remoteClient, verify.TestNamespace())
 				cr.Verification = &verifyResult
 				if !verifyResult.Success {
+					// The response carries the catalog sentence for the
+					// classified code; the cluster's own words go to the
+					// server log and stop there.
+					log.Info("adopt: connectivity verification failed",
+						"cluster", clusterName,
+						"code", verifyResult.ErrorCode,
+						"diagnostic", verifyResult.Diagnostic())
 					cr.Status = "failed"
 					cr.Error = fmt.Sprintf("connectivity verification failed: %s",
-						verify.FriendlyMessage(verifyResult))
+						verify.FriendlyMessage(verifyResult.ErrorCode))
 					result.Results = append(result.Results, cr)
 					continue
 				}
@@ -271,6 +278,10 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		result.Results = append(result.Results, adoptResult)
 	}
 
+	// The accurate counts are filled in from the per-cluster answers here,
+	// at the single exit, so every caller gets them without having to know
+	// they exist.
+	result.Summarize()
 	return result, nil
 }
 

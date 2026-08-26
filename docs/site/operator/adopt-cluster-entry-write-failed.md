@@ -35,7 +35,7 @@ The downstream consequence is **silent state inconsistency**:
 The next reconciler tick reads `managed-clusters.yaml`, finds no
 entry for `<cluster>`, but finds a labeled-as-sharko Secret in
 ArgoCD with that name. **The reconciler then deletes the Secret**
-(the two-direction policy: "in ArgoCD but not in git -> delete"
+(the two-direction policy: "in ArgoCD but not in Git -> delete"
 per `cluster-reconciler.md`).
 
 So the adoption appears to succeed, then 30 seconds later the
@@ -134,8 +134,10 @@ What an operator sees when this fires:
 
   Empty output = the cluster is not in the canonical list.
 
-- **No specific Prometheus alert fires today.** A V2-4.x follow-up
-  is to surface `sharko_adopt_partial_state_total` and alert on >0.
+- **No specific Prometheus alert fires today.** Sharko does not export
+  this metric today. The alert below is a design sketch for a future
+  release, not something you can deploy now. The sketch: surface
+  `sharko_adopt_partial_state_total` and alert on more than 0.
 
 If the symptom is **adopt failing with HTTP 502** during the PR
 creation (e.g. `creating pull request: ...`), the failure is
@@ -357,7 +359,7 @@ edit introduced a YAML syntax error. The next Sharko adopt call hits
 the parser failure during `AddClusterEntry`.
 
 Diagnostic signature: Diagnosis step 2 shows
-`yaml: line N: did not find expected key`. The git log shows a
+`yaml: line N: did not find expected key`. The Git log shows a
 recent non-Sharko commit touching the file.
 
 Fix lane: Mitigation step 3 (fix the syntax) + step 1 (add the new

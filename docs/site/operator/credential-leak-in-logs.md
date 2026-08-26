@@ -417,7 +417,7 @@ and the value is a sentence — it looks exactly like every other error
 log in the process.
 
 Why a "redact anything that looks credential-shaped in error text" filter
-was NOT the fix: it would have to guess, it would mangle useful git and
+was NOT the fix: it would have to guess, it would mangle useful Git and
 Kubernetes diagnostics, and it would silently stop matching the day a
 backend rephrased its errors.
 
@@ -432,7 +432,7 @@ The fix, structurally:
   `%w` chains and `errors.As` on typed provider errors keep working. What
   is gone is getting at the original WORDS by accident.
 - Classification is `errors.Is` against a sentinel — **by type, never by
-  reading the error's words**. A git or Kubernetes error that WRAPS a
+  reading the error's words**. A Git or Kubernetes error that WRAPS a
   credentials error is therefore caught too, because the marker travels
   through the `%w` chain.
 - When a caller genuinely needs to know WHY the fetch failed, the

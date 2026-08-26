@@ -18,7 +18,15 @@ So for `cluster_registration` you get `sharko_cluster_registration_duration_seco
 
 ## Everything else Sharko exports
 
-These are the metrics registered in `internal/metrics/metrics.go` (the "legacy" default-registry metrics — kept stable for existing dashboards, alongside the SLO surfaces above).
+These are the metrics registered in `internal/metrics/metrics.go` (the "legacy" default-registry metrics, served alongside the SLO surfaces above). Together with the 12 SLO families that makes 44 metric families in total.
+
+!!! warning "Ten of the metrics below are registered but never written"
+
+    `sharko_cluster_count`, `sharko_cluster_status`, `sharko_cluster_last_verified_timestamp`, `sharko_cluster_last_test_duration_seconds`, `sharko_cluster_test_failures_total`, `sharko_addon_sync_status`, `sharko_addon_health`, `sharko_addon_version`, `sharko_pr_tracked` and `sharko_auth_login_total` are declared in the code, but nothing in Sharko ever sets a value on them. They have never produced a real number, so no dashboard or alert can be relying on them. Do not build one now.
+
+    All ten carry labels, and a labelled Prometheus collector with no children publishes nothing at all — so they are simply absent from a scrape and a query against them returns no data. None of them shows you a number that is not true; they show you nothing, which is the honest answer for something nobody measures.
+
+    Whether these get wired up or removed is an open product decision. The rows below describe what each one *would* mean. `internal/metrics/contract_writers_test.go` holds the same list in code, so this warning and the product cannot drift apart.
 
 ### Clusters
 
@@ -37,10 +45,24 @@ These are the metrics registered in `internal/metrics/metrics.go` (the "legacy" 
 | `sharko_addon_sync_status` | Gauge | `cluster`, `addon`, `status` | ArgoCD sync status per addon (0/1, one-hot). |
 | `sharko_addon_health` | Gauge | `cluster`, `addon`, `health` | ArgoCD health status per addon (0/1, one-hot). |
 | `sharko_addon_version` | Gauge | `cluster`, `addon`, `version` | The version currently reported for an addon on a cluster. |
-| `sharko_catalog_entries_count` | Gauge | — | Total number of addons in the catalog right now. |
-| `sharko_catalog_source_fetch_total` | Counter | `url`, `status` | Third-party catalog source fetch attempts, by source URL and outcome (`ok`, `stale`, `failed`). |
-| `sharko_catalog_source_last_success_timestamp` | Gauge | `url` | Unix time of the last successful fetch for a third-party catalog source. |
-| `sharko_catalog_source_entries` | Gauge | `url` | Number of entries in the current snapshot of a third-party catalog source. |
+| `sharko_catalog_entries_count` | Gauge | — | How many addons your org has approved — the number of entries in `catalog.yaml` on the base branch, as of the last time Sharko read that file. Absent from the scrape until Sharko has read it once, so an empty graph means "not looked yet" and a zero means "you have approved nothing". |
+| `sharko_catalog_source_fetch_total` | Counter | `url`, `status` | Third-party catalog source fetch attempts by outcome (`ok`, `stale`, `failed`). The `url` label is always the fixed word `redacted`. |
+| `sharko_catalog_source_last_success_timestamp` | Gauge | `url` | Unix time of the last successful third-party catalog fetch. The `url` label is always the fixed word `redacted`. |
+| `sharko_catalog_source_entries` | Gauge | `url` | Number of entries in the most recently written third-party catalog snapshot. The `url` label is always the fixed word `redacted`. |
+
+#### Why `url` is always `redacted` on the three catalog-source metrics
+
+`GET /metrics` has no login in front of it, so everything on it is readable by anyone who can reach the port. You address a private catalog by writing a token into the address itself — that is what `SHARKO_CATALOG_URLS` is for — and the documented shape puts the token inside the address's own path, where no check can tell it apart from an ordinary path segment. An address that looks clean can still be the key to someone's private catalog.
+
+So Sharko never puts a configured address on the `url` label, no matter what it looks like. Every source is published as the single word `redacted`. Nothing about the address is shown, and nothing is worked out from it either: no hash of it, no part of it, no hint of how long it was.
+
+**One consequence to know before you read a dashboard.** `redacted` is the same word for every configured source, so all of them share one line:
+
+- `sharko_catalog_source_fetch_total{url="redacted"}` counts the attempts across all of them together. If three catalogs each failed once, you see one line saying 3 — not three lines saying 1. It cannot tell you how many separate catalogs are behind it.
+- `sharko_catalog_source_last_success_timestamp{url="redacted"}` shows whichever of them succeeded most recently.
+- `sharko_catalog_source_entries{url="redacted"}` shows the entry count of the most recent one written, not a total across them.
+
+Alert on the rate of `status="failed"` and on the freshness of the last success, as you would anyway. To find out *which* catalog is unhappy, use `GET /api/v1/catalog/sources`, which is behind a login — its rows also all say `redacted`, so tell them apart by their status, entry count and last-fetched time.
 | `sharko_scorecard_refresh_total` | Counter | `status` | OpenSSF Scorecard refresh runs, by outcome. |
 | `sharko_scorecard_last_refresh_timestamp` | Gauge | — | Unix time of the last Scorecard refresh cycle. |
 
@@ -69,9 +91,8 @@ Both of Sharko's background reconcilers — the one that keeps ArgoCD cluster-se
 | `sharko_api_requests_total` | Counter | `method`, `path`, `status` | HTTP requests, by method, normalized path, and status code. |
 | `sharko_api_request_duration_seconds` | Histogram | `method`, `path` | HTTP request duration. |
 | `sharko_auth_login_total` | Counter | `result` | Login attempts, by outcome. |
-| `sharko_active_sessions` | Gauge | — | Current number of active sessions. |
+| `sharko_active_sessions` | Gauge | — | How many people are signed in right now. Counted fresh on every scrape; a login whose 24-hour lifetime has run out is not counted, even in the window before the hourly sweep deletes it. |
 | `sharko_pr_tracked` | Gauge | `status` | Count of pull requests Sharko is tracking, by status. |
-| `sharko_pr_merge_duration_seconds` | Histogram | — | Time from PR creation to merge. |
 | `sharko_ai_annotate_total` | Counter | `outcome` | AI "annotate values" calls, by outcome (`ok`, `not_configured`, `oversize`, `secret_blocked`, `timeout`, `llm_error`, `parse_error`, `opted_out`, `disabled`). |
 | `sharko_ai_annotate_latency_seconds` | Histogram | `outcome` | Latency of AI annotate calls (secret-guard scan plus the LLM round-trip), by outcome. |
 
@@ -94,9 +115,9 @@ Two alerts watch the reconciler metrics directly, since a stalled reconciler or 
 
 ## Grafana dashboard
 
-The repo ships a ready-to-import Grafana dashboard at `charts/sharko/dashboards/sharko-overview.json`. It has six panels:
+The repo ships a ready-to-import Grafana dashboard at `charts/sharko/dashboards/sharko-overview.json`. It has six panels. **Five of them show data. The first one does not:**
 
-- **Cluster Status Overview** — gauge of clusters by status
+- **Cluster Status Overview** — **this panel is always empty.** It queries `sum(sharko_cluster_count) by (status)`, and `sharko_cluster_count` is one of the thirteen metrics listed in the warning above that nothing in Sharko ever writes. The panel is not broken and there is nothing to fix in Grafana — the number it wants simply does not exist yet. Whether to remove the panel or start writing the metric is an open product decision.
 - **Reconciler Run Duration** — time series, per engine
 - **API Request Rate** — time series
 - **API Latency Percentiles** — time series

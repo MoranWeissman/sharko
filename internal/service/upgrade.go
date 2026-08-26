@@ -11,6 +11,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/logging"
@@ -267,9 +268,14 @@ func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp 
 	}
 
 	return &models.AvailableVersionsResponse{
-		AddonName:      addonName,
-		Chart:          addon.Chart,
-		RepoURL:        addon.RepoURL,
+		AddonName: addonName,
+		Chart:     addon.Chart,
+		// B14: repo_url goes onto an ordinary 200 body. The catalog entry it
+		// comes from is routinely written with the access token inside the
+		// address, so the raw value is the operator's secret handed to
+		// whoever asked. SafeRepoURL keeps the host and path, which is what
+		// tells a person which repository this is.
+		RepoURL:        credsafe.SafeRepoURL(addon.RepoURL),
 		CurrentVersion: addon.Version,
 		Versions:       versions,
 	}, nil

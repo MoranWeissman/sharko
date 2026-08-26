@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/helm"
 )
 
@@ -351,7 +352,15 @@ func (s *FreshnessScheduler) refresh() {
 		snap := EnginePinSnapshot{CheckedAt: now}
 		switch {
 		case err != nil:
-			snap.Err = err.Error()
+			// BF1: this field is returned in the body of GET
+			// /api/v1/catalog/freshness, so err.Error() here was a
+			// provider's own words on a user-facing surface. Today's
+			// feeder happens to be safe; the feeder is a closure wired
+			// in cmd/sharko/serve.go and it changes, and nobody rechecks
+			// this line when it does. credsafe.LogClass is built from
+			// sentinels and Go type names only — never from the error's
+			// words — so the surface is closed whatever feeds it.
+			snap.Err = credsafe.LogClass(err)
 			log.Warn("[freshness] engine pin check failed", "err", err)
 		case status != nil:
 			snap.Status = *status
@@ -379,6 +388,15 @@ func (s *FreshnessScheduler) refresh() {
 func (s *FreshnessScheduler) fetchOne(ctx context.Context, name, repoURL, chart, scope string) VersionSnapshot {
 	snap := VersionSnapshot{CheckedAt: s.now(), Scope: scope}
 
+	// B14: every sentence below names the repository, NoDataReason is
+	// rendered verbatim in the browser, and repoURL comes straight out of
+	// the org's catalog.yaml — where the access token is routinely written
+	// inside the address. safeRepo is the only spelling of it allowed past
+	// this line: host and path, so a person still knows which repository is
+	// meant, and never the userinfo section. The raw repoURL is used only to
+	// dial, never to describe.
+	safeRepo := credsafe.SafeRepoURLPhrase(repoURL)
+
 	if repoURL == "" || chart == "" {
 		snap.Unknown = true
 		snap.NoDataReason = fmt.Sprintf(
@@ -391,14 +409,17 @@ func (s *FreshnessScheduler) fetchOne(ctx context.Context, name, repoURL, chart,
 		snap.Unknown = true
 		if errors.Is(err, helm.ErrOCIVersionCheckUnsupported) {
 			snap.NoDataReason = fmt.Sprintf(
-				"no freshness data for this source — %s has no version index Sharko can read", repoURL)
+				"no freshness data for this source — %s has no version index Sharko can read", safeRepo)
 			return snap
 		}
-		snap.Err = err.Error()
+		// BF1: same rule as the engine-pin snapshot above. This one comes
+		// straight out of a chart repository fetch, where the address —
+		// token and all — is routinely quoted verbatim in the error text.
+		snap.Err = credsafe.LogClass(err)
 		snap.NoDataReason = fmt.Sprintf(
-			"no freshness data for this source — Sharko could not read the version index at %s", repoURL)
+			"no freshness data for this source — Sharko could not read the version index at %s", safeRepo)
 		slog.Default().With("component", "catalog-freshness").Warn(
-			"[freshness] version fetch failed", "addon", name, "repo", repoURL, "err", err)
+			"[freshness] version fetch failed", "addon", name, "repo", safeRepo, "err", err)
 		return snap
 	}
 
@@ -406,7 +427,7 @@ func (s *FreshnessScheduler) fetchOne(ctx context.Context, name, repoURL, chart,
 	if len(versions) == 0 {
 		snap.Unknown = true
 		snap.NoDataReason = fmt.Sprintf(
-			"no freshness data for this source — %s lists no versions of %s", repoURL, chart)
+			"no freshness data for this source — %s lists no versions of %s", safeRepo, chart)
 	}
 	return snap
 }

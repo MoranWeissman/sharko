@@ -9,7 +9,41 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
+
+// Every sentence Stage 1 hands back — Result.ErrorMessage and every failed
+// Step.Detail — is a catalog sentence chosen by ErrorCode. Not one character
+// of what the cluster said reaches a person.
+//
+// # The shape
+//
+//	classify at the boundary   ClassifyError(err) -> a stable ErrorCode
+//	choose a safe sentence     FriendlyMessage(code) -> SafeMessage
+//	keep the cause for the log Result.diagnostic (unexported, so unmarshallable)
+//
+// # What was here before, and how bad it actually was
+//
+// failResult set ErrorMessage to err.Error(), all six Step.Detail values were
+// err.Error(), and FriendlyMessage glued a hint onto that raw text. The trace
+// says a credentials-MARKED error cannot reach these lines today: the markers
+// go on at the credential fetch (internal/providers) and the client build
+// (remoteclient.NewClientFromKubeconfig), and both of those return on branches
+// that never call Stage 1. Every error that does arrive comes from the
+// kubernetes.Interface below.
+//
+// So what actually leaked was the destination cluster's own words — API server
+// hostnames and resolved IPs from *url.Error, internal DNS resolvers, the
+// ServiceAccount identity out of a 403, certificate names from x509 failures,
+// and whatever text a third-party admission webhook felt like returning. Real,
+// but topology detail rather than credential material.
+//
+// It is fixed unconditionally anyway. The rule is that no raw provider,
+// credential-store, Git, Kubernetes or internal error text is part of a
+// user-facing message, and "today's trace says it cannot reach here" is not
+// one of the exceptions — Stage 1 is handed a client by its caller and cannot
+// see where that client came from.
 
 // Stage1 verifies connectivity to a Kubernetes cluster by performing a full
 // secret CRUD cycle: ensure namespace -> create secret -> read back -> delete.
@@ -20,7 +54,7 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 	// 1. Get server version (informational).
 	var serverVersion string
 	if version, err := client.Discovery().ServerVersion(); err != nil {
-		steps = append(steps, Step{Name: "Fetch server version", Status: "fail", Detail: err.Error()})
+		steps = append(steps, Step{Name: "Fetch server version", Status: "fail", Detail: safeDetail(err)})
 		return failResult("stage1", err, time.Since(start), serverVersion, steps)
 	} else {
 		serverVersion = version.GitVersion
@@ -34,13 +68,13 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 			ObjectMeta: metav1.ObjectMeta{Name: namespace},
 		}, metav1.CreateOptions{})
 		if err != nil {
-			steps = append(steps, Step{Name: "Ensure namespace", Status: "fail", Detail: err.Error()})
+			steps = append(steps, Step{Name: "Ensure namespace", Status: "fail", Detail: safeDetail(err)})
 			return failResultSkipping("stage1", err, time.Since(start), serverVersion, steps,
 				"Create test secret", "Read back test secret", "Delete test secret")
 		}
 		steps = append(steps, Step{Name: "Ensure namespace", Status: "pass", Detail: "created"})
 	} else if err != nil {
-		steps = append(steps, Step{Name: "Ensure namespace", Status: "fail", Detail: err.Error()})
+		steps = append(steps, Step{Name: "Ensure namespace", Status: "fail", Detail: safeDetail(err)})
 		return failResultSkipping("stage1", err, time.Since(start), serverVersion, steps,
 			"Create test secret", "Read back test secret", "Delete test secret")
 	} else {
@@ -61,7 +95,7 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 	}
 	_, err = client.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
-		steps = append(steps, Step{Name: "Create test secret", Status: "fail", Detail: err.Error()})
+		steps = append(steps, Step{Name: "Create test secret", Status: "fail", Detail: safeDetail(err)})
 		return failResultSkipping("stage1", err, time.Since(start), serverVersion, steps,
 			"Read back test secret", "Delete test secret")
 	}
@@ -70,7 +104,7 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 	// 4. Read back.
 	_, err = client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		steps = append(steps, Step{Name: "Read back test secret", Status: "fail", Detail: err.Error()})
+		steps = append(steps, Step{Name: "Read back test secret", Status: "fail", Detail: safeDetail(err)})
 		return failResultSkipping("stage1", err, time.Since(start), serverVersion, steps,
 			"Delete test secret")
 	}
@@ -79,7 +113,7 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 	// 5. Delete.
 	err = client.CoreV1().Secrets(namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 	if err != nil {
-		steps = append(steps, Step{Name: "Delete test secret", Status: "fail", Detail: err.Error()})
+		steps = append(steps, Step{Name: "Delete test secret", Status: "fail", Detail: safeDetail(err)})
 		return failResult("stage1", err, time.Since(start), serverVersion, steps)
 	}
 	steps = append(steps, Step{Name: "Delete test secret", Status: "pass"})
@@ -93,16 +127,33 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 	}
 }
 
-// failResult builds a failed Result with classified error code.
+// safeDetail is the sentence a failed step shows a person.
+//
+// Step.Detail is serialized on every cluster-test response (twice — as `steps`
+// and again inside `result`), so it is exactly as public as ErrorMessage and
+// gets exactly the same treatment: classify at the boundary, then say the
+// catalog sentence for the code. Nothing the cluster said reaches it.
+func safeDetail(err error) string {
+	return FriendlyMessage(ClassifyError(err)).String()
+}
+
+// failResult builds a failed Result: a stable code, the catalog sentence for
+// that code, and the real cause tucked into the unexported diagnostic field
+// for the server-side log.
 func failResult(stage string, err error, duration time.Duration, serverVersion string, steps []Step) Result {
+	code := ClassifyError(err)
 	return Result{
 		Success:       false,
 		Stage:         stage,
-		ErrorCode:     ClassifyError(err),
-		ErrorMessage:  err.Error(),
+		ErrorCode:     code,
+		ErrorMessage:  FriendlyMessage(code).String(),
 		DurationMs:    duration.Milliseconds(),
 		ServerVersion: serverVersion,
 		Steps:         steps,
+		// credsafe.Sentence, not err.Error(): a credentials-backend error
+		// says the fixed safe sentence even here, where only the server log
+		// can see it.
+		diagnostic: credsafe.Sentence(err),
 	}
 }
 

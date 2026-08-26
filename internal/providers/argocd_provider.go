@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -117,13 +118,67 @@ func resolveArgoCDNamespaceTyped(cfg ClusterTestProviderConfig) string {
 	if cfg.ArgoCDNamespace != "" {
 		return cfg.ArgoCDNamespace
 	}
-	if env := os.Getenv("SHARKO_ARGOCD_NAMESPACE"); env != "" {
-		slog.Warn("[provider] SHARKO_ARGOCD_NAMESPACE env var is deprecated — set ClusterTestProviderConfig.ArgoCDNamespace (or clusterTest.argocdNamespace in Helm values) instead; env var removed in v1.26",
-			"env_value", env,
-		)
+	if env, set := ArgoCDNamespaceFromEnv(); set {
 		return env
 	}
-	return "argocd"
+	return DefaultArgoCDNamespace
+}
+
+// DeprecatedArgoCDNamespaceEnv is the old, still-honoured way to say
+// which namespace ArgoCD runs in.
+//
+// It is NOT a deprecated alias in the registry sense and must not be
+// made one: an alias resolves to another environment variable, and this
+// name has no replacement of that kind. What replaced it is the typed
+// ClusterTestProviderConfig, set from the clusterTest.argocdNamespace
+// Helm value — configuration that does not travel through the
+// environment at all.
+const DeprecatedArgoCDNamespaceEnv = "SHARKO_ARGOCD_NAMESPACE"
+
+// DefaultArgoCDNamespace is where ArgoCD installs itself by default.
+const DefaultArgoCDNamespace = "argocd"
+
+var argoCDNamespaceWarnOnce sync.Once
+
+// ArgoCDNamespaceFromEnv reads the deprecated namespace setting and
+// warns about it once per process.
+//
+// # Two things this fixes
+//
+// The warning used to carry "env_value", env — it printed the value.
+// The registry's own Deprecation type carries only names, precisely so a
+// deprecation warning can never leak a secret, and a rule that holds
+// only for the settings somebody remembered to mark secret is not a
+// rule. The warning now names the setting and what to set instead, and
+// nothing else.
+//
+// And it used to be the only one of three readers that warned at all.
+// charts/sharko/values.yaml tells operators this setting "emits
+// slog.Warn at startup"; the two reads in cmd/sharko/serve.go, which are
+// the ones that actually run at startup, warned about nothing. Every
+// reader goes through this function now, so the chart's promise is true.
+// sync.Once keeps three readers from becoming three warnings about one
+// setting.
+func ArgoCDNamespaceFromEnv() (string, bool) {
+	value := os.Getenv(DeprecatedArgoCDNamespaceEnv)
+	if value == "" {
+		return "", false
+	}
+	argoCDNamespaceWarnOnce.Do(func() {
+		slog.Warn("deprecated configuration setting is set",
+			"setting", DeprecatedArgoCDNamespaceEnv,
+			"use_instead", "the clusterTest.argocdNamespace Helm value",
+			"removed_in", "v1.26")
+	})
+	return value, true
+}
+
+// resetArgoCDNamespaceWarnForTest lets a test watch the warning happen
+// more than once in one process. Test-only; there is no instance to
+// hang this seam off, because there is no instance — this is one
+// environment variable read by three call sites.
+func resetArgoCDNamespaceWarnForTest() {
+	argoCDNamespaceWarnOnce = sync.Once{}
 }
 
 // Stable wire-error codes returned in API responses (Story 10.3 will lift these

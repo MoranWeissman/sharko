@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/schema"
 	"gopkg.in/yaml.v3"
@@ -115,7 +117,7 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 	// refuseV3ValuesSurfaceOnActiveRepo).
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		writeNoActiveGitConnection(w, r)
 		return
 	}
 
@@ -138,7 +140,7 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 	// Build orchestrator (same pattern as clusters_batch.go).
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
@@ -189,7 +191,9 @@ func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) 
 func (s *Server) ReadDefaultAddons(ctx context.Context) ([]string, error) {
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		return nil, fmt.Errorf("no active git provider: %w", err)
+		// B1: same wrap, same leak, same fix as everywhere else in this set.
+		slog.Warn("default addons: no usable Git connection for the active connection")
+		return nil, credsafe.ErrNoActiveGitConnection
 	}
 
 	// Attempt to read default-addons.yaml from git.

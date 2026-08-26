@@ -126,22 +126,83 @@ func Hint(code ErrorCode) string {
 	}
 }
 
-// FriendlyMessage builds the single, consistent human-facing message for a
-// failed verification Result. It appends an actionable hint when one exists for
-// the result's ErrorCode, while always preserving the raw error cause
-// (ErrorMessage) for diagnosis. Both the register-preview and adopt call sites
-// use this helper so their wording can never drift apart.
+// ── the safe sentence catalog ───────────────────────────────────────────
+
+// SafeMessage is a finished sentence from the catalog below, and the only
+// thing this package hands out as a message for a person.
 //
-// Shape: "<raw cause> — <hint>" when a hint exists, otherwise "<raw cause>".
+// # Why it is a type and not a string
+//
+// The product owner asked for "an API that makes unsafe construction
+// difficult" rather than a rule somebody has to remember. A string return type
+// made the unsafe thing the DEFAULT: the old FriendlyMessage returned one, and
+// what it returned was the raw error text with a hint glued on. Nothing in the
+// signature said that was wrong, and the doc comment above it described the
+// leak as the design ("<raw cause> — <hint>").
+//
+// SafeMessage carries an unexported field, so no package outside this one can
+// build one. The only way to get one is FriendlyMessage, and FriendlyMessage
+// takes an ErrorCode — a closed set of ten constants. There is no parameter
+// for raw text to ride in on. A caller who wants to put a cluster's own words
+// in front of a person now has to write code that visibly does that, instead
+// of getting it by accident.
+type SafeMessage struct{ sentence string }
+
+// String renders the sentence. Satisfying fmt.Stringer is what lets the call
+// sites keep using %s without reaching for anything raw.
+func (m SafeMessage) String() string { return m.sentence }
+
+// safeSentences is the catalog: one complete, Sharko-written sentence per
+// ErrorCode. Every character a person reads about a failed connectivity check
+// is declared right here.
+//
+// Each entry says two things on purpose — what went wrong, and which category
+// of thing to go and look at. That second half is the counterweight: the raw
+// Kubernetes text is gone, and a bare "something went wrong" would trade one
+// defect for another, so no entry is allowed to stop at the first half.
+//
+// The raw cause is not thrown away. It goes on Result.diagnostic, which is
+// unexported and therefore unreachable by encoding/json, and the handlers log
+// it server-side against the request id.
+//
+// TestSafeSentences_EveryDeclaredErrorCodeHasOne parses the const block above
+// and fails BY NAME on any code missing an entry — a LIST, not a count, so a
+// new code cannot ship with a blank message.
+var safeSentences = map[ErrorCode]string{
+	ERR_NETWORK:    "Sharko could not reach this cluster's API server over the network. Check that the server address in this cluster's connection details is correct and that the API server is reachable from Sharko.",
+	ERR_TLS:        "Sharko reached this cluster's API server but could not verify its certificate. Check that the certificate authority in this cluster's connection details matches the one the API server presents.",
+	ERR_AUTH:       "This cluster rejected Sharko's credentials (HTTP 401). The token may be expired or invalid — regenerate the kubeconfig or token for this cluster and try again.",
+	ERR_RBAC:       "This cluster accepted Sharko's credentials but refused the action (HTTP 403). Grant Sharko's service account the RBAC permissions it needs on this cluster and try again.",
+	ERR_AWS_STS:    "AWS would not mint a token for this cluster. Check that Sharko's identity is allowed to mint tokens for it and that the cluster's region is set correctly.",
+	ERR_AWS_ASSUME: "Sharko could not assume the role configured for this cluster. Check the role's trust policy, that Sharko's identity has sts:AssumeRole on it, and that sts:TagSession is granted if you use EKS Pod Identity.",
+	ERR_QUOTA:      "This cluster's API server is rate-limiting Sharko's requests. Wait for the limit to reset and run the check again.",
+	ERR_NAMESPACE:  "Sharko could not use its test namespace on this cluster. Check that the namespace is not stuck terminating and that no admission webhook is blocking it.",
+	ERR_TIMEOUT:    "This cluster's API server did not answer in time. Check that it is reachable from Sharko and not overloaded, then run the check again.",
+	ERR_UNKNOWN:    "Sharko's connectivity check on this cluster did not finish. The server log for this request id names the step that failed and the reason the cluster gave.",
+}
+
+// FriendlyMessage returns the catalog sentence for a classified failure.
+//
+// It takes the CODE — not the Result, not the error. That is the whole point:
+// with no error and no string in the signature, there is nothing for raw
+// provider, credential-store, Git or Kubernetes text to ride in on, and "never
+// put err.Error() in a response message" stops being a rule someone can forget
+// and becomes a thing that cannot be written.
+//
+// Both the register-preview and adopt call sites use this helper, so their
+// wording still cannot drift apart. An unrecognised code — including stage 2's
+// ERR_NOT_IMPLEMENTED — renders as ERR_UNKNOWN rather than as an empty string,
+// so no path can produce a blank message.
+//
 // A bracketed machine token used to lead this string ("[ERR_AUTH] ...") —
 // retired (error review package 2): a machine code has no business leading
 // a sentence meant for a person, and a caller that needs the code has
-// r.ErrorCode directly rather than parsing it back out of prose.
-func FriendlyMessage(r Result) string {
-	if hint := Hint(r.ErrorCode); hint != "" {
-		return r.ErrorMessage + " — " + hint
+// Result.ErrorCode directly rather than parsing it back out of prose.
+func FriendlyMessage(code ErrorCode) SafeMessage {
+	if sentence, ok := safeSentences[code]; ok {
+		return SafeMessage{sentence: sentence}
 	}
-	return r.ErrorMessage
+	return SafeMessage{sentence: safeSentences[ERR_UNKNOWN]}
 }
 
 // AssumeRoleHint returns a cause-specific hint for an assume-role failure by

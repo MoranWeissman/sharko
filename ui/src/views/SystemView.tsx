@@ -45,15 +45,28 @@ import { ClusterIdentityPanel } from '@/components/ClusterIdentityPanel'
 import { HomeClusterCard, type HomeClusterInfo } from '@/components/HomeClusterCard'
 import { ManagedSecretsSummaryLine } from '@/components/ManagedSecretsSummaryLine'
 import testedRange from '@/generated/argocd-tested-range.json'
+import { NOTIFICATION_CODES } from '@/generated/notification-codes'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bell-alert titles from the connection-health poller (#436). These strings
-// are a stable contract with internal/notifications/connection_poller.go —
-// when one of these alerts is active, its description is surfaced on the
-// matching arrow as extra detail.
+// Bell alerts from the connection-health poller (#436). When one of these is
+// active, its description is surfaced on the matching arrow as extra detail.
+//
+// (Story P5) This page used to hold two hand-typed copies of the poller's
+// TITLES and pick the matching arrow by comparing a notification's title
+// against them, with the title itself as the map key. That is routing on
+// wording: reword TitleGitConnectionBroken in Go — or capitalise one letter of
+// it — and both arrows silently lose their detail line, with nothing failing
+// anywhere. The titles are text to show a person and may be reworded in any
+// release; they were never an identifier.
+//
+// The server has carried a stable `code` on every notification since story
+// P2b, and cmd/gen-notification-codes writes the browser's copy of the closed
+// set from internal/notifications/codes.go. The map is keyed on those now, and
+// the two title constants are gone.
 // ─────────────────────────────────────────────────────────────────────────────
-export const GIT_CONN_ALERT_TITLE = "Sharko can't reach your Git connection"
-export const ARGO_REPO_ALERT_TITLE = "ArgoCD can't sync the repo"
+
+/** The notification codes this page surfaces on an arrow, and which arrow. */
+const ARROW_ALERT_CODES = [NOTIFICATION_CODES.gitConnectionBroken, NOTIFICATION_CODES.argocdRepoBroken] as const
 
 // Repo-arrow labels in the same voice as WhoseConnectionLabel (#447).
 export const SHARKO_REPO_LABEL = 'Sharko → Git repo'
@@ -393,8 +406,12 @@ export function SystemView() {
       if (notifRes.status === 'fulfilled') {
         const map: Record<string, string> = {}
         for (const n of notifRes.value.notifications ?? []) {
-          if (n.title === GIT_CONN_ALERT_TITLE || n.title === ARGO_REPO_ALERT_TITLE) {
-            map[n.title] = n.description
+          // A notification with no code, or a code this build does not know,
+          // is one from an older or newer server. It simply does not fill an
+          // arrow's detail line — the arrow still renders its own status and
+          // detail, so nothing is hidden and nothing is guessed.
+          if (n.code && (ARROW_ALERT_CODES as readonly string[]).includes(n.code)) {
+            map[n.code] = n.description
           }
         }
         setAlertDescriptions(map)
@@ -500,7 +517,7 @@ export function SystemView() {
             }
             status={sharkoRepo.status}
             detail={sharkoRepo.detail}
-            alertDetail={alertDescriptions[GIT_CONN_ALERT_TITLE]}
+            alertDetail={alertDescriptions[NOTIFICATION_CODES.gitConnectionBroken]}
             actionTo="/settings?section=connections"
             actionLabel="Check in Settings → Connections"
           />
@@ -517,7 +534,7 @@ export function SystemView() {
             }
             status={argoRepo.status}
             detail={argoRepo.detail}
-            alertDetail={alertDescriptions[ARGO_REPO_ALERT_TITLE]}
+            alertDetail={alertDescriptions[NOTIFICATION_CODES.argocdRepoBroken]}
             actionTo="/settings?section=connections"
             actionLabel="Check in Settings → Connections"
           />

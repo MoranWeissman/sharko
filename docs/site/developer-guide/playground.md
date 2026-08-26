@@ -19,11 +19,11 @@ register clusters, enable an addon, watch ArgoCD deploy it — no EKS, no cloud
 secrets backend required.
 
 **What this proves:** `make playground-up` only provisions infrastructure
-(kind clusters, ArgoCD, Gitea, Sharko, and an empty git repo). Every piece of
+(kind clusters, ArgoCD, Gitea, Sharko, and an empty Git repo). Every piece of
 Sharko state after that — the v4 seed-bootstrap, cluster registration, addon
 assignment — is created by calling Sharko's own REST API and merging the PRs
 it opens, the same way a real operator would. Nothing is written directly
-into git by the playground process itself. That means the playground also
+into Git by the playground process itself. That means the playground also
 proves: the seed-bootstrap PR flow (`POST /api/v1/init`), the cluster
 reconciler picking up a merged registration and creating the ArgoCD cluster
 Secret, and the ApplicationSet picking up a merged v4 addon assignment.
@@ -43,13 +43,13 @@ make playground-up
 This command (see `cmd/playground/cmd_up.go` + `cmd/playground/realdoors.go`)
 splits cleanly into an infrastructure phase and a real-API-doors phase:
 
-**Infrastructure (no Sharko state, no git writes):**
+**Infrastructure (no Sharko state, no Git writes):**
 
 1. Creates or reuses a persistent hub kind cluster (`sharko-play-hub`) and N
    spoke clusters (`sharko-play-spoke-1..N`, default N=2).
 2. Installs ArgoCD on the hub.
 3. Builds and loads the Sharko + GitFake images onto the hub.
-4. Deploys the git backend — Gitea by default (real git server, in-cluster,
+4. Deploys the Git backend — Gitea by default (real Git server, in-cluster,
    with an empty repo — just what Gitea's own "create repository" gives you),
    or GitFake when `PLAYGROUND_GIT_BACKEND=gitfake` is set.
 5. Installs Sharko on the hub via Helm.
@@ -87,7 +87,7 @@ splits cleanly into an infrastructure phase and a real-API-doors phase:
 **GitFake backend note:** `PLAYGROUND_GIT_BACKEND=gitfake` keeps the older
 direct-seed path (a `managed-clusters.yaml` baked into the GitFake Pod at
 startup) instead of the real-doors flow above, because GitFake
-(`tests/e2e/harness/gitfake`) only implements the git smart-HTTP protocol —
+(`tests/e2e/harness/gitfake`) only implements the Git smart-HTTP protocol —
 it has no PR/merge REST API for the playground to drive the way it drives
 Gitea. **Gitea is the supported local playground flow.** GitFake mode does
 not exercise the seed-bootstrap PR, the catalog approval gate, or any

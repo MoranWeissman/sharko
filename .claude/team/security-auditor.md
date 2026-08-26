@@ -193,6 +193,32 @@ The v1.23 catalog-signing surface introduced a set of cosign/Sigstore concerns t
 
 Outcome surfaces: `verified` (bool) and `signature_identity` (string) on the `CatalogEntry` API model and JSON responses. Both fields are user-visible (Marketplace **Verified** badge + AddonDetail signature panel) — never silently flip them based on trust-policy edits without a re-fetch.
 
+### 16. Repository addresses on READ endpoints (B14)
+
+- A chart/Git repository address is credential material: it is routinely written
+  `https://<token>@host/org/repo` (token in the USERNAME position) or
+  `https://x-access-token:<token>@host/...`. Go's `url.Redacted()` masks only the password
+  half, so it is NOT a fix. `credsafe.SafeRepoURL` is the ONE stripper — it drops the whole
+  userinfo section plus query and fragment. `credsafe.SafeRepoURLPhrase` is the same thing
+  for use INSIDE a sentence (never returns empty, so a sentence cannot end up with a hole).
+- Any field or sentence on a response that names a repository must go through one of those
+  two. `internal/api/cluster_comparison_leak_test.go` holds the field-by-field list and
+  fails both ways; the routed-field floor is EXACT, never rounded down.
+- **Read endpoints are in scope for the role-gate audit.** `authz_coverage_test.go` only
+  ever walked POST/PUT/PATCH/DELETE, which is how two GET routes shipped with no gate at
+  all. `internal/api/authz_read_coverage_test.go` now walks every GET route: gated on a
+  named action, or listed as deliberately open. A read endpoint in neither place is a
+  finding.
+- **The log sink classifies, the call sites do not.** `internal/logging`'s RedactHandler
+  now has four detectors; the fourth rewrites any string value net/url parses as a URL with
+  a userinfo section. A fix that patches one `slog.String("repo", repoURL)` call site and
+  leaves the sink alone is an incomplete fix.
+- **Errors must not reach the model provider.** `internal/ai/agent.go`'s tool-result line is
+  the single boundary for all ~26 tool error returns; it must call
+  `credsafe.SafeToolFailure(err)`, which takes an error and nothing else. A change that
+  formats a raw error into a tool result is a critical finding — that text is posted to a
+  third party.
+
 ## Report Format
 - **PASS**: no issues found (with brief summary of what was checked)
 - **ISSUES**: list each with severity (critical/important/minor), file, line, description

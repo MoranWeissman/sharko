@@ -7,6 +7,7 @@ import {
 } from '@/views/settings/SecretsProviderSection'
 import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
 import { showToast } from '@/components/ToastNotification'
+import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
 /*
  * V2-cleanup-55.2 — the dropdown collapses the generated alias strings
@@ -961,7 +962,7 @@ describe('SecretsProviderSection', () => {
       })
       testProviderMock.mockResolvedValue({
         status: 'error',
-        message: "Sharko can't reach your secrets store — the request timed out. Check the URL and network access.",
+        message: CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsTimeout,
       })
       setupHook([{ ...sampleConnection, provider: { type: 'aws-sm', region: 'eu-west-1' } }])
       render(<SecretsProviderSection />)
@@ -970,7 +971,7 @@ describe('SecretsProviderSection', () => {
       await user.click(button)
 
       expect(
-        await screen.findByText("Sharko can't reach your secrets store — the request timed out. Check the URL and network access."),
+        await screen.findByText(CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsTimeout),
       ).toBeInTheDocument()
     })
   })

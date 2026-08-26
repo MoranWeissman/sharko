@@ -48,7 +48,18 @@ func (s *Server) handleListAddons(w http.ResponseWriter, r *http.Request) {
 	setPaginationHeaders(w, len(addons), p)
 	paged := applyPagination(addons, p)
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"applicationsets": paged})
+	// B11: the catalog entries are the ON-DISK shape — models.AddonCatalogEntry
+	// carries yaml tags as well as json ones, and Sharko reads this same struct
+	// out of addons-catalog.yaml, changes one field and writes the whole thing
+	// back. Its repoURL is routinely written with the access token inside it,
+	// and this endpoint used to marshal the parsed entries straight out.
+	//
+	// The raw entries stay exactly as they were read — anything that fetches a
+	// chart or writes the file back still has the operator's credential. Only
+	// this copy, which exists solely to be a response, has it removed.
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"applicationsets": models.NewAddonCatalogEntryViews(paged),
+	})
 }
 
 // handleGetAddonCatalog godoc

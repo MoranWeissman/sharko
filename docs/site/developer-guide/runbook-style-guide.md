@@ -200,6 +200,28 @@ sum(rate(sharko_cluster_registration_errors_total[5m]))
 clamp_min(sum(rate(sharko_cluster_registration_total[5m])), 1e-9)
 ```
 
+**A ` ```promql ` fence is a promise that the query runs today.** Only
+use it when every metric and every label in the query is actually
+registered — check the
+[metrics reference](../operator/metrics.md), which is the one list.
+A query an operator pastes into Prometheus and gets nothing back
+from is worse than no query at all, because they will believe they are
+covered.
+
+If you are writing up a metric Sharko does not have yet — a "we should
+alert on this one day" note — do two things:
+
+1. Open the paragraph with this exact sentence:
+
+    > Sharko does not export this metric today. The alert below is a
+    > design sketch for a future release, not something you can deploy
+    > now.
+
+2. Put the query in a **plain ` ``` ` fence, not a ` ```promql ` one.**
+   The plain fence means "read this, don't run it", and it is what the
+   metrics guard test in `internal/metrics` keys on. A design sketch
+   left in a `promql` fence will fail CI.
+
 For log-driven diagnosis, lean on the V2-2.2 `request_id` correlation
 pattern — every Sharko log line carries a `request_id`, and a single
 `jq 'select(.request_id == "req-<id>")'` joins lines across middleware,

@@ -19,7 +19,11 @@ import (
 // engine pin, and polls for sync verification.
 func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*InitRepoResult, error) {
 	if o.gitops.RepoURL == "" {
-		return nil, fmt.Errorf("git repo URL is required for init — set SHARKO_GITOPS_REPO_URL")
+		// The old text here said "set SHARKO_GITOPS_REPO_URL". Sharko has
+		// never read that name, and since internal/envreg/unknown.go
+		// shipped, setting it stops the server — so the error told the
+		// operator to do the one thing that would make this worse.
+		return nil, fmt.Errorf("this connection has no Git repository URL, so there is nothing to initialize. Set it on the connection (Settings → Connections), or with the SHARKO_CONN_GIT_REPO_URL setting")
 	}
 
 	// Step 1 — Check if repo is already initialized. The engine pin is the
@@ -240,7 +244,9 @@ func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) 
 // recording progress between each.
 func (o *Orchestrator) CollectBootstrapFiles(ctx context.Context) (map[string][]byte, error) {
 	if o.gitops.RepoURL == "" {
-		return nil, fmt.Errorf("git repo URL is required — set SHARKO_GITOPS_REPO_URL")
+		// Same correction as InitRepo above: the name it used to print is
+		// one Sharko never read and now refuses to start with.
+		return nil, fmt.Errorf("this connection has no Git repository URL, so there is nothing to initialize. Set it on the connection (Settings → Connections), or with the SHARKO_CONN_GIT_REPO_URL setting")
 	}
 	// Preflight (Story A1) — same check InitRepo runs, and for the same
 	// reason: this is the async init flow's Step 1 (runInitOperation,

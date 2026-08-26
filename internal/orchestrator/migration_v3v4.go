@@ -55,7 +55,7 @@ const RepoFormatMixed = "mixed"
 // MixedLayoutMessage is the plain-words explanation for RepoFormatMixed,
 // shared by the status surfaces and by the refusal every v4 write gives on
 // such a repo, so a person hears one story.
-const MixedLayoutMessage = "this repo has both the old and the new layout in it — sharko-engine.yaml is there, and so are the old v3 files. Finish the conversion or revert it: while both are present the engine reads one set of files and the cluster reconciler prefers the other, so they disagree about which clusters and addons are real. Sharko will not change your catalog or your clusters' addons until one of the two is gone."
+const MixedLayoutMessage = "this repo has both the old and the new layout in it — sharko-engine.yaml is there, and so are the old v3 files. Finish the conversion or revert it: while both are present the engine reads one set of files and Sharko reads the other, so they disagree about which clusters and addons are real. Sharko will not change your catalog or your clusters' addons until one of the two is gone."
 
 // Migration file actions, as reported in a plan.
 const (

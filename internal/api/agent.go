@@ -97,13 +97,13 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		gp, err := s.connSvc.GetActiveGitProvider()
 		if err != nil {
 			agentMu.Unlock()
-			writeError(w, http.StatusServiceUnavailable, err.Error())
+			writeNoActiveGitConnectionUnavailable(w, r)
 			return
 		}
 		ac, err := s.connSvc.GetActiveArgocdClient()
 		if err != nil {
 			agentMu.Unlock()
-			writeError(w, http.StatusServiceUnavailable, err.Error())
+			writeNoActiveArgocdConnectionUnavailable(w, r)
 			return
 		}
 

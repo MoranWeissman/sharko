@@ -213,9 +213,9 @@ func registerSpokeRealDoor(client *apiClient, giteaToken, name, kubeconfig strin
 	// pick up the merged managed-clusters.yaml entry and create the ArgoCD
 	// cluster Secret. This is a courtesy wait, not a hard requirement — the
 	// reconciler converges on its own regardless of whether we see it here.
-	fmt.Printf("      Waiting for the cluster reconciler to pick up %s...\n", name)
+	fmt.Printf("      Waiting for Sharko to pick up %s...\n", name)
 	if err := waitForClusterVisible(client, name, 90*time.Second); err != nil {
-		fmt.Printf("      Warning: %s not visible via GET /api/v1/clusters/%s within 90s — the reconciler's next tick will still pick it up: %v\n", name, name, err)
+		fmt.Printf("      Warning: %s not visible via GET /api/v1/clusters/%s within 90s — Sharko still picks it up on its own: %v\n", name, name, err)
 	} else {
 		fmt.Printf("      %s is registered\n", name)
 	}

@@ -323,13 +323,23 @@ its own Helm chart (`charts/sharko/templates/rbac.yaml`):
   host cluster is now one of the two namespaced grants below.
 - **A namespaced read/write** on Secrets in the ArgoCD namespace only
   (`rbac.argocdNamespace`, default `argocd`), for managing
-  cluster-connection Secrets.
+  cluster-connection Secrets. It carries no `resourceNames`, so it
+  covers every Secret in that namespace, not only the ones Sharko
+  created.
 - **A namespaced, read-only grant** (`get`/`list`) per namespace
   listed in `rbac.k8sSecretsProviderNamespaces` (the release namespace
-  is always included), for the k8s-secrets cluster-credential and
-  addon-secret providers when either is configured to use that
-  backend. This is the exact reach those two providers need — nothing
-  wider.
+  is always included, whether or not an operator lists it), for the
+  k8s-secrets cluster-credential and addon-secret providers when
+  either is configured to use that backend. It is namespace-scoped,
+  not name-scoped: within each of those namespaces it reads **every**
+  Secret, not only the ones those two providers ask for, and it is
+  created even when neither provider is configured. The blast radius
+  is therefore "every Secret in the release namespace, plus every
+  Secret in each namespace an operator adds" — narrower than the
+  cluster-wide rule it replaced, and wider than the providers
+  themselves need. Running Sharko in a namespace of its own, and
+  keeping unrelated Secrets out of any listed namespace, is what
+  closes the rest of the gap.
 - **A namespaced, mostly resource-name-scoped** set of permissions in
   Sharko's own release namespace, for its own auth Secret, connection
   Secret, API-token Secret, and a few others — each pinned to a

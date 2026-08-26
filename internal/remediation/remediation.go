@@ -19,12 +19,14 @@ package remediation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -33,22 +35,23 @@ import (
 	"github.com/MoranWeissman/sharko/internal/service"
 )
 
-// isBenignTerminateError returns true when a TerminateOperation error
-// indicates no operation was in progress (benign race window).
-func isBenignTerminateError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "no operation is in progress") ||
-		(strings.Contains(msg, "unexpected status 400") && strings.Contains(msg, "no operation"))
-}
+// The old isBenignTerminateError lived here — a second copy of the one in
+// internal/api, lowercasing the error and searching it for the words "no
+// operation is in progress". Both copies are gone. internal/argocd says the
+// same thing with a type (argocd.ErrNoOperationInProgress), decided from the
+// call it made and the status it got back, so nothing downstream has to read
+// ArgoCD's prose to decide what Sharko does next.
 
 // ArgoClient is the subset of the ArgoCD client the remediator needs.
 type ArgoClient interface {
 	ListApplications(ctx context.Context) ([]models.ArgocdApplication, error)
 	TerminateOperation(ctx context.Context, appName string) error
 	SyncApplication(ctx context.Context, appName string) error
+	// CanSyncApplication reports whether ArgoCD will let this token sync the
+	// named application. Asked before anything is terminated: without the
+	// permission, terminating a running operation and then being refused the
+	// re-sync leaves the application worse off than doing nothing at all.
+	CanSyncApplication(ctx context.Context, project, appName string) argocd.Capability
 	// RefreshApplication triggers ArgoCD to re-fetch the application state from
 	// Git. Called after a Sharko PR merges so ArgoCD picks up the new config
 	// without waiting for its next poll cycle (~3 min in most environments).
@@ -162,8 +165,32 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 	slog.Info("remediation: terminating stale sync", "app", app.Name, "pr_id", pr.PRID,
 		"operation_phase", app.OperationPhase, "started_at", app.OperationStartedAt)
 
+	// Ask first. Syncing an application is a permission an ArgoCD
+	// administrator grants deliberately; installing Sharko does not grant it
+	// and Sharko never grants it to itself. When ArgoCD says no, this whole
+	// action is unavailable and the audit log says exactly that, rather than
+	// terminating the running operation and then recording a generic failure
+	// on the re-sync it was never going to be allowed to make.
+	if r.deps.ArgoClient.CanSyncApplication(ctx, app.Project, app.Name) == argocd.CapabilityDenied {
+		slog.Warn("remediation: not permitted to sync applications in ArgoCD; leaving the stale operation alone",
+			"app", app.Name, "project", app.Project, "pr_id", pr.PRID)
+		r.deps.AuditFn(audit.Entry{
+			Level:    "warn",
+			Event:    "argocd_auto_remediation_unavailable",
+			User:     "sharko",
+			Action:   "terminate_and_sync",
+			Resource: "app:" + app.Name,
+			Source:   "remediation",
+			Result:   "skipped",
+			Reason:   audit.ReasonPermission,
+			Detail: fmt.Sprintf("the ArgoCD account Sharko uses may not sync applications, so the stale operation on %s "+
+				"was left alone after PR #%d merged; ArgoCD still applies what Git says on its own schedule", app.Name, pr.PRID),
+		})
+		return
+	}
+
 	if err := r.deps.ArgoClient.TerminateOperation(ctx, app.Name); err != nil {
-		if isBenignTerminateError(err) {
+		if errors.Is(err, argocd.ErrNoOperationInProgress) {
 			// Race window: the operation finished between isFailingAndStale and now.
 			// Log a warning and proceed to re-sync — the op is already done.
 			slog.Warn("remediation: terminate returned benign 'no operation' error; proceeding to sync",
@@ -171,16 +198,23 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 		} else {
 			slog.Error("remediation: terminate operation failed", "app", app.Name, "error", err)
 			r.deps.AuditFn(audit.Entry{
-				Level:             "error",
-				Event:             "argocd_auto_remediation_failed",
-				User:              "sharko",
-				Action:            "terminate_operation",
-				Resource:          "app:" + app.Name,
-				Source:            "remediation",
-				Result:            "failure",
-				Error:             err.Error(),
-				CredentialFailure: credsafe.Is(err),
-				Detail:            fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
+				Level:    "error",
+				Event:    "argocd_auto_remediation_failed",
+				User:     "sharko",
+				Action:   "terminate_operation",
+				Resource: "app:" + app.Name,
+				Source:   "remediation",
+				Result:   "failure",
+				// This is the path that was guaranteed to leak. The error is
+				// an ArgoCD error and nothing marks ArgoCD errors, so
+				// credsafe.Is was guaranteed false, the old flag was
+				// guaranteed false, and err.Error() went into the audit log
+				// verbatim on every failure — with Detail never cleared
+				// either. Nothing is passed by hand now: the category goes,
+				// the sink writes the sentence, and the ArgoCD error's own
+				// words are in the slog line above and nowhere else.
+				Reason: audit.Classify(err),
+				Detail: fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
 			})
 			return
 		}
@@ -189,16 +223,17 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 	if err := r.deps.ArgoClient.SyncApplication(ctx, app.Name); err != nil {
 		slog.Error("remediation: re-sync failed", "app", app.Name, "error", err)
 		r.deps.AuditFn(audit.Entry{
-			Level:             "error",
-			Event:             "argocd_auto_remediation_failed",
-			User:              "sharko",
-			Action:            "sync_application",
-			Resource:          "app:" + app.Name,
-			Source:            "remediation",
-			Result:            "failure",
-			Error:             err.Error(),
-			CredentialFailure: credsafe.Is(err),
-			Detail:            fmt.Sprintf("terminated stale sync for %s but re-sync failed after PR #%d merged", app.Name, pr.PRID),
+			Level:    "error",
+			Event:    "argocd_auto_remediation_failed",
+			User:     "sharko",
+			Action:   "sync_application",
+			Resource: "app:" + app.Name,
+			Source:   "remediation",
+			Result:   "failure",
+			// The second of the two guaranteed-unsanitised paths. Same story
+			// as the terminate branch above.
+			Reason: audit.Classify(err),
+			Detail: fmt.Sprintf("terminated stale sync for %s but re-sync failed after PR #%d merged", app.Name, pr.PRID),
 		})
 		return
 	}
@@ -218,6 +253,15 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 	})
 }
 
+// B1: each of the four methods below used to build its failure by wrapping
+// the underlying error with %w behind a short prefix of its own. Every one of
+// those errors is then logged by the remediator under slog's "error" key, and
+// the wrapped value is whatever building an ArgoCD client out of the saved
+// connection produced — the same raw-error class that was reaching response
+// bodies from sixty-four handlers in internal/api, reaching a log line here
+// instead. They now return the one fixed sentence from internal/credsafe,
+// with nothing wrapped underneath it for a later fmt.Errorf to pull back out.
+//
 // LazyArgoClient wraps a ConnectionService and lazily resolves the active
 // ArgoCD client at call time. This allows the remediator to be wired at
 // startup even when no ArgoCD connection is configured yet.
@@ -228,7 +272,7 @@ type LazyArgoClient struct {
 func (l *LazyArgoClient) ListApplications(ctx context.Context) ([]models.ArgocdApplication, error) {
 	c, err := l.ConnSvc.GetActiveArgocdClient()
 	if err != nil {
-		return nil, fmt.Errorf("no active ArgoCD connection: %w", err)
+		return nil, credsafe.ErrNoActiveArgocdConnection
 	}
 	return c.ListApplications(ctx)
 }
@@ -236,7 +280,7 @@ func (l *LazyArgoClient) ListApplications(ctx context.Context) ([]models.ArgocdA
 func (l *LazyArgoClient) TerminateOperation(ctx context.Context, appName string) error {
 	c, err := l.ConnSvc.GetActiveArgocdClient()
 	if err != nil {
-		return fmt.Errorf("no active ArgoCD connection: %w", err)
+		return credsafe.ErrNoActiveArgocdConnection
 	}
 	return c.TerminateOperation(ctx, appName)
 }
@@ -244,15 +288,26 @@ func (l *LazyArgoClient) TerminateOperation(ctx context.Context, appName string)
 func (l *LazyArgoClient) SyncApplication(ctx context.Context, appName string) error {
 	c, err := l.ConnSvc.GetActiveArgocdClient()
 	if err != nil {
-		return fmt.Errorf("no active ArgoCD connection: %w", err)
+		return credsafe.ErrNoActiveArgocdConnection
 	}
 	return c.SyncApplication(ctx, appName)
+}
+
+func (l *LazyArgoClient) CanSyncApplication(ctx context.Context, project, appName string) argocd.Capability {
+	c, err := l.ConnSvc.GetActiveArgocdClient()
+	if err != nil {
+		// No connection is not a refusal. Reporting "denied" here would make
+		// a missing connection look like a missing permission, and the caller
+		// would print the wrong explanation.
+		return argocd.CapabilityUnknown
+	}
+	return c.CanSyncApplication(ctx, project, appName)
 }
 
 func (l *LazyArgoClient) RefreshApplication(ctx context.Context, appName string, hard bool) (*models.ArgocdApplication, error) {
 	c, err := l.ConnSvc.GetActiveArgocdClient()
 	if err != nil {
-		return nil, fmt.Errorf("no active ArgoCD connection: %w", err)
+		return nil, credsafe.ErrNoActiveArgocdConnection
 	}
 	return c.RefreshApplication(ctx, appName, hard)
 }

@@ -253,7 +253,7 @@ Distinguish reconciler-driven from handler-driven by checking the
    echo "Quota resets in $(( ( $(date -u -r <reset-unix> +%s) - $(date -u +%s) ) / 60 )) minutes"
    ```
 
-   Success indicator: `/api/v1/health` (if it surfaces git provider
+   Success indicator: `/api/v1/health` (if it surfaces Git provider
    reachability) flips back to reachable; a synthetic
    `GET /api/v1/clusters` does not return 502 with the rate-limit
    shape.
@@ -464,13 +464,15 @@ How to make this failure mode less likely going forward. Three
 levers, in order of leverage:
 
 - **Monitoring — alert on rate-limit headroom, not on the failure.**
-  GitHub returns `X-RateLimit-Remaining` on every response. Add a
-  Sharko-internal metric that records the most-recent value (e.g.
-  `sharko_github_rate_limit_remaining`) and alert when it falls
-  below 20% of `X-RateLimit-Limit` for 5 minutes. That gives the
-  operator a 15-30 minute warning before the budget hits zero — long
-  enough to throttle a burst or rotate a PAT preemptively. Wiring
-  this metric into `internal/metrics/` is a V2-4.x follow-up.
+  Sharko does not export this metric today. The alert below is a design
+  sketch for a future release, not something you can deploy now. GitHub
+  returns `X-RateLimit-Remaining` on every response; the sketch is a
+  Sharko-internal metric recording the most-recent value (e.g.
+  `sharko_github_rate_limit_remaining`), alerting when it falls below
+  20% of `X-RateLimit-Limit` for 5 minutes. That would give the operator
+  a 15-30 minute warning before the budget hits zero — long enough to
+  throttle a burst or rotate a PAT preemptively. Wiring this metric into
+  `internal/metrics/` is a V2-4.x follow-up.
 
 - **Gating — document the per-operation API cost in onboarding
   scripts.** Each cluster registration costs ~3-4 GitHub API calls;

@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // ErrOCIVersionCheckUnsupported is returned by ListVersions (and anything
@@ -74,6 +76,19 @@ func NewFetcher() *Fetcher {
 
 // getIndex fetches and caches the repo index.
 func (f *Fetcher) getIndex(ctx context.Context, repoURL string) (*repoIndex, error) {
+	// Sharko never dials an address it would not save. Every other method on
+	// this type reaches the network through here — ListVersions and
+	// ListCharts call it directly, FindNearestVersion, FetchValues and
+	// fetchChartYAML go through ListVersions — so this one check is what
+	// makes "never connect using that address" true for all of them, rather
+	// than a check each caller has to remember.
+	//
+	// It runs before the cache lookup as well as before the request: a
+	// refused address must never come back from a cache slot either.
+	if err := credsafe.ValidateSupportedRepoURL(repoURL); err != nil {
+		return nil, err
+	}
+
 	if idx, ok := f.indexCache[repoURL]; ok {
 		return idx, nil
 	}
@@ -91,12 +106,22 @@ func (f *Fetcher) getIndex(ctx context.Context, repoURL string) (*repoIndex, err
 	indexURL := strings.TrimRight(repoURL, "/") + "/index.yaml"
 	req, err := http.NewRequestWithContext(ctx, "GET", indexURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		// Never "%w" on either of these (BF12). net/http hands back a
+		// *url.Error, which prints the address it was given: on the build
+		// with nothing masked at all, on the send with only the password
+		// half of any user information hidden. The address here is a chart
+		// repository, which is credential material — it is routinely
+		// written https://<token>@host/org/repo — and these errors do not
+		// stay inside the process: several handlers put them straight into
+		// an API reply with writeError(err.Error()).
+		return nil, fmt.Errorf("the chart index request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching index: %w", err)
+		return nil, fmt.Errorf("the chart index request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -267,12 +292,15 @@ func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version s
 	// Download the .tgz
 	req, err := http.NewRequestWithContext(ctx, "GET", chartURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("creating chart request: %w", err)
+		// Address-free, same reason as getIndex above (BF12).
+		return "", fmt.Errorf("the chart download request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("downloading chart: %w", err)
+		return "", fmt.Errorf("the chart download did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -343,12 +371,15 @@ func (f *Fetcher) fetchChartYAML(ctx context.Context, repoURL, chartName, versio
 
 	req, err := http.NewRequestWithContext(ctx, "GET", chartURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating chart request: %w", err)
+		// Address-free, same reason as getIndex above (BF12).
+		return nil, fmt.Errorf("the chart download request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("downloading chart: %w", err)
+		return nil, fmt.Errorf("the chart download did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 
@@ -418,6 +449,14 @@ func extractGitHubRepoFromURL(rawURL string) string {
 // FetchReleaseNotes tries to get release notes for a chart version.
 // Precedence: Chart.yaml sources[] → Chart.yaml home → guessGitHubRepo heuristic.
 func (f *Fetcher) FetchReleaseNotes(ctx context.Context, repoURL, chartName, version string) (string, error) {
+	// This method carries on after fetchChartYAML fails — it falls back to
+	// guessing a GitHub repository from the address — so it cannot rely on
+	// getIndex's refusal having stopped it. Same rule, asked again here, not
+	// a second rule.
+	if err := credsafe.ValidateSupportedRepoURL(repoURL); err != nil {
+		return "", err
+	}
+
 	// 1. Try Chart.yaml sources/home for a GitHub URL.
 	var githubRepo string
 	if meta, err := f.fetchChartYAML(ctx, repoURL, chartName, version); err == nil {
@@ -471,13 +510,18 @@ func (f *Fetcher) fetchGitHubRelease(ctx context.Context, repo, tag string) (str
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", err
+		// Address-free, same reason as getIndex above (BF12). The host is
+		// a literal here, but the repository and tag in the path are not,
+		// and the rule is about the whole address.
+		return "", fmt.Errorf("the release-notes request could not be built (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("the release-notes request did not complete (%s)",
+			credsafe.PlainFailureReason(err))
 	}
 	defer resp.Body.Close()
 

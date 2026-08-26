@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ClustersOverview } from '@/views/ClustersOverview';
 import { AuthContext } from '@/hooks/useAuth';
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences';
 import { CONN_OWNER_USER_LABEL } from '@/components/ConnectionOwnerBadge';
 
 // V2-cleanup-57.2 — "connection managed by: me" (self-managed ArgoCD
@@ -135,7 +136,9 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     await waitFor(() => {
       expect(screen.getByText(new RegExp(CONN_OWNER_USER_LABEL))).toBeInTheDocument();
     });
-    expect(screen.getByText(new RegExp('never writes, rotates, or deletes'))).toBeInTheDocument();
+    // The caption's sentence is the SERVER's, imported from the generated
+    // contract — this asserts the render path reaches it, not its wording.
+    expect(screen.getByText(new RegExp(CONNECTION_SENTENCES.modeStatementSelfManaged))).toBeInTheDocument();
 
     // Close and open the Sharko-managed cluster's popover — no note.
     fireEvent.click(pills[0]);
@@ -156,9 +159,12 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     // Both options are present, in plain English (V2-cleanup-92.1 F11).
     expect(screen.getByText('Sharko (default)')).toBeInTheDocument();
     expect(screen.getByText('Manage a cluster ArgoCD already connects to')).toBeInTheDocument();
-    // Default hint explains Sharko ownership.
+    // The default hint describes the CHOICE. It deliberately no longer
+    // promises what Sharko will do afterwards — see the comment on
+    // CONN_OWNERSHIP_HINTS, and the absence pin in
+    // ui/src/__tests__/browserAuthoredPromises.test.ts.
     expect(
-      screen.getByText(/Sharko creates the ArgoCD cluster secret and keeps its credentials up to date/),
+      screen.getByText(/Hand this cluster's connection to Sharko\. The usual choice\./),
     ).toBeInTheDocument();
   });
 

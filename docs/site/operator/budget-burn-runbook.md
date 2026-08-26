@@ -1,6 +1,9 @@
 # Budget-Burn Runbook
 
-> **Verified:** Authored 2026-06-01 against the V2-3.3 alerts shipped in
+> **Verified:** Updated 2026-08-25 for BF14 revision 2 (the log
+> `source` field is now always the fixed word `redacted`, so the
+> identify-the-source step reads the API instead of grouping logs).
+> Originally authored 2026-06-01 against the V2-3.3 alerts shipped in
 > `charts/sharko/templates/prometheusrules.yaml` (PR #372). Every alert in
 > that file has a 1:1 section below; section anchors match the
 > `runbook_url` annotation of each alert. Re-verify before changing alert
@@ -124,9 +127,10 @@ Page on-call.
 5. **Network policy / firewall** — Sharko → ArgoCD and Sharko →
    kube-apiserver paths must be allowed. A recently-applied
    NetworkPolicy is a common trigger.
-6. **Last resort: scale down and drain** — if a retry storm is
-   amplifying a transient ArgoCD issue, scale Sharko to 1 replica until
-   ArgoCD recovers. Per the
+6. **Last resort: pause Sharko** — if a retry storm is amplifying a
+   transient ArgoCD issue, scale Sharko to zero until ArgoCD recovers,
+   then back to one. Sharko runs as a single pod, so zero and one are
+   the only two settings it has. Per the
    [logging guide](../developer-guide/logging.md), retry traffic should
    be visible as `Warn` lines with `retry triggered`.
 
@@ -207,7 +211,7 @@ hours.
 2. **Re-check ArgoCD account token** — most slow-burn registration
    failures trace to expired or revoked ArgoCD credentials. Same fix
    as the fast-burn path.
-3. **Check git provider quota** — if the registration PR opening is
+3. **Check Git provider quota** — if the registration PR opening is
    rate-limited by GitHub / GitLab, the failure manifests as a
    registration error but the root cause is upstream. Look for
    `rate limit hit` Warn lines.
@@ -254,11 +258,19 @@ Page on-call.
     clamp_min(sharko:addon_cycle:request_rate_5m, 1e-9)
     ```
 
-2. **Per-action breakdown** — the histogram carries a `phase` label
-   with values `enable`, `disable`, and `upgrade_global` (per
-   [`metrics-naming.md`](metrics-naming.md#addon_cycle)). Pivot by phase
-   in Grafana to see whether a single action is failing or the whole
-   surface.
+2. **Per-action breakdown** — the histogram carries a `phase` label. At
+   runtime Sharko emits exactly two values on this surface: `enable` and
+   `disable` (`internal/api/addon_ops.go`). Pivot by phase in Grafana to
+   see whether a single action is failing or both.
+
+    Do not go looking for an `upgrade_global` phase in Prometheus. Names
+    like `enable_dry_run` and `upgrade_global` are **performance-harness
+    step ids** (`tests/e2e/harness/phases.go`), used to label the
+    measurements in [`slos.md`](slos.md) and
+    [`perf-baselines.md`](perf-baselines.md). They are not values the
+    running server ever puts on the `phase` label. Two different
+    vocabularies, same word.
+
 3. **PR tracker state** — `kubectl logs -n <ns> -l app=sharko --tail=500
    | jq 'select(.request_id | startswith("prtrack-"))'`. Each cycle
    opens a PR; PR-tracker poll failures correlate with addon-cycle
@@ -494,13 +506,16 @@ a ticket; not user-blocking enough to page.
 
 ### Mitigations (try in order)
 
-1. **Identify the failing source** — group log errors by source name:
-
-    ```sh
-    kubectl logs -n <ns> -l app=sharko --since=6h \
-      | jq -r 'select(.level == "ERROR" and .source) | .source' \
-      | sort | uniq -c | sort -rn
-    ```
+1. **Identify the failing source** — the log's `source` field is
+   always the fixed word `redacted` (a configured catalog address can
+   carry an auth token inside it, so it is never written to a log), so
+   grouping log lines cannot name the source. Read
+   `GET /api/v1/catalog/sources` (behind a login) instead: its rows
+   also all read `redacted`, but the failing one shows
+   `status: "failed"`, and the rows follow your configured
+   `SHARKO_CATALOG_URLS` addresses sorted alphabetically — match the
+   failing row's position and entry count against the list you
+   configured.
 
 2. **Disable the failing source temporarily** — remove it from
    `catalog.sources` in Helm values until it recovers; document in the
@@ -578,9 +593,14 @@ sees an error state when they open the app. Page on-call.
 3. **Catalog cache** — `fleet_status` joins addon health which
    depends on the catalog. If `catalog_scan` is also alerting, treat
    that as the upstream root cause.
-4. **Replica scaling** — the dashboard handlers are read-only and
-   cacheable; if the read fanout is saturating a single pod, bump
-   replicas via Helm `replicaCount`.
+4. **Give the one pod more room** — the technical preview runs a
+   single Sharko pod and does not support a second one, so there is
+   no second pod to spread the reads over. If dashboard reads are
+   saturating the pod, give it more CPU and memory (`resources` in the
+   Helm values) and restart it, and reduce the read load itself:
+   fewer dashboard tabs left open, and fewer automated pollers
+   against the dashboard endpoints. See
+   [the preview limits](../technical-preview.md).
 5. **Worst case: serve degraded** — the handlers already report
    availability flags rather than 5xx for upstream failures; if a
    sustained 5xx is leaking through, that's a Sharko bug — open an
@@ -598,7 +618,7 @@ sees an error state when they open the app. Page on-call.
   internally, but a flood of concurrent reads at start can overwhelm
   the warm-up; this self-corrects within ~30 seconds.
 - **Upstream Git outage** — `pull_requests` handler depends on the
-  git provider for the live PR list. A git provider outage surfaces
+  Git provider for the live PR list. A Git provider outage surfaces
   here before it surfaces anywhere else operators see.
 
 ---
@@ -641,18 +661,20 @@ during business hours.
 1. **Identify the failing phase** — query the histogram with `phase`
    label split. The slowest-tail phase is usually the cause.
 2. **Inspect the upstream that feeds the slow phase** — ArgoCD for
-   `fleet_status`, git provider for `pull_requests`, internal cache
+   `fleet_status`, Git provider for `pull_requests`, internal cache
    for `attention`. Slow burns here usually trace to upstream latency
    that's not bad enough to fast-burn.
 3. **Tune handler timeouts** — if upstream is genuinely slow but
    recoverable, the handler timeout (rather than upstream itself) is
    converting latency into errors. Adjust `config.dashboard.timeout`
    in Helm values.
-4. **Replicas + cache** — read-heavy dashboard load on a single
-   Sharko replica with cold caches can drag p99 into error territory.
-   Scaling and warming the cache via the
+4. **Warm the cache** — read-heavy dashboard load on a Sharko whose
+   caches are cold can drag p99 into error territory. Warming them
+   with the
    [contributor smoke walk](../developer-guide/contributor-smoke-walk.md)
-   pattern resolves both.
+   pattern fixes that half. The other half is the read load itself:
+   the preview runs one Sharko pod and cannot be given a second one,
+   so cut the load or give the pod more CPU and memory.
 
 ### Root-cause patterns
 

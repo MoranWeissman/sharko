@@ -43,7 +43,7 @@ existing ArgoCD with pre-existing cluster Secrets.
 
 Sharko runs a single in-Pod goroutine (no CRD, no controller-runtime,
 no operator deployment) that reads `managed-clusters.yaml` from your
-bootstrap git repo and reconciles ArgoCD's cluster Secret state to
+bootstrap Git repo and reconciles ArgoCD's cluster Secret state to
 match. Every cluster Sharko creates carries the ownership label
 `app.kubernetes.io/managed-by: sharko`; the reconciler only ever
 mutates Secrets that carry that label. Externally-created cluster
@@ -119,7 +119,7 @@ matching entry in `managed-clusters.yaml`, classify it as an
 in-argocd ∖ in-git delta, and **delete it** as part of the
 self-consistency pass. This is the inverse of the missing-cluster case
 and it is intentional — the reconciler exists to make ArgoCD state
-match the git declaration.
+match the Git declaration.
 
 **Operator action if you see this happen unintentionally:** either add
 the cluster to `managed-clusters.yaml` (preferred — declare the
@@ -152,7 +152,7 @@ Two triggers drive a `PollOnce` call:
 
 The 30s periodic tick is the safety net for:
 
-- out-of-band git changes (someone edited `managed-clusters.yaml`
+- out-of-band Git changes (someone edited `managed-clusters.yaml`
   directly on the main branch instead of via Sharko),
 - accidental Secret deletion (`kubectl delete secret ...` in the
   argocd namespace),
@@ -184,7 +184,7 @@ endpoints) now include a `last_reconcile` field:
 ```
 
 `outcome` is one of `succeeded`, `failed`, or `skipped`. This is
-**derived, in-memory state only** — never written to git, never
+**derived, in-memory state only** — never written to Git, never
 persisted across a restart. A server restart loses the history, but the
 next tick (at most `DefaultTickInterval` later) repopulates it, exactly
 like the reconcile loop itself is self-healing. The field is
@@ -217,21 +217,21 @@ secret](self-managed-connections.md#when-another-argocd-application-also-renders
 
 ## Two-direction policy
 
-The reconciler handles one direction automatically (git → ArgoCD) and
-defers the other direction (ArgoCD → git) to a human-initiated Adopt
+The reconciler handles one direction automatically (Git → ArgoCD) and
+defers the other direction (ArgoCD → Git) to a human-initiated Adopt
 action (V125-2 backlog).
 
 | Source change                                       | Reconciler action                              | Direction               | Status   |
 | --------------------------------------------------- | ---------------------------------------------- | ----------------------- | -------- |
-| New entry in `managed-clusters.yaml`                | Create labeled Secret in argocd namespace      | git → ArgoCD (auto)     | ✓ shipped |
-| Entry removed from `managed-clusters.yaml`          | Delete labeled Secret                          | git → ArgoCD (auto)     | ✓ shipped |
-| ArgoCD Secret **without** sharko label appears      | Ignored (never touched; V125-2 Adopt surfaces) | ArgoCD → git (manual)   | ✓ shipped |
-| Labeled Secret deleted out-of-band                  | Re-create from git + vault on next tick        | git → ArgoCD (auto)     | ✓ shipped |
+| New entry in `managed-clusters.yaml`                | Create labeled Secret in argocd namespace      | Git → ArgoCD (auto)     | ✓ shipped |
+| Entry removed from `managed-clusters.yaml`          | Delete labeled Secret                          | Git → ArgoCD (auto)     | ✓ shipped |
+| ArgoCD Secret **without** sharko label appears      | Ignored (never touched; V125-2 Adopt surfaces) | ArgoCD → Git (manual)   | ✓ shipped |
+| Labeled Secret deleted out-of-band                  | Re-create from Git + vault on next tick        | Git → ArgoCD (auto)     | ✓ shipped |
 | Unlabeled Secret deleted                            | Untracked — never Sharko's problem             | none                    | ✓ shipped |
 
 Two principles drive the asymmetry:
 
-- **One direction is automatic** because git is the declared source of
+- **One direction is automatic** because Git is the declared source of
   truth and convergence is well-defined.
 - **The other direction is human-initiated** because importing an
   existing Secret is destructive (rewriting `managed-clusters.yaml`)
@@ -288,7 +288,7 @@ This is the operational-safety guarantee V125-1-9 was built to
 provide. Run `sharko validate-config configuration/` locally to
 exercise the same validator surface before opening a PR.
 
-### What if git is rate-limited or unreachable?
+### What if Git is rate-limited or unreachable?
 
 The reconciler logs the git-fetch error, audit-logs
 `git_fetch_failed`, and **skips this tick**. Existing labeled Secrets
@@ -340,7 +340,7 @@ management without re-registering or rotating credentials.
    not have run yet (wait up to 30s) or `managed-clusters.yaml` may
    have a schema-validation error blocking the entire tick — check
    for `schema_validation_failed`.
-4. If you see `git_fetch_failed`, check the git provider PAT and
+4. If you see `git_fetch_failed`, check the Git provider PAT and
    GitHub/GitLab/ADO API status.
 
 ### "A cluster I removed from `managed-clusters.yaml` is still in ArgoCD"
@@ -361,7 +361,7 @@ management without re-registering or rotating credentials.
 
 You likely have a Secret with the sharko label but no corresponding
 entry in `managed-clusters.yaml`. The reconciler is doing its job —
-converging ArgoCD state to match the declared git state. Two fixes:
+converging ArgoCD state to match the declared Git state. Two fixes:
 
 - **Preferred:** add the cluster to `managed-clusters.yaml` (declare
   the desired state).
@@ -381,20 +381,42 @@ Two ways, as of V2-cleanup-89.4:
 Any merge of a Sharko-opened PR also still triggers an immediate
 reconcile automatically via `prTracker.SetOnMergeFn` — the manual
 trigger above is for the cases that aren't a PR merge (an out-of-band
-git edit, a manually-recreated Secret, or just wanting to confirm
+Git edit, a manually-recreated Secret, or just wanting to confirm
 convergence without waiting for the safety-net tick).
 
 ### Common audit-log actions to grep for
 
-| Action                            | Meaning                                                  |
-| --------------------------------- | -------------------------------------------------------- |
-| `cluster_secret_create`           | Reconciler created a Secret in argocd ns                  |
-| `cluster_secret_create_failed`    | Create attempt failed (per-cluster error isolated)      |
-| `cluster_secret_delete`           | Reconciler deleted a labeled Secret                      |
-| `cluster_secret_delete_failed`    | Delete attempt failed                                    |
-| `vault_get_failed`                | Vault returned an error fetching cluster creds          |
-| `git_fetch_failed`                | Git Contents API returned an error                       |
-| `schema_validation_failed`        | `managed-clusters.yaml` failed envelope/schema check    |
+Every name below is either a success or a failure, never both. A past-tense
+name (`cluster_secret_create`) is only written when the thing named really
+happened; anything that failed gets its own `_failed` name. So you can grep
+for trouble by name alone, without also reading `result`.
+
+| Action                                    | Meaning                                                 |
+| ----------------------------------------- | ------------------------------------------------------- |
+| `cluster_secret_create`                   | Reconciler created a Secret in argocd ns                 |
+| `cluster_secret_create_failed`            | Create attempt failed (per-cluster error isolated)       |
+| `cluster_secret_delete`                   | Reconciler deleted a labeled Secret                      |
+| `cluster_secret_delete_failed`            | Delete attempt failed                                    |
+| `cluster_secret_user_label_sync`          | Addon labels synced onto a self-managed connection       |
+| `cluster_secret_user_label_sync_failed`   | That label sync failed                                   |
+| `cluster_secret_managed_self_heal`        | Sharko re-applied labels on a connection it owns         |
+| `cluster_secret_managed_self_heal_failed` | That self-heal write failed or did not converge          |
+| `cluster_secret_user_pending`             | Self-managed connection, Secret not created by hand yet  |
+| `connection_credential_drift_detected`    | A check ran to completion and found a difference         |
+| `connection_credential_drift_cleared`     | A later check found the difference gone                  |
+| `connection_credential_check_failed`      | The check itself could not run                           |
+| `connection_credential_check_recovered`   | A check that had been failing ran successfully again     |
+| `cluster_connection_repair_requested`     | A repair was asked for                                   |
+| `cluster_connection_repair`               | A repair ran and wrote                                   |
+| `cluster_connection_repair_refused`       | A repair was refused before touching anything            |
+| `cluster_connection_repair_failed`        | A repair started and failed                              |
+| `vault_get_failed`                        | Vault returned an error fetching cluster creds           |
+| `git_fetch_failed`                        | Git Contents API returned an error                       |
+| `schema_validation_failed`                | `managed-clusters.yaml` failed envelope/schema check     |
+
+Each entry also carries a `changes` field — `applied`, `none`,
+`not_applicable`, or absent. See
+[Audit log — retention model](audit-log.md#the-changes-field).
 
 ---
 

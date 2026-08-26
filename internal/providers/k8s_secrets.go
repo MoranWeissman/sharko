@@ -123,7 +123,12 @@ func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path stri
 
 	secret, err := p.client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", secretName, namespace, err)
+		// THE TRUSTED BOUNDARY — same reasoning as the AWS backend's
+		// GetSecretValue. err belongs to the Kubernetes API server and can
+		// name the ServiceAccount out of a 403, the API server host, or
+		// whatever an admission webhook decided to say. The path checks
+		// above return Sharko-authored refusals and stay unmarked.
+		return nil, credsafe.MarkSecretValue(fmt.Errorf("getting secret %q in namespace %q: %w", secretName, namespace, err))
 	}
 	val, ok := secret.Data[key]
 	if !ok {

@@ -7,7 +7,7 @@ Sharko provides flexible upgrade workflows: upgrade a single addon globally, upg
 Every upgrade is a GitOps operation:
 
 1. Sharko updates the version in the relevant `values.yaml` file(s) in your addons repo
-2. A PR is opened in Git (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+2. A PR is opened in Git (auto-merged if `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`)
 3. ArgoCD detects the change and syncs the new version to the cluster(s)
 
 No changes are applied directly to the cluster — all changes go through the Git PR.
@@ -100,13 +100,35 @@ sharko upgrade-addon cert-manager --version 1.15.0
 
 ## Auto-Merge
 
-To auto-merge upgrade PRs without manual review, set:
+To auto-merge upgrade PRs without manual review, set the Helm value:
+
+```yaml
+connection:
+  gitops:
+    prAutoMerge: "true"
+```
+
+That is the way to do it — the chart turns the value into the setting the
+server reads, so you never have to type the variable name yourself. See
+[Git-Native Server Configuration](../operator/git-native-config.md).
+
+If you set it by hand instead, the name is `SHARKO_CONN_GITOPS_PR_AUTO_MERGE`:
 
 ```yaml
 extraEnv:
-  - name: SHARKO_GITOPS_PR_AUTO_MERGE
+  - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
     value: "true"
 ```
+
+!!! danger "If you copied an older version of this page, your server will not start"
+    This page used to show the same block naming
+    `SHARKO_GITOPS_PR_AUTO_MERGE` — the name without `CONN_` in it.
+    **Sharko has never read that name.** It was ignored in silence, so
+    auto-merge was never on for anyone who set it, and from this release a
+    `SHARKO_` name Sharko does not recognise stops the server at startup
+    instead of being ignored. If that block is in your values file, your
+    next upgrade will not come up. Fix the name, or delete the block and
+    use `connection.gitops.prAutoMerge` above.
 
 !!! warning
     Auto-merge is convenient but skips human review. Enable it only for addons where automated testing provides sufficient confidence.

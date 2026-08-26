@@ -1,15 +1,15 @@
 # Git-Native Server Configuration
 
-**Git wins.** Sharko v3.0.0 makes server settings and connection configuration fully declarable in Helm `values.yaml`. When a setting is declared in Helm/git, that value is authoritative — Sharko reconciles its runtime state toward the git-declared value at boot and on a periodic reclaim, so a runtime UI edit to a declared field is reverted to the git value within 60 seconds.
+**Git wins.** Sharko v3.0.0 makes server settings and connection configuration fully declarable in Helm `values.yaml`. When a setting is declared in Helm/git, that value is authoritative — Sharko reconciles its runtime state toward the git-declared value at boot and on a periodic reclaim, so a runtime UI edit to a declared field is reverted to the Git value within 60 seconds.
 
-This is the same self-healing principle that manages cluster labels: operators expose everything via Helm values so they never have to touch the UI/API; git is the source of truth, and ArgoCD syncing the Sharko release keeps runtime state aligned.
+This is the same self-healing principle that manages cluster labels: operators expose everything via Helm values so they never have to touch the UI/API; Git is the source of truth, and ArgoCD syncing the Sharko release keeps runtime state aligned.
 
 ## How It Works
 
-When you set a value in `charts/sharko/values.yaml`, the chart renders it as an **environment variable** on the Sharko Deployment. Environment variables are immutable for a pod's life and ArgoCD owns the Deployment, so git is authoritative by construction. Sharko reads the env vars and:
+When you set a value in `charts/sharko/values.yaml`, the chart renders it as an **environment variable** on the Sharko Deployment. Environment variables are immutable for a pod's life and ArgoCD owns the Deployment, so Git is authoritative by construction. Sharko reads the env vars and:
 
 1. **Boot reconcile** — on startup, Sharko overwrites its runtime ConfigMap/Secret with the env-declared values (for the fields that are env-declared).
-2. **Periodic reclaim (60s tick)** — a background goroutine re-runs the reconcile every 60 seconds. If a user edits a git-declared field via the UI/API between ticks, Sharko reverts it to the git value on the next tick.
+2. **Periodic reclaim (60s tick)** — a background goroutine re-runs the reconcile every 60 seconds. If a user edits a git-declared field via the UI/API between ticks, Sharko reverts it to the Git value on the next tick.
 
 **Undeclared keys** (left empty/unset in Helm values) keep their runtime ConfigMap/Secret value — the API is authoritative for those, exactly like today's pre-v3 behavior. This is full back-compat: if you never touch the Helm values, the UI/API works exactly as before.
 
@@ -22,9 +22,9 @@ Two server-wide toggles are now Helm-declarable:
 | Helm value | Type | Default | What it controls |
 |------------|------|---------|------------------|
 | `settings.probeMode` | string | `""` (undeclared) | Connectivity probe mode: `"check-app"` (default, auto-deploy a transient connectivity-check Application to new zero-addon clusters) or `"api-test"` (no app ever auto-deployed, reachability from ArgoCD connection state only). Leave empty to keep the runtime API value authoritative. |
-| `settings.allowInlineCredentials` | string | `""` (undeclared) | Whether the "Paste a kubeconfig" registration path is enabled server-wide: `"true"` (default) or `"false"`. Set to `"false"` to forbid inline credential paste install-wide; connection-only registrations unaffected. Leave empty to keep the runtime API value authoritative. |
+| `settings.allowInlineCredentials` | string | `""` (undeclared) | The **Allow legacy inline credentials** switch: whether the "Paste a kubeconfig" registration path is enabled server-wide — `"false"` (the server default) or `"true"` (the legacy escape hatch; a pasted credential exists only in the live Secret and cannot be recovered from Git). Connection-only registrations are unaffected either way. Leave empty to keep the runtime API value authoritative. |
 
-When `settings.probeMode` is set to `"check-app"` or `"api-test"` in Helm values, that becomes the authoritative mode; a runtime `PUT /settings/probe-mode` edit is accepted but reverted to the git value within 60 seconds. The `GET /settings/probe-mode` response includes `managed_by_git: true` so the UI can show "git-managed; your edit will revert."
+When `settings.probeMode` is set to `"check-app"` or `"api-test"` in Helm values, that becomes the authoritative mode; a runtime `PUT /settings/probe-mode` edit is accepted but reverted to the Git value within 60 seconds. The `GET /settings/probe-mode` response includes `managed_by_git: true` so the UI can show "git-managed; your edit will revert."
 
 **Example:**
 
@@ -32,12 +32,30 @@ When `settings.probeMode` is set to `"check-app"` or `"api-test"` in Helm values
 # charts/sharko/values.yaml
 settings:
   probeMode: "check-app"                # git wins; UI edit will revert
-  allowInlineCredentials: "false"       # git wins; forbid inline paste install-wide
+  allowInlineCredentials: "false"       # git wins; pins the default-off legacy paste path
 ```
+
+!!! note "Both settings need a settings store, which means in-cluster"
+    The settings store is a Kubernetes ConfigMap, wired only when Sharko has
+    an in-cluster Kubernetes client. Out of cluster there is no store, so
+    both settings read as their defaults and a `PUT` on either returns 503.
+    For `allow_inline_credentials` that means pasted-kubeconfig registration
+    stays refused with no way to enable it — the correct fail-closed
+    behaviour, and documented in
+    [Connections → Allow legacy inline credentials](../user-guide/connections.md#allow-legacy-inline-credentials).
 
 ### Connection Configuration (Non-Secret Fields)
 
-The **non-secret fields** of the active connection are Helm-declarable with git-wins. Sharko's connection is one encrypted JSON blob in the `sharko-connections` Secret, so "git wins on non-secret fields" is a **field-level merge**: the declared non-secret fields are overwritten from env while the encrypted secret material (git token/PAT, ArgoCD token) is **preserved untouched**, then re-encrypted on save.
+The **non-secret fields** of the active connection are Helm-declarable with git-wins. Sharko's connection is one encrypted JSON blob in the `sharko-connections` Secret, so "git wins on non-secret fields" is a **field-level merge**: the declared non-secret fields are overwritten from env while the encrypted secret material (Git token/PAT, ArgoCD token) is **preserved untouched**, then re-encrypted on save.
+
+!!! warning "The two addresses must carry no credential"
+    `connection.git.repoURL` and `connection.argocd.serverURL` are written into the pod as ordinary environment values, so anyone who can read the Deployment can read them. The chart **refuses to install** unless it can read the address and finds no user information in the host part, no query string and no fragment. Those three are the only places a credential can sit in an address, so keeping all three out of the pod is what makes calling these values non-secret true. `ai.baseURL` and `ai.ollama.url` go through the same chart check.
+
+    The chart also turns away most addresses it cannot read — a port that is not a number, for example, or a `git@host:org/repo.git` remote, which Sharko has never supported. It is not a full address checker, though. It looks at the shape of the address, not at whether the host is a real machine, so a malformed IPv6 address in square brackets such as `[::1::2]:80` still installs. Sharko's own reading of an address is stricter about what is inside the brackets and turns that one away; the server applies that reading to the declared ArgoCD address when it starts. Nothing that carries a credential sits in the gap between the two.
+
+    A scheme is optional. `https://argocd.example.com`, a plain `argocd.example.com` and `localhost:8080` all install, and so does an `@` inside the path, as in `https://github.com/org/repo@v1`.
+
+    The check looks at the shape of the address and never guesses which text looks secret, so an ordinary `?ref=main` is refused as well. Use a plain credential-free address. Authentication is the Git token or PAT and the ArgoCD token, which stay in the encrypted `sharko-connections` Secret and are entered once through the Settings UI; Sharko never reads a credential out of the address.
 
 **Git-declarable non-secret connection fields:**
 
@@ -79,7 +97,7 @@ connection:
     defaultAddons: "cert-manager,metrics-server"  # comma-separated addon names
 ```
 
-**Secret material is NEVER declared in values.yaml** — the git token/PAT and ArgoCD token stay in the encrypted `sharko-connections` Secret and are entered once via the Settings UI. This block only carries identifiers and settings that are safe to keep in git.
+**Secret material is NEVER declared in values.yaml** — the Git token/PAT and ArgoCD token stay in the encrypted `sharko-connections` Secret and are entered once via the Settings UI. This block only carries identifiers and settings that are safe to keep in Git.
 
 **Scope:** the **active (or default) connection only**. When no connection exists yet (fresh install, token not entered), this block is a no-op — Sharko never fabricates a connection without credentials.
 
@@ -173,10 +191,10 @@ Prior to v3.0.0, operator docs described `probe_mode` and `allow_inline_credenti
 
 That description is now **partially stale**: in v3.0.0, these settings can ALSO be Helm-declared with git-wins. The full precedence is:
 
-1. **Helm-declared value** (env var emitted) → **git authoritative** (reclaimed on the 60s tick).
+1. **Helm-declared value** (env var emitted) → **Git authoritative** (reclaimed on the 60s tick).
 2. **Undeclared (env var not emitted)** → **API authoritative** (runtime ConfigMap value persists, no reclaim).
 
-The UI/API endpoints still work (backward-compatible), but when a key is git-declared, a runtime edit is transient — it reverts to the git value within 60 seconds.
+The UI/API endpoints still work (backward-compatible), but when a key is git-declared, a runtime edit is transient — it reverts to the Git value within 60 seconds.
 
 ## Example: Production Hardening with Git-Wins
 
@@ -186,7 +204,7 @@ Operators who want GitOps-clean server config can now declare everything in Helm
 # charts/sharko/values.yaml (production hardening)
 settings:
   probeMode: "check-app"
-  allowInlineCredentials: "false"  # forbid inline kubeconfig paste
+  allowInlineCredentials: "false"  # pins the default-off legacy paste path
 
 connection:
   git:
@@ -221,7 +239,7 @@ ai:
   maxIterations: 12
 ```
 
-With the above, git is authoritative for all non-secret config. A UI edit to any of these fields is reverted to the git value within 60 seconds. Secret material (git token, ArgoCD token, AI API key) is still entered once via the Settings UI and stored encrypted — never in the values file.
+With the above, Git is authoritative for all non-secret config. A UI edit to any of these fields is reverted to the Git value within 60 seconds. Secret material (Git token, ArgoCD token, AI API key) is still entered once via the Settings UI and stored encrypted — never in the values file.
 
 ## Migration from Pre-v3
 
@@ -233,7 +251,7 @@ With the above, git is authoritative for all non-secret config. A UI edit to any
 
 To adopt git-wins incrementally:
 
-1. Set the Helm values you want git to own (e.g., `settings.probeMode: "api-test"`).
+1. Set the Helm values you want Git to own (e.g., `settings.probeMode: "api-test"`).
 2. Upgrade the Sharko release (`helm upgrade`).
 3. ArgoCD syncs the Deployment with the new env vars.
 4. Sharko's boot reconcile + 60s tick reclaims the settings/connection toward the git-declared values.

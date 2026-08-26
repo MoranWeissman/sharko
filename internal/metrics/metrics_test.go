@@ -8,89 +8,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func TestMetricsRegistered(t *testing.T) {
-	// All promauto metrics should be findable in the default registry.
-	// We gather all metrics and check that our sharko_ prefixed ones exist.
-	mfs, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	want := map[string]bool{
-		"sharko_cluster_count":                      false,
-		"sharko_cluster_status":                     false,
-		"sharko_cluster_last_verified_timestamp":    false,
-		"sharko_cluster_last_test_duration_seconds": false,
-		"sharko_cluster_test_failures_total":        false,
-		"sharko_addon_sync_status":                  false,
-		"sharko_addon_health":                       false,
-		"sharko_addon_version":                      false,
-		"sharko_catalog_entries_count":              false,
-		"sharko_reconciler_runs_total":              false,
-		"sharko_reconciler_duration_seconds":        false,
-		"sharko_reconciler_last_run_timestamp":      false,
-		"sharko_reconciler_last_success_timestamp":  false,
-		"sharko_reconciler_items_checked_total":     false,
-		"sharko_reconciler_items_changed_total":     false,
-		"sharko_managed_secrets_state":              false,
-		"sharko_reconciler_item_failures_total":     false,
-		"sharko_reconciler_writes_total":            false,
-		"sharko_reconciler_fights":                  false,
-		"sharko_pr_tracked":                         false,
-		"sharko_pr_merge_duration_seconds":          false,
-		"sharko_api_requests_total":                 false,
-		"sharko_api_request_duration_seconds":       false,
-		"sharko_auth_login_total":                   false,
-		"sharko_active_sessions":                    false,
-	}
-
-	for _, mf := range mfs {
-		if _, ok := want[mf.GetName()]; ok {
-			want[mf.GetName()] = true
-		}
-	}
-
-	// Some metrics won't appear until they have observations (histograms, counters
-	// with label vectors). Use Describe to verify they're registered instead.
-	descCh := make(chan *prometheus.Desc, 100)
-	go func() {
-		// Collect descriptions from our known metrics.
-		HTTPRequests.Describe(descCh)
-		HTTPDuration.Describe(descCh)
-		ClusterCount.Describe(descCh)
-		ClusterStatus.Describe(descCh)
-		ClusterLastVerified.Describe(descCh)
-		ClusterTestDuration.Describe(descCh)
-		ClusterTestFailures.Describe(descCh)
-		AddonSyncStatus.Describe(descCh)
-		AddonHealth.Describe(descCh)
-		AddonVersion.Describe(descCh)
-		CatalogEntriesCount.Describe(descCh)
-		ReconcilerRuns.Describe(descCh)
-		ReconcilerDuration.Describe(descCh)
-		ReconcilerLastRun.Describe(descCh)
-		ReconcilerLastSuccess.Describe(descCh)
-		ReconcilerItemsChecked.Describe(descCh)
-		ReconcilerItemsChanged.Describe(descCh)
-		ManagedSecretsState.Describe(descCh)
-		ReconcilerItemFailures.Describe(descCh)
-		ReconcilerWrites.Describe(descCh)
-		ReconcilerFights.Describe(descCh)
-		PRTracked.Describe(descCh)
-		PRMergeDuration.Describe(descCh)
-		AuthLoginTotal.Describe(descCh)
-		ActiveSessions.Describe(descCh)
-		close(descCh)
-	}()
-
-	descCount := 0
-	for range descCh {
-		descCount++
-	}
-	if descCount != 25 {
-		t.Errorf("expected 25 metric descriptions, got %d", descCount)
-	}
-}
+// TestMetricsRegistered used to live here. It built a 25-entry map of
+// metric names, never read a value out of it, and asserted only
+// `if descCount != 25`. Renaming two registered metrics out from under
+// the shipped alert rule left it green. It is replaced — not extended —
+// by the published-metrics contract in contract_test.go, which compares
+// the real registry against everything that tells an operator a metric
+// exists. See contract_registry_test.go for why Describe() is the only
+// honest source of the metric list.
 
 func TestNormalizePath(t *testing.T) {
 	tests := []struct {

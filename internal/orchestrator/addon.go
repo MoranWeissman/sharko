@@ -20,6 +20,12 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 	if req.RepoURL == "" {
 		return nil, fmt.Errorf("addon repo_url is required")
 	}
+	// Refused here, at the door, so the operator hears the rule before
+	// Sharko touches Git. The canonical writer refuses too — this is the
+	// same call, not a second rule.
+	if err := checkAddAddonRepoURLs(req); err != nil {
+		return nil, err
+	}
 
 	// This writes the v3 full-copy catalog file, which a v4 repo does not
 	// have — see refuseV3ShapedWriteOnV4Repo. Refuse before any read or

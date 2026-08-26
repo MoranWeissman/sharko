@@ -119,9 +119,15 @@ Step 4 inspects the Sharko pod's current token secret.
 ```sh
 SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
 
-# What ArgoCD server URL does Sharko have configured?
-ARGOCD_SERVER=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_ARGOCD_SERVER")].value}')
+# What ArgoCD server URL does Sharko have configured? Ask Sharko — the URL
+# lives on the active connection, and the pod env only carries it when the
+# install declares SHARKO_CONN_ARGOCD_SERVER_URL, which most do not.
+ARGOCD_SERVER=$(curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
+  "http://sharko/api/v1/connections/" \
+  | jq -r '.connections[] | select(.is_active) | .argocd_server_url')
+
+# Empty means no URL was configured and Sharko discovered one at runtime
+# from the argocd-server Service in the ArgoCD namespace.
 
 # Probe ArgoCD's /api/v1/version with NO auth to confirm reachability:
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
@@ -175,32 +181,38 @@ phrases above. Each maps to a different mitigation lane.
 
 ### 4. Inspect the Sharko pod's current ArgoCD token
 
+**Where the token actually lives.** Sharko does not take its ArgoCD token
+from a deployment environment variable. The token is part of the active
+connection, held AES-256-GCM encrypted inside the connection Secret
+(`sharko-connections` by default, `config.connectionSecretName` in Helm
+values) and decrypted in memory with `SHARKO_ENCRYPTION_KEY`. You cannot
+read it out of the pod spec, and there is no `SHARKO_ARGOCD_TOKEN`
+environment variable — no Sharko build reads that name.
+
+The one exception is dev mode: with `SHARKO_DEV_MODE=true` and no token on
+the connection, Sharko falls back to the plain `ARGOCD_TOKEN` environment
+variable (no `SHARKO_` prefix). That fallback is for local development and
+should never be how a production install is wired.
+
+Confirm which source is in play:
+
 ```sh
-# What Secret does the Sharko pod read its token from?
-TOKEN_SECRET_NAME=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_ARGOCD_TOKEN")].valueFrom.secretKeyRef.name}')
+# Dev-mode fallback in use? Both of these must be set for it to apply.
+kubectl -n <sharko-ns> get deployment sharko \
+  -o jsonpath='{.spec.template.spec.containers[0].env}' \
+  | jq -c '.[] | select(.name == "SHARKO_DEV_MODE" or .name == "ARGOCD_TOKEN") | {name, hasValue: (.value != null)}'
 
-# Or it may be a direct env var (less common in production):
-TOKEN_DIRECT=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_ARGOCD_TOKEN")].value}')
-
-# Read the Secret (defensive about logging the value):
-if [[ -n "$TOKEN_SECRET_NAME" ]]; then
-  echo "Token sourced from Secret: $TOKEN_SECRET_NAME"
-  TOKEN_PREVIEW=$(kubectl -n <sharko-ns> get secret "$TOKEN_SECRET_NAME" \
-    -o jsonpath='{.data.argocd-token}' | base64 -d | head -c 30)
-  echo "Token prefix: ${TOKEN_PREVIEW}..."
-else
-  echo "Token sourced directly from env"
-fi
+# Otherwise the token is on the connection. Ask Sharko, not kubectl:
+curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
+  "http://sharko/api/v1/connections/" \
+  | jq '{active: .active_connection, connections: [.connections[] | {name, is_active, argocd_server_url, argocd_token_masked}]}'
 ```
 
-The token is a JWT. Decode its claims without revealing the signing
-material:
+The API never returns the token value. To inspect the JWT's claims you need
+the copy you issued in ArgoCD, or you issue a fresh one — which is the
+mitigation below anyway. If you still hold the plaintext:
 
 ```sh
-TOKEN=$(kubectl -n <sharko-ns> get secret "$TOKEN_SECRET_NAME" \
-  -o jsonpath='{.data.argocd-token}' | base64 -d)
 echo "$TOKEN" | cut -d'.' -f2 | base64 -d 2>/dev/null | jq
 ```
 
@@ -285,40 +297,53 @@ deleted.
    kubectl -n "$ARGOCD_NS" edit configmap argocd-rbac-cm
    ```
 
-   Ensure the Sharko user has the required policy (per the
-   k8s-expert role file):
+   Ensure the Sharko user has the required policy:
 
    ```yaml
    data:
      policy.csv: |
        p, role:sharko-writer, clusters, *, *, allow
        p, role:sharko-writer, projects, *, *, allow
-       p, role:sharko-writer, applications, *, *, allow
        p, role:sharko-writer, repositories, *, *, allow
+       p, role:sharko-writer, applications, get, */*, allow
+       p, role:sharko-writer, applications, create, */*, allow
        g, sharko, role:sharko-writer
    ```
+
+   The applications line is deliberately split rather than written as
+   `applications, *, *`. The wildcard verb includes `sync`, and Sharko
+   does not need `sync` for addons to be deployed: Git holds the desired
+   state and ArgoCD applies it without being asked. Granting `sync` is a
+   separate, optional decision, and it should be scoped to Sharko's own
+   AppProject rather than to `*/*` — see
+   [Letting Sharko restart a sync](security.md#letting-sharko-restart-a-sync).
 
    After the ConfigMap changes, re-mint the token (Mitigation step
    1).
 
 4. **If the token-rotation Helm value path is wrong (token re-
    provisioning didn't take effect), debug the Sharko-side
-   credential injection.** Common failure: the Secret name in
-   the deployment's env doesn't match the Secret you patched, or
-   the Secret has the right data but a different key.
+   credential injection.** The token is stored on the active
+   connection, encrypted in the connection Secret — not in the
+   deployment's environment. Two things usually go wrong: the new
+   token was saved onto a connection that is not the active one,
+   or `SHARKO_ENCRYPTION_KEY` changed so the stored value can no
+   longer be decrypted.
 
    ```sh
-   kubectl -n <sharko-ns> get deployment sharko \
-     -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_ARGOCD_TOKEN")]}' | jq
+   # Which connection is active, and is Sharko happy with it?
+   curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
+     "http://sharko/api/v1/connections/" \
+     | jq '{active: .active_connection, connections: [.connections[] | {name, is_active, argocd_token_masked}]}'
 
-   # Confirm the secret-key in the deployment matches the secret's key:
-   kubectl -n <sharko-ns> get secret "$TOKEN_SECRET_NAME" \
-     -o jsonpath='{.data}' | jq -r 'keys[]'
+   # Decryption failures show up in the pod log at startup and on save:
+   kubectl -n <sharko-ns> logs deployment/sharko --tail=200 | grep -i "decrypt\|encryption key"
    ```
 
-   The `secretKeyRef.key` in the deployment must match the actual
-   key in the Secret's `data`. If they're different, edit the Helm
-   values and reinstall, or rename the Secret key to match.
+   If decryption is the problem, re-enter the token through
+   **Settings → Connections** with the current key in place. If the new
+   token went onto the wrong connection, make the right one active from
+   the same page (or `POST /api/v1/connections/active`).
 
 5. **Last resort — bypass account-token auth and use admin
    credentials temporarily.** This is for the case where ArgoCD's
@@ -413,11 +438,12 @@ in ArgoCD).
 
 ## Prevention
 
-- **Monitoring — token-expiry watch.** A V2-3.x follow-up metric
-  `sharko_argocd_token_expires_in_seconds` exposed as a gauge would
-  let operators alert at T-7d. Today, the only signal is the
-  failure itself after expiry. Implementation: decode the JWT's
-  `exp` claim at startup and on every refresh, emit the gauge.
+- **Monitoring — token-expiry watch.** Sharko does not export this
+  metric today. The alert below is a design sketch for a future release,
+  not something you can deploy now. The sketch: expose
+  `sharko_argocd_token_expires_in_seconds` as a gauge — decode the JWT's
+  `exp` claim at startup and on every refresh — so operators could alert
+  at T-7d. Today, the only signal is the failure itself after expiry.
 
 - **Gating — startup token-health probe.** Sharko at startup should
   call `argocd account get-user-info` (or any minimally-privileged

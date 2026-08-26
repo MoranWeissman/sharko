@@ -15,6 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 func init() {
@@ -34,7 +36,17 @@ var loginCmd = &cobra.Command{
 		// here rather than via cobra.MarkPersistentFlagRequired on rootCmd
 		// to avoid forcing --server on commands that have a saved-config
 		// fallback (list-clusters, status, version, etc.).
-		server := strings.TrimRight(effectiveServer(""), "/")
+		//
+		// Refuse an unusable address before anything else happens (BF10):
+		// before the password prompt, before the dial, and before it can
+		// be saved. `sharko login` is where a server address enters the
+		// config file in the first place, so this is the cheapest possible
+		// moment to stop one that carries a credential.
+		resolved, err := effectiveServer("")
+		if err != nil {
+			return err
+		}
+		server := strings.TrimRight(resolved, "/")
 		if server == "" {
 			return fmt.Errorf("required flag(s) \"server\" not set")
 		}
@@ -259,29 +271,64 @@ func readPasswordSafeWithAndReader(tio terminalIO, reader *bufio.Reader, prompt 
 }
 
 // formatConnectionError turns a low-level dial error into a friendly,
-// actionable message that points the user at their --server flag. The
-// underlying error is preserved (wrapped) so verbose debugging is not lost.
+// actionable message that points the user at their --server flag.
 //
 // Categories detected:
 //   - connection refused (ECONNREFUSED) — server not running on that port
 //   - DNS lookup failure (*net.DNSError) — hostname does not resolve
 //   - generic *net.OpError — falls back to the catch-all hint
+//
+// # What changed here, and why (BF10)
+//
+// This function used to do BOTH of the things that leaked. It printed the
+// server address exactly as configured, and it wrapped the transport's own
+// error with "%w" — and net/http's *url.Error prints the address it dialled,
+// masking the password half of the userinfo and nothing else. So a token
+// written in the username position came back out twice on the same screen.
+//
+// Two things fix it and neither costs the operator anything real:
+//
+//   - The address is shown through credsafe. By the time login dials, the
+//     address has already passed the structural check, so a credential-free
+//     address prints exactly as it always did. Going through credsafe anyway
+//     means the display cannot become a leak if the check ever moves.
+//   - The transport error is described, not quoted.
+//     credsafe.PlainFailureReason never reads an error's message; it reports
+//     sentinel and interface matches, all written in source. An operator still
+//     learns that the dial was refused, or timed out — which is what the
+//     "underlying:" line was actually being read for — without the address
+//     riding along.
+//
+// One later change (BF12): this used to call credsafe.LogClass, whose answer
+// ends with the Go type names of the error chain. That belongs in a log line,
+// not in a sentence a person reads, so the plain-English form is used here and
+// LogClass stays where the collector reads it.
+//
+// The category hints are unchanged, and they are the part that tells someone
+// what to do next.
 func formatConnectionError(server string, err error) error {
 	if err == nil {
 		return nil
 	}
 
-	host := server
-	if u, parseErr := url.Parse(server); parseErr == nil && u.Host != "" {
+	shown := credsafe.SafeServerAddressPhrase(server)
+
+	// Parse the SAFE form, never the raw one: pulling the host out of a
+	// string Sharko has not vouched for would be the same leak in a
+	// smaller shape.
+	host := shown
+	if u, parseErr := url.Parse(shown); parseErr == nil && u.Host != "" {
 		host = u.Host
 	}
+
+	facts := credsafe.PlainFailureReason(err)
 
 	if isConnectionRefused(err) {
 		return fmt.Errorf(
 			"cannot reach Sharko server at %s — connection refused\n"+
 				"  → check that the --server URL is correct and the server is running\n"+
-				"  → underlying: %w",
-			server, err)
+				"  → failure: %s",
+			shown, facts)
 	}
 
 	var dnsErr *net.DNSError
@@ -289,8 +336,8 @@ func formatConnectionError(server string, err error) error {
 		return fmt.Errorf(
 			"cannot reach Sharko server at %s — DNS lookup failed for %s\n"+
 				"  → check the --server hostname for typos\n"+
-				"  → underlying: %w",
-			server, host, err)
+				"  → failure: %s",
+			shown, host, facts)
 	}
 
 	var opErr *net.OpError
@@ -298,11 +345,11 @@ func formatConnectionError(server string, err error) error {
 		return fmt.Errorf(
 			"cannot reach Sharko server at %s — network error\n"+
 				"  → check that the --server URL is reachable from this host\n"+
-				"  → underlying: %w",
-			server, err)
+				"  → failure: %s",
+			shown, facts)
 	}
 
-	return fmt.Errorf("login request failed: %w", err)
+	return fmt.Errorf("login request failed (%s)", facts)
 }
 
 // isConnectionRefused reports whether err (or any wrapped error) is a TCP

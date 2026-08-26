@@ -2,7 +2,10 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD as part of
+> **Verified:** Updated 2026-08-25 for BF14 revision 2 (the `source`
+> log field is now always the fixed word `redacted`); log-line shapes
+> re-checked against the test suite on that date. Originally authored
+> 2026-06-01 against `main` HEAD as part of
 > V2-4.4 (existing-runbook style compliance refresh). The env-var
 > names, default identity list, default workflow_ref regex, log
 > messages (`catalog signature verification failed`,
@@ -46,13 +49,13 @@ What an operator sees when this fires:
 
   ```
   level=WARN msg="catalog signature verification failed"
-      source_fp=<10-char hex>
+      source=redacted
       reason="signature verified but identity not in trust policy: <subject>"
   ```
 
   ```
   level=WARN msg="catalog signature verification failed"
-      source_fp=<10-char hex>
+      source=redacted
       reason="cert-claim assertion failed: workflow_ref \"<actual>\" does not match policy \"<configured>\""
   ```
 
@@ -60,10 +63,13 @@ What an operator sees when this fires:
   level=WARN msg="catalog source sidecar verification errored"
   ```
 
-- No Sharko-specific alert fires by default — verification failure
-  is per-entry diagnostic-only at the metric layer; the
-  `sharko_catalog_source_entries{verified="false"}` gauge ticks up
-  but does not page.
+- **No alert fires, and no metric can be made to fire one.** Sharko
+  shows per-entry verification in two places only: the badge in the UI
+  and the field in the API response. There is **no metric** carrying
+  the verified/unverified split. `sharko_catalog_source_entries` exists
+  but is labelled by `url` alone — it counts entries per source and
+  says nothing about whether they were verified. Watching this failure
+  mode means watching the UI or polling the API, not Prometheus.
 - The catalog still works — Unverified entries surface and can be
   installed; the operator just sees the badge and the API field.
 
@@ -134,14 +140,12 @@ kubectl get -n sharko deploy/sharko -o yaml \
 
 ### 3. Read the expected signing identity off the failing entry
 
-```sh
-# Source fingerprint maps to a URL — re-hash to confirm
-printf '%s' "<the catalog URL you expected signed>" \
-  | shasum -a 256 | head -c 10
-```
-
-Compare the resulting fingerprint to the `source_fp` field in the
-WARN line from step 1. Once matched, capture the OIDC subject (cert
+The WARN line never names an address — `source` is always the fixed
+word `redacted`. List the configured sources with
+`GET /api/v1/catalog/sources` (behind a login) to see which row is
+unverified; its rows also all read `redacted`, so match by status,
+entry count and position against your own configured address list.
+Once you know which source it is, capture the OIDC subject (cert
 SAN) from the signing run by re-fetching the bundle directly:
 
 ```sh
@@ -183,7 +187,7 @@ kubectl rollout restart deployment/sharko -n sharko
 ```
 
 Verify after restart by re-running the diagnosis step 1 grep — the
-WARN line should disappear for the affected `source_fp` and the
+WARN line should disappear for the affected source and the
 marketplace entry should flip to Verified within one fetch cycle
 (default 1h; force-refresh via the admin
 `POST /api/v1/catalog/sources/refresh` endpoint to confirm without
@@ -322,10 +326,6 @@ How to make this failure mode less likely going forward.
   every environment (dev / staging / prod). Sharko-release defaults
   are conservative; internal catalogs need explicit additions, and
   the values file is the right place to keep them under review.
-- **Monitor unverified entries with a metric alert.** Add a Prometheus
-  alert on `sharko_catalog_source_entries{verified="false"} > 0` for
-  sources that are supposed to be signed. Catches the case where the
-  catalog publisher silently stopped signing.
 - **Pin cosign in publisher pipelines.** Catalog publishers should pin
   the cosign version in their CI to a known-compatible major; bundle
   format drift is the second most common preventable cause of this
@@ -370,7 +370,7 @@ force-refresh via `POST /api/v1/catalog/sources/refresh`), email the
 maintainer: `moran.weissman@gmail.com`. Include:
 
 - The runbook URL you used (this page)
-- The exact WARN line from diagnosis step 1 (including `source_fp`
+- The exact WARN line from diagnosis step 1 (including `source`
   and `reason`)
 - The startup line from diagnosis step 2 (`identity_count`)
 - The configured value of `SHARKO_CATALOG_TRUSTED_IDENTITIES` and
@@ -546,7 +546,7 @@ logs a `WARN` line under component `catalog-signing`:
 
 ```
 level=WARN msg="catalog signature verification failed"
-    source_fp=<10-char hex>
+    source=redacted
     reason="cert-claim assertion failed: workflow_ref \"refs/heads/feature-branch\" does not match policy \"^refs/tags/v.*$\""
 ```
 

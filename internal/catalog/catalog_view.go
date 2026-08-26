@@ -25,6 +25,7 @@ import (
 	"sort"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -85,6 +86,20 @@ type CatalogAddon struct {
 	// line somebody hand-edited.
 	Deployable    bool     `json:"deployable"`
 	MissingFields []string `json:"missing_fields,omitempty"`
+
+	// UnsupportedFields names fields whose value is filled in but which
+	// Sharko will not use, so the entry is unusable for a reason that is
+	// not "somebody left it blank". Today there is one such reason: a
+	// repository address written with sign-in details inside it, which the
+	// technical preview does not support.
+	//
+	// Only the field PATH appears here. The value never does — not the
+	// value, not a piece of it, not its length, not a mask of it.
+	//
+	// It sets Deployable false, which is the flag the write paths already
+	// check, so an entry in this state cannot be enabled on a cluster and
+	// cannot be carried through a migration.
+	UnsupportedFields []string `json:"unsupported_fields,omitempty"`
 
 	// Secrets: the credentials this addon needs before it works. Read from
 	// the entry itself. When the entry carries none and the Marketplace
@@ -190,6 +205,31 @@ func missingDeploymentFields(e config.AddonCatalogEntry) []string {
 	return missing
 }
 
+// unsupportedRepoURLFields names every repository address on the entry that
+// Sharko will not use, by field path.
+//
+// This is the READING half of the technical-preview rule about catalog
+// repository addresses. The writing half lives in internal/config's two
+// canonical writers and refuses outright; this half deliberately does not,
+// because a catalog file that already carries such an address is already in
+// the operator's Git repository and refusing to load it would take the whole
+// installation down over one entry. So the file loads, the rest of the addons
+// keep working, and this one entry comes back unusable with the field named.
+//
+// Both halves ask credsafe.ValidateSupportedRepoURL. There is one rule.
+func unsupportedRepoURLFields(e config.AddonCatalogEntry) []string {
+	var out []string
+	if credsafe.ValidateSupportedRepoURL(e.RepoURL) != nil {
+		out = append(out, "repoURL")
+	}
+	for i, s := range e.AdditionalSources {
+		if credsafe.ValidateSupportedRepoURL(s.RepoURL) != nil {
+			out = append(out, fmt.Sprintf("additionalSources[%d].repoURL", i))
+		}
+	}
+	return out
+}
+
 // applyCuratedKnowledge fills a's display fields from the Marketplace's
 // curated entry for the same addon. Deployment fields are deliberately
 // untouched — the file is the only thing that says what gets deployed.
@@ -256,8 +296,9 @@ func BuildCatalogView(curated *Catalog, spec config.AddonCatalogSpec) map[string
 			ExtraHelmValues:   copyStringMap(e.ExtraHelmValues),
 			Secrets:           entrySecrets(e.Secrets),
 			MissingFields:     missingDeploymentFields(e),
+			UnsupportedFields: unsupportedRepoURLFields(e),
 		}
-		a.Deployable = len(a.MissingFields) == 0
+		a.Deployable = len(a.MissingFields) == 0 && len(a.UnsupportedFields) == 0
 		if ce, ok := byName[name]; ok {
 			applyCuratedKnowledge(&a, ce)
 		}
@@ -319,6 +360,15 @@ func ValidateCatalogEntry(name string, entry config.AddonCatalogEntry) error {
 	if missing := missingDeploymentFields(entry); len(missing) > 0 {
 		return &MissingRequiredFieldError{Addon: name, Field: missing[0]}
 	}
+	// An address Sharko will not use is a different problem from a blank
+	// one, and it gets its own refusal so the operator is told the rule
+	// rather than being told to fill in a field they already filled in.
+	if unsupported := unsupportedRepoURLFields(entry); len(unsupported) > 0 {
+		return &credsafe.UnsupportedRepoURLError{
+			File:  config.AddonCatalogPath,
+			Field: fmt.Sprintf("addons.%s.%s", name, unsupported[0]),
+		}
+	}
 	return nil
 }
 
@@ -355,4 +405,47 @@ func MergeAddonSettings(base, delta *config.AddonSettings) {
 	if delta.PreserveResourcesOnDeletion != nil {
 		base.PreserveResourcesOnDeletion = delta.PreserveResourcesOnDeletion
 	}
+}
+
+// --- B11: the response copy of an approved addon ----------------------------
+
+// SafeForResponse returns a copy of the approved addon with every repository
+// address routed through internal/credsafe.
+//
+// CatalogAddon is already the read-only view: it has json tags only, and
+// config.AddonCatalogEntry — the thing with yaml tags that Sharko reads
+// catalog.yaml into and writes back out — is a different type. What was
+// missing was the routing, and it could not simply be done inside
+// BuildCatalogView, because that view is ALSO what the write and fetch paths
+// read the deployment fields from:
+//
+//   - internal/orchestrator catalogAddonForV4 and catalog_ops.go build the
+//     values file and the ApplicationSet from entry.RepoURL,
+//   - internal/service upgrade.go dials entry.RepoURL to list chart versions,
+//   - internal/api addons_changelog.go does the same for release notes.
+//
+// Sanitising there would have handed all of them a URL with the credential
+// missing and broken every one of them. So the stripping happens at the
+// response boundary and nowhere else: the two org-catalog handlers call this,
+// and nothing that fetches or writes does.
+func (a CatalogAddon) SafeForResponse() CatalogAddon {
+	out := a
+	out.RepoURL = credsafe.SafeRepoURL(a.RepoURL)
+	if len(a.AdditionalSources) > 0 {
+		out.AdditionalSources = make([]models.AddonSource, 0, len(a.AdditionalSources))
+		for _, s := range a.AdditionalSources {
+			s.RepoURL = credsafe.SafeRepoURL(s.RepoURL)
+			out.AdditionalSources = append(out.AdditionalSources, s)
+		}
+	}
+	return out
+}
+
+// SafeCatalogAddonsForResponse is the slice form, for the list endpoint.
+func SafeCatalogAddonsForResponse(in []CatalogAddon) []CatalogAddon {
+	out := make([]CatalogAddon, 0, len(in))
+	for _, a := range in {
+		out = append(out, a.SafeForResponse())
+	}
+	return out
 }

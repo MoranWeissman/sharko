@@ -79,7 +79,7 @@ func resolveOrphanRegistrations(
 	argoClusters, err := lister.ListClusters(ctx)
 	if err != nil {
 		slog.Warn("list_argocd_clusters_for_orphan_registrations: degrading to empty",
-			"err", err.Error())
+			"err", err)
 		return out
 	}
 

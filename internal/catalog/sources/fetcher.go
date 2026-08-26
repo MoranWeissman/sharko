@@ -28,9 +28,19 @@
 //     re-check the resolved IPs on every fetch attempt. When
 //     cfg.AllowPrivate is set the check is skipped (matches the startup
 //     escape hatch).
-//   - No URL is ever logged. Catalog URL paths may encode auth tokens.
-//     Log with a short host fingerprint instead where a log line is
-//     genuinely needed.
+//   - No configured URL is ever logged, in any form. Catalog URL paths
+//     may encode auth tokens — the documented private-catalog shape
+//     hides the token in the path, where no grammar can spot it — so
+//     the address is treated as sensitive because of what it IS. Where
+//     a log line needs a source field, it carries
+//     credsafe.PublicSourceLabel(): the fixed word "redacted", the same
+//     for every configured source. Nothing derived from the address —
+//     no hash, no length, no partial — ever goes out. Fetch errors are
+//     logged as error VALUES and the production log sink
+//     (internal/logging.NewHandler) replaces their words by TYPE before
+//     anything is written — that central sink, not this package, is
+//     what keeps an address inside net/url's and net/http's own error
+//     text off the log.
 //   - Schema validation reuses catalog.LoadBytes — same parser + rule
 //     set the embedded catalog goes through, so third-party feeds get
 //     identical treatment. No refactor of loader.go was needed.
@@ -38,8 +48,6 @@ package sources
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -53,6 +61,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 )
@@ -640,7 +649,7 @@ func (f *Fetcher) fetchMany(ctx context.Context, urls []string) {
 // into private catalogs is past the SSRF threat model.
 func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	startAt := f.clock.Now()
-	fingerprint := urlFingerprint(rawURL)
+	sourceLabel := metricLabelForURL()
 	// Per-fetch contextual logger. Each per-URL fetch within a tick
 	// fanout shares the same `catscan-<unix_ts>` request_id (attached
 	// at supervise() entry), so a single log query surfaces every URL
@@ -657,7 +666,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 		ips, err := runtimeSSRFCheckResolvedIPs(rawURL)
 		if err != nil {
 			log.Warn("catalog source blocked by runtime SSRF guard",
-				"source_fp", fingerprint, "err", err.Error())
+				"source", sourceLabel, "err", err)
 			f.recordFailure(rawURL, startAt, err)
 			return
 		}
@@ -679,7 +688,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	}
 	if err != nil {
 		log.Warn("catalog source fetch failed",
-			"source_fp", fingerprint, "err", err.Error())
+			"source", sourceLabel, "err", err)
 		f.recordFailure(rawURL, startAt, err)
 		return
 	}
@@ -706,7 +715,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	if err != nil {
 		validationErr := fmt.Errorf("schema validation: %w", err)
 		log.Warn("catalog source schema validation failed",
-			"source_fp", fingerprint, "err", validationErr.Error())
+			"source", sourceLabel, "err", validationErr)
 		f.recordSchemaFailure(rawURL, startAt, validationErr)
 		return
 	}
@@ -726,7 +735,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 			v, iss, verr := f.verifier.Verify(ctx, body, sidecarURL, f.trustPolicy)
 			if verr != nil {
 				log.Warn("catalog source sidecar verification errored",
-					"source_fp", fingerprint, "err", verr.Error())
+					"source", sourceLabel, "err", verr)
 			} else {
 				verified = v
 				issuer = iss
@@ -974,9 +983,10 @@ func (f *Fetcher) recordSuccess(rawURL string, at time.Time, entries []catalog.C
 	entryCount := len(entries)
 	f.mu.Unlock()
 
-	metrics.CatalogSourceFetchTotal.WithLabelValues(rawURL, string(StatusOK)).Inc()
-	metrics.CatalogSourceLastSuccess.WithLabelValues(rawURL).Set(float64(at.Unix()))
-	metrics.CatalogSourceEntries.WithLabelValues(rawURL).Set(float64(entryCount))
+	label := metricLabelForURL()
+	metrics.CatalogSourceFetchTotal.WithLabelValues(label, string(StatusOK)).Inc()
+	metrics.CatalogSourceLastSuccess.WithLabelValues(label).Set(float64(at.Unix()))
+	metrics.CatalogSourceEntries.WithLabelValues(label).Set(float64(entryCount))
 }
 
 // recordFailure marks Status stale (prior success exists) or failed
@@ -998,7 +1008,8 @@ func (f *Fetcher) recordFailure(rawURL string, at time.Time, err error) {
 	status := snap.Status
 	f.mu.Unlock()
 
-	metrics.CatalogSourceFetchTotal.WithLabelValues(rawURL, string(status)).Inc()
+	label := metricLabelForURL()
+	metrics.CatalogSourceFetchTotal.WithLabelValues(label, string(status)).Inc()
 }
 
 // recordSchemaFailure is the dedicated path for AC #3: validation
@@ -1021,7 +1032,8 @@ func (f *Fetcher) recordSchemaFailure(rawURL string, at time.Time, err error) {
 	// last-good data is the whole point of a "last-successful snapshot".
 	f.mu.Unlock()
 
-	metrics.CatalogSourceFetchTotal.WithLabelValues(rawURL, string(StatusFailed)).Inc()
+	label := metricLabelForURL()
+	metrics.CatalogSourceFetchTotal.WithLabelValues(label, string(StatusFailed)).Inc()
 }
 
 // runtimeSSRFCheck re-resolves the host and fails if any IP is
@@ -1121,13 +1133,29 @@ func isPrivateAddr(addr netip.Addr) bool {
 		addr.IsUnspecified()
 }
 
-// urlFingerprint returns a short, non-reversible identifier for a URL
-// that's safe to include in logs. Never log the URL itself — paths may
-// encode auth tokens (Gotcha #1). The fingerprint is a 10-char prefix
-// of SHA-256(url).
-func urlFingerprint(u string) string {
-	sum := sha256.Sum256([]byte(u))
-	return hex.EncodeToString(sum[:])[:10]
+// metricLabelForURL is the one way a catalog source address becomes the
+// text of a Prometheus label or a log field in this package.
+//
+// An operator points Sharko at extra catalogs with SHARKO_CATALOG_URLS,
+// and a private catalog is addressed by writing a token into the
+// address's own path — that variable exists so such an address need not
+// be committed to Git, so a credential in this string is the expected
+// shape rather than an accident. GET /metrics needs no login, so
+// whatever becomes a label is readable by anyone who can reach the port.
+//
+// credsafe owns the answer, and the answer is always the same fixed
+// word. The configured address is sensitive because of what it IS — the
+// documented private-catalog shape hides the token in the path, where no
+// grammar can spot it — so nothing about the address is shown and
+// nothing is computed from it either. Every configured source therefore
+// shares one label and their counts add up together — the metric Help
+// text says so, and so does the operator documentation.
+//
+// The function takes no argument on purpose: there is no question left
+// to ask about the address, and a signature without it means a future
+// call site cannot quietly start feeding the address back in.
+func metricLabelForURL() string {
+	return credsafe.PublicSourceLabel()
 }
 
 // copySnapshot deep-copies a *SourceSnapshot so callers can mutate

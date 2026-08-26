@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/security"
 )
 
@@ -72,9 +73,12 @@ func (s *Server) handleListRepoCharts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateRepoURL(repo); err != nil {
+		// Echoed through credsafe, never raw — same reason as
+		// /catalog/validate: one of the things validateRepoURL refuses is an
+		// address carrying sign-in details.
 		writeJSON(w, http.StatusOK, repoChartsResponse{
 			Valid:     false,
-			Repo:      repo,
+			Repo:      credsafe.SafeRepoURL(repo),
 			ErrorCode: validateErrInvalidInput,
 			Message:   err.Error(),
 		})

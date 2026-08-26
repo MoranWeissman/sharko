@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"golang.org/x/term"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // ---------------------------------------------------------------------------
@@ -50,9 +52,32 @@ func TestFormatConnectionError_ConnectionRefused(t *testing.T) {
 	if !strings.Contains(msg, "check that the --server URL is correct") {
 		t.Errorf("missing actionable hint: %q", msg)
 	}
-	// Underlying error must be preserved for debugging.
-	if !errors.Is(out, syscall.ECONNREFUSED) {
-		t.Errorf("expected underlying ECONNREFUSED to be preserved via %%w; got: %v", out)
+	// BF10, reworded by BF12-2 — what the operator gets instead of the
+	// wrapped transport error: credsafe.PlainFailureReason's description,
+	// which names the failure without ever reading the error's own words.
+	//
+	// It used to be credsafe.LogClass, whose answer ends with the Go type
+	// names of the error chain. That belongs in a log line, not in a
+	// sentence a person reads, so the assertion on "chain=*url.Error" is
+	// now the opposite one: those names must NOT be here.
+	if !strings.Contains(msg, "the connection was refused") {
+		t.Errorf("the message must still say WHAT failed, in plain words: %q", msg)
+	}
+	if strings.Contains(msg, "chain=") || strings.Contains(msg, "*url.Error") {
+		t.Errorf("the message puts Go type names on an operator's screen: %q", msg)
+	}
+	// BF10 — and the raw *url.Error must be neither wrapped nor quoted. It
+	// prints the address it dialled, so keeping it in the chain puts that
+	// address in every rendering of this error.
+	if strings.Contains(msg, wrapped.URL) {
+		t.Errorf("the dialled address is quoted back in the message: %q", msg)
+	}
+	if errors.Is(out, syscall.ECONNREFUSED) {
+		t.Errorf("the raw transport error is still wrapped, so its text still renders: %v", out)
+	}
+	var leaked *url.Error
+	if errors.As(out, &leaked) {
+		t.Errorf("the *url.Error is still reachable in the chain: %v", out)
 	}
 }
 
@@ -79,9 +104,20 @@ func TestFormatConnectionError_DNSLookup(t *testing.T) {
 	if !strings.Contains(msg, "no.such.host.invalid") {
 		t.Errorf("missing host in message: %q", msg)
 	}
+	// BF10, reworded by BF12-2 — the DNS category still comes through, in
+	// plain words, and never from the wrapped error.
+	if !strings.Contains(msg, "the name did not resolve") {
+		t.Errorf("the message must still say the name would not resolve: %q", msg)
+	}
+	if strings.Contains(msg, "chain=") || strings.Contains(msg, "*net.DNSError") {
+		t.Errorf("the message puts Go type names on an operator's screen: %q", msg)
+	}
+	if strings.Contains(msg, wrapped.URL) {
+		t.Errorf("the dialled address is quoted back in the message: %q", msg)
+	}
 	var dns *net.DNSError
-	if !errors.As(out, &dns) {
-		t.Errorf("expected wrapped *net.DNSError; got: %v", out)
+	if errors.As(out, &dns) {
+		t.Errorf("the raw transport error is still wrapped; it must not be: %v", out)
 	}
 }
 
@@ -108,6 +144,14 @@ func TestFormatConnectionError_GenericNetOpError(t *testing.T) {
 	if !strings.Contains(msg, "network error") {
 		t.Errorf("missing network-error category: %q", msg)
 	}
+	// BF10, reworded by BF12-2 — the failure is described in plain words,
+	// the Go type names are gone, and the address is not quoted.
+	if strings.Contains(msg, "chain=") || strings.Contains(msg, "*url.Error") {
+		t.Errorf("the message puts Go type names on an operator's screen: %q", msg)
+	}
+	if strings.Contains(msg, wrapped.URL) {
+		t.Errorf("the dialled address is quoted back in the message: %q", msg)
+	}
 }
 
 func TestFormatConnectionError_NonNetworkError(t *testing.T) {
@@ -118,8 +162,17 @@ func TestFormatConnectionError_NonNetworkError(t *testing.T) {
 	if !strings.Contains(out.Error(), "login request failed") {
 		t.Errorf("expected fallback prefix; got: %q", out.Error())
 	}
-	if !errors.Is(out, plain) {
-		t.Errorf("expected underlying plain err to be preserved; got: %v", out)
+	// BF10 — the fallback is where an error of a shape nobody predicted
+	// lands, which makes it the LAST place to quote one. Sharko says what
+	// class of thing it was and stops there.
+	if !strings.Contains(out.Error(), credsafe.PlainFailureUnknown) {
+		t.Errorf("expected the plain-English description; got: %q", out.Error())
+	}
+	if strings.Contains(out.Error(), "custom transport bug") {
+		t.Errorf("the underlying error's own words are still being printed: %q", out.Error())
+	}
+	if errors.Is(out, plain) {
+		t.Errorf("the underlying error is still wrapped, so its text still renders: %v", out)
 	}
 }
 

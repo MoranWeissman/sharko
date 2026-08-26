@@ -32,7 +32,7 @@ Sharko has no database of its own. Delete the Sharko deployment and:
 - Nothing is uninstalled, degraded, or orphaned at the moment Sharko
   goes away.
 
-> **Re-verified 2026-08-08** on `main@45503903`, including a git change
+> **Re-verified 2026-08-08** on `main@45503903`, including a Git change
 > applied while Sharko was down — the claim above isn't just a design
 > intent, it's been tested against a real repo.
 
@@ -49,7 +49,7 @@ not immediately:
    Operator instead of Sharko's delivery, this doesn't apply to you.
 2. **Two label syncs, and cluster-credential rotation.** The
    [cluster reconciler](cluster-reconciler.md) keeps two things in step
-   with git on a timer: which addons are switched on for a cluster (a
+   with Git on a timer: which addons are switched on for a cluster (a
    label read from `cluster-addons/<cluster>.yaml`) and the cluster's own
    connection record (read from `managed-clusters.yaml`) — and it
    refreshes rotated cluster credentials. Whatever labels and connection

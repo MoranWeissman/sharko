@@ -18,7 +18,7 @@ import (
 func (s *Server) handleGetObservabilityOverview(w http.ResponseWriter, r *http.Request) {
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeNoActiveArgocdConnectionUnavailable(w, r)
 		return
 	}
 

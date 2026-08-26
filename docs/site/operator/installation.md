@@ -32,6 +32,15 @@ the Settings UI (or `sharko connect` from the CLI). Sharko stores it encrypted
 in the `sharko-connections` Kubernetes Secret. See
 [Connections](../user-guide/connections.md#connection) for the steps.
 
+!!! warning "Not using the chart?"
+
+    If you write your own Deployment instead of installing this chart, you
+    must set `enableServiceLinks: false` on the Sharko Pod. Without it
+    Kubernetes injects around ten `SHARKO_*` environment variables that no
+    operator set, one of which collides with Sharko's own former port
+    setting. The chart does this for you. See
+    [the listen port](configuration.md#service-links).
+
 ### Recommended Production Install
 
 Use a values file for production deployments:
@@ -162,6 +171,8 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
     The plaintext password lives in your Helm values file (and any release-history Secret Helm keeps). Use `bootstrapAdmin.existingSecret` for production installs.
 
 Sharko bcrypt-hashes the value into `admin.password` and **does NOT log it**. The `BOOTSTRAP ADMIN CREDENTIAL` block does not appear when an operator-supplied password is in use.
+
+The password does not go into the Deployment. The chart writes the plaintext into its own Secret under the key `admin.bootstrapPassword`, and the pod reads it from there with `valueFrom.secretKeyRef` — the same way the existing-Secret path below works. So `kubectl get deployment -o yaml`, `helm get manifest` and a rendered-manifest Git repository all show a reference and never the value.
 
 ### 3. Operator-supplied via existing Secret (recommended for production)
 

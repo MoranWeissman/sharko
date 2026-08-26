@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -26,6 +27,10 @@ type fakeArgo struct {
 	errSync error
 	// errRefresh forces RefreshApplication to return an error.
 	errRefresh error
+	// canSync is the answer the capability check gives. Zero value is
+	// CapabilityUnknown — "ArgoCD could not say" — which lets the sync
+	// proceed, so tests written before the check existed are unaffected.
+	canSync argocd.Capability
 }
 
 func (f *fakeArgo) ListApplications(_ context.Context) ([]models.ArgocdApplication, error) {
@@ -40,6 +45,14 @@ func (f *fakeArgo) TerminateOperation(_ context.Context, appName string) error {
 	f.terminated = append(f.terminated, appName)
 	f.mu.Unlock()
 	return nil
+}
+
+// canSync is what the fake's capability check answers. The zero value is
+// CapabilityUnknown, which is what a real ArgoCD that cannot answer returns
+// and which must let the sync go ahead — so an existing test that never sets
+// this field keeps exercising the sync path.
+func (f *fakeArgo) CanSyncApplication(_ context.Context, _, _ string) argocd.Capability {
+	return f.canSync
 }
 
 func (f *fakeArgo) SyncApplication(_ context.Context, appName string) error {
@@ -425,15 +438,24 @@ func TestRemediation_V2cleanup38_FinishedOp(t *testing.T) {
 	}
 }
 
-// TestRemediation_V2cleanup38_BenignTerminate — terminate returns benign 400
-// → warning logged, SyncApplication still called.
+// TestRemediation_V2cleanup38_BenignTerminate — terminate comes back saying
+// there was nothing to terminate → warning logged, SyncApplication still
+// called.
+//
+// The fixture used to be a hand-written error string carrying ArgoCD's own
+// wording, because the code decided this by searching that wording. It is the
+// typed sentinel now, which is what the ArgoCD client mints from the call it
+// made and the status it got back (BF6). An end-to-end version of this case,
+// driven through a real client against a real 400, is in
+// argocd_write_audit_leak_test.go.
 func TestRemediation_V2cleanup38_BenignTerminate(t *testing.T) {
 	mergeBase := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
 	app := liveKedaApp(mergeBase)
 
 	fa := &fakeArgo{
-		apps:         []models.ArgocdApplication{app},
-		errTerminate: fmt.Errorf("terminating operation for \"keda-moran-test\": unexpected status 400 from DELETE /api/v1/applications/keda-moran-test/operation: {\"error\":\"Unable to terminate operation. No operation is in progress\"}"),
+		apps: []models.ArgocdApplication{app},
+		errTerminate: fmt.Errorf("terminating operation for %q: %w",
+			"keda-moran-test", argocd.ErrNoOperationInProgress),
 	}
 	rem, ac := makeRemediator(fa, func() time.Time { return mergeBase })
 	pr := makePR("keda", "moran-test", 42)

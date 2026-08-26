@@ -103,6 +103,66 @@ const (
 	doctorOverallPartial = "partial"
 )
 
+// connectionSecretReadDetail and connectionSecretReadFix are the safe
+// sentences for "Sharko tried to read this cluster's ArgoCD connection Secret
+// and the read failed".
+//
+// # What was wrong
+//
+// Two checks — secret-ownership and connectivity-app-drift — built their
+// Detail AND their Fix by concatenating err.Error(), so the same Kubernetes
+// error text went out twice per failure, on two fields that both carry a
+// `json:` tag and both land in the doctor response a browser renders. One of
+// the two reads is a bare client-go Secret Get, so that text is a raw
+// *apierrors.StatusError: on a 403 it names the ServiceAccount Sharko runs as,
+// the namespace, the verb and the resource; on other failures it can carry the
+// API server host or whatever an admission webhook decided to say.
+//
+// Three checks in this same file already did the safe thing (the credentials
+// fetch, the assume-role check, and the client build all go through
+// credsafe.Sentence), which is what makes these two an oversight rather than a
+// decision.
+//
+// # Why it is classified by type
+//
+// apierrors.IsForbidden / IsUnauthorized / IsNotFound read the typed Status
+// code, never the message wording. A substring match would stop working the
+// day client-go rephrased itself — that is the rule credsafe exists to hold,
+// applied here to a Kubernetes error rather than a credentials one.
+//
+// # What an operator can still work out
+//
+// The cluster name (Sharko's own), and which of three different things to go
+// and fix: an RBAC grant, a Secret that is not there, or an unreachable API
+// server. The Fix sentence is chosen to match. The Kubernetes text itself goes
+// to the server log line at the call site.
+func connectionSecretReadDetail(clusterName string, err error) string {
+	switch {
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return fmt.Sprintf("Sharko is not allowed to read cluster %q's ArgoCD connection secret.", clusterName)
+	case apierrors.IsNotFound(err):
+		return fmt.Sprintf("Cluster %q's ArgoCD connection secret is not there to read.", clusterName)
+	default:
+		return fmt.Sprintf("Sharko could not read cluster %q's ArgoCD connection secret.", clusterName)
+	}
+}
+
+// connectionSecretReadFix is the matching next step for the Detail above.
+func connectionSecretReadFix(err error) string {
+	switch {
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return "Give Sharko's service account RBAC permission to read secrets in the argocd namespace, then run the doctor again."
+	case apierrors.IsNotFound(err):
+		return "Register or re-apply this cluster's connection so the secret is created, then run the doctor again."
+	default:
+		// An untyped error lands here — including a plain errors.New that no
+		// apierrors predicate recognises. RBAC is still the likeliest cause
+		// of a failed Secret read in the argocd namespace, so the fallback
+		// names it too rather than going vague.
+		return "Check that Sharko can reach the Kubernetes API and has RBAC permission to read secrets in the argocd namespace, then run the doctor again."
+	}
+}
+
 // doctorCheck is one attempt-based check's structured verdict.
 type doctorCheck struct {
 	ID     string `json:"id" example:"connection-credentials"`
@@ -302,39 +362,45 @@ func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName st
 
 	catalogData, err := gp.GetFileContent(cctx, s.repoPaths.Catalog, s.gitopsConfig().BaseBranch)
 	if err != nil {
+		// The Git provider's own text stays here. It used to be appended to
+		// Detail, which is a `json:"detail"` field a browser renders.
+		slog.Error("[doctor] reading the addon catalog from Git failed", "step", "read-catalog", "error", err)
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
 			Status: doctorStatusFail,
-			Detail: "Sharko could not read the addon catalog from Git: " + err.Error(),
+			Detail: "Sharko could not read the addon catalog from Git.",
 			Fix:    "Check that the addon catalog file still exists on the configured branch.",
 		}
 	}
 	parser := config.NewParser()
 	catalog, err := parser.ParseAddonsCatalog(catalogData)
 	if err != nil {
+		slog.Error("[doctor] parsing the addon catalog failed", "step", "parse-catalog", "error", err)
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
 			Status: doctorStatusFail,
-			Detail: "Sharko could not parse the addon catalog: " + err.Error(),
+			Detail: "Sharko could not parse the addon catalog.",
 			Fix:    "Fix the YAML in the addon catalog file and try again.",
 		}
 	}
 
 	clusterData, err := gp.GetFileContent(cctx, s.repoPaths.ManagedClusters, s.gitopsConfig().BaseBranch)
 	if err != nil {
+		slog.Error("[doctor] reading the managed-clusters file from Git failed", "step", "read-managed-clusters", "error", err)
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
 			Status: doctorStatusFail,
-			Detail: "Sharko could not read the managed-clusters file from Git: " + err.Error(),
+			Detail: "Sharko could not read the managed-clusters file from Git.",
 			Fix:    "Check that the managed-clusters file still exists on the configured branch.",
 		}
 	}
 	clusters, err := parser.ParseClusterAddons(clusterData)
 	if err != nil {
+		slog.Error("[doctor] parsing the managed-clusters file failed", "step", "parse-managed-clusters", "error", err)
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
 			Status: doctorStatusFail,
-			Detail: "Sharko could not parse the managed-clusters file: " + err.Error(),
+			Detail: "Sharko could not parse the managed-clusters file.",
 			Fix:    "Fix the YAML in the managed-clusters file and try again.",
 		}
 	}
@@ -395,10 +461,14 @@ func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName st
 	}
 	secretProvider, err := s.getDoctorAddonSecretProviderFn()(*cfg)
 	if err != nil {
+		// credsafe.Sentence, not err: building a secrets provider is a
+		// credentials-adjacent step and this is the one detail that could
+		// carry backend text even in a log line.
+		slog.Error("[doctor] building the addon-secret provider failed", "step", "build-secret-provider", "error", credsafe.Sentence(err))
 		return doctorCheck{
 			ID:     doctorCheckAddonSecretPaths,
 			Status: doctorStatusFail,
-			Detail: "Sharko could not build the addon-secret provider: " + err.Error(),
+			Detail: "Sharko could not build the addon-secret provider.",
 			Fix:    "Check the addon-secret provider configuration in Settings -> Connections.",
 		}
 	}
@@ -667,8 +737,8 @@ func (s *Server) doctorCheckSecretOwnership(ctx context.Context, clusterName str
 		return doctorCheck{
 			ID:     doctorCheckSecretOwnership,
 			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("Sharko could not read cluster %q's ArgoCD connection secret: %s", clusterName, err.Error()),
-			Fix:    fmt.Sprintf("Sharko couldn't read the secret: %s — check Sharko's RBAC on the argocd namespace.", err.Error()),
+			Detail: connectionSecretReadDetail(clusterName, err),
+			Fix:    connectionSecretReadFix(err),
 		}
 	}
 	if !found {
@@ -770,8 +840,8 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		return doctorCheck{
 			ID:     doctorCheckConnectivityApp,
 			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("Sharko could not read cluster %q's ArgoCD connection secret: %s", clusterName, err.Error()),
-			Fix:    fmt.Sprintf("Sharko couldn't read the secret: %s — check Sharko's RBAC on the argocd namespace.", err.Error()),
+			Detail: connectionSecretReadDetail(clusterName, err),
+			Fix:    connectionSecretReadFix(err),
 		}
 	}
 
@@ -793,7 +863,12 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 				ID:     doctorCheckConnectivityApp,
 				Status: doctorStatusFail,
 				Detail: fmt.Sprintf("Cluster %q has zero enabled addons — this cluster should carry the connectivity-check label so ArgoCD can prove the connection, but it doesn't.", clusterName),
-				Fix:    "Sharko's reconciler adds it automatically within ~30 seconds; if it doesn't appear, check that the reconciler is running.",
+				// Names no machinery and promises no timeframe: the check
+				// interval is operator-settable, so "within ~30 seconds" was
+				// false on any installation that sets it longer. The phrase
+				// for the component is the one repairFailNoReconciler already
+				// uses, so a person meets one name for it, not two.
+				Fix: "Sharko automatically adds this label. If it does not appear, check that the part of Sharko that manages cluster connections is running on this server.",
 			}
 		}
 		return doctorCheck{
@@ -824,7 +899,7 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		return doctorCheck{
 			ID:     doctorCheckConnectivityApp,
 			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("Sharko could not list ArgoCD clusters: %s", err.Error()),
+			Detail: argoListFailureSentence(argoReadClusters, err),
 			Fix:    "Check Sharko's RBAC permissions on ArgoCD — the service account must be able to list clusters.",
 		}
 	}
@@ -872,7 +947,7 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		return doctorCheck{
 			ID:     doctorCheckConnectivityApp,
 			Status: doctorStatusFail,
-			Detail: fmt.Sprintf("Sharko could not list ArgoCD applications: %s", err.Error()),
+			Detail: argoListFailureSentence(argoReadApplications, err),
 			Fix:    "Check Sharko's RBAC permissions on ArgoCD — the service account must be able to list applications.",
 		}
 	}

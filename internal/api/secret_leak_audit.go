@@ -13,9 +13,11 @@ package api
 // without disturbing the in-flight one, this helper writes a second Entry
 // directly to the Server's audit log buffer.
 //
-// We only log redacted summaries — pattern names + line numbers + addon +
-// chart version. The actual matched bytes never leave the orchestrator's
-// in-memory ScanForSecrets call.
+// What this file writes is a summary only: the addon, the chart and its
+// version, how many matches there were, and the pattern names. It does not
+// write the matched line, the field name, or any part of the value. The
+// matched bytes themselves never leave the orchestrator's in-memory
+// ScanForSecrets call at all.
 
 import (
 	"context"
@@ -32,9 +34,11 @@ import (
 // Server's audit log. `source` distinguishes the call site (`addon_add`,
 // `ai_annotate`, `values_refresh`) so operators can tell which mutation
 // path the block came from. `addon` and `chart`+`version` identify the
-// resource without leaking secret bytes. `matches` is the redacted
-// SecretMatch list returned by ScanForSecrets — pattern + redacted field +
-// line number, never the actual secret.
+// resource without leaking secret bytes. `matches` is the SecretMatch list
+// returned by ScanForSecrets, and this helper reads only two things out of
+// it: how many there were, and their pattern names. The Field text is never
+// written to the audit entry or to the log line from here — the one place
+// Field goes onto a wire is the 422 body in ai_annotate.go.
 //
 // Safe to call when s.auditLog is nil (early server bring-up): it falls
 // through to a slog.Warn so the block isn't lost entirely.

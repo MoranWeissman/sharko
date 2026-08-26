@@ -164,7 +164,7 @@ func TestWriteRateLimiter_BlocksAfterLimit(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := writeRateLimiter(2, 1*time.Minute)(inner)
+	handler := writeRateLimiter(2, 1*time.Minute, (*TrustedProxies)(nil).ClientIP)(inner)
 
 	doPost := func() int {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(`{}`))
@@ -191,7 +191,7 @@ func TestWriteRateLimiter_GetNotLimited(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := writeRateLimiter(1, 1*time.Minute)(inner)
+	handler := writeRateLimiter(1, 1*time.Minute, (*TrustedProxies)(nil).ClientIP)(inner)
 
 	for i := 0; i < 10; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/clusters", nil)
@@ -209,7 +209,7 @@ func TestWriteRateLimiter_LoginExempt(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := writeRateLimiter(1, 1*time.Minute)(inner)
+	handler := writeRateLimiter(1, 1*time.Minute, (*TrustedProxies)(nil).ClientIP)(inner)
 
 	doLogin := func() int {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{}`))

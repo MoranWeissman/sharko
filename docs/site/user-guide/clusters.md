@@ -63,9 +63,9 @@ When you register a cluster, one of the things to settle is **how should Sharko 
 
 | Credentials source | What it means | You supply |
 |--------------------|---------------|------------|
-| **Paste a kubeconfig** | You hand Sharko the kubeconfig directly. Bearer-token auth only. | The kubeconfig YAML |
 | **Point at a stored kubeconfig** | The kubeconfig already lives in your secret backend (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or a Kubernetes Secret). Works for **any** cluster, including local / on-prem. | The secret path/name |
 | **Amazon EKS token** | Sharko mints a short-lived token from your EKS cloud identity, so nothing long-lived is stored or pasted. EKS only. | The AWS region |
+| **Paste a kubeconfig** (legacy, off by default) | You hand Sharko the kubeconfig directly. Bearer-token auth only. A pasted credential exists **only in the live ArgoCD cluster Secret** — it is never stored in Git and cannot be recovered from Git if that Secret is lost. New pasted registrations are refused unless an admin turns on **Allow legacy inline credentials** (see [Connections & Settings](connections.md#allow-legacy-inline-credentials)). | The kubeconfig YAML |
 
 The credentials source is the *only* thing that changes between these three. Everything else — which addons to enable, the environment label, the cluster name — works the same way no matter how Sharko reaches the cluster.
 
@@ -96,7 +96,7 @@ Flags:
 ### Via UI
 
 1. Navigate to **Clusters → Register Cluster**
-2. Choose **how Sharko should get the credentials** — paste a kubeconfig, point at a stored kubeconfig, or mint an Amazon EKS token
+2. Choose **how Sharko should get the credentials** — point at a stored kubeconfig, or mint an Amazon EKS token (pasting a kubeconfig only appears here when an admin has turned on the legacy setting)
 3. Fill in what that source needs (the kubeconfig YAML, the secret path, or the AWS region)
 4. Choose which addons to enable (or leave empty to use the [default addons](addons.md#default-addons))
 5. Click **Register** — Sharko creates a PR in your Git repo
@@ -246,7 +246,7 @@ When Test connection fails and you need to know *which* link broke — credentia
 
 ## Checking the Last Reconcile / Manual Sync
 
-Sharko's cluster-secret reconciler runs every 30 seconds in the background, converging the ArgoCD cluster Secret's addon labels (and, for Sharko-managed connections, the credentials themselves) to match what's declared in Git. `GET /api/v1/clusters/{name}` includes a `last_reconcile` field showing the most recent outcome (`succeeded`, `failed`, or `skipped`) with a plain-English message on failure — this used to be visible only in the server log. In the UI, it's the **"Last sync"** line on the cluster detail page.
+Sharko converges the ArgoCD cluster Secret's addon labels (and, for Sharko-managed connections, the credentials themselves) to match what's declared in Git, on its own schedule in the background. `GET /api/v1/clusters/{name}` includes a `last_reconcile` field showing the most recent outcome (`succeeded`, `failed`, or `skipped`) with a plain-English message on failure — this used to be visible only in the server log. In the UI, it's the **"Last sync"** line on the cluster detail page.
 
 To nudge a reconcile immediately instead of waiting for the next tick, click **Sync now** on the cluster detail page, or:
 
@@ -258,7 +258,7 @@ curl -X POST https://sharko.your-domain.com/api/v1/clusters/my-cluster/reconcile
 This returns `202` right away — the reconcile itself runs in the background. Poll `GET /clusters/{name}` afterward and read the updated `last_reconcile` field.
 
 !!! note "Self-managed connections: a 'succeeded' sync with a warning"
-    On a self-managed connection, if another ArgoCD Application is also rendering the same connection secret from Git, the reconciler can end up in a tug-of-war over the addon-label values. `last_reconcile.outcome` stays `succeeded` in that case — Sharko is still successfully re-applying its labels every tick — but the message names the pattern after two reverts in a row. See [Managing Cluster Connections Yourself](../operator/self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
+    On a self-managed connection, if another ArgoCD Application is also rendering the same connection secret from Git, Sharko can end up in a tug-of-war over the addon-label values. `last_reconcile.outcome` stays `succeeded` in that case — Sharko is still successfully re-applying its labels every tick — but the message names the pattern after two reverts in a row. See [Managing Cluster Connections Yourself](../operator/self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
 
 ## Refreshing Cluster Credentials
 

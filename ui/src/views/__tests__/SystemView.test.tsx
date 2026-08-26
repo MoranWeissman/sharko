@@ -6,10 +6,10 @@
 // act (read-only contract).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { NOTIFICATION_CODES } from '@/generated/notification-codes'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import SystemView, {
-  GIT_CONN_ALERT_TITLE,
   aggregateStatuses,
   clusterStatusParts,
   deriveArgoClusterStatus,
@@ -91,7 +91,7 @@ function obsWithVersion(version?: string) {
 interface MockAllOpts {
   repo?: { initialized: boolean; bootstrap_synced: boolean; reason?: RepoStatusReason }
   clusters?: Cluster[]
-  notifications?: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
+  notifications?: { id: string; type: string; code?: string; title: string; description: string; timestamp: string; read: boolean }[]
   argocdVersion?: string
   capabilities?: { aws: { detected: boolean; method: string; identity_arn?: string }; hub_platform: string } | null
   // WQ-3 — home-cluster identity card reads. Defaulted to "unavailable"
@@ -461,7 +461,13 @@ describe('SystemView', () => {
         {
           id: 'n1',
           type: 'connection',
-          title: GIT_CONN_ALERT_TITLE,
+          // Routed by CODE, never by the title. The title below is
+          // deliberately NOT the poller's real sentence: this test would have
+          // passed for the wrong reason if the browser were still matching
+          // wording, and it now proves the arrow's detail is found by the
+          // identifier alone.
+          code: NOTIFICATION_CODES.gitConnectionBroken,
+          title: 'a title this test made up',
           description: 'Sharko uses this Git connection for every commit and pull request, and right now it can\'t reach it.',
           timestamp: new Date().toISOString(),
           read: false,
@@ -490,6 +496,42 @@ describe('SystemView', () => {
       expect(within(line).getByText('1 with issues').className).toContain('text-red-700')
     })
   })
+
+  // (Story P5) Safe degradation, proved rather than hoped for. The browser
+  // routes on the server's stable code; a notification carrying a code this
+  // build does not know, or no code at all, is one from an older or newer
+  // server. It must not fill an arrow's detail line and must not blank the
+  // page — the arrow keeps its own status and detail either way.
+  for (const [what, code] of [
+    ['a code this build does not know', 'a_code_from_a_newer_server'],
+    ['no code at all — a notification restored from an older server', undefined],
+  ] as [string, string | undefined][]) {
+    it(`does not surface an alert detail for ${what}`, async () => {
+      mockAll({
+        repo: { initialized: false, bootstrap_synced: false, reason: 'connection_error' },
+        clusters: [],
+        notifications: [
+          {
+            id: 'n1',
+            type: 'connection',
+            ...(code === undefined ? {} : { code }),
+            title: 'a title this test made up',
+            description: 'a description that must not reach an arrow',
+            timestamp: new Date().toISOString(),
+            read: false,
+          },
+        ],
+      })
+      renderPage()
+
+      await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+      expect(screen.queryByText('a description that must not reach an arrow')).not.toBeInTheDocument()
+      // The arrow still says what it knows on its own — nothing was hidden.
+      expect(
+        screen.getByText("Sharko can't reach the Git repo right now (network, TLS, or auth problem)."),
+      ).toBeInTheDocument()
+    })
+  }
 
   it('renders unknown states calmly (no clusters, unreported statuses)', async () => {
     mockAll({

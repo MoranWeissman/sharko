@@ -134,6 +134,18 @@ export interface SystemCapabilitiesResponse {
   hub_platform: string
 }
 
+/**
+ * The health words the server can put on a connection — ArgoCD's own answer,
+ * never Sharko's opinion of the git state beside it.
+ *
+ * ONE TYPE, BECAUSE TWO SURFACES RENDER IT. The fleet list and the connection
+ * page both map this word to display text. When the server grew a fourth
+ * value (B13 item 3), a per-surface inline union let one surface silently
+ * fall through to the wrong word. Declared once here, both surfaces now fail
+ * to compile until they handle a new value.
+ */
+export type ConnectionHealthWord = 'connected' | 'unavailable' | 'not_checked' | 'unknown'
+
 // ManagedSecretsResponse mirrors GET /api/v1/system/managed-secrets — every
 // secret Sharko manages, built server-side from data it already read (the
 // cluster list, the two reconcilers' own stats, the audit log). Visibility
@@ -142,11 +154,53 @@ export interface ConnectionSecretRow {
   cluster: string
   secret_namespace?: string
   secret_name?: string
-  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'. A FAILED
-  // check (P1-B) renders as 'unknown', never 'out_of_sync' — Sharko could
-  // not look, which is a different fact from "Sharko looked and it
-  // differs". See last_check_error below.
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'foreign' | 'unknown'.
+  //
+  // B5: this is a PROJECTION of sync_state below, computed on the server —
+  // it is NOT a second answer the browser may re-derive from. It exists
+  // because the chips, the ?state= filter and the sort rank read it; since
+  // it is a projection, they cannot drift apart from the canonical answer.
+  // A FAILED check (P1-B) renders as 'unknown', never 'out_of_sync' —
+  // Sharko could not look, which is a different fact from "Sharko looked
+  // and it differs". See last_check_error below.
   state: string
+  // ── The canonical reconciliation answer (B5) ──────────────────────────
+  // Produced by ONE server-side derivation (internal/api/
+  // connection_canonical.go) shared with the connection page, so the fleet
+  // and the detail page can never phrase the same connection differently.
+  // The browser renders these; it derives nothing from them.
+  //
+  // Absent on a server that predates B5 — every field below is optional for
+  // that reason alone, never because the browser may invent a fallback.
+  management_mode?: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  // What Sharko OWNS on this connection.
+  managed_scope?: 'full_connection' | 'addon_labels' | 'none'
+  // The canonical git state. 'synced' arrives ONLY with
+  // verification_scope 'full' — the server refuses any other combination.
+  sync_state?: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  // How much of what Sharko owns was successfully compared.
+  verification_scope?: 'full' | 'partial' | 'none'
+  // True exactly when the drift touches connection configuration or
+  // credential material.
+  approval_required?: boolean
+  // The display word for this row's git state — rendered VERBATIM. The
+  // browser has no headline table of its own.
+  headline?: string
+  // The sentence beside the headline when the verification is narrower than
+  // the whole connection, or the connection's data is managed outside
+  // Sharko. Absent when the state needs none.
+  qualifier?: string
+  // ArgoCD's OWN answer for this connection, INDEPENDENT of the git state
+  // above: "Connected" beside "Verification incomplete" is correct, not a
+  // contradiction.
+  //
+  // 'unknown' (B13 item 3) is the FOURTH word, and it is not a synonym for
+  // not_checked. not_checked means a probe has not arrived yet — a statement
+  // about a connection that exists, and ArgoCD's own sentence even explains
+  // the probe comes once an application is scheduled. On a self-managed
+  // connection whose Secret does not exist there is nothing to probe, so
+  // not_checked would invite somebody to wait for a check of nothing.
+  health?: ConnectionHealthWord
   // source (S1) says, per row, which store this secret's content is
   // compared against. Always 'git' for a connection secret — git holds
   // the addon labels this secret is built from.
@@ -184,6 +238,19 @@ export interface ConnectionSecretRow {
   // secret. Absent/0 for every cluster with no fight in progress. The panel
   // shows a quiet warning at 3 or more.
   fight_count?: number
+  // credential_check (W3-3) is the background loop's own read-only verdict
+  // on whether this connection's stored details still match its configured
+  // credentials source — separate from `state`, which is the git-labels
+  // comparison. One of 'drifted' | 'clear' | 'not_compared' | 'check_failed'.
+  // Absent on a server that predates the loop, or before its first pass.
+  credential_check?: 'drifted' | 'clear' | 'not_compared' | 'check_failed'
+  // credential_check_detail is a fixed, server-written sentence explaining
+  // credential_check — never a value, length, hash, or fragment.
+  credential_check_detail?: string
+  // credential_checked_at (RFC3339) is when the background loop (or the
+  // last manual Check-again click, which updates the same store) last ran
+  // this comparison. Absent before the first pass.
+  credential_checked_at?: string
 }
 
 export interface AddonValuesSecretRow {
@@ -300,6 +367,34 @@ export interface OrphanedSecretDeleteResult {
   message: string
 }
 
+/**
+ * (B13 item 6) Whether the background connection check is really running, and
+ * the server's own plain sentence when it is not.
+ *
+ * WHY IT EXISTS. Every connection row's headline comes from the last check.
+ * When the loop cannot run, no row has a check, so every row reads "Not
+ * checked yet" and the Synced count is zero — and until this field there was
+ * no sentence anywhere saying why. The worst case is an out-of-cluster
+ * server, which never schedules the loop at all: the whole page reads that
+ * way permanently and looks like a fleet Sharko has not got round to.
+ *
+ * `reason` is the SERVER'S sentence. The browser renders it verbatim and
+ * never composes one of its own — the server is the only thing that knows
+ * which of the several reasons applies.
+ *
+ * Optional because an older server does not send the field.
+ */
+export interface BackgroundConnectionChecks {
+  /** True only when the last attempted pass really checked the fleet. */
+  running: boolean
+  /** The plain sentence for why checks are not running. Empty exactly when running is true. */
+  reason?: string
+  /** The loop's cadence. 0/absent when no loop is scheduled on this server at all. */
+  interval_seconds?: number
+  /** RFC3339 of the last pass the loop tried. ABSENT when it has never tried one — never a zero time. */
+  last_attempt?: string
+}
+
 export interface ManagedSecretsResponse {
   cluster_connection_secrets: ConnectionSecretRow[]
   addon_values_secrets: AddonValuesSecretRow[]
@@ -307,6 +402,8 @@ export interface ManagedSecretsResponse {
   // older server that predates this field.
   orphaned_secrets?: OrphanedSecretRow[]
   engines: ManagedSecretsEngines
+  // (B13 item 6) Absent on an older server that predates the field.
+  background_connection_checks?: BackgroundConnectionChecks
   // addon_values_secret_source is the real, human-readable backend name
   // addon-values secrets are compared against ("AWS Secrets Manager", "a
   // Kubernetes Secret", ...), or the generic lowercase "secrets store"
@@ -617,7 +714,17 @@ export interface AddonComparisonStatus {
   argocd_deployed_version?: string
   argocd_namespace?: string
   argocd_operation_state?: string
-  /** First line of operationState.message when the operation is failing (capped at 300 chars). */
+  /**
+   * Sharko's own explanation of a failing ArgoCD operation, plus the facts the
+   * server is willing to vouch for (phase, sync, health, and the repository
+   * address with any credential stripped out).
+   *
+   * It is NOT ArgoCD's operationState.message and must never be treated as
+   * such: that message quotes whatever ArgoCD was working on, including the
+   * repository address with its access token inside it, and this field is on
+   * an ordinary 200 response (B8). The server decides the wording; the browser
+   * renders it as-is.
+   */
   argocd_operation_message?: string
   status?: string
   issues: string[]
@@ -642,6 +749,172 @@ export interface ClusterComparisonResponse {
   cluster_connection_state?: string
   argocd_connection_status?: string
   argocd_connection_message?: string
+}
+
+// Credential source type constants — must match internal/models/credlookup.go
+// These are the legal values for entry.CredsSource (see models.Cluster.CredsSource
+// jsonschema enum at internal/models/cluster.go:72).
+export const CREDS_SOURCE_EKS_TOKEN = 'eks-token' // models.CredsSourceEKSToken
+export const CREDS_SOURCE_INLINE_KUBECONFIG = 'inline-kubeconfig' // models.CredsSourceInlineKubeconfig
+export const CREDS_SOURCE_SECRET_KUBECONFIG = 'secret-kubeconfig' // models.CredsSourceSecretKubeconfig
+
+// ConnectionComparisonView — the response from GET /clusters/{name}/connection-comparison.
+// Wire shape documented in internal/api/connection_comparison.go.
+export interface ConnectionComparisonView {
+  cluster: string
+  status: 'synced' | 'out_of_sync' | 'missing' | 'check_failed' | 'ownership_conflict' | 'limited'
+  scope: string
+  ownership_mode: string
+  limit_reason?: string
+  failure_reason?: string
+  checked_at: string // RFC3339
+  branch: string
+  compared_commit?: string
+  compared_path?: string
+  credential_source_type?: string
+  differences: ConnectionComparisonDifference[]
+  not_checked: ConnectionComparisonNotChecked[]
+  checked_field_count: number
+  repair_available: boolean
+  repair_scope: string
+  values_never_returned: boolean
+}
+
+// ConnectionComparisonDifference — one field that did not match.
+// For a sensitive field: path, status, sensitive:true, and NO expected/live properties.
+export interface ConnectionComparisonDifference {
+  path: string
+  status: 'same' | 'different' | 'missing' | 'unexpected'
+  sensitive?: boolean
+  expected?: string
+  live?: string
+}
+
+// ConnectionComparisonNotChecked — one field inside the nominal scope that
+// Sharko deliberately did not check, with the plain reason why.
+export interface ConnectionComparisonNotChecked {
+  path: string
+  reason: string
+}
+
+// ConnectionReconciliation — the response from
+// GET /clusters/{name}/connection-reconciliation.
+// Wire shape documented in internal/api/connection_reconciliation.go. The
+// synchronization invariant is enforced SERVER-SIDE: sync.state === 'synced'
+// only ever arrives with verification_scope === 'full' — the UI renders the
+// combination it is given and never repairs one.
+export interface ConnectionReconciliation {
+  cluster: string
+  management_mode: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  managed_scope: 'full_connection' | 'addon_labels' | 'none'
+  mode_statement: string
+  definition: ConnectionReconciliationDefinition
+  sync: ConnectionReconciliationSync
+  health: ConnectionReconciliationHealth
+  conditions: ConnectionReconciliationCondition[]
+  drift: ConnectionReconciliationDrift
+  plan: ConnectionReconciliationPlan
+  values_never_returned: boolean
+}
+
+export interface ConnectionReconciliationDefinition {
+  file?: string
+  branch?: string
+  desired_revision?: string
+  applied_revision?: string
+  credential_source_type?: string
+}
+
+export interface ConnectionReconciliationSync {
+  state: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  // Ruling (d), 2026-08-19: 'labels_only' is gone from the enum. It was
+  // declared server-side and never produced by any handler path, so
+  // publishing it advertised a wire value that could not arrive.
+  verification_scope: 'full' | 'partial' | 'none'
+  approval_required: boolean
+  /**
+   * The display word for this connection's git state, produced by the SAME
+   * server function that feeds the fleet row (B5). Rendered VERBATIM — the
+   * browser owns no headline table and derives nothing.
+   */
+  headline: string
+  /** The scope sentence beside the headline. Absent when the state needs none. */
+  qualifier?: string
+  reason?: string
+  /** RFC3339 — ABSENT when no check has run, never a zero time. */
+  checked_at?: string
+  /** RFC3339, from the live Secret's provenance annotation. ABSENT when unknown. */
+  last_successful_application?: string
+}
+
+export interface ConnectionReconciliationHealth {
+  /** The same four words the fleet row carries — see ConnectionHealthWord. */
+  state: ConnectionHealthWord
+  /** ArgoCD's own failure text — only ever set for a failed connection. */
+  message?: string
+}
+
+export interface ConnectionReconciliationCondition {
+  id: string
+  status: 'ok' | 'attention' | 'blocked'
+  detail: string
+}
+
+// One non-sensitive field that did not match.
+export interface ConnectionReconciliationDriftEntry {
+  path: string
+  status: string
+  expected?: string
+  live?: string
+}
+
+// One sensitive field that did not match. The wire type has NO expected and
+// NO live properties at all — there is nothing here to redact client-side.
+export interface ConnectionReconciliationSensitiveDriftEntry {
+  path: string
+  status: string
+  sensitive: boolean
+}
+
+export interface ConnectionReconciliationDrift {
+  connection_configuration: ConnectionReconciliationDriftEntry[]
+  credential_material: ConnectionReconciliationSensitiveDriftEntry[]
+  addon_labels: ConnectionReconciliationDriftEntry[]
+  not_checked: ConnectionComparisonNotChecked[]
+}
+
+export interface ConnectionReconciliationPlan {
+  /** Fixed server sentence for what happens by itself — rendered VERBATIM. */
+  automatic?: string
+  /** Fixed server sentence for the approval-gated half — rendered VERBATIM. */
+  requires_approval?: string
+  action: 'none' | 'repair_connection' | 'sync_addon_labels' | 'take_over' | 'migrate_credentials'
+  action_scopes: string[]
+  /** The commit a repair must echo back — set only when action is repair_connection. */
+  reviewed_commit?: string
+}
+
+// ConnectionRepairView — the response from POST /clusters/{name}/connection-repair.
+// Wire shape documented in internal/api/connection_repair.go.
+export interface ConnectionRepairView {
+  cluster: string
+  repaired: boolean
+  scope_applied: string
+  fields_repaired: string[]
+  label_diff?: {
+    added?: Record<string, string>
+    removed?: string[]
+    changed?: Record<string, string>
+  }
+  preserved_foreign_labels: number
+  preserved_foreign_data_keys: number
+  branch: string
+  repaired_at_commit?: string
+  repaired_at: string
+  message: string
+  comparison: ConnectionComparisonView
+  self_heal_unchanged: boolean
+  values_never_returned: boolean
 }
 
 export interface AddonDeploymentInfo {
@@ -1499,6 +1772,20 @@ export interface AuditEntry {
   source: string
   result: string
   duration_ms: number
+  /**
+   * Whether this entry's operation ACTUALLY changed anything (ruling f).
+   * The truth travels on the entry now; before this the browser invented it
+   * from a static read-only flag in its own title table, so it could never
+   * agree with reality.
+   *
+   *  - 'not_applicable' — a read-only check. It neither changed anything
+   *    nor failed to, so a reader must render NOTHING, never "no changes".
+   *  - 'none'           — an action ran and deliberately wrote nothing.
+   *    This is the ONE case where "No changes made" is a true thing to say.
+   *  - 'applied'        — something really changed.
+   *  - absent           — a writer that predates the field. Render nothing.
+   */
+  changes?: 'not_applicable' | 'none' | 'applied'
   error?: string
   request_id?: string
   detail?: string

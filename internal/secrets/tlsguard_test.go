@@ -87,7 +87,7 @@ func TestReconcile_RefusesUnverifiedDestination(t *testing.T) {
 		t.Fatal("a secret was delivered to a destination whose connection skips certificate checks")
 	}
 
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Created != 0 || stats.Updated != 0 {
 		t.Errorf("expected no writes, got Created=%d Updated=%d", stats.Created, stats.Updated)
 	}
@@ -126,7 +126,7 @@ func TestReconcile_VerifiedDestinationUnaffected(t *testing.T) {
 	if _, err := client.CoreV1().Secrets("monitoring").Get(context.Background(), "datadog-secret", metav1.GetOptions{}); err != nil {
 		t.Fatalf("secret was not delivered to a certificate-verifying destination: %v", err)
 	}
-	stats := r.GetStats().(ReconcileStats)
+	stats := r.GetStats()
 	if stats.Created != 1 || stats.Errors != 0 {
 		t.Errorf("expected Created=1 Errors=0, got Created=%d Errors=%d", stats.Created, stats.Errors)
 	}

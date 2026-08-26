@@ -129,7 +129,7 @@ the optional `creds_source` field:
 
 | `creds_source` | What it means | You supply |
 |----------------|---------------|------------|
-| `inline-kubeconfig` | You paste a kubeconfig right in the request. Bearer-token auth only. | `kubeconfig` (the YAML) |
+| `inline-kubeconfig` | Legacy, **off by default**: you paste a kubeconfig right in the request. Bearer-token auth only. Refused unless an admin has turned on **Allow legacy inline credentials** in Settings. | `kubeconfig` (the YAML) |
 | `secret-kubeconfig` | You point at a kubeconfig already stored in your secret backend. Works for **any** cluster, including local / on-prem. | `secret_path` |
 | `eks-token` | Sharko mints a short-lived token from your EKS cloud identity. Amazon EKS only. | `region` (+ `role_arn` for a cross-account cluster) |
 
@@ -139,10 +139,20 @@ on/off — **on a v4 (migrated) repo this field is silently ignored**;
 registration is addon-free there, and you enable each addon afterward via
 `POST /v4/clusters/{name}/addons/{addon}` (section 3 below).
 
-#### Paste a kubeconfig (`inline-kubeconfig`)
+#### Paste a kubeconfig (`inline-kubeconfig`) — legacy, off by default
 
 You hand Sharko the kubeconfig YAML directly in the request. The kubeconfig must
 use bearer-token auth.
+
+!!! warning "Refused unless an admin enables the legacy setting"
+    A pasted credential exists only in the live ArgoCD cluster Secret — it is
+    never stored in Git and cannot be recovered from Git if that Secret is
+    lost. That is why this path is **off by default**: the server refuses an
+    inline registration with a plain message pointing at the supported
+    credential providers, until an admin turns on **Allow legacy inline
+    credentials** in Settings. To move an existing pasted connection onto a
+    supported provider, see
+    [Migrating Off Pasted (Inline) Credentials](../operator/migrate-inline-credentials.md).
 
 ```bash
 curl -s "${auth[@]}" -X POST "$SH/clusters" \
@@ -651,7 +661,10 @@ curl -s "${auth[@]}" "$SH/dashboard/pull-requests" | jq
 ### Audit log
 
 A record of who did what, when — every register, enable, disable, upgrade, and
-values edit lands here. Useful for confirming an action was recorded.
+values edit lands here. Useful for confirming an action was recorded. It holds
+what happened **since Sharko started**: the feed is held in memory only and empties on
+a pod restart, and nothing else keeps a copy — see
+[what Sharko keeps and for how long](../operator/audit-log.md).
 
 ```bash
 curl -s "${auth[@]}" "$SH/audit" | jq

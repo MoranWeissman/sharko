@@ -411,15 +411,18 @@ For Mitigation step 5 (manual bootstrap):
 
 ## Prevention
 
-- **Monitoring — alert on long-running operation-ids.** Add a
-  Prometheus rule that pages when an operation-id has `state=running`
-  for > 5 minutes:
+- **Monitoring — alert on long-running operation-ids.** Sharko does not
+  export this metric today. The alert below is a design sketch for a
+  future release, not something you can deploy now. The sketch: a rule
+  that pages when an operation-id has `state=running` for more than 5
+  minutes —
 
-  ```promql
+  ```
   sharko_operation_running_seconds > 300
   ```
 
-  Wiring requires Sharko to emit a per-operation-id gauge or counter.
+  — which requires Sharko to emit a per-operation-id gauge or counter
+  first.
 
 - **Code change — aggressive ctx timeouts on init steps.** Each
   init step (Git push, ArgoCD repo registration, AppProject creation,

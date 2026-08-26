@@ -13,6 +13,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -482,10 +483,13 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	for _, addon := range gitAddons {
 		// GetEnabledAddons now only returns enabled addons, so no need to check addon.Enabled
 		comp := models.AddonComparisonStatus{
-			AddonName:          addon.AddonName,
-			GitConfigured:      true,
-			GitChart:           addon.Chart,
-			GitRepoURL:         addon.RepoURL,
+			AddonName:     addon.AddonName,
+			GitConfigured: true,
+			GitChart:      addon.Chart,
+			// A chart repository URL is a repository URL: it is routinely
+			// written with the credential in the userinfo section, whoever
+			// wrote it. Same helper as the ArgoCD-sourced one (B7).
+			GitRepoURL:         credsafe.SafeRepoURL(addon.RepoURL),
 			GitVersion:         addon.CurrentVersion,
 			GitNamespace:       addon.Namespace,
 			GitEnabled:         true,
@@ -509,23 +513,27 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			trackedArgocdApps[appName] = true
 			comp.ArgocdDeployed = true
 			comp.ArgocdApplicationName = app.Name
-			comp.ArgocdSyncStatus = app.SyncStatus
-			comp.ArgocdHealthStatus = app.HealthStatus
+			// Every ArgoCD-sourced value below goes through internal/credsafe
+			// on its way onto the response (B7, B8). See safeAddonFailure.
+			comp.ArgocdSyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
+			comp.ArgocdHealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
 			comp.ArgocdDeployedVersion = app.SourceTargetRevision
 			comp.ArgocdNamespace = app.DestinationNamespace
-			comp.ArgocdSourceRepoURL = app.SourceRepoURL
-			comp.ArgocdDestinationServer = app.DestinationServer
-			comp.ArgocdOperationState = app.OperationState
+			comp.ArgocdSourceRepoURL = credsafe.SafeRepoURL(app.SourceRepoURL)
+			comp.ArgocdDestinationServer = credsafe.SafeRepoURL(app.DestinationServer)
+			comp.ArgocdOperationState = credsafe.SafeOperationPhase(app.OperationState)
 
-			var issueMsg string
-			comp.Status, issueMsg = classifyAddonApp(app)
-			if issueMsg != "" {
-				// issues[] keeps the short first-line version so badges stay compact.
-				comp.Issues = append(comp.Issues, issueMsg)
-				// ArgocdOperationMessage ships the full text (capped at 4000 chars)
-				// so the UI's expanded row can render the complete error without
-				// truncation. The field was previously set to the trimmed issueMsg.
-				comp.ArgocdOperationMessage = fullOperationMessage(app.OperationMessage)
+			var failing bool
+			comp.Status, failing = classifyAddonApp(app)
+			if failing {
+				// Both fields carry Sharko's own sentence plus the facts
+				// credsafe is willing to vouch for. They used to carry
+				// ArgoCD's operationState.message — the short first line in
+				// issues[] and the full 4000 characters here — and that
+				// message quotes the repository ArgoCD was syncing from,
+				// token and all, on an ordinary 200 response.
+				comp.Issues = append(comp.Issues, credsafe.ArgocdSyncFailureShort)
+				comp.ArgocdOperationMessage = safeAddonFailure(app)
 			}
 			switch comp.Status {
 			case "healthy":
@@ -568,12 +576,12 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 				AddonName:               appName,
 				ArgocdDeployed:          true,
 				ArgocdApplicationName:   app.Name,
-				ArgocdSyncStatus:        app.SyncStatus,
-				ArgocdHealthStatus:      app.HealthStatus,
+				ArgocdSyncStatus:        credsafe.SafeSyncStatus(app.SyncStatus),
+				ArgocdHealthStatus:      credsafe.SafeHealthStatus(app.HealthStatus),
 				ArgocdDeployedVersion:   app.SourceTargetRevision,
 				ArgocdNamespace:         app.DestinationNamespace,
-				ArgocdSourceRepoURL:     app.SourceRepoURL,
-				ArgocdDestinationServer: app.DestinationServer,
+				ArgocdSourceRepoURL:     credsafe.SafeRepoURL(app.SourceRepoURL),
+				ArgocdDestinationServer: credsafe.SafeRepoURL(app.DestinationServer),
 				Status:                  "sharko_system",
 				Issues:                  []string{},
 			})
@@ -600,13 +608,22 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		}
 	}
 
-	connStatus, connMessage, connErr := argocdSvc.GetClusterConnectionInfo(ctx, clusterName)
+	// connMessage is ArgoCD's own connectionMessage for this cluster: whatever
+	// the Kubernetes client, the cloud provider's IAM layer or the transport
+	// said, quoted in full. It never reaches the response — Sharko says its own
+	// sentence instead, and the full text stays in the server-side log where
+	// only an operator with log access can read it (B8).
+	connStatus, _, connErr := argocdSvc.GetClusterConnectionInfo(ctx, clusterName)
 	if connErr != nil {
 		log.Warn("could not fetch argocd connection info", "cluster", clusterName, "error", connErr)
 		if connStatus == "" {
 			connStatus = "Unknown"
 		}
-		connMessage = connErr.Error()
+	}
+	connStatus = credsafe.SafeConnectionState(connStatus)
+	connMessage := ""
+	if connStatus == "Failed" || connStatus == credsafe.Unrecognised {
+		connMessage = credsafe.ArgocdClusterConnectionFailureMessage
 	}
 	cluster.ConnectionStatus = connStatus
 
@@ -954,20 +971,29 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	return resp, nil
 }
 
-// classifyAddonApp derives the addon comparison status string and an optional
-// issue message from a live ArgoCD application. Priority order:
+// classifyAddonApp derives the addon comparison status string from a live
+// ArgoCD application, and says whether the operation is failing. Priority
+// order:
 //
 //  1. sync_failing — op phase Failed|Error, OR phase Running AND
 //     (any SyncFailed task OR message contains "completed unsuccessfully").
-//     The short (first-line, 300-char) message is returned as the issue;
-//     use fullOperationMessage for the full text.
 //  2. deploying — op phase Running OR health Progressing (no error signal).
 //  3. Existing health-based mapping (healthy / unhealthy / unknown_health /
 //     unknown_state).
 //
 // The function is the single source of truth for both the cluster comparison
 // endpoint and the addon catalog endpoint so they stay in sync.
-func classifyAddonApp(app models.ArgocdApplication) (status, issueMessage string) {
+//
+// # Why the second return value is a bool and not a message any more (B8)
+//
+// It used to hand back the first line of ArgoCD's operationState.message, and
+// the caller put that straight into issues[] on a 200 response. ArgoCD's
+// message quotes whatever it was syncing from, which includes the repository
+// address with its access token inside it, so the message could not travel.
+// Reading the message to CLASSIFY is fine and stays — that reading happens
+// server-side and only a true/false comes back out. Nothing of the text
+// escapes the function.
+func classifyAddonApp(app models.ArgocdApplication) (status string, syncFailing bool) {
 	phase := app.OperationPhase
 	health := app.HealthStatus
 	opMsg := app.OperationMessage
@@ -977,52 +1003,34 @@ func classifyAddonApp(app models.ArgocdApplication) (status, issueMessage string
 	opRunningWithFailure := phase == "Running" &&
 		(app.HasSyncFailedResource || strings.Contains(opMsg, "completed unsuccessfully"))
 	if opFailed || opRunningWithFailure {
-		issue := trimOperationMessage(opMsg)
-		return "sync_failing", issue
+		return "sync_failing", true
 	}
 
 	// 2. Active rollout — no error signal yet.
 	if phase == "Running" || health == "Progressing" {
-		return "deploying", ""
+		return "deploying", false
 	}
 
 	// 3. Existing health mapping.
-	return classifyHealth(health, ""), ""
+	return classifyHealth(health, ""), false
 }
 
-// fullOperationMessage returns the full operation message capped at 4000
-// characters. Unlike trimOperationMessage it preserves newlines and the
-// full text so the UI can render the complete error in the expanded row.
-// The 4000-char cap prevents accidental multi-MB blobs from reaching the
-// API response (ArgoCD messages rarely exceed a few KB).
-func fullOperationMessage(msg string) string {
-	if msg == "" {
-		return ""
-	}
-	const maxLen = 4000
-	if len(msg) > maxLen {
-		msg = msg[:maxLen]
-	}
-	return msg
-}
-
-// trimOperationMessage truncates an ArgoCD operation message to its first line,
-// capped at 300 characters. This prevents multi-KB error blobs from bloating
-// the issues[] array in API responses.
-func trimOperationMessage(msg string) string {
-	if msg == "" {
-		return ""
-	}
-	// First line only.
-	if idx := strings.Index(msg, "\n"); idx >= 0 {
-		msg = msg[:idx]
-	}
-	// Cap at 300 chars.
-	const maxLen = 300
-	if len(msg) > maxLen {
-		msg = msg[:maxLen]
-	}
-	return strings.TrimSpace(msg)
+// safeAddonFailure is what argocd_operation_message carries now: Sharko's own
+// fixed sentence plus the facts internal/credsafe is willing to vouch for.
+//
+// The whole of the ArgoCD text is left behind on purpose. It has no grammar —
+// it is Helm's words, or the Kubernetes API server's, or a Git transport's,
+// quoted verbatim — so there is no part of it Sharko can point at and say
+// "this part is not the credential". Scanning it for things that look like
+// secrets would be the text-matching approach this codebase bans, and it fails
+// on the first format nobody predicted.
+func safeAddonFailure(app models.ArgocdApplication) string {
+	return credsafe.SafeOperationDetail(credsafe.ArgocdSyncFailureMessage, credsafe.OperationFacts{
+		Phase:        app.OperationPhase,
+		SyncStatus:   app.SyncStatus,
+		HealthStatus: app.HealthStatus,
+		RepoURL:      app.SourceRepoURL,
+	})
 }
 
 func classifyHealth(healthStatus, _ string) string {

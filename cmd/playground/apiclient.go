@@ -97,6 +97,31 @@ func (c *apiClient) registerCluster(name, kubeconfig string, addons map[string]b
 	return nil
 }
 
+// enableLegacyInlineCredentials opts this sandbox into legacy inline
+// credentials through the real settings door — the same
+// PUT /api/v1/settings/allow-inline-credentials an admin uses in Settings.
+//
+// The playground registers its spokes by pasting their in-cluster
+// kubeconfigs (the inline path), and the server-wide default is OFF
+// (connection-reconciliation epic, product correction 5): a pasted
+// credential exists only in the live connection Secret and cannot be
+// restored from Git. That trade-off is fine for a throwaway kind sandbox,
+// so the playground opts in explicitly — the server-side default and the
+// refusal are never weakened, and this is exactly the "existing
+// installations may explicitly enable the legacy option" door the ruling
+// describes.
+func (c *apiClient) enableLegacyInlineCredentials() error {
+	status, body, err := c.doJSON(http.MethodPut, "/api/v1/settings/allow-inline-credentials",
+		map[string]interface{}{"allow_inline_credentials": true}, nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("PUT /api/v1/settings/allow-inline-credentials: status %d: %s", status, string(body))
+	}
+	return nil
+}
+
 // createConnection creates a new Sharko connection and sets it as active.
 // The argocdToken is optional (empty string for in-cluster service account auth).
 // Retries up to 5 times with a 3s backoff to handle transient failures during
@@ -374,7 +399,7 @@ func (c *apiClient) registerClusterV4(name, kubeconfig string, autoMerge bool) (
 		return nil, fmt.Errorf("decode register response: %w", err)
 	}
 	if resp.Git == nil {
-		return nil, fmt.Errorf("POST /api/v1/clusters: no git PR info in response (status=%s message=%s error=%s)", resp.Status, resp.Message, resp.Error)
+		return nil, fmt.Errorf("POST /api/v1/clusters: no Git PR info in response (status=%s message=%s error=%s)", resp.Status, resp.Message, resp.Error)
 	}
 	return resp.Git, nil
 }

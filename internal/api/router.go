@@ -52,6 +52,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/readcache"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/internal/settings"
 	"github.com/MoranWeissman/sharko/internal/verify"
@@ -148,6 +149,20 @@ func (s *Server) GitopsBaseBranch() string {
 	return s.gitopsConfig().BaseBranch
 }
 
+// ClusterCredentialsProvider is the exported form of credProvider() — the
+// single seam packages outside internal/api use to read the
+// CURRENTLY-published cluster-credentials provider. Live (reads the current
+// published snapshot, not a value captured at wiring time), so a caller that
+// resolves through it on every use sees the same provider generation the
+// check path reads, across ReinitializeFromConnection hot-reloads (R2-1:
+// cmd/sharko/serve.go wires the cluster reconciler's Deps.Vault as this
+// method, so the background write and the repair stop holding the boot
+// generation). Returns nil when no backend is configured right now — callers
+// must fail closed, never fall back to an earlier value.
+func (s *Server) ClusterCredentialsProvider() providers.ClusterCredentialsProvider {
+	return s.credProvider()
+}
+
 // publishGitopsCfg atomically publishes a new GitOps config snapshot. The
 // ONLY writer path for gitops config (SetWriteAPIDeps at boot,
 // ReinitializeFromConnection on hot-reload, tests via their seams). GF2.
@@ -159,7 +174,11 @@ func (s *Server) publishGitopsCfg(cfg orchestrator.GitOpsConfig) {
 // It is implemented by internal/secrets.Reconciler but defined here to avoid an import cycle.
 type SecretReconciler interface {
 	Trigger()
-	GetStats() interface{} // returns secrets.ReconcileStats but we keep the import-free boundary
+	// GetStats returns secrets.ReconcileStats directly — the compiler enforces
+	// this boundary now, so every SecretReconciler (the real one and the demo
+	// stand-in alike) must hand back the concrete type; there is no longer a
+	// type-assertion step on the caller's side that could silently fail.
+	GetStats() secrets.ReconcileStats
 	// LastRunTime, LastError, and Interval (System-page managed-secrets
 	// summary) are primitive-typed on purpose — same import-free-boundary
 	// reasoning as GetStats, but callers that only need these facts don't
@@ -350,6 +369,24 @@ type Server struct {
 	// Audit log for external-change events (always available — initialised in NewServer).
 	auditLog *audit.Log
 
+	// connCredChecks holds each managed cluster's last read-only
+	// credential-check outcome (W3-3 — see connection_credential_check.go).
+	// Written by the background check loop AND by the manual
+	// connection-comparison endpoint, read by the fleet rows. Always
+	// available — initialised in NewServer; its getter is nil-safe anyway.
+	connCredChecks *connectionCredentialCheckStore
+
+	// connCheckStatus answers "are background connection checks actually
+	// running on this server, and if not, why" (B13 item 6). It lives on the
+	// Server and NOT on the loop on purpose: the loop is started only inside
+	// the in-cluster branch of cmd/sharko/serve.go, so on an out-of-cluster
+	// server there IS no loop object to ask — and that is precisely the case
+	// where every fleet row reads "Not checked yet" forever with no
+	// explanation anywhere. A status that only exists when the loop exists
+	// could never report the loop's absence. Always available — initialised
+	// in NewServer; its reader is nil-safe anyway.
+	connCheckStatus *connectionCheckStatus
+
 	// readCache is the shared TTL cache backing the six hot fleet-wide
 	// reads (perf M1 — see internal/readcache's package doc): dashboard
 	// stats, clusters list, fleet status, catalog list, version matrix,
@@ -534,6 +571,14 @@ type Server struct {
 	// merge layer reads snapshots from this via SourcesFetcher().
 	sourcesFetcher *sources.Fetcher
 
+	// trustedProxies is the parsed SHARKO_TRUSTED_PROXIES list — the proxy
+	// addresses whose forwarding headers this server believes. Set once at
+	// startup via SetTrustedProxies, before any traffic arrives. Nil is the
+	// safe default and means no proxy is trusted, so X-Forwarded-For and
+	// X-Real-IP are ignored and every caller is keyed by its real TCP peer.
+	// See clientip.go for the resolution rules.
+	trustedProxies *TrustedProxies
+
 	// freshness is the v4 wave 1 Story 3.4 background scheduler that keeps
 	// a durable "last checked" snapshot of chart versions (per curated
 	// addon) and the engine pin check, independent of who's browsing. Nil
@@ -541,6 +586,13 @@ type Server struct {
 	// pre-Story-3.4 on-demand behavior when it's unset (tests, or a build
 	// that never wires one).
 	freshness *catalog.FreshnessScheduler
+
+	// loginRL is the per-router login rate limiter (5 attempts per IP per
+	// minute). Set by registerRoutes; nil means "no limit configured", which
+	// is what a Server built without a router gets. Lives here rather than in
+	// a closure so POST /auth/login can be a NAMED handler — see
+	// handleLoginRateLimited and route_registry.go (B16).
+	loginRL *loginRateLimiter
 }
 
 // NewServer creates a new API server.
@@ -595,6 +647,10 @@ func NewServer(
 	dashboardSvc.SetCache(readCache)
 	observabilitySvc.SetCache(readCache)
 
+	// One audit log, shared by the request middleware and the
+	// credential-check store's transition-only entries (W3-3).
+	auditLog := audit.NewLog(1000)
+
 	return &Server{
 		connSvc:           connSvc,
 		clusterSvc:        clusterSvc,
@@ -607,7 +663,9 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
-		auditLog:          audit.NewLog(1000),
+		auditLog:          auditLog,
+		connCredChecks:    newConnectionCredentialCheckStore(auditLog.Add),
+		connCheckStatus:   newConnectionCheckStatus(),
 		notificationStore: notifications.NewStore(100, nil),
 		changeLogStore:    changelog.NewStore(changelog.DefaultMaxPerCluster, nil),
 		opsStore:          operations.NewStore(),
@@ -1122,8 +1180,25 @@ func (s *Server) SetAWSDetector(d *capabilities.AWSDetector) {
 // staticFS can be nil if no static files are available (e.g., dev mode).
 func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	startSessionCleanup()
-	mux := http.NewServeMux()
+	// The session map lives in this package, so this is where the
+	// sharko_active_sessions gauge has to be told how to count it.
+	metrics.SetActiveSessionsSource(countActiveSessions)
 
+	// routeMux, not a bare http.ServeMux: every registration below is
+	// recorded as it happens, and the permission / audit / tier guards
+	// enumerate that recording instead of parsing this file for a literal
+	// call shape. See route_registry.go (B16).
+	mux := newRouteMux()
+	registerRoutes(srv, mux, staticFS)
+
+	return wrapWithMiddleware(srv, mux)
+}
+
+// registerRoutes puts every route on the given routeMux. Split out of
+// NewRouter so the coverage guards can run exactly this — the real
+// registration path — against a throwaway server and read back what it
+// registered (route_registry.go, routeInventory).
+func registerRoutes(srv *Server, mux *routeMux, staticFS fs.FS) {
 	// Swagger UI
 	mux.Handle("/swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
@@ -1168,6 +1243,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// nothing type-checking them. See connection_comparison.go's header for
 	// why the request carries a cluster name and nothing else.
 	mux.HandleFunc("GET /api/v1/clusters/{name}/connection-comparison", srv.handleGetConnectionComparison)
+	// The reconciliation contract for a connection: desired vs applied
+	// revision, honest sync + verification scope, ArgoCD health, conditions,
+	// grouped drift and the plan. Same read-only core as /connection-comparison
+	// (which stays byte-for-byte unchanged for its current clients); see
+	// connection_reconciliation.go's header.
+	mux.HandleFunc("GET /api/v1/clusters/{name}/connection-reconciliation", srv.handleGetConnectionReconciliation)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/history", srv.handleGetClusterHistory)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/changes", srv.handleGetClusterChanges)
 	mux.HandleFunc("GET /api/v1/clusters/{name}", srv.handleGetCluster)
@@ -1179,6 +1260,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/reconcile", srv.handleReconcileCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/resync", srv.handleResyncCluster)
+	// "Make this cluster's ArgoCD connection match the Git-defined connection."
+	// A separate route from /resync above on purpose: that one re-applies
+	// addon labels and is unchanged by this step, while this one can
+	// rewrite the whole connection and is admin-gated for that reason.
+	// See connection_repair.go's header.
+	mux.HandleFunc("POST /api/v1/clusters/{name}/connection-repair", srv.handleRepairConnection)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/doctor", srv.handleDoctorCluster)
@@ -1465,15 +1552,15 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Webhooks (no user auth — signature verified inside the handler)
 	mux.HandleFunc("POST /api/v1/webhooks/git", srv.handleGitWebhook)
 
-	// Auth (login is rate-limited: 5 attempts per IP per minute)
-	loginRL := newLoginRateLimiter(5, 1*time.Minute)
-	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		if !loginRL.Allow(clientIP(r)) {
-			writeError(w, http.StatusTooManyRequests, "too many login attempts, please try again later")
-			return
-		}
-		srv.handleLogin(w, r)
-	})
+	// Auth (login is rate-limited: 5 attempts per IP per minute).
+	//
+	// The rate limit used to live in a func literal registered right here.
+	// A closure has no name, and a route whose handler has no name cannot be
+	// keyed in the permission, audit or tier tables — so B16's route guard
+	// refuses one. The limiter now hangs off the Server (one per router, the
+	// same isolation the closure gave) and the route registers a real method.
+	srv.loginRL = newLoginRateLimiter(5, 1*time.Minute)
+	mux.HandleFunc("POST /api/v1/auth/login", srv.handleLoginRateLimited)
 
 	// Stale dead-route stub.
 	//
@@ -1577,7 +1664,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 			fileServer.ServeHTTP(w, r)
 		})
 	}
+}
 
+// wrapWithMiddleware puts the middleware chain around the registered routes.
+// Split out of NewRouter alongside registerRoutes so route registration has
+// exactly one caller-visible shape.
+func wrapWithMiddleware(srv *Server, mux http.Handler) http.Handler {
 	// Wrap with middleware
 	// Wrapping order (innermost → outermost): mux → maxBodySize → writeRateLimiter
 	// → auditMiddleware (reads user from header set by basicAuth) → basicAuthMiddleware
@@ -1589,9 +1681,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// visible to every downstream layer (logging, metrics, audit, handlers,
 	// orchestrator, gitops, ...). V2-2.2.
 	var handler http.Handler = mux
-	handler = maxBodySize(handler, 1<<20)                  // 1MB request body limit
-	handler = writeRateLimiter(30, 1*time.Minute)(handler) // 30 writes/min per IP
-	handler = srv.auditMiddleware(handler)                 // emit audit entry after auth sets user
+	handler = maxBodySize(handler, 1<<20)                                // 1MB request body limit
+	handler = writeRateLimiter(30, 1*time.Minute, srv.clientIP)(handler) // 30 writes/min per IP
+	handler = srv.auditMiddleware(handler)                               // emit audit entry after auth sets user
 	handler = srv.basicAuthMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = securityHeadersMiddleware(handler)
@@ -1670,7 +1762,11 @@ func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
 
 // writeRateLimiter returns a middleware that rate-limits POST/PUT/PATCH/DELETE requests
 // per client IP. GET and OPTIONS requests pass through without consuming quota.
-func writeRateLimiter(limit int, window time.Duration) func(http.Handler) http.Handler {
+//
+// resolveIP is the trusted-proxy-aware resolver (see clientip.go). It is
+// passed in rather than reached for so this middleware cannot grow a second,
+// header-believing way to identify a caller.
+func writeRateLimiter(limit int, window time.Duration, resolveIP func(*http.Request) string) func(http.Handler) http.Handler {
 	rl := newRateLimiter(limit, window)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1681,7 +1777,7 @@ func writeRateLimiter(limit int, window time.Duration) func(http.Handler) http.H
 					next.ServeHTTP(w, r)
 					return
 				}
-				if !rl.Allow(clientIP(r)) {
+				if !rl.Allow(resolveIP(r)) {
 					writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 					return
 				}
@@ -1689,23 +1785,6 @@ func writeRateLimiter(limit int, window time.Duration) func(http.Handler) http.H
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// clientIP extracts the client IP, preferring X-Forwarded-For (behind ALB/proxy).
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// X-Forwarded-For may contain multiple IPs; the first is the real client
-		if idx := strings.IndexByte(xff, ','); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	// Fall back to RemoteAddr (strip port)
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx]
-	}
-	return addr
 }
 
 // --- Session token auth ---
@@ -1757,6 +1836,27 @@ func startSessionCleanup() {
 			}
 		}()
 	})
+}
+
+// countActiveSessions counts the logins that are still valid right now.
+// An entry whose lifetime has run out is NOT counted, whether or not the
+// hourly sweep has got round to deleting it yet — the sweep is
+// housekeeping, and every read path already treats an expired entry as
+// gone.
+//
+// This is what the sharko_active_sessions gauge counts, at scrape time.
+// See metrics.SetActiveSessionsSource.
+func countActiveSessions() int {
+	sessionsMu.RLock()
+	defer sessionsMu.RUnlock()
+	now := time.Now()
+	n := 0
+	for _, sess := range activeSessions {
+		if now.Before(sess.Expiry) {
+			n++
+		}
+	}
+	return n
 }
 
 func generateToken() string {
@@ -1865,7 +1965,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStaleLoginRoute(w http.ResponseWriter, r *http.Request) {
 	slog.Warn("client hit dead /api/v1/login route — real endpoint is /api/v1/auth/login",
 		"path", r.URL.Path,
-		"client_ip", clientIP(r),
+		"client_ip", s.clientIP(r),
 	)
 	writeError(w, http.StatusNotFound, "endpoint not found — did you mean POST /api/v1/auth/login?")
 }
@@ -1946,7 +2046,16 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 
-		// Skip auth for: health, login, git webhooks (signature-verified), static files.
+		// Skip auth for: health, login, the Git webhook, static files.
+		//
+		// THE GIT WEBHOOK IS NOT UNPROTECTED, AND THIS COMMENT NO LONGER
+		// SAYS IT IS PROTECTED EITHER. It used to read "signature-verified",
+		// which was a claim about the handler that the handler did not keep:
+		// it verified a signature only when a secret happened to be set, and
+		// the chart shipped that secret empty. Whether the route is safe is
+		// decided in handleGitWebhook and nowhere else, so read it there.
+		// What this line does is exempt the route from the session/token
+		// check, because a webhook sender has neither.
 		// /api/v1/login is the dead-route stub — it must reach
 		// handleStaleLoginRoute so we return a clean 404 instead of
 		// swallowing the request as a 401 here.
@@ -2594,6 +2703,20 @@ func classifyUpstreamError(err error) int {
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Timeout() {
 		return http.StatusGatewayTimeout
+	}
+
+	// A refused ArgoCD write says its status in a field, so it is answered
+	// from the field — before the text match below ever runs. ArgoCD's own
+	// reply is not in this error any more (BF6), so matching its words would
+	// be matching Sharko's own sentence and would only ever find what an
+	// endpoint path happened to spell. Everything that is not a rate limit
+	// keeps the status it has always had.
+	var writeRefused *argocd.WriteRefusedError
+	if errors.As(err, &writeRefused) {
+		if writeRefused.Status == http.StatusTooManyRequests {
+			return http.StatusTooManyRequests
+		}
+		return http.StatusInternalServerError
 	}
 
 	// 429 — upstream rate limit. The phrasing is normalised to lower case

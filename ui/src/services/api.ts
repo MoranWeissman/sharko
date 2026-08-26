@@ -14,6 +14,9 @@ import type {
   ClusterResyncResponse,
   ClustersResponse,
   ConfigDiffResponse,
+  ConnectionComparisonView,
+  ConnectionReconciliation,
+  ConnectionRepairView,
   CredsSource,
   ConnectionsListResponse,
   DashboardStats,
@@ -414,6 +417,54 @@ const KNOWN_TEST_ERROR_CODES: ReadonlySet<TestClusterErrorCode> = new Set<TestCl
   'argocd_provider_exec_unsupported',
   'argocd_provider_unsupported_auth',
 ])
+
+/**
+ * The verification stage the server names when the CREDENTIAL LOOKUP itself
+ * failed, before any cluster was contacted.
+ *
+ * The wire value is written in exactly one place server-side —
+ * `Stage: "credentials"` in internal/api/clusters_discover.go's handleTestCluster
+ * — on the one branch it takes when fetching this cluster's sign-in details
+ * did not work. Whatever the reason, that branch means: nothing was asked of
+ * the cluster.
+ *
+ * It is pinned as a written-out literal on both sides. Go's half is
+ * TestTestCluster_CredentialFailureStageIsPinned in internal/api; this
+ * constant and its test are the browser's half, in the same shape as the
+ * banned-wording pair that already spans the two languages.
+ */
+export const VERIFY_STAGE_CREDENTIALS = 'credentials'
+
+/**
+ * True when a cluster test failed because Sharko could not read the cluster's
+ * sign-in details — not because anything was wrong with the cluster.
+ *
+ * WHY THIS IS A TYPED CHECK AND NOT A SEARCH THROUGH THE MESSAGE. The adopt
+ * dialog used to answer this question by lower-casing the server's
+ * `error_message` and looking in it for "secret", "not found", "credential",
+ * "unavailable" and "no credentials available". Two things were wrong with
+ * that, and the second one is live:
+ *
+ *   1. It is the browser deciding what to render by reading a human sentence
+ *      the server wrote, which the product owner ruled out: presentation
+ *      structure follows typed facts.
+ *   2. Since the credentials hotfix, a credentials-backend failure carries
+ *      ONE fixed sentence — the backend's own words never leave the server —
+ *      and that sentence contains none of the five phrases. So the search
+ *      answered "no" for every credentials failure there is, and the
+ *      credentials-optional contract it was implementing had quietly stopped
+ *      working: a cluster whose credentials simply are not configured was
+ *      being shown as a failed verification and deselected, when the server
+ *      would have adopted it happily.
+ *
+ * The server's own adopt path (internal/orchestrator/adopt.go) treats ANY
+ * credential-lookup failure the same way — "a failed credential lookup is the
+ * NORMAL case, not a fatal one — skip verification instead of failing the
+ * adoption" — with no sub-classification by reason. This matches it exactly.
+ */
+export function isCredentialLookupFailure(v: VerifyResult): boolean {
+  return v.success === false && v.stage === VERIFY_STAGE_CREDENTIALS
+}
 
 export function isTestClusterUnavailable(
   v: unknown,
@@ -1277,6 +1328,20 @@ export interface InitStatus {
   detail: string
   /** Only meaningful when state is "partial" — see the state doc above. */
   repairable?: boolean
+  /**
+   * True when the probe actually FOUND the ArgoCD bootstrap Application,
+   * whatever its health. False when it is not there, or the probe never got
+   * far enough to know.
+   *
+   * The wizard needs this one fact to decide whether it may say "this
+   * application already exists but is not healthy". It used to infer it by
+   * searching `detail` for the substring "sync=" — the shape the server's
+   * diagnostic happens to take once it has resolved an app — so a copy edit
+   * to that diagnostic silently changed which panel rendered, and the wizard
+   * could assert an Application exists when it does not. Route on this,
+   * never on `detail`.
+   */
+  bootstrap_app_resolved?: boolean
 }
 
 /**
@@ -1546,6 +1611,14 @@ export const api = {
   getDiscoveredClusters: () => fetchJSON<ClustersResponse>('/clusters?managed=false'),
   getCluster: (name: string) => fetchJSON<ClusterDetailResponse>(`/clusters/${name}`),
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
+  getConnectionComparison: (name: string) => fetchJSON<ConnectionComparisonView>(`/clusters/${name}/connection-comparison`),
+  // The connection page's one read (epic-connection-reconciliation-view,
+  // Story 2): the full reconciliation contract — read-only and zero-mint on
+  // the server, so re-fetching it IS "Check again".
+  getConnectionReconciliation: (name: string) =>
+    fetchJSON<ConnectionReconciliation>(`/clusters/${encodeURIComponent(name)}/connection-reconciliation`),
+  repairConnection: (name: string, reviewedCommit: string) =>
+    postJSON<ConnectionRepairView>(`/clusters/${name}/connection-repair?reviewed_commit=${encodeURIComponent(reviewedCommit)}`),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),
   getConfigDiff: (name: string) => fetchJSON<ConfigDiffResponse>(`/clusters/${name}/config-diff`),
   getClusterHistory: (name: string) => fetchJSON<{ cluster_name: string; history: SyncActivityEntry[] }>(`/clusters/${name}/history`),
@@ -1920,7 +1993,21 @@ export const api = {
 
   // Notifications
   getNotifications: () => fetchJSON<{
-    notifications: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
+    // `code` is the stable identifier (internal/notifications/codes.go, and
+    // ui/src/generated/notification-codes.ts on this side). Route on it.
+    // `title` and `description` are text to show a person and may be reworded
+    // in any release — never branch on them, never key a map by one.
+    // Optional because a notification restored from an older server's
+    // ConfigMap can predate the field.
+    notifications: {
+      id: string
+      type: string
+      code?: string
+      title: string
+      description: string
+      timestamp: string
+      read: boolean
+    }[]
     unread_count: number
   }>('/notifications'),
 
@@ -2136,9 +2223,11 @@ export const api = {
   // ─── Server-wide settings (V2-cleanup-89.6) ────────────────────────────
 
   /**
-   * Whether the "Paste a kubeconfig" registration path is enabled
-   * server-wide (default true). Powers the Settings → Inline Credentials
-   * toggle and the Register dialog's Connection source select.
+   * Whether legacy inline credentials (a kubeconfig pasted at registration)
+   * are allowed server-wide (default false — a pasted credential exists
+   * only in the live connection and cannot be restored from Git). Powers
+   * the Settings → Legacy Inline Credentials toggle and the Register
+   * dialog's Connection source select.
    */
   getAllowInlineCredentials: () =>
     fetchJSON<import('./models').AllowInlineCredentialsResponse>('/settings/allow-inline-credentials'),
