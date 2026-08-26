@@ -14,11 +14,11 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
-## Unreleased
+## v4.0.0 (technical preview)
 
-**Status:** not tagged yet. Everything below has merged to `main` since v3.0.0
-(released 2026-07-21) and will become **v4.0.0** once the maintainer decides
-it's ready — this entry is written ahead of the tag so nothing gets lost.
+**Status:** the v4.0.0 technical preview. This entry lists everything merged to
+`main` since v3.0.0 (released 2026-07-21); it is the release entry for the
+`v4.0.0` tag.
 
 **Sharko v4.0.0 is a technical preview. Install only published `v4.0.0`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko

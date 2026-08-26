@@ -99,6 +99,16 @@ var bannedWordings = []string{
 	strings.Join([]string{"do", "not", "install", "yet"}, " "),
 	strings.Join([]string{"wait", "for", "v4"}, " "),
 	strings.Join([]string{"no", "release", "to", "install"}, " "),
+	// TAGPREP-DOCS, 2026-08-26. The "published chart still installs v3.0.0"
+	// family and the release-notes "not tagged yet ... written ahead of the
+	// tag" wording both go false the moment the v4 chart publishes or the tag
+	// is cut. Both were replaced with state-independent wording that reads
+	// true before and after. Banning "chart still installs" (not the bare
+	// "still installs") keeps this clear of docs/site/operator/git-native-config.md's
+	// unrelated address-shape sentence, which legitimately uses "still installs".
+	strings.Join([]string{"chart", "still", "installs"}, " "),
+	strings.Join([]string{"written", "ahead", "of", "the", "tag"}, " "),
+	strings.Join([]string{"not", "tagged", "yet"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart
