@@ -118,6 +118,12 @@ var bannedWordings = []string{
 	// version below v4.0.0, all earlier release lines are retired and
 	// unsupported."
 	strings.Join([]string{"installs", "the", "retired", "unsupported", "v3", "line"}, " "),
+	// TAGCLOSE-DOCS, 2026-08-27. "v3.0.0, the only public release so far, and
+	// every earlier tag remain retired and unsupported" named v3.0.0 as the
+	// only public release, which stops being true the moment a later line
+	// ships. Replaced with "v3.0.0 and earlier remain retired and
+	// unsupported," which stays true regardless of what else gets released.
+	strings.Join([]string{"only", "public", "release", "so", "far"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart

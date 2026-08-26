@@ -382,4 +382,4 @@ API tokens persisting across restarts (#783); e2e strictness (no more silent 500
 real (#782) and the release workflow gated on full e2e+docs+perf evidence, not just plain CI
 (#781). `internal/clusterreconciler` is now the only reconciler of ArgoCD cluster Secrets — the
 old `internal/argosecrets` ticker is gone (`internal/secrets` still runs its own separate
-reconciler for addon secrets, unrelated). `v4.0.0` is not tagged yet; that's on Moran's word only.
+reconciler for addon secrets, unrelated).

@@ -17,7 +17,7 @@
 
 ---
 
-> **Sharko v4.0.0 is a technical preview. Do not use Sharko in production.** Install only published `v4.0.0`-or-later artifacts. `v3.0.0`, the only public release so far, and every earlier tag remain retired and unsupported — it is unsafe, so **do not install it**. There is no patch for the `v3` line. See [SECURITY.md](SECURITY.md#why-v300-is-retired) for what went wrong. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
+> **Sharko v4.0.0 is a technical preview. Do not use Sharko in production.** Install only published `v4.0.0`-or-later artifacts. `v3.0.0` and earlier remain retired and unsupported. There is no patch for the `v3` line. See [SECURITY.md](SECURITY.md#why-v300-is-retired) for what went wrong. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
 
 > **Sharko is a technical preview, not production ready.** There are no *known* credential leaks, permission bypasses, or places where Sharko says work finished when it did not — but nobody outside this project has assessed its security, the activity history is lost on every restart, and only one copy of Sharko can run at a time. Read [Technical preview — read this before you point Sharko at a cluster](docs/site/technical-preview.md) before you give it real cluster credentials.
 
