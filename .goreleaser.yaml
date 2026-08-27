@@ -72,14 +72,22 @@ release:
   # "Latest release". Using `auto` (not `true`) lets the same workflow handle
   # both pre-release and GA cuts without a manual flip.
   prerelease: auto
-  # V2-cleanup-57.1: prepend the CI-verified ArgoCD compatibility line to
-  # every release body. SHARKO_TESTED_ARGOCD_LINE is exported by
-  # release.yml's "Derive ArgoCD tested-range release-notes line" step,
-  # which reads ui/src/generated/argocd-tested-range.json (maintained by
-  # the weekly argocd-matrix workflow). envOrDefault keeps local/ad-hoc
-  # `goreleaser` runs working when the variable is unset — the header is
-  # then empty rather than a template error.
+  # Story RELEASESURFACE-META: the published GitHub release title must carry
+  # the technical-preview label so operators reading the download page know
+  # the state of the release.
+  name_template: "{{ .Tag }} — technical preview"
+  # V2-cleanup-57.1 / RELEASESURFACE-META: the release body opens with the
+  # durable technical-preview warning above the CI-verified ArgoCD compatibility
+  # line. The warning sits on one physical line so YAML block-scalar wrapping
+  # does not split it. SHARKO_TESTED_ARGOCD_LINE is exported by release.yml's
+  # "Derive ArgoCD tested-range release-notes line" step, which reads
+  # ui/src/generated/argocd-tested-range.json (maintained by the weekly
+  # argocd-matrix workflow). envOrDefault keeps local/ad-hoc `goreleaser` runs
+  # working when the variable is unset — the header is then empty rather than
+  # a template error.
   header: |
+    > **Sharko {{ .Tag }} is a technical preview. Do not use Sharko in production.** Install only published `v4.0.0`-or-later artifacts. `v3.0.0` and earlier remain retired and unsupported.
+
     {{ envOrDefault "SHARKO_TESTED_ARGOCD_LINE" "" }}
   # Story V123-2.5: attach per-entry cosign bundles produced by the
   # sign-catalog-entries job to the GitHub release. The signed catalog YAML

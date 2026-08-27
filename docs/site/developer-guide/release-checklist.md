@@ -65,6 +65,24 @@ depends on `release-evidence-gate` succeeding first. If any evidence job
 fails or is skipped, nothing downstream runs and the release workflow run
 itself shows red.
 
+### What the published release page shows
+
+The GitHub release page title and body are configured in
+`.goreleaser.yaml`, in the `release:` block. For v4.0.0 and forward:
+
+- **The title** carries "— technical preview" after the tag name (via
+  `name_template`), so the download page itself says the release is a
+  preview without an operator needing to read into the body.
+- **The body** opens with a durable warning blockquote stating the
+  technical-preview status, the supported artifact range
+  (`v4.0.0`-or-later only), and the fact that earlier releases remain
+  retired. This warning sits above the CI-verified ArgoCD tested-range
+  line, which follows it with a blank line between them.
+
+The release page remains GitHub's "Latest" release — that's correct,
+because v4 replaces the unsafe and retired v3 release. The metadata on
+the page itself carries the preview label.
+
 ## Why this runs on every tag, every time
 
 This is slower than the old behavior — the full kind-backed suite alone
