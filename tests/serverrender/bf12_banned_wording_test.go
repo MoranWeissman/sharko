@@ -124,6 +124,18 @@ var bannedWordings = []string{
 	// ships. Replaced with "v3.0.0 and earlier remain retired and
 	// unsupported," which stays true regardless of what else gets released.
 	strings.Join([]string{"only", "public", "release", "so", "far"}, " "),
+	// TRUTHCLOSE-DOCS, 2026-08-27. The owner found seven more places still
+	// telling the reader "hold off" or "nothing to install" after the v4.0.0
+	// technical-preview line was ruled the durable status. Checked against
+	// the whole extended corpus (this sweep's own roots, normalized) with
+	// zero collisions, so none of these needed narrowing: docs/ historical
+	// pages like design-history.md do not use this exact wording.
+	strings.Join([]string{"no", "supported", "release"}, " "),
+	strings.Join([]string{"is", "in", "active", "development"}, " "),
+	strings.Join([]string{"is", "in", "development", "on"}, " "),
+	strings.Join([]string{"nothing", "to", "install"}, " "),
+	strings.Join([]string{"not", "proven", "by", "a", "release", "yet"}, " "),
+	strings.Join([]string{"waiting", "on", "moran's", "word", "for", "the"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart
@@ -137,7 +149,16 @@ var wordingSweptExtensions = map[string]bool{
 // could live in. SECURITY.md and GOVERNANCE.md were added by BANNERS-V4: both
 // carried the retired install-banner wording and neither is under docs/ or
 // named README.md, so the walk would have missed them.
-var wordingSweptRoots = []string{"docs", "charts", "templates", "README.md", "SECURITY.md", "GOVERNANCE.md"}
+var wordingSweptRoots = []string{
+	"docs", "charts", "templates", "README.md", "SECURITY.md", "GOVERNANCE.md",
+	// TRUTHCLOSE-DOCS, 2026-08-27. These five live-status files carried the
+	// same stale "no release right now" / "in development" family the sweep
+	// was already banning elsewhere, but none of them sit under docs/ or
+	// carry one of the names already listed above, so the walk was missing
+	// them.
+	"MAINTAINERS.md", "CONTRIBUTING.md", "CHANGELOG.md",
+	".claude/team/product-manager.md", ".claude/team/project-manager.md",
+}
 
 // commentMarkers are the characters a line of prose can start with when it is
 // sitting inside a comment or a list. They are dropped before the words are

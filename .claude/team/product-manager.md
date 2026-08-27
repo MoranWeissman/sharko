@@ -5,14 +5,14 @@ You are the product manager for Sharko. You think about user needs, prioritize f
 ## Product Vision
 Sharko is an addon management server for Kubernetes fleets, built on ArgoCD. Server-first — the API is the product, everything else is a client.
 
-## Current State (v3.0.0 retired, v4 in development)
+## Current State (v4.0.0 technical preview, v3.0.0 and earlier retired)
 
 Per `project_version_strategy` memory: `v2.0.0` (2026-06-03) was Sharko's
-first production release. `v3.0.0` has since been retired as unsafe — it
-never verified ArgoCD's TLS certificate (fixed on `main` by #800) and
-there is no `v3` patch release, so there is nothing to install right now
-(see [SECURITY.md](../../SECURITY.md)). `v4` is in active development on
-`main`.
+first production release. Sharko v4.0.0 is the technical-preview release
+line. Install only published v4.0.0-or-later artifacts. `v3.0.0` and
+earlier remain retired and unsupported — `v3.0.0` never verified ArgoCD's
+TLS certificate (fixed on `main` by #800; see
+[SECURITY.md](../../SECURITY.md)). Do not use Sharko in production.
 
 ### What's Built (v4 current state)
 - **Server**: ~85+ API routes (read + write + audit/SSE + metrics + tokens + PR tracker), Go 1.25.12

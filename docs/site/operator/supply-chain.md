@@ -109,8 +109,8 @@ The release pipeline builds the image as a multi-arch manifest list, so `docker 
 | `linux/amd64` | Standard x86_64 cloud nodes (most EC2, GCE, AKS) |
 | `linux/arm64` | AWS Graviton, Ampere Altra, Oracle Ampere A1, Apple Silicon dev machines |
 
-!!! warning "Not proven by a release yet"
-    The last real release run (2026-08-04) pushed the image fine, but the same job then failed on an unrelated build-cache write and the whole run was marked failed, so no release since has re-run this job successfully. The cause is fixed (the cache write can no longer fail the build, and the two heavy build stages now cross-compile instead of running under slow arm64 emulation), but until the next release actually completes, treat "the pipeline builds both architectures" as the current, not yet re-proven, state. Check the [GitHub releases page](https://github.com/MoranWeissman/sharko/releases) and confirm `docker buildx imagetools inspect` (below) lists both platforms for a given tag before relying on it.
+!!! warning "Verify the architectures for the tag you deploy"
+    Don't assume every published tag carries both architectures — check before you rely on it. Confirm the tag exists and its workflow run is green on the [GitHub releases page](https://github.com/MoranWeissman/sharko/releases), then run `docker buildx imagetools inspect` (below) for that tag and confirm it lists both platforms before pulling it onto arm64 or amd64 nodes.
 
 Cosign signs the manifest-list digest, not the per-arch images. A single `cosign verify ghcr.io/moranweissman/sharko:vX.Y.Z` therefore validates the signature for every architecture. There is no per-arch verify command.
 

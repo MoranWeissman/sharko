@@ -61,11 +61,13 @@ every PR touching envelope-shaped YAML or its Go model.
 
 ## Current State — v4-coherence-closure sprint
 
-`v3.0.0` is the shipped release line; `v4` (the split-file data format —
-`managed-clusters.yaml` / `catalog.yaml` / `sharko-engine.yaml` at repo root,
-`cluster-addons/<cluster>.yaml` per-cluster assignment, `values/global/` + `values/clusters/`)
-is functionally complete and merged to main, waiting on Moran's word for the `v4.0.0` tag —
-never tag it without that.
+Sharko v4.0.0 is the technical-preview release line: `v4` (the split-file
+data format — `managed-clusters.yaml` / `catalog.yaml` / `sharko-engine.yaml`
+at repo root, `cluster-addons/<cluster>.yaml` per-cluster assignment,
+`values/global/` + `values/clusters/`) is functionally complete and merged
+to main. Install only published v4.0.0-or-later artifacts; v3.0.0 and
+earlier remain retired and unsupported, and Sharko should not be used in
+production. Never tag a release without Moran's word.
 
 This sprint (v4-coherence-closure) shipped, in order: self-generated initial admin with the old
 fail-open path removed (#777); v4-native catalog edit + delete through the preview/PR pipeline

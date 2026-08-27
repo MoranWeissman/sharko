@@ -117,9 +117,10 @@ Release cadence and version numbering follow the rules in
 - `v2.0.0` (2026-06-03) was Sharko's first production-ready release.
   SemVer has applied strictly since then: patch for fixes, minor for
   features, major for breaking changes.
-- `v3.0.0` has been retired as unsafe, so there is no supported
-  release right now (see [SECURITY.md](SECURITY.md)); `v4` is in
-  active development on `main`.
+- Sharko v4.0.0 is the technical-preview release line. Install only
+  published v4.0.0-or-later artifacts. v3.0.0 and earlier remain
+  retired and unsupported (see [SECURITY.md](SECURITY.md)). Do not use
+  Sharko in production.
 
 The BDFL (or, post-transition, the steering committee) decides when a
 release is ready.
