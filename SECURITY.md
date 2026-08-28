@@ -112,8 +112,8 @@ verification" into every connection it saved. Sharko's connection to
 ArgoCD carries Sharko's ArgoCD API token, so someone who could read that
 network traffic could have read the token.
 
-**Affected:** `v3.0.0` and every earlier tag. Fixed on `main`, ships in
-`v4.0.1`.
+**Affected:** `v3.0.0` and every earlier tag. Fixed in the v4 code line.
+Install only published `v4.0.1`-or-later artifacts.
 
 **Not affected:** the secret values Sharko delivers to your clusters,
 your Git token, and your cluster kubeconfigs. Those travel over

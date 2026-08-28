@@ -47,9 +47,9 @@ in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
 exactly where it is. Its release run then failed at the release-evidence gate, so
 none of the publishing steps ran: there is no `v4.0.0` release page and no
 `v4.0.0` artifact of any kind, and none will be produced later — the tag is left
-in place rather than moved onto a different commit. Install `v4.0.1` above
-instead. This entry lists everything merged to `main` since v3.0.0 (released
-2026-07-21), all of which ships in `v4.0.1`.
+in place rather than moved onto a different commit. This entry lists everything
+merged to `main` since v3.0.0 (released 2026-07-21), all of which is in the v4
+code line. Install only published `v4.0.1`-or-later artifacts.
 
 **Sharko v4.0.1 is a technical preview. Install only published `v4.0.1`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
