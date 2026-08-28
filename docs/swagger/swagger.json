@@ -14406,7 +14406,7 @@
                     "type": "string"
                 },
                 "upstream_version": {
-                    "description": "UpstreamVersion is the chart version Sharko fetched the upstream\nvalues.yaml for. Echo of the catalog pin — surfaced so the UI can\nshow \"Merging in defaults from cert-manager@1.20.2\".",
+                    "description": "UpstreamVersion is the chart version as the catalog pins it. Echo of\nthe catalog pin — surfaced so the UI can show \"Merging in defaults\nfrom cert-manager@1.20.2\".\n\nIt is NOT necessarily the version string the chart repository\npublishes. A pin written without the leading \"v\" resolves against a\nv-prefixed index, so a pin of \"1.16.3\" can fetch \"v1.16.3\" while this\nfield still reads \"1.16.3\". That is deliberate: the field exists to\necho back what the operator wrote in the catalog, which is what they\nrecognise.",
                     "type": "string"
                 }
             }
