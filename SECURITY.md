@@ -101,6 +101,7 @@ earlier tag remain retired and unsupported — **do not install them.**
 | ------- | ----------------------------- |
 | `v3.0.x` | No — retired. Unsafe and unsupported, do not install it. |
 | `v2.x` and earlier | No. They have the same flaw as `v3.0.0`, so do not fall back to them either. |
+| `v4.0.0` | Nothing to support. The tag exists but its release never published, so there are no `v4.0.0` artifacts to install. |
 | `v4.0.1` and later | Yes — the currently supported technical preview line |
 
 ### Why v3.0.0 is retired

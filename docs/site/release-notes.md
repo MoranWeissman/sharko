@@ -16,8 +16,8 @@ recent release is the first thing readers see.
 
 ## v4.0.1 — a chart version pinned without the leading "v" still resolves
 
-**Status:** the first publishable version of the v4 technical-preview line. It
-carries everything in the v4.0.0 entry below, plus the fix described here.
+**Status:** the version of the v4 technical-preview line that carries the fix
+below. It also carries everything in the v4.0.0 entry.
 
 **Sharko v4 is a technical preview. Install only published `v4.0.1`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko

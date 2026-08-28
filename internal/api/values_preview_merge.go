@@ -58,9 +58,16 @@ type previewMergeResponse struct {
 	// header so the user can decide whether to open the diff or skip.
 	DiffSummary previewMergeSummary `json:"diff_summary"`
 
-	// UpstreamVersion is the chart version Sharko fetched the upstream
-	// values.yaml for. Echo of the catalog pin — surfaced so the UI can
-	// show "Merging in defaults from cert-manager@1.20.2".
+	// UpstreamVersion is the chart version as the catalog pins it. Echo of
+	// the catalog pin — surfaced so the UI can show "Merging in defaults
+	// from cert-manager@1.20.2".
+	//
+	// It is NOT necessarily the version string the chart repository
+	// publishes. A pin written without the leading "v" resolves against a
+	// v-prefixed index, so a pin of "1.16.3" can fetch "v1.16.3" while this
+	// field still reads "1.16.3". That is deliberate: the field exists to
+	// echo back what the operator wrote in the catalog, which is what they
+	// recognise.
 	UpstreamVersion string `json:"upstream_version"`
 }
 

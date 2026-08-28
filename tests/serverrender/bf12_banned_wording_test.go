@@ -205,7 +205,36 @@ var bannedWordings = []string{
 	// collisions in the swept roots and zero across every tracked file of any
 	// type.
 	strings.Join([]string{"sharko", "v4.0.1", "is", "a", "technical", "preview"}, " "),
+	// V401-RECOVERY amendment 4, 2026-08-28. A reviewer proved a hole in the
+	// pair above: the v4.0.0 entries cover BOTH shapes, but v4.0.1 only had
+	// the banner one, and the release-line shape is what 5 of the 15 sites
+	// actually use. Planting "Sharko v4.0.1 is the technical-preview release
+	// line" in CONTRIBUTING.md walked straight past the sweep while the
+	// v4.0.0 spelling in the same place was caught. Closing it.
+	strings.Join([]string{"sharko", "v4.0.1", "is", "the", "technical-preview", "release", "line"}, " "),
 }
+
+// Why the published GitHub release page is allowed to say the banned sentence.
+//
+// .goreleaser.yaml's release header reads "Sharko {{ .Tag }} is a technical
+// preview". When v4.0.1 publishes, that renders as "Sharko v4.0.1 is a
+// technical preview" — word for word what the two entries above ban in prose.
+// That is correct and intended, not an oversight:
+//
+//   - A release page is a record OF THAT RELEASE. Naming the version there is
+//     true permanently, the same way the v4.0.0 release-notes entry names
+//     v4.0.0. What goes stale is a CURRENT-STATE sentence on a page that
+//     outlives the version it names — a README banner, a support table, a
+//     governance note. Those are what moved to "Sharko v4".
+//   - The header is a template, not a literal, so it cannot drift: it always
+//     renders the tag actually being built. That is why the owner ruled
+//     .goreleaser.yaml stays tag-specific.
+//   - This sweep could not reach it anyway. .goreleaser.yaml is not under
+//     wordingSweptRoots, and the file is YAML holding a Go template, so the
+//     rendered sentence never exists on disk. The guard that pins that header
+//     is TestPublishedReleaseBodyCarriesTheDurableWarning in
+//     releasesurface_meta_test.go, and it asserts the {{ .Tag }} form on
+//     purpose.
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart
 // values, chart templates and the install notes. Go sources are deliberately

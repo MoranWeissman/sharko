@@ -79,8 +79,26 @@ var (
 	catalogVersionsTTL      = 15 * time.Minute
 	catalogVersionsCap      = 200
 
-	// One shared fetcher across all callers — the underlying http.Client and
-	// in-memory caches are safe to reuse.
+	// One shared fetcher across all callers, and this is a package-level
+	// value serving concurrent HTTP requests, so sharing it has to be
+	// genuinely safe rather than assumed safe.
+	//
+	// It is. http.Client is safe for concurrent use by design, and
+	// helm.Fetcher guards its three cache maps — the repo index, the chart
+	// values and the Chart.yaml metadata — with an internal RWMutex held
+	// only across the map read or map write itself, never across the HTTP
+	// fetch. Two requests arriving together for the same cold entry will
+	// each fetch it and the second store wins, which costs one extra
+	// download and avoids serialising every caller behind one slow
+	// repository.
+	//
+	// Until v4.0.1 those maps had no lock at all and this comment claimed
+	// they were safe anyway. Two overlapping requests through this very
+	// variable produced "fatal error: concurrent map read and map write",
+	// an unrecoverable abort that kills the process rather than the request
+	// — and Sharko keeps sessions in memory on a single instance, so that
+	// signs every user out. internal/helm's concurrency tests now hold that
+	// line under `go test -race`.
 	catalogVersionsFetcher = helm.NewFetcher()
 )
 

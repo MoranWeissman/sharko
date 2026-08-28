@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 
@@ -57,15 +58,36 @@ type chartMetadata struct {
 
 // Fetcher downloads Helm chart values.yaml for comparison.
 // Includes in-memory caching to avoid redundant downloads.
+//
+// A Fetcher is safe to share between goroutines. Long-lived shared ones exist
+// on live paths — internal/api/catalog_versions.go keeps a package-level one
+// behind the chart-versions endpoint, internal/service/upgrade.go holds one for
+// the life of the service, and cmd/sharko/serve.go hands one to the catalog
+// freshness scheduler — so two HTTP requests routinely land in the same Fetcher
+// at the same time. Before the lock below, that produced
+// "fatal error: concurrent map writes", which is an unrecoverable runtime abort:
+// it kills the process, not the request. Sharko runs as a single instance with
+// sessions in an in-memory map, so one such crash signs every user out.
 type Fetcher struct {
-	client     *http.Client
-	indexCache map[string]*repoIndex // key: repoURL
+	client *http.Client
+
+	// mu guards the three cache maps below, and nothing else. It is held
+	// ONLY across a map read or a map write — never across an HTTP request,
+	// YAML parsing or archive extraction, all of which happen unlocked
+	// between a released read lock and the write lock that stores the
+	// result. Two callers asking for the same cold entry at the same moment
+	// will therefore both fetch it, and the second store simply wins. That
+	// is the intended trade: a duplicate download costs one request, while
+	// holding a lock across a network round trip would serialise every
+	// caller behind the slowest repository.
+	mu          sync.RWMutex
+	indexCache  map[string]*repoIndex // key: repoURL
+	valuesCache map[string]string     // key: repoURL/chart/resolved-version
 	// The two archive caches are keyed on the version the repo index
 	// PUBLISHES, not on the spelling the caller pinned — see
 	// resolveChartVersion. "1.16.3" and "v1.16.3" against a v-prefixed
 	// index therefore share one entry and one download.
-	valuesCache map[string]string         // key: repoURL/chart/resolved-version
-	chartCache  map[string]*chartMetadata // key: repoURL/chart/resolved-version
+	chartCache map[string]*chartMetadata // key: repoURL/chart/resolved-version
 }
 
 // NewFetcher creates a new Helm chart fetcher with caching.
@@ -93,7 +115,10 @@ func (f *Fetcher) getIndex(ctx context.Context, repoURL string) (*repoIndex, err
 		return nil, err
 	}
 
-	if idx, ok := f.indexCache[repoURL]; ok {
+	f.mu.RLock()
+	idx, ok := f.indexCache[repoURL]
+	f.mu.RUnlock()
+	if ok {
 		return idx, nil
 	}
 
@@ -138,13 +163,25 @@ func (f *Fetcher) getIndex(ctx context.Context, repoURL string) (*repoIndex, err
 		return nil, fmt.Errorf("reading index: %w", err)
 	}
 
-	var idx repoIndex
-	if err := yaml.Unmarshal(body, &idx); err != nil {
+	var parsed repoIndex
+	if err := yaml.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("parsing index: %w", err)
 	}
 
-	f.indexCache[repoURL] = &idx
-	return &idx, nil
+	// The parsed index is filled in completely BEFORE it is published here,
+	// and nothing ever writes to it again. That is what makes it safe for
+	// ListVersions to hand the same Entries slice to every caller without
+	// copying it: the slice, its backing array and the map holding it are
+	// all write-once, and the Unlock/RLock pair below and above is the
+	// happens-before edge that guarantees a reader sees a finished object.
+	// Every consumer was checked for mutation — nine call sites plus the
+	// FreshnessSnapshot the slice escapes into — and none sorts it, assigns
+	// through an index, or writes a field; the two that sort build a fresh
+	// slice first. Cloning would be churn with nothing behind it.
+	f.mu.Lock()
+	f.indexCache[repoURL] = &parsed
+	f.mu.Unlock()
+	return &parsed, nil
 }
 
 // ListVersions returns available versions for a chart from the repo index.
@@ -267,12 +304,17 @@ func parseVersion(version string) []int {
 // Sharko will accept: the same string with a single leading lowercase "v"
 // added if it has none, or removed if it has exactly one.
 //
-// It returns false when the requested string is not one of those two plain
-// shapes, so nothing beyond the exact match is ever tried. "vv1.2.3" is the
-// case that matters: dropping one "v" would turn it into "v1.2.3", which is
-// a DIFFERENT version string, and Sharko must not quietly fetch a version
-// nobody pinned. A capital "V" is not the lowercase one either, so "V1.2.3"
-// never reaches "v1.2.3" — no case folding anywhere on this path.
+// The remove direction is guarded: it returns false rather than dropping a
+// leading "v" when what follows is another "v" or nothing at all. "vv1.2.3" is
+// the case that matters — dropping one "v" would turn it into "v1.2.3", a
+// DIFFERENT version string, and Sharko must not quietly fetch a version nobody
+// pinned.
+//
+// The add direction validates nothing, because it does not need to: prefixing
+// anything that does not already start with a lowercase "v" produces a string
+// that either names a real index entry or misses. "V1.2.3" becomes "vV1.2.3",
+// which no sane index publishes, so the request is refused — a capital "V"
+// never reaches "v1.2.3", and no case folding happens anywhere on this path.
 func altVersionSpelling(requested string) (string, bool) {
 	if requested == "" {
 		return "", false
@@ -289,14 +331,30 @@ func altVersionSpelling(requested string) (string, bool) {
 }
 
 // pickChartVersion returns the index entry whose version string is exactly
-// want and that actually has somewhere to download from. Entries with an
-// empty urls: list are skipped and the scan continues, because there is
-// nothing to fetch for them.
+// want and that actually has somewhere to download from. Entries Sharko cannot
+// download are skipped and the scan continues, because there is nothing to
+// fetch for them.
+//
+// "Cannot download" means two things, and it has to mean both. An entry with no
+// urls: list is the obvious one. An entry whose urls: list holds an empty
+// string is the other, and it is the one that is easy to lose: the code this
+// replaced used the URL string itself as its not-found sentinel, so
+// `chartURL == ""` caught both states at once for free. Checking only the
+// length brings back a hit with an empty download address, which the
+// relative-URL join in the callers turns into the repository ROOT — Sharko
+// issues an HTTP GET it should never make and reports
+// "decompressing: gzip: invalid header" instead of refusing cleanly.
+//
+// Only URLs[0] is checked because only URLs[0] is ever used.
 func pickChartVersion(versions []ChartVersion, want string) *ChartVersion {
 	for i := range versions {
-		if versions[i].Version == want && len(versions[i].URLs) > 0 {
-			return &versions[i]
+		if versions[i].Version != want {
+			continue
 		}
+		if len(versions[i].URLs) == 0 || versions[i].URLs[0] == "" {
+			continue
+		}
+		return &versions[i]
 	}
 	return nil
 }
@@ -328,6 +386,16 @@ func pickChartVersion(versions []ChartVersion, want string) *ChartVersion {
 // two spellings of a version share a single cache entry and a single
 // download rather than fetching the same archive twice.
 func resolveChartVersion(versions []ChartVersion, requested string) (resolved, chartURL string, ok bool) {
+	// An empty pin resolves to nothing, ever. Without this, a malformed index
+	// entry whose own version: field is empty would match it, and Sharko would
+	// download an arbitrary archive for a version nobody wrote down. Most API
+	// handlers reject an empty version with a 400 first, but two paths hand
+	// one straight through: internal/orchestrator/catalog_ops.go passes
+	// entry.Version from the catalog file, and internal/ai/tools.go passes
+	// whatever the model put in a tool argument.
+	if requested == "" {
+		return "", "", false
+	}
 	if hit := pickChartVersion(versions, requested); hit != nil {
 		return hit.Version, hit.URLs[0], true
 	}
@@ -358,7 +426,10 @@ func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version s
 	}
 
 	cacheKey := repoURL + "/" + chartName + "/" + resolvedVersion
-	if cached, ok := f.valuesCache[cacheKey]; ok {
+	f.mu.RLock()
+	cached, hit := f.valuesCache[cacheKey]
+	f.mu.RUnlock()
+	if hit {
 		return cached, nil
 	}
 
@@ -410,7 +481,11 @@ func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version s
 				return "", fmt.Errorf("reading values.yaml: %w", err)
 			}
 			result := string(data)
+			// Write lock taken here and nowhere earlier: the download and
+			// the tar walk above ran unlocked.
+			f.mu.Lock()
 			f.valuesCache[cacheKey] = result
+			f.mu.Unlock()
 			return result, nil
 		}
 	}
@@ -436,7 +511,10 @@ func (f *Fetcher) fetchChartYAML(ctx context.Context, repoURL, chartName, versio
 	}
 
 	cacheKey := repoURL + "/" + chartName + "/" + resolvedVersion
-	if cached, ok := f.chartCache[cacheKey]; ok {
+	f.mu.RLock()
+	cached, hit := f.chartCache[cacheKey]
+	f.mu.RUnlock()
+	if hit {
 		return cached, nil
 	}
 
@@ -488,7 +566,13 @@ func (f *Fetcher) fetchChartYAML(ctx context.Context, repoURL, chartName, versio
 			if err := yaml.Unmarshal(data, &meta); err != nil {
 				return nil, fmt.Errorf("parsing Chart.yaml: %w", err)
 			}
+			// Same as FetchValues: the write lock covers the store only.
+			// meta is finished before it is published and never written
+			// again, so the pointer handed to every later caller is safe
+			// to read without a lock.
+			f.mu.Lock()
 			f.chartCache[cacheKey] = &meta
+			f.mu.Unlock()
 			return &meta, nil
 		}
 	}

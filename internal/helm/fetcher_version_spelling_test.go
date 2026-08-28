@@ -37,11 +37,21 @@ const spellingChartName = "spelling-chart"
 // values body proves which one was downloaded.
 //
 // An empty archive means the entry is published with an empty urls: list —
-// the "nothing to download here" case the lookup has always skipped.
+// the "nothing to download here" case the lookup has always skipped. The
+// urlsHoldEmptyString label means the entry has a urls: list holding one empty
+// string, which is the OTHER "nothing to download here" state and the one that
+// is easy to lose track of.
 type indexEntry struct {
 	version string
 	archive string
 }
+
+// urlsHoldEmptyString is an archive label meaning "publish this entry with
+// urls: [\"\"]". A real index does this when a chart is mis-published, and the
+// old lookup caught it for free because it used the URL string itself as its
+// not-found sentinel. Sharko must refuse such an entry, NOT join the empty
+// string onto the repository address and GET the repository root.
+const urlsHoldEmptyString = "!urls-hold-an-empty-string!"
 
 // fakeRepo is an httptest-served Helm repository: one index.yaml and one
 // .tgz per named archive, plus a record of every path that was requested.
@@ -141,6 +151,10 @@ func startFakeRepo(t *testing.T, entries []indexEntry) *fakeRepo {
 		fmt.Fprintf(&idx, "    - version: %q\n", e.version)
 		if e.archive == "" {
 			idx.WriteString("      urls: []\n")
+			continue
+		}
+		if e.archive == urlsHoldEmptyString {
+			idx.WriteString("      urls:\n      - \"\"\n")
 			continue
 		}
 		fmt.Fprintf(&idx, "      urls:\n      - archives/%s.tgz\n", e.archive)
@@ -283,6 +297,49 @@ func TestFetchValues_VersionSpelling(t *testing.T) {
 			name:        "an entry with no urls is still skipped when it is the only one",
 			index:       []indexEntry{{"1.2.3", ""}},
 			requested:   "1.2.3",
+			wantArchive: "",
+		},
+		{
+			// The regression this story introduced and then fixed. Checking
+			// only len(urls) counts this as a hit with an empty download
+			// address; the relative-URL join turns that into the repository
+			// ROOT, so Sharko fetched "/" and reported
+			// "decompressing: gzip: invalid header". It must refuse instead,
+			// and it must not reach out at all.
+			name:        "an entry whose urls list holds an empty string is skipped",
+			index:       []indexEntry{{"1.2.3", urlsHoldEmptyString}},
+			requested:   "1.2.3",
+			wantArchive: "",
+		},
+		{
+			// Same bad entry, but a good one exists under the other
+			// spelling: the scan must step over the unusable entry and
+			// carry on, exactly as it does for an empty urls: list.
+			name:         "a urls list holding an empty string is stepped over to reach the other spelling",
+			index:        []indexEntry{{"1.2.3", urlsHoldEmptyString}, {"v1.2.3", "vprefixed"}},
+			requested:    "1.2.3",
+			wantArchive:  "vprefixed",
+			wantResolved: "v1.2.3",
+		},
+		{
+			// An empty pin must never resolve, even against a malformed
+			// index that publishes an entry with an empty version: field.
+			// Otherwise Sharko downloads an arbitrary archive for a version
+			// nobody wrote down. Two callers can pass an empty version
+			// through: the v4 catalog values fetch, and the AI tool
+			// arguments.
+			name:        "an empty requested version never resolves",
+			index:       []indexEntry{{"", "sneaky"}, {"1.2.3", "bare"}},
+			requested:   "",
+			wantArchive: "",
+		},
+		{
+			// The v-prefix fallback must not rescue an empty pin either:
+			// altVersionSpelling("") already returns false, and the guard in
+			// resolveChartVersion means we never even get there.
+			name:        "an empty requested version is refused even when a v-prefixed empty-ish entry exists",
+			index:       []indexEntry{{"v", "sneaky"}, {"1.2.3", "bare"}},
+			requested:   "",
 			wantArchive: "",
 		},
 		{
