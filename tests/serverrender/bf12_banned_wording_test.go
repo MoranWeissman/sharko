@@ -182,6 +182,29 @@ var bannedWordings = []string{
 	// tracked file of any type.
 	strings.Join([]string{"sharko", "v4.0.0", "is", "a", "technical", "preview"}, " "),
 	strings.Join([]string{"sharko", "v4.0.0", "is", "the", "technical-preview", "release", "line"}, " "),
+	// V401-RECOVERY amendment 2, second pass, 2026-08-28. The first pass moved
+	// the thirteen current-state openings to "Sharko v4 is ..." but left two
+	// more in docs/site/release-notes.md reading "Sharko v4.0.1 is a technical
+	// preview" — the same mistake one patch along, written by the same hand
+	// that was cleaning it up. The owner's ruling is that the generic wording
+	// applies to ALL current-state locations, so both now read "Sharko v4 is
+	// ...", and the shape that shipped is banned here too.
+	//
+	// Same narrowness rule as above, and for the same reason: NOT the stem
+	// "sharko v4.0.1 is", which is collision-free today but would forbid a
+	// perfectly good future sentence like "Sharko v4.0.1 is the first
+	// published version of the v4 line" — a statement of fact once it is one.
+	//
+	// Honest limitation, written down because the next person will hit it:
+	// bannedWordings is a list of literal phrases, so it cannot express the
+	// actual rule, which is "a current-state sentence names no patch version
+	// at all". It only catches the openings that really shipped. If a v4.0.2
+	// opening ever appears, this list will not stop it — a reviewer has to.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly: zero
+	// collisions in the swept roots and zero across every tracked file of any
+	// type.
+	strings.Join([]string{"sharko", "v4.0.1", "is", "a", "technical", "preview"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart

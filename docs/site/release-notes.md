@@ -19,7 +19,7 @@ recent release is the first thing readers see.
 **Status:** the first publishable version of the v4 technical-preview line. It
 carries everything in the v4.0.0 entry below, plus the fix described here.
 
-**Sharko v4.0.1 is a technical preview. Install only published `v4.0.1`-or-later
+**Sharko v4 is a technical preview. Install only published `v4.0.1`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
 in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
 
@@ -51,7 +51,7 @@ in place rather than moved onto a different commit. This entry lists everything
 merged to `main` since v3.0.0 (released 2026-07-21), all of which is in the v4
 code line. Install only published `v4.0.1`-or-later artifacts.
 
-**Sharko v4.0.1 is a technical preview. Install only published `v4.0.1`-or-later
+**Sharko v4 is a technical preview. Install only published `v4.0.1`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
 in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
 
