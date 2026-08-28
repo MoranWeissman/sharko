@@ -38,6 +38,7 @@ in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
   pre-release or build suffix is never dropped, so `1.2.3-rc.1` still never
   becomes `1.2.3`; `V1.2.3` still does not match `v1.2.3`; and Sharko still never
   picks a nearby version on its own.
+  ([#863](https://github.com/MoranWeissman/sharko/pull/863))
 
 ---
 
