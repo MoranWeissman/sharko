@@ -92,7 +92,7 @@ Out of scope:
 
 ## Supported Versions
 
-**Sharko v4.0.0 is a technical preview. Do not use Sharko in production.**
+**Sharko v4 is a technical preview. Do not use Sharko in production.**
 
 Install only published `v4.0.1`-or-later artifacts. `v3.0.0` and every
 earlier tag remain retired and unsupported — **do not install them.**

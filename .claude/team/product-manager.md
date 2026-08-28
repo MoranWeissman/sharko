@@ -5,10 +5,10 @@ You are the product manager for Sharko. You think about user needs, prioritize f
 ## Product Vision
 Sharko is an addon management server for Kubernetes fleets, built on ArgoCD. Server-first — the API is the product, everything else is a client.
 
-## Current State (v4.0.0 technical preview, v3.0.0 and earlier retired)
+## Current State (v4 technical preview, v3.0.0 and earlier retired)
 
 Per `project_version_strategy` memory: `v2.0.0` (2026-06-03) was Sharko's
-first production release. Sharko v4.0.0 is the technical-preview release
+first production release. Sharko v4 is the technical-preview release
 line. Install only published v4.0.1-or-later artifacts. `v3.0.0` and
 earlier remain retired and unsupported — `v3.0.0` never verified ArgoCD's
 TLS certificate (fixed on `main` by #800; see

@@ -2,7 +2,7 @@
 
 This guide is for platform engineers and cluster operators installing Sharko in a production environment.
 
-!!! danger "Sharko v4.0.0 is a technical preview — do not use Sharko in production"
+!!! danger "Sharko v4 is a technical preview — do not use Sharko in production"
     Install only published `v4.0.1`-or-later artifacts. Do not install any
     Sharko chart version below `v4.0.1` — all earlier release lines are
     retired and unsupported. There is no patch for the `v3` line.

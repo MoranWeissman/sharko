@@ -19,7 +19,7 @@ here and retain commit access at the project's discretion.
 
 Sharko is currently led by a single maintainer (BDFL model — see
 [GOVERNANCE.md](GOVERNANCE.md)). Sharko reached production GA with
-`v2.0.0` (2026-06-03). Sharko v4.0.0 is the technical-preview release
+`v2.0.0` (2026-06-03). Sharko v4 is the technical-preview release
 line; install only published v4.0.1-or-later artifacts, since v3.0.0
 and earlier remain retired and unsupported (see
 [SECURITY.md](SECURITY.md)) and Sharko should not be used in

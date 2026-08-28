@@ -61,7 +61,7 @@ every PR touching envelope-shaped YAML or its Go model.
 
 ## Current State — v4-coherence-closure sprint
 
-Sharko v4.0.0 is the technical-preview release line: `v4` (the split-file
+Sharko v4 is the technical-preview release line: `v4` (the split-file
 data format — `managed-clusters.yaml` / `catalog.yaml` / `sharko-engine.yaml`
 at repo root, `cluster-addons/<cluster>.yaml` per-cluster assignment,
 `values/global/` + `values/clusters/`) is functionally complete and merged

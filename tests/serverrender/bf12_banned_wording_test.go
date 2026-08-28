@@ -155,6 +155,33 @@ var bannedWordings = []string{
 	// Note this guard cannot protect .goreleaser.yaml's release header, which
 	// is not under wordingSweptRoots; releasesurface_meta_test.go pins that.
 	strings.Join([]string{"published", "v4.0.0-or-later", "artifacts"}, " "),
+	// V401-RECOVERY amendment 2, 2026-08-28. The owner ruled that a sentence
+	// describing the CURRENT state must name no patch version at all, because
+	// one that does goes stale at the next patch — which is the exact failure
+	// this whole closure has been chasing. Every "Sharko v4.0.0 is a technical
+	// preview" and "Sharko v4.0.0 is the technical-preview release line" now
+	// reads "Sharko v4 is ...", which stays true for the whole line and needs
+	// no edit at v4.0.2. These are the two shapes that actually shipped,
+	// banned so neither can drift back.
+	//
+	// Both stored phrases are comma-free, so wordEdgeTrim's edge trimming
+	// reaches them from corpus text written with backticks around the version
+	// or with punctuation after it. "v4.0.0" survives the trim because its
+	// dots are internal, not on the edges.
+	//
+	// DELIBERATELY NOT the shorter stem "sharko v4.0.0 is", even though it is
+	// collision-free today and would cover both shapes at once. That stem
+	// would also forbid an honest present-tense sentence about the failed tag
+	// — "Sharko v4.0.0 is the tag that was never published" — and the v4.0.0
+	// release-notes entry, the PRD and the design records all have to be able
+	// to say what happened. A ban that forces a historical record to lie is
+	// worse than no ban, so this stays narrow on purpose.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly: zero
+	// collisions for either phrase in the swept roots, and zero across every
+	// tracked file of any type.
+	strings.Join([]string{"sharko", "v4.0.0", "is", "a", "technical", "preview"}, " "),
+	strings.Join([]string{"sharko", "v4.0.0", "is", "the", "technical-preview", "release", "line"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart
