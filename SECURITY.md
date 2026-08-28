@@ -101,7 +101,7 @@ earlier tag remain retired and unsupported — **do not install them.**
 | ------- | ----------------------------- |
 | `v3.0.x` | No — retired. Unsafe and unsupported, do not install it. |
 | `v2.x` and earlier | No. They have the same flaw as `v3.0.0`, so do not fall back to them either. |
-| `v4.0.0` and later | Yes — the currently supported technical preview line |
+| `v4.0.1` and later | Yes — the currently supported technical preview line |
 
 ### Why v3.0.0 is retired
 
@@ -113,7 +113,7 @@ ArgoCD carries Sharko's ArgoCD API token, so someone who could read that
 network traffic could have read the token.
 
 **Affected:** `v3.0.0` and every earlier tag. Fixed on `main`, ships in
-`v4.0.0`.
+`v4.0.1`.
 
 **Not affected:** the secret values Sharko delivers to your clusters,
 your Git token, and your cluster kubeconfigs. Those travel over
