@@ -1,8 +1,8 @@
 # Installation
 
 !!! danger "Sharko v4.0.0 is a technical preview — do not use Sharko in production"
-    Install only published `v4.0.0`-or-later artifacts. Do not install any
-    Sharko chart version below `v4.0.0` — all earlier release lines are
+    Install only published `v4.0.1`-or-later artifacts. Do not install any
+    Sharko chart version below `v4.0.1` — all earlier release lines are
     retired and unsupported. There is no patch for the `v3` line.
     See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
 

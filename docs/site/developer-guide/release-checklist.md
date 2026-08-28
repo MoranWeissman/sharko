@@ -75,7 +75,7 @@ The GitHub release page title and body are configured in
   preview without an operator needing to read into the body.
 - **The body** opens with a durable warning blockquote stating the
   technical-preview status, the supported artifact range
-  (`v4.0.0`-or-later only), and the fact that earlier releases remain
+  (`v4.0.1`-or-later only), and the fact that earlier releases remain
   retired. This warning sits above the CI-verified ArgoCD tested-range
   line, which follows it with a blank line between them.
 

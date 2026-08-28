@@ -13,7 +13,7 @@ technical direction, scope, release timing, and maintainer additions.
 Sharko reached production GA with `v2.0.0` (2026-06-03). The `v3.0.0`
 tag has since been retired as unsafe and unsupported. Sharko v4.0.0 is
 a technical preview built on `main` — install only published
-`v4.0.0`-or-later artifacts (see [SECURITY.md](SECURITY.md)). This model
+`v4.0.1`-or-later artifacts (see [SECURITY.md](SECURITY.md)). This model
 is intentional and appropriate for the project's
 current stage:
 
@@ -118,7 +118,7 @@ Release cadence and version numbering follow the rules in
   SemVer has applied strictly since then: patch for fixes, minor for
   features, major for breaking changes.
 - Sharko v4.0.0 is the technical-preview release line. Install only
-  published v4.0.0-or-later artifacts. v3.0.0 and earlier remain
+  published v4.0.1-or-later artifacts. v3.0.0 and earlier remain
   retired and unsupported (see [SECURITY.md](SECURITY.md)). Do not use
   Sharko in production.
 

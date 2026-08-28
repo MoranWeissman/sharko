@@ -14,13 +14,44 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
-## v4.0.0 (technical preview)
+## v4.0.1 — a chart version pinned without the leading "v" still resolves
 
-**Status:** the v4.0.0 technical preview. This entry lists everything merged to
-`main` since v3.0.0 (released 2026-07-21); it is the release entry for the
-`v4.0.0` tag.
+**Status:** the first publishable version of the v4 technical-preview line. It
+carries everything in the v4.0.0 entry below, plus the fix described here.
 
-**Sharko v4.0.0 is a technical preview. Install only published `v4.0.0`-or-later
+**Sharko v4.0.1 is a technical preview. Install only published `v4.0.1`-or-later
+artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
+in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
+
+### Bug fixes
+
+- **An addon pinned to a chart version without the leading `v` now finds its
+  chart.** Helm repositories disagree about that leading `v`: the jetstack index
+  publishes cert-manager as `v1.16.3` and carries no bare `1.16.x` entry at all.
+  Sharko compared the pinned version against the index entry as an exact string,
+  so an addon pinned to `1.16.3` came back as `version 1.16.3 not found for chart
+  cert-manager` and every request that has to read the chart's own values failed
+  with a 500 — the values editor, the merge preview, the AI annotation of values,
+  and adding an addon from a pasted chart URL. Sharko now tries the pinned
+  version exactly first and, only if that finds nothing, tries the same version
+  with one leading lowercase `v` added or removed. Nothing else changed: a pinned
+  pre-release or build suffix is never dropped, so `1.2.3-rc.1` still never
+  becomes `1.2.3`; `V1.2.3` still does not match `v1.2.3`; and Sharko still never
+  picks a nearby version on its own.
+
+---
+
+## v4.0.0 — tagged, never published
+
+**Status:** the `v4.0.0` tag was created on 2026-08-27 and pushed, and it stays
+exactly where it is. Its release run then failed at the release-evidence gate, so
+none of the publishing steps ran: there is no `v4.0.0` release page and no
+`v4.0.0` artifact of any kind, and none will be produced later — the tag is left
+in place rather than moved onto a different commit. Install `v4.0.1` above
+instead. This entry lists everything merged to `main` since v3.0.0 (released
+2026-07-21), all of which ships in `v4.0.1`.
+
+**Sharko v4.0.1 is a technical preview. Install only published `v4.0.1`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
 in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
 
@@ -323,7 +354,7 @@ right now" state instead of being bounced back to first-time setup.
 
 !!! danger "v3.0.0 is retired and unsupported"
     `v3.0.0` and every earlier tag are unsafe, retired, and unsupported.
-    Install only published `v4.0.0`-or-later artifacts. What went wrong and
+    Install only published `v4.0.1`-or-later artifacts. What went wrong and
     what to do:
     [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
 

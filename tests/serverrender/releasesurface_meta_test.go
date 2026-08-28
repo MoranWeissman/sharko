@@ -68,7 +68,7 @@ func TestPublishedReleaseBodyCarriesTheDurableWarning(t *testing.T) {
 	warningSentences := []string{
 		"Sharko {{ .Tag }} is a technical preview.",
 		"Do not use Sharko in production.",
-		"Install only published v4.0.0-or-later artifacts.",
+		"Install only published v4.0.1-or-later artifacts.",
 		"v3.0.0 and earlier remain retired and unsupported.",
 	}
 

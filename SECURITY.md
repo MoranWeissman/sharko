@@ -94,7 +94,7 @@ Out of scope:
 
 **Sharko v4.0.0 is a technical preview. Do not use Sharko in production.**
 
-Install only published `v4.0.0`-or-later artifacts. `v3.0.0` and every
+Install only published `v4.0.1`-or-later artifacts. `v3.0.0` and every
 earlier tag remain retired and unsupported — **do not install them.**
 
 | Version | Supported for security fixes |
@@ -120,7 +120,7 @@ your Git token, and your cluster kubeconfigs. Those travel over
 different connections and this flaw did not touch them.
 
 **What to do:** do not install `v3.0.0` or any earlier tag — they remain
-retired and unsupported. Install only published `v4.0.0`-or-later
+retired and unsupported. Install only published `v4.0.1`-or-later
 artifacts. There is no patch release for the `v3` line.
 
 If you did run `v3.0.0` against an `https://` ArgoCD server, treat that

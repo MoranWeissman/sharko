@@ -58,10 +58,14 @@ type chartMetadata struct {
 // Fetcher downloads Helm chart values.yaml for comparison.
 // Includes in-memory caching to avoid redundant downloads.
 type Fetcher struct {
-	client      *http.Client
-	indexCache  map[string]*repoIndex     // key: repoURL
-	valuesCache map[string]string         // key: repoURL/chart/version
-	chartCache  map[string]*chartMetadata // key: repoURL/chart/version
+	client     *http.Client
+	indexCache map[string]*repoIndex // key: repoURL
+	// The two archive caches are keyed on the version the repo index
+	// PUBLISHES, not on the spelling the caller pinned — see
+	// resolveChartVersion. "1.16.3" and "v1.16.3" against a v-prefixed
+	// index therefore share one entry and one download.
+	valuesCache map[string]string         // key: repoURL/chart/resolved-version
+	chartCache  map[string]*chartMetadata // key: repoURL/chart/resolved-version
 }
 
 // NewFetcher creates a new Helm chart fetcher with caching.
@@ -259,29 +263,103 @@ func parseVersion(version string) []int {
 	return result
 }
 
+// altVersionSpelling returns the one other spelling of a chart version that
+// Sharko will accept: the same string with a single leading lowercase "v"
+// added if it has none, or removed if it has exactly one.
+//
+// It returns false when the requested string is not one of those two plain
+// shapes, so nothing beyond the exact match is ever tried. "vv1.2.3" is the
+// case that matters: dropping one "v" would turn it into "v1.2.3", which is
+// a DIFFERENT version string, and Sharko must not quietly fetch a version
+// nobody pinned. A capital "V" is not the lowercase one either, so "V1.2.3"
+// never reaches "v1.2.3" — no case folding anywhere on this path.
+func altVersionSpelling(requested string) (string, bool) {
+	if requested == "" {
+		return "", false
+	}
+	if rest, hadV := strings.CutPrefix(requested, "v"); hadV {
+		// One leading "v", with something after it that is not another
+		// "v". Anything else is not a plain spelling of a version.
+		if rest == "" || strings.HasPrefix(rest, "v") {
+			return "", false
+		}
+		return rest, true
+	}
+	return "v" + requested, true
+}
+
+// pickChartVersion returns the index entry whose version string is exactly
+// want and that actually has somewhere to download from. Entries with an
+// empty urls: list are skipped and the scan continues, because there is
+// nothing to fetch for them.
+func pickChartVersion(versions []ChartVersion, want string) *ChartVersion {
+	for i := range versions {
+		if versions[i].Version == want && len(versions[i].URLs) > 0 {
+			return &versions[i]
+		}
+	}
+	return nil
+}
+
+// resolveChartVersion picks the download URL for a requested chart version
+// out of a repo index's entry list, and reports which spelling of the
+// version the index actually publishes.
+//
+// The matching rule, in full:
+//
+//  1. The requested string, exactly.
+//  2. Only if that finds nothing: the same string with one leading
+//     lowercase "v" added or removed (see altVersionSpelling).
+//
+// That is all of it. Chart repositories disagree about the leading "v" —
+// the jetstack index publishes cert-manager as "v1.16.3" and carries no
+// bare "1.16.x" entry at all — so an addon pinned to "1.16.3" used to miss
+// the lookup and fail the request outright. Nothing else is attempted: no
+// nearest-version selection (FindNearestVersion is a separate call the
+// upgrade checker makes deliberately, and it must stay unreachable from
+// here), no case folding, and prerelease and build suffixes ride along
+// untouched, so "1.2.3-rc.1" never resolves to "1.2.3".
+//
+// FetchValues and fetchChartYAML both go through this one function. They
+// used to carry a byte-identical copy of the strict-equality loop each,
+// which is how the bare-version miss came to exist in two places at once.
+//
+// The returned resolved version is what both caches are keyed on, so the
+// two spellings of a version share a single cache entry and a single
+// download rather than fetching the same archive twice.
+func resolveChartVersion(versions []ChartVersion, requested string) (resolved, chartURL string, ok bool) {
+	if hit := pickChartVersion(versions, requested); hit != nil {
+		return hit.Version, hit.URLs[0], true
+	}
+	if alt, hasAlt := altVersionSpelling(requested); hasAlt {
+		if hit := pickChartVersion(versions, alt); hit != nil {
+			return hit.Version, hit.URLs[0], true
+		}
+	}
+	return "", "", false
+}
+
 // FetchValues downloads a chart archive and extracts values.yaml.
 func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version string) (string, error) {
-	// Check cache first
-	cacheKey := repoURL + "/" + chartName + "/" + version
-	if cached, ok := f.valuesCache[cacheKey]; ok {
-		return cached, nil
-	}
-
-	// First get the chart URL from index
+	// The index is read BEFORE the values cache is consulted, because the
+	// cache key holds the version the index publishes rather than the
+	// spelling this caller happened to use. That costs no extra network
+	// traffic on a repeat call — indexCache holds the parsed index for the
+	// life of the process — and it means getIndex's address check now runs
+	// on every FetchValues, including ones a cache hit used to skip.
 	versions, err := f.ListVersions(ctx, repoURL, chartName)
 	if err != nil {
 		return "", err
 	}
 
-	var chartURL string
-	for _, v := range versions {
-		if v.Version == version && len(v.URLs) > 0 {
-			chartURL = v.URLs[0]
-			break
-		}
-	}
-	if chartURL == "" {
+	resolvedVersion, chartURL, ok := resolveChartVersion(versions, version)
+	if !ok {
 		return "", fmt.Errorf("version %s not found for chart %s", version, chartName)
+	}
+
+	cacheKey := repoURL + "/" + chartName + "/" + resolvedVersion
+	if cached, ok := f.valuesCache[cacheKey]; ok {
+		return cached, nil
 	}
 
 	// Handle relative URLs
@@ -341,28 +419,25 @@ func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version s
 }
 
 // fetchChartYAML downloads the chart archive and extracts Chart.yaml metadata.
-// Results are cached per repoURL/chartName/version (15-minute effective TTL via process lifetime).
+// Results are cached per repoURL/chartName/resolved-version (15-minute
+// effective TTL via process lifetime).
 func (f *Fetcher) fetchChartYAML(ctx context.Context, repoURL, chartName, version string) (*chartMetadata, error) {
-	cacheKey := repoURL + "/" + chartName + "/" + version
-	if cached, ok := f.chartCache[cacheKey]; ok {
-		return cached, nil
-	}
-
-	// Reuse chart URL lookup from the index.
+	// Index first, then the cache — same reason as FetchValues above: the
+	// cache key carries the version the index publishes, not the spelling
+	// the caller used.
 	versions, err := f.ListVersions(ctx, repoURL, chartName)
 	if err != nil {
 		return nil, err
 	}
 
-	var chartURL string
-	for _, v := range versions {
-		if v.Version == version && len(v.URLs) > 0 {
-			chartURL = v.URLs[0]
-			break
-		}
-	}
-	if chartURL == "" {
+	resolvedVersion, chartURL, ok := resolveChartVersion(versions, version)
+	if !ok {
 		return nil, fmt.Errorf("version %s not found for chart %s", version, chartName)
+	}
+
+	cacheKey := repoURL + "/" + chartName + "/" + resolvedVersion
+	if cached, ok := f.chartCache[cacheKey]; ok {
+		return cached, nil
 	}
 
 	if !strings.HasPrefix(chartURL, "http") {

@@ -65,7 +65,7 @@ Sharko v4.0.0 is the technical-preview release line: `v4` (the split-file
 data format — `managed-clusters.yaml` / `catalog.yaml` / `sharko-engine.yaml`
 at repo root, `cluster-addons/<cluster>.yaml` per-cluster assignment,
 `values/global/` + `values/clusters/`) is functionally complete and merged
-to main. Install only published v4.0.0-or-later artifacts; v3.0.0 and
+to main. Install only published v4.0.1-or-later artifacts; v3.0.0 and
 earlier remain retired and unsupported, and Sharko should not be used in
 production. Never tag a release without Moran's word.
 

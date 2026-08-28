@@ -9,7 +9,7 @@ Sharko is an addon management server for Kubernetes fleets, built on ArgoCD. Ser
 
 Per `project_version_strategy` memory: `v2.0.0` (2026-06-03) was Sharko's
 first production release. Sharko v4.0.0 is the technical-preview release
-line. Install only published v4.0.0-or-later artifacts. `v3.0.0` and
+line. Install only published v4.0.1-or-later artifacts. `v3.0.0` and
 earlier remain retired and unsupported — `v3.0.0` never verified ArgoCD's
 TLS certificate (fixed on `main` by #800; see
 [SECURITY.md](../../SECURITY.md)). Do not use Sharko in production.

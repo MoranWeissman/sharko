@@ -136,6 +136,25 @@ var bannedWordings = []string{
 	strings.Join([]string{"nothing", "to", "install"}, " "),
 	strings.Join([]string{"not", "proven", "by", "a", "release", "yet"}, " "),
 	strings.Join([]string{"waiting", "on", "moran's", "word", "for", "the"}, " "),
+	// V401-RECOVERY, 2026-08-28. The v4.0.0 tag was cut but its release gate
+	// failed, so no v4.0.0 artifact was ever published and none ever will be.
+	// Every install and support page that told the reader to install only
+	// published v4.0.0-or-later artifacts was naming a floor nobody can
+	// reach; they now say v4.0.1. Banned so the old floor cannot drift back.
+	//
+	// Three words, no comma: wordEdgeTrim strips backticks and punctuation
+	// off each word's edges, so a stored phrase carrying its own comma would
+	// never match the corpus. The corpus wrote this both with backticks
+	// around the version and with a comma after "artifacts", and both reach
+	// the comparison as these three plain words.
+	//
+	// Checked before adding: zero places in the swept roots — and zero in any
+	// tracked file of any type — still carry this phrase, so it collides with
+	// nothing. The historical record in docs/site/release-notes.md says
+	// v4.0.0 was tagged but never published, which is a different sentence.
+	// Note this guard cannot protect .goreleaser.yaml's release header, which
+	// is not under wordingSweptRoots; releasesurface_meta_test.go pins that.
+	strings.Join([]string{"published", "v4.0.0-or-later", "artifacts"}, " "),
 }
 
 // wordingSweptExtensions are the kinds of file a person reads: prose, chart

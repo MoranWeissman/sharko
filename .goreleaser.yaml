@@ -86,7 +86,7 @@ release:
   # working when the variable is unset — the header is then empty rather than
   # a template error.
   header: |
-    > **Sharko {{ .Tag }} is a technical preview. Do not use Sharko in production.** Install only published `v4.0.0`-or-later artifacts. `v3.0.0` and earlier remain retired and unsupported.
+    > **Sharko {{ .Tag }} is a technical preview. Do not use Sharko in production.** Install only published `v4.0.1`-or-later artifacts. `v3.0.0` and earlier remain retired and unsupported.
 
     {{ envOrDefault "SHARKO_TESTED_ARGOCD_LINE" "" }}
   # Story V123-2.5: attach per-entry cosign bundles produced by the
