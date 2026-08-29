@@ -628,23 +628,3 @@ supported way to apply policy changes.
   `^refs/tags/v.*$` cryptographically pins trust to tag-built signatures.
 - **Future:** hot reload, per-source policy overrides, Settings-page
   exposure of the policy.
-
-<!-- Style-guide compliance checklist (V2-4.1):
-- [x] Title matches `# <Failure name>` (page covers the trust-policy failure mode)
-- [x] Severity line present (P1)
-- [x] Verified-by-execution header + date
-- [x] Symptoms section before Diagnosis
-- [x] Symptoms include exact log lines / error messages / API responses
-- [x] Diagnosis has 3 concrete checks
-- [x] Mitigation uses numbered list
-- [x] Mitigation has 5 steps in priority order
-- [x] Root-cause patterns: 4 named causes
-- [x] Prevention section present and non-empty
-- [x] Related runbooks section present
-- [x] Intro is operator-on-call voice (runbook half leads, reference half follows behind divider)
-- [x] Length in 300-800 line range
-- [x] All cross-links resolve
-- [x] No emoji / no internal Slack / employee email
-- [x] (if applicable) Alert name from prometheusrules.yaml referenced — N/A (no alert for this failure mode)
--->
-

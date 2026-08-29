@@ -389,22 +389,3 @@ production-blocking conversations only, email
 The maintainer is a single human, not a 24×7 rotation. This is a
 v1.x scope cut, not a bug; escalation accelerates roadmap visibility
 but doesn't unlock the feature in v1.x.
-
-<!-- Style-guide compliance checklist (V2-4.1):
-- [x] Title matches `# <Failure name>`
-- [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current; explains 2-row grouping rationale per style guide
-- [x] Symptoms section appears BEFORE Diagnosis
-- [x] Symptoms include exact log lines / error messages (4 variants)
-- [x] Diagnosis has 3+ concrete checks (3 named) with exact commands
-- [x] Mitigation uses numbered list (1. 2. 3. 4.) not bullets
-- [x] Mitigation has 3-5 steps in priority order, each with rationale + exact command
-- [x] Root-cause patterns section: 2+ named causes (3 named), 1-3 paragraphs each
-- [x] Prevention section present and non-empty (NOT "TBD")
-- [x] Related runbooks section present with multiple links
-- [x] Intro is operator-on-call voice; explicit "this is a v1.x scope cut" framing
-- [x] Length within 300-800 line target
-- [x] All cross-links resolve via mkdocs --strict
-- [x] No emoji / no internal Slack / employee email
-- [x] No alert applicable (scope cut); explicitly stated
--->

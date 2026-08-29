@@ -377,21 +377,3 @@ the cluster is critical-path for fleet expansion, email the maintainer:
 
 The maintainer is a single human, not a 24×7 rotation. Expect a
 business-day SLA, not a paged response.
-
-<!-- Style-guide compliance checklist (V2-cleanup-88.6 rewrite):
-- [x] Title matches `# <Failure name>`
-- [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current
-- [x] Symptoms section appears BEFORE Diagnosis
-- [x] Symptoms include exact log lines / error messages / wire codes
-- [x] Diagnosis has 4 concrete checks with exact commands
-- [x] Mitigation uses numbered list (1-5) not bullets
-- [x] Mitigation has 5 steps in priority order, each with rationale + exact command
-- [x] Root-cause patterns section: 3 named causes
-- [x] Prevention section present and non-empty
-- [x] Related runbooks section present with multiple links
-- [x] Intro is operator-on-call voice
-- [x] All cross-links resolve via mkdocs --strict
-- [x] No emoji / no internal Slack / employee email
-- [x] Reflects V2-cleanup-88.2 shipped reality: only unknown commands are unsupported
--->

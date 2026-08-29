@@ -434,22 +434,3 @@ The maintainer is a single human, not a 24x7 rotation. Expect a
 business-day SLA. Because the guard is by-design and the addon
 operation completes successfully, this is not a pager-grade
 incident.
-
-<!-- Style-guide compliance checklist (V2-4.1):
-- [x] Title matches `# <Failure name>`
-- [x] Severity line present (P1)
-- [x] Verified-by-execution header + date
-- [x] Symptoms section before Diagnosis
-- [x] Symptoms include exact log lines / error messages / response shapes
-- [x] Diagnosis has 3+ concrete checks
-- [x] Mitigation uses numbered list
-- [x] Mitigation has 3-5 steps in priority order (4 steps)
-- [x] Root-cause patterns: 2+ named causes (3 named)
-- [x] Prevention section present and non-empty
-- [x] Related runbooks section present
-- [x] Intro is operator-on-call voice
-- [x] Length 300-800 lines (in range)
-- [x] All cross-links resolve
-- [x] No emoji / no internal Slack / employee email
-- [x] (if applicable) Metric reference includes outcome label
--->

@@ -504,22 +504,3 @@ If the bypass affects production fleet at scale, also notify
 downstream operators (the platform teams whose clusters Sharko
 manages) so they can audit their own audit trails for unauthorized
 actions during the bypass window.
-
-<!-- Style-guide compliance checklist (V2-4.1):
-- [x] Title matches `# <Failure name>`
-- [x] Severity line present (P0)
-- [x] Verified-by-execution header + date
-- [x] Symptoms section before Diagnosis
-- [x] Symptoms include exact log lines / error messages / alert names
-- [x] Diagnosis has 3+ concrete checks (4 named)
-- [x] Mitigation uses numbered list
-- [x] Mitigation has 3-5 steps in priority order
-- [x] Root-cause patterns: 2+ named causes (4 named)
-- [x] Prevention section present and non-empty
-- [x] Related runbooks section present
-- [x] Intro is operator-on-call voice
-- [x] Length 300-800 lines
-- [x] All cross-links resolve
-- [x] No emoji / no internal Slack / employee email
-- [x] (if applicable) No alert defined yet (per Symptoms)
--->

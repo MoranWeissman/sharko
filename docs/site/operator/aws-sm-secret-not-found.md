@@ -508,22 +508,3 @@ AND the cluster is on the critical path, email the maintainer:
 The maintainer is a single human, not a 24×7 rotation. Most
 not-found failures are operator-correctable via Mitigation steps 1-4;
 escalation is rare.
-
-<!-- Style-guide compliance checklist (V2-4.1):
-- [x] Title matches `# <Failure name>`
-- [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current (re-authored 2026-08-11, provider-error hotfix)
-- [x] Symptoms section appears BEFORE Diagnosis
-- [x] Symptoms include exact log lines / error messages
-- [x] Diagnosis has 3+ concrete checks (4 named) with exact commands
-- [x] Mitigation uses numbered list (1. 2. 3. 4. 5.) not bullets
-- [x] Mitigation has 3-5 steps in priority order, each with rationale + exact command
-- [x] Root-cause patterns section: 2+ named causes (5 named), 1-3 paragraphs each
-- [x] Prevention section present and non-empty (NOT "TBD")
-- [x] Related runbooks section present with multiple links
-- [x] Intro is operator-on-call voice
-- [x] Length within 300-800 line target
-- [x] All cross-links resolve via mkdocs --strict
-- [x] No emoji / no internal Slack / employee email
-- [x] Alert names referenced (SharkoClusterRegistrationFastBurn)
--->

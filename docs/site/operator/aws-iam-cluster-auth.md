@@ -306,21 +306,3 @@ limitation is blocking fleet on-boarding, email the maintainer:
 
 The maintainer is a single human, not a 24x7 rotation. Expect a
 business-day SLA, not a paged response.
-
-<!-- Style-guide compliance checklist (V2-cleanup-88.6 rewrite):
-- [x] Title matches `# <Failure name>`
-- [x] Severity line present (P1)
-- [x] Verified-by-execution header + date current
-- [x] Symptoms section before Diagnosis
-- [x] Symptoms include exact log lines / error messages / API responses
-- [x] Diagnosis has 4 concrete checks
-- [x] Mitigation uses numbered list
-- [x] Mitigation has 5 steps in priority order
-- [x] Root-cause patterns: 3 named causes
-- [x] Prevention section present and non-empty
-- [x] Related runbooks section present
-- [x] Intro is operator-on-call voice
-- [x] All cross-links resolve
-- [x] No emoji / no internal Slack / employee email
-- [x] Reflects V2-cleanup-88.2 shipped reality, not the old v1.x-unsupported framing
--->
