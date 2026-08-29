@@ -39,36 +39,34 @@ production-launch epic focused on **measurable production-readiness**
 rather than new user features. Capabilities landed:
 
 - **Performance baselines + SLO targets per critical path.** p50 / p95
-  / p99 measurements per phase across the four V2-1 critical surfaces
+  / p99 measurements per phase across the four critical surfaces
   (`cluster_registration`, `addon_cycle`, `catalog_scan`,
   `dashboard_read`), with documented SLO targets, error budgets, and
   multi-burn-rate thresholds. A `workflow_dispatch` baseline-refresh
   workflow plus a comparator binary with `-emit` mode gate every PR
   against the committed baselines.
-  → See [`slos.md`](../operator/slos.md),
-  [`perf-baselines.md`](../operator/perf-baselines.md), and the V2-1
-  release-notes entry.
+  → See [`slos.md`](../operator/slos.md) and
+  [`perf-baselines.md`](../operator/perf-baselines.md).
 - **100% slog logging with correlation IDs and sensitive-field
   redaction.** Every internal caller now uses `log/slog`. A
   `request_id` propagates across middleware, the cluster reconciler,
   the PR tracker, the orchestrator, and every API handler. A
   `slog.Handler` wrapper redacts tokens, kubeconfigs, and secret
   bodies before they hit any sink.
-  → See [`logging.md`](../developer-guide/logging.md) and the V2-2
-  release-notes entry.
+  → See [`logging.md`](../developer-guide/logging.md).
 - **Prometheus telemetry for SLO surfaces.** Histogram + counter
-  exposition with V2-1.2-sized buckets, OpenTelemetry-conventional
-  metric naming, exemplars carrying `request_id`, a Helm-shipped
-  `PrometheusRule` template with multi-window multi-burn-rate alerts,
-  and an operator runbook covering every alert end-to-end.
+  exposition with OpenTelemetry-conventional metric naming, exemplars
+  carrying `request_id`, a Helm-shipped `PrometheusRule` template with
+  multi-window multi-burn-rate alerts, and an operator runbook
+  covering every alert end-to-end.
   → See [`metrics-naming.md`](../operator/metrics-naming.md) and
   [`budget-burn-runbook.md`](../operator/budget-burn-runbook.md).
 - **Failure-mode index + P0/P1 runbooks.** Every Sharko error path
   bucketed into operator-observable failure modes (63 rows across the
   API, reconciler, orchestrator, providers, catalog, and audit-log
-  surfaces). All P0 and P1 GAPs closed by V2-4.3; the remaining 12
-  P2s are tracked as a v2.x follow-up backlog. Style guide governs
-  every runbook page going forward.
+  surfaces). All P0 and P1 GAPs closed; the remaining 12 P2s are
+  tracked as a v2.x follow-up backlog. Style guide governs every
+  runbook page going forward.
   → See [`failure-mode-index.md`](../operator/failure-mode-index.md)
   and the [runbook style
   guide](../developer-guide/runbook-style-guide.md).
@@ -105,20 +103,17 @@ needing a major bump. The maintainer's working order is roughly:
 - **Adopter feedback fixes.** Bug reports and small papercuts surfaced
   by real v2.0.0 installs. Prioritisation favours problems that block
   first-install-to-first-cluster.
-- **Per-endpoint stability annotation rollout (V2-6.3 follow-up).**
-  The stability tiers documented in
-  [`api-stability.md`](../developer-guide/api-stability.md) need a
-  mechanical pass adding `// @stability <tier>` annotations to each
-  handler's Swagger block so the Swagger UI can render the badge
+- **Per-endpoint stability annotation rollout.** The stability tiers
+  documented in [`api-stability.md`](../developer-guide/api-stability.md)
+  need a mechanical pass adding `// @stability <tier>` annotations to
+  each handler's Swagger block so the Swagger UI can render the badge
   inline. Separate mechanical PR; no contract change.
-- **Per-phase metric wiring follow-ups.** V2-3.1 instrumented the four
-  critical surfaces with phase-grained histograms; a small number of
-  internal phases inside `cluster_registration`, `addon_cycle`, and
-  `catalog_scan` still need their `request_id`-bearing exemplars
-  wired through.
-- **ServiceMonitor CR shipping (V2-3 follow-up).** The
-  `PrometheusRule` template ships in the Helm chart; a matching
-  `ServiceMonitor` CR for the
+- **Per-phase metric wiring follow-ups.** The four critical surfaces
+  have phase-grained histograms; a small number of internal phases
+  inside `cluster_registration`, `addon_cycle`, and `catalog_scan`
+  still need their `request_id`-bearing exemplars wired through.
+- **ServiceMonitor CR shipping.** The `PrometheusRule` template ships
+  in the Helm chart; a matching `ServiceMonitor` CR for the
   [Prometheus Operator](https://prometheus-operator.dev/) is a
   near-term addition for adopters who run that stack.
 
@@ -244,7 +239,7 @@ In order of preference:
   describing the problem, your current workaround, and what
   capability would unblock you. Discussions stay open longer than
   issues and are the maintainer's preferred surface for shaping
-  intent. The category was added by the V2-6 GitHub config:
+  intent:
   [https://github.com/MoranWeissman/sharko/discussions](https://github.com/MoranWeissman/sharko/discussions).
 - **Feature issue template.** When the problem is concrete enough to
   formalise as a request, use the
