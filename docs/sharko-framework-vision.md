@@ -1,5 +1,11 @@
 # Sharko — Framework Vision
 
+> **This is a design-vision record, not documentation.** It describes what Sharko
+> was meant to become when it was planned. Some of it was built differently and
+> some of it was never built, so nothing on this page should be read as a
+> statement about how Sharko behaves. For that, read the
+> [documentation](site/index.md) or the README at the top of the repository.
+
 > **Name:** Sharko — the shark alongside the Argo. ArgoCD's octopus + Sharko's shark.
 > Two ocean predators, same ecosystem. The "-o" suffix mirrors ArgoCD — companion tools.
 >
