@@ -212,6 +212,68 @@ var bannedWordings = []string{
 	// line" in CONTRIBUTING.md walked straight past the sweep while the
 	// v4.0.0 spelling in the same place was caught. Closing it.
 	strings.Join([]string{"sharko", "v4.0.1", "is", "the", "technical-preview", "release", "line"}, " "),
+	// INSTALL-PATHS, 2026-08-29. Every documented way to install the CLI was
+	// broken, and one of them was dangerous rather than merely useless:
+	//
+	//   - "go install github.com/MoranWeissman/sharko/cmd/sharko@latest"
+	//     silently installed v1.0.0. go.mod declares the module with no /vN
+	//     suffix, which Go requires from major version 2 up, so the module proxy
+	//     has never seen v2, v3 or v4 and @latest resolves inside the v1 line.
+	//     That build predates the ArgoCD TLS fix — the exact defect that makes
+	//     v3.0.0 retired and unsafe — and the reader got it with no error at all.
+	//   - "brew install moranweissman/tap/sharko" pointed at a tap that does not
+	//     exist and never has. Both spellings of the tap repository return 404,
+	//     and .goreleaser.yaml has no brew section to publish a formula from.
+	//   - the version-less archive names. goreleaser's name_template is
+	//     "sharko_{{ .Version }}_{{ .Os }}_{{ .Arch }}", so a filename with no
+	//     version in it cannot resolve for any release that has ever been cut.
+	//
+	// The go install phrase is stored WITHOUT the @latest suffix on purpose.
+	// Phrases are matched as substrings of the flattened text, so the shorter
+	// stem also catches @v1.0.0 and every other pin — all of them inside the v1
+	// line, all of them below the v4.0.1 floor. It does NOT catch the path the
+	// /v4 module migration will create, because "sharko/v4/cmd/sharko" does not
+	// contain "sharko/cmd/sharko", so this ban cannot stand in the way of the
+	// real fix when that lands.
+	//
+	// Two different failures need two different bans, which is why both the
+	// filenames and the URL prefix are here:
+	//
+	//   - a version-less filename under a tagged URL is a 404. All four
+	//     published platform names are banned, not only the linux/amd64 one that
+	//     shipped, because the page now documents all four and a later edit could
+	//     drop the version from any of them.
+	//   - a VERSIONED filename under releases/latest/download/ is worse: it
+	//     resolves while that release is the latest one and breaks at the next
+	//     release, so it passes review and fails in front of a user.
+	//     "latest/download/sharko" catches that, and because the stem stops
+	//     before the separator it also catches the dashed sharko-linux-amd64
+	//     shape the GitHub Actions example under templates/ was using — a name
+	//     that has never been a release asset in any form.
+	//
+	// DELIBERATELY NOT banning "releases/latest/download" on its own.
+	// latest/download/checksums.txt genuinely resolves, because checksums.txt is
+	// the one release asset with no version in its name, so a ban on the bare
+	// prefix would forbid a command that works. The archive names are the
+	// problem, so only they are named.
+	//
+	// Honest limitation: this list holds literal phrases, so it cannot express
+	// the actual rule, which is "an install command must name a version that
+	// exists and must be able to reach v4.0.1 or later". It catches the shapes
+	// that really shipped. A newly invented broken shape still needs a reviewer.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly over every
+	// tracked file of every type: the only hits for any of these seven phrases
+	// were the two files the same change fixes, docs/site/cli/overview.md and
+	// templates/examples/validate-action.yaml. Nothing else in the repository
+	// carries them, including the historical records under docs/design.
+	strings.Join([]string{"go", "install", "github.com/moranweissman/sharko/cmd/sharko"}, " "),
+	strings.Join([]string{"brew", "install", "moranweissman/tap/sharko"}, " "),
+	strings.Join([]string{"sharko", "linux", "amd64.tar.gz"}, "_"),
+	strings.Join([]string{"sharko", "linux", "arm64.tar.gz"}, "_"),
+	strings.Join([]string{"sharko", "darwin", "amd64.tar.gz"}, "_"),
+	strings.Join([]string{"sharko", "darwin", "arm64.tar.gz"}, "_"),
+	strings.Join([]string{"latest", "download", "sharko"}, "/"),
 }
 
 // Why the published GitHub release page is allowed to say the banned sentence.
@@ -513,5 +575,49 @@ func TestTheBannedAddressWordingIsNowhereInTheDocumentationOrTheChart(t *testing
 			"same rule, and the tests compare the two over written-down lists rather than over every "+
 			"address there is. Say what is actually true instead.",
 			len(found), strings.Join(lines, "\n  "))
+	}
+}
+
+// TestTheCLIInstallPageBuildsTheVersionedArchiveName pins the install command
+// that works, by exact text.
+//
+// INSTALL-PATHS, 2026-08-29. Banning the three broken forms is only half of the
+// guard, because a ban is also satisfied by a page with no install command on it
+// at all, and that is its own kind of broken. This asserts the shape that was
+// actually run against the published release is still on the page: the archive
+// name built from the tag rather than typed out, the tagged download URL, the
+// checksum file, and the -f on curl. Without -f a wrong name saves GitHub's 404
+// page under the archive's name and the failure only shows up later, as a
+// confusing tar error.
+//
+// This one reads the file as written rather than flattened, because what is
+// being pinned is shell text, and the shell expansions have to survive exactly.
+func TestTheCLIInstallPageBuildsTheVersionedArchiveName(t *testing.T) {
+	page := filepath.Join(repoRoot(t), "docs", "site", "cli", "overview.md")
+	body, err := os.ReadFile(page)
+	if err != nil {
+		t.Fatalf("cannot read the CLI install page, so nothing about it is pinned: %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		// The version comes from the tag, so the name can never go version-less.
+		"sharko_${TAG#v}_darwin_${ARCH}.tar.gz",
+		"sharko_${TAG#v}_linux_${ARCH}.tar.gz",
+		// A tagged URL, not the latest/download one.
+		"releases/download/${TAG}",
+		// Fail on a bad name instead of saving the 404 page.
+		"curl -fLO",
+		// Integrity is checked, not assumed.
+		"checksums.txt",
+		// Both architectures are offered, so nobody is left without a command.
+		"ARCH=arm64",
+		"ARCH=amd64",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("docs/site/cli/overview.md no longer contains %q. The install command on that "+
+				"page is the only supported way to get the CLI and it was verified against a real "+
+				"published release; if it changed shape, run it from an empty directory and prove the "+
+				"new one works before changing this test.", want)
+		}
 	}
 }
