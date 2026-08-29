@@ -26,7 +26,7 @@ Three-tier framing:
 |---|---|---|---|
 | **Unit / component** | `internal/**/*_test.go`, `ui/src/**/__tests__/` | every PR (`ci.yml`) | seconds |
 | **In-process e2e** | `tests/e2e/` with `make test-e2e-fast` | local + opt-in | ~30 s |
-| **Helm-mode e2e (V125-1-13)** | Wave-D `cluster_test_*` files with `make test-e2e-helm` | every PR (`e2e.yml::helm-mode-e2e`) | ~5–8 min |
+| **Helm-mode e2e** | Wave-D `cluster_test_*` files with `make test-e2e-helm` | every PR (`e2e.yml::helm-mode-e2e`) | ~5–8 min |
 | **Full e2e (kind + argocd)** | `tests/e2e/` with `make test-e2e` | label `e2e`, nightly, manual | ~10–15 min |
 
 Every file in `tests/e2e/` carries the `//go:build e2e` build tag, so the
@@ -173,7 +173,7 @@ ONLY those carrying the sentinel — your dev cluster from
 `scripts/sharko-dev.sh` is never touched. Don't broaden the destroy
 criteria; the sentinel is the safety contract.
 
-## Full-fidelity Helm mode (V125-1-13)
+## Full-fidelity Helm mode
 
 Helm mode boots a real Sharko Docker image into a kind cluster via
 `helm install` and talks to it through a `kubectl port-forward`. It catches
@@ -194,15 +194,14 @@ Three primitives carry the mode end-to-end:
 ### When to use Helm mode
 
 - Testing the **auto-default provider path** — `rest.InClusterConfig()` only
-  succeeds inside a real pod, so the V125-1-10.7 ungate fix is invisible to
-  in-process tests.
+  succeeds inside a real pod, so the ungate fix is invisible to in-process tests.
 - Testing **UI ↔ backend contract end-to-end** — provider-type dropdown
   changes, registration wizard flows that hit the live router stack.
 - Reproducing **operator-flow bugs** — port-forward, admin-secret bootstrap,
   ArgoCD reconciliation timing, RBAC against a real ServiceAccount.
 - **Regression-pinning** a fix that came out of a live dev install — the
-  three Wave-D tests (`TestClusterTest_*`) are exactly this: each pins a
-  V125-1-10.x bug that the in-process suite missed.
+  three Wave-D tests (`TestClusterTest_*`) are exactly this: each pins a bug
+  that the in-process suite missed.
 
 ### When NOT to use Helm mode
 
@@ -251,8 +250,8 @@ SHARKO_E2E_IMAGE_TAG=e2e-$(git rev-parse --short HEAD) \
 ### Writing a Helm-mode test
 
 The minimum shape (lifted from
-`tests/e2e/lifecycle/cluster_test_provider_autodefault_test.go` —
-the V125-1-13.5 regression pin for V125-1-10.7's `serve.go` ungate):
+`tests/e2e/lifecycle/cluster_test_provider_autodefault_test.go` — a regression
+pin for the `serve.go` ungate fix):
 
 ```go
 //go:build e2e
@@ -399,7 +398,7 @@ storage). The cleanup hook runs on `t.Cleanup` so a panicked test or
 | Job | Trigger | Runtime | What it runs |
 |---|---|---|---|
 | `e2e` | label `e2e`, nightly, manual | ~10–15 min | `make test-e2e-report` — full suite. |
-| `helm-mode-e2e` (V125-1-13.8) | **every** PR push | ~5–8 min | `make test-e2e-helm` — Wave-D subset. |
+| `helm-mode-e2e` | **every** PR push | ~5–8 min | `make test-e2e-helm` — Wave-D subset. |
 | `live-gitea` (task #65) | label `e2e`, nightly, manual | a few minutes | `TestGiteaLiveWriteLoop` against a `gitea/gitea` service container. See [Live-Gitea write loop](#live-gitea-write-loop-task-65) above. |
 
 The split is deliberate. `helm-mode-e2e` is unlabelled and PR-blocking
@@ -416,7 +415,7 @@ docker-build cache hits on workflow re-runs of the same commit, and uploads
 deployment + ArgoCD diagnostics on failure (see the `Diagnostics on
 failure` step in `e2e.yml`).
 
-### Provider-types contract (V125-1-13.7)
+### Provider-types contract
 
 A separate guard catches a class of UI ↔ backend drift that even Helm
 mode would miss without explicit assertions: the Settings →
@@ -442,15 +441,15 @@ The pattern mirrors the swagger-docs-up-to-date check
 contracts — the generator is invoked at build/CI time, never at server
 start.
 
-### In-cluster gitfake (V125-1-13.x)
+### In-cluster gitfake
 
 Helm-mode tests historically could not drive register / sync flows that
 round-trip through Git: the in-pod Sharko couldn't reach a host-side
 `harness.GitFake` listener (loopback semantics, see Known limitations),
 and the production git-host whitelist in
 `internal/service/connection.go::deriveProviderFromURL` accepts only
-`github.com` and `dev.azure.com`. The V125-1-13.x sprint closes both
-gaps with a Pod-deployed gitfake + an opt-in env var.
+`github.com` and `dev.azure.com`. These gaps are closed by a Pod-deployed
+gitfake + an opt-in env var.
 
 **What it is.** A small Go HTTP server (built from
 `tests/e2e/harness/gitfake/cmd/gitfake-server/`, image defined by
@@ -504,7 +503,7 @@ admin.PostConnection(t, models.Connection{
 })
 ```
 
-**IMPORTANT — structural limitation discovered in V125-1-13.x.6.**
+**IMPORTANT — structural limitation.**
 Sharko's `GitHubProvider` uses the go-github REST client hardwired to
 `api.github.com`. Pointing a Sharko connection at the gitfake URL passes
 URL validation, and gitfake speaks git-protocol (clone / push) faithfully,
@@ -513,15 +512,14 @@ but Sharko's GitHub-provider operations (`BatchCreateFiles`,
 yet a complete drop-in for tests that exercise the full Sharko-driven
 Git flow in Helm mode. Two workarounds today:
 
-- **Test-cluster-style tests** (the V125-1-13.x.6 pattern, e.g.
-  `TestClusterTest_ArgoCDProvider`): bypass Sharko's Git flow entirely
-  by registering the target cluster directly via ArgoCD's REST API. The
-  test exercises `ArgoCDProvider` against a real cluster Secret without
-  depending on Sharko's Git side.
+- **Test-cluster-style tests** (e.g. `TestClusterTest_ArgoCDProvider`):
+  bypass Sharko's Git flow entirely by registering the target cluster
+  directly via ArgoCD's REST API. The test exercises `ArgoCDProvider`
+  against a real cluster Secret without depending on Sharko's Git side.
 - **Tests that need full Git interception**: deferred to a future
-  follow-up (tracked as V125-1-13.y). Either a ghmock sidecar Pod that
-  intercepts `api.github.com` traffic from inside the cluster, or making
-  `GitHubProvider`'s base URL configurable. Out of scope for V125-1-13.x.
+  follow-up. Either a ghmock sidecar Pod that intercepts `api.github.com`
+  traffic from inside the cluster, or making `GitHubProvider`'s base URL
+  configurable.
 
 **Troubleshooting.**
 
@@ -627,7 +625,7 @@ make test-e2e-gitea
 Tear the container down with `docker rm -f sharko-e2e-gitea` when you're
 done.
 
-### Note on the git-host allowlist (V125-1-13)
+### Note on the git-host allowlist
 
 This suite constructs `gitprovider.GiteaProvider` directly (the same way
 `internal/demo` and the unit tests do) — it never goes through Sharko's
@@ -743,7 +741,7 @@ the job; both are declared at the top of `e2e.yml`.
 | `E2E_KIND_IMAGE` | `kindest/node:v1.31.0` | kindest/node image used by `ProvisionTopology`. Override to test against a different K8s minor. |
 | `E2E_KIND_BIN` | `kind` | Path to the `kind` binary. |
 | `E2E_KUBECTL_BIN` | `kubectl` | Path to the `kubectl` binary. |
-| `E2E_SHARKO_MODE` | `in-process` | `helm` switches `StartSharko` to the real `helm install` path (V125-1-13). See [Full-fidelity Helm mode](#full-fidelity-helm-mode-v125-1-13). |
+| `E2E_SHARKO_MODE` | `in-process` | `helm` switches `StartSharko` to the real `helm install` path. See [Full-fidelity Helm mode](#full-fidelity-helm-mode). |
 | `SHARKO_E2E_IMAGE_TAG` | unset (fresh `e2e-<8-hex>` per call) | When set AND the tagged image is already in the kind node's containerd, skip the docker build + kind load roundtrip. `make test-e2e-helm` defaults this to `e2e-<short-sha>`. |
 | `E2E_HELM_BIN` | `helm` | Path to the `helm` binary. |
 | `E2E_DOCKER_BIN` | `docker` | Path to the `docker` binary. |

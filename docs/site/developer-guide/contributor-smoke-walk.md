@@ -1,6 +1,6 @@
 # Contributor Smoke Walk
 
-> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-08 by `./scripts/sharko-dev.sh smoke` (which forwards to `scripts/smoke.sh` after auto-extracting credentials) against image `sharko:e2e` built from commit `96567f0e` (dev/v1.24-cleanup tip — V124-8.1 + V124-8.2 merged). 47/47 PASS in 14 s of script time, including the auto-extract of `$ADMIN_PW` and `$TOKEN`. The `argocd-token` subcommand (V124-9) was end-to-end validated on 2026-05-09 against the same `kind-sharko-e2e` cluster: cold-start (apiKey patch + argocd-server restart + port-forward recovery + login + token generate), eval-via-pipe `--export`, quiet mode, idempotency (1.7 s second-run vs 34 s cold), `--service-account` (patches `accounts.sharko` + `argocd-rbac-cm` policy.csv + token generate), and bearer-token usability against `https://localhost:18080/api/v1/account`. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
+> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-08 by `./scripts/sharko-dev.sh smoke` (which forwards to `scripts/smoke.sh` after auto-extracting credentials) against image `sharko:e2e` built from commit `96567f0e`. 47/47 PASS in 14 s of script time, including the auto-extract of `$ADMIN_PW` and `$TOKEN`. The `argocd-token` subcommand was end-to-end validated on 2026-05-09 against the same `kind-sharko-e2e` cluster: cold-start (apiKey patch + argocd-server restart + port-forward recovery + login + token generate), eval-via-pipe `--export`, quiet mode, idempotency (1.7 s second-run vs 34 s cold), `--service-account` (patches `accounts.sharko` + `argocd-rbac-cm` policy.csv + token generate), and bearer-token usability against `https://localhost:18080/api/v1/account`. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad`; Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
 
 A hands-on, checkbox-driven smoke pass for anyone contributing to Sharko. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
 
@@ -10,7 +10,7 @@ If you want background on the test pyramid and what each layer is for, read [Tes
 
 ## Quick reference — `sharko-dev.sh` subcommand cheatsheet
 
-The `sharko-dev.sh` automation is a single entry point with subcommand dispatch (V124-8.1). The `ready` subcommand (V124-12.1) is the canonical first step for a smoke pass: from any state (no cluster, partial install, dead port-forwards) it brings everything up and prints a unified credential summary in one go.
+The `sharko-dev.sh` automation is a single entry point with subcommand dispatch. The `ready` subcommand is the canonical first step for a smoke pass: from any state (no cluster, partial install, dead port-forwards) it brings everything up and prints a unified credential summary in one go.
 
 | Scenario | Command |
 |---|---|
@@ -26,14 +26,14 @@ The `sharko-dev.sh` automation is a single entry point with subcommand dispatch 
 | Get the current admin password | `./scripts/sharko-dev.sh creds` |
 | Capture admin password into `$ADMIN_PW` | `eval "$(./scripts/sharko-dev.sh creds --export)"` |
 | Login + capture `$ADMIN_PW` and `$TOKEN` | `eval "$(./scripts/sharko-dev.sh login --export)"` |
-| Rotate admin password (verifies V124-7) | `./scripts/sharko-dev.sh rotate` |
+| Rotate admin password | `./scripts/sharko-dev.sh rotate` |
 | Generate ArgoCD account token (for wizard step 3) | `./scripts/sharko-dev.sh argocd-token` |
 | Capture `$ARGOCD_TOKEN` + `$ARGOCD_URL` into shell | `eval "$(./scripts/sharko-dev.sh argocd-token --export)"` |
 | Run the full smoke suite | `./scripts/sharko-dev.sh smoke` |
 | Show current env state | `./scripts/sharko-dev.sh status` |
 | Per-subcommand help | `./scripts/sharko-dev.sh <cmd> --help` |
 
-!!! tip "One-command env + creds with `ready` (V124-12.1)"
+!!! tip "One-command env + creds with `ready`"
     For a smoke pass, the canonical first step is:
     ```bash
     eval "$(./scripts/sharko-dev.sh ready --export)"
@@ -45,7 +45,7 @@ The `sharko-dev.sh` automation is a single entry point with subcommand dispatch 
     ```bash
     eval "$(./scripts/sharko-dev.sh login --export)"
     ```
-    This avoids any `set -e` / `set -u` leak into your interactive shell. The legacy `source scripts/dev-rebuild.sh` still works (V124-8.2 fixed the leak) but eval-via-pipe is the recommended pattern going forward.
+    This avoids any `set -e` / `set -u` leak into your interactive shell. The legacy `source scripts/dev-rebuild.sh` still works but eval-via-pipe is the recommended pattern going forward.
 
 ---
 
@@ -62,9 +62,9 @@ The goal of one full pass:
 !!! note "Bugs found in the first smoke pass (2026-05-01) — historical reference"
     These were the three bugs found in the very first hands-on smoke pass and are listed here for context. Keep an eye out for regressions, but do not expect to reproduce them as-is.
 
-    1. **Login page footer shows wrong version** (BUG-001) — fixed in the v1.24 hotfix bundle (V124-2.1).
-    2. **`GET /api/v1/clusters` returns 500** with raw filesystem error string leaking to the UI (BUG-002) — fixed in the v1.24 hotfix bundle (V124-2.2).
-    3. **Cluster list page goes blank after ~30 s** when the underlying error clears (BUG-003) — UI white-screen on background-refresh failure. Recovery still requires nav-and-back or hard refresh; tracked separately, not yet closed in the v1.24 hotfix bundle.
+    1. **Login page footer shows wrong version** — fixed in v1.24.
+    2. **`GET /api/v1/clusters` returns 500** with raw filesystem error string leaking to the UI — fixed in v1.24.
+    3. **Cluster list page goes blank after ~30 s** when the underlying error clears — UI white-screen on background-refresh failure. Recovery still requires nav-and-back or hard refresh; tracked separately.
 
 ---
 
@@ -108,7 +108,7 @@ Three steps, every time. This is the minimum payload that makes a bug actionable
 Self-contained, no cluster, no Helm. Boots in under 5 seconds. Use this to find the cheap bugs first.
 
 !!! tip "Now automated by `./scripts/sharko-dev.sh smoke`"
-    The mechanical CLI + API sweep portions of Track A (A.4 API checklist + A.6 CLI sweep) are codified into the smoke phases. The canonical entry is the subcommand dispatcher (V124-8.1):
+    The mechanical CLI + API sweep portions of Track A (A.4 API checklist + A.6 CLI sweep) are codified into the smoke phases. The canonical entry is the subcommand dispatcher:
     ```bash
     ./scripts/sharko-dev.sh smoke
     ```

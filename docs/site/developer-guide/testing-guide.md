@@ -1,6 +1,6 @@
 # Testing Guide
 
-> **Verified:** Not verified end-to-end since authoring; review pending. Cross-reference text was updated alongside V124-3.10 to qualify `admin/admin` as demo-only and reflect V124-3.7's env-var-driven e2e creds, but the full layer-by-layer walk against a fresh image has not been re-executed since the original write-up. Treat any layer-specific command as authoritative ONLY if you can match it against the layer's source files (e.g. `tests/e2e/setup.sh`, `tests/api/*.hurl`, `cmd/sharko/*.go`).
+> **Verified:** Not verified end-to-end since authoring; review pending. Cross-reference text was updated to qualify `admin/admin` as demo-only and reflect env-var-driven e2e credentials, but the full layer-by-layer walk against a fresh image has not been re-executed since the original write-up. Treat any layer-specific command as authoritative ONLY if you can match it against the layer's source files (e.g. `tests/e2e/setup.sh`, `tests/api/*.hurl`, `cmd/sharko/*.go`).
 
 The single canonical reference for testing Sharko — what we have, what we don't, the exact commands to run, and which tool fits which layer. Use this when you want to verify a release candidate, when you add a feature and need to know what tests to write, or when you're about to copy a pattern from somewhere else and want to check that we already have one.
 
@@ -688,12 +688,12 @@ Three tests, all in `tests/e2e/e2e_test.go`:
 | Test | What it checks |
 |---|---|
 | `TestHealthEndpoint` | `GET /api/v1/health` returns 200 and `status: healthy` |
-| `TestLoginAndAuth` | `POST /api/v1/auth/login` with `$SHARKO_E2E_USERNAME` / `$SHARKO_E2E_PASSWORD` (defaults to `admin`/`admin` for demo mode; pass real bootstrap creds for kind via `SHARKO_E2E_PASSWORD=...` — see V124-3.7) returns a non-empty token |
+| `TestLoginAndAuth` | `POST /api/v1/auth/login` with `$SHARKO_E2E_USERNAME` / `$SHARKO_E2E_PASSWORD` (defaults to `admin`/`admin` for demo mode; pass real bootstrap creds for kind via `SHARKO_E2E_PASSWORD=...`) returns a non-empty token |
 | `TestRepoStatus` | Authenticated `GET /api/v1/repo/status` returns a JSON `initialized` boolean |
 
 That's it. Three tests. The skeleton exists so we can grow it without re-litigating the harness.
 
-### What should be added (V124+ targets)
+### What should be added
 
 | Test | Endpoint | What it proves |
 |---|---|---|
@@ -714,7 +714,7 @@ on:
   #   branches: [main]
 ```
 
-The policy: don't enable PR-triggered E2E until the suite is stable and has > 5 meaningful tests. A flaky 1-test suite that runs on every PR is worse than no suite. Flip the trigger at the same time as expanding the test list (V124-1 candidate).
+The policy: don't enable PR-triggered E2E until the suite is stable and has > 5 meaningful tests. A flaky 1-test suite that runs on every PR is worse than no suite. Flip the trigger at the same time as expanding the test list.
 
 ---
 

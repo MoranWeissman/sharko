@@ -63,7 +63,7 @@ You don't usually need to copy it by hand — see [Per-cluster template seeding]
 
 ## Cluster-specific field detection
 
-Sharko ships a heuristic list of patterns that identify cluster-specific fields. The list lives at `internal/orchestrator/smart_values.go` (`clusterSpecificPatterns`); a schema-PR can extend it.
+Sharko ships a heuristic list of patterns that identify cluster-specific fields.
 
 The patterns Sharko ships:
 
@@ -83,7 +83,7 @@ Pattern semantics:
 - A leading `*` matches zero or more path segments. So `*.host` matches both `host` (at the root) and `service.host` (nested).
 - A trailing `*` matches zero or more path segments. So `*.ingress.*` matches `ingress`, `ingress.tls`, and `controller.ingress.tls.hosts`.
 
-When the pattern doesn't catch a field that's actually cluster-specific (or, conversely, flags a global field), open a PR against `internal/orchestrator/smart_values.go`. The list is intentionally conservative — false positives are recoverable (the user uncomments the placeholder), but false negatives leak cluster-shape into the global file.
+When the pattern doesn't catch a field that's actually cluster-specific (or, conversely, flags a global field), open an issue or pull request to extend the pattern list. The list is intentionally conservative — false positives are recoverable (the user uncomments the placeholder), but false negatives leak cluster-shape into the global file.
 
 The optional **AI annotation** layer adds an LLM call that finds non-obvious cluster-specific fields and unions them into this set. AI is additive only — it never removes paths the heuristic flagged.
 

@@ -1,6 +1,6 @@
 # Catalog Scan Runbook — Addon Discovery Bot
 
-> **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. 2026-08-08: the scheduled trigger was turned off (bot is now manual-only, run via `workflow_dispatch`) — this is a config change to `.github/workflows/catalog-scan.yml`, not a re-walk; the underlying scan logic (`scripts/catalog-scan.mjs`) has not changed materially since authoring. A re-walk against a real bot-opened PR is still recommended.
+> **Verified:** Not verified end-to-end since authoring (2026-04-25); review pending. 2026-08-08: the scheduled trigger was turned off (bot is now manual-only, run via `workflow_dispatch`) — this is a config change to `.github/workflows/catalog-scan.yml`, not a re-walk; the underlying scan logic (`scripts/catalog-scan.mjs`) has not changed materially since authoring. A re-walk against a real bot-opened PR is still recommended.
 
 !!! warning "Parked — no schedule, manual only"
     This bot is parked. There is no cron trigger — it only runs when someone
@@ -19,7 +19,7 @@
 
 Operational guide for reviewers of `catalog-scan` bot PRs.
 
-The **addon discovery bot** (codenamed V123-3 internally) opens one **draft PR per run** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
+The **addon discovery bot** opens one **draft PR per run** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
 
 ## What This Bot Does — Menu Ownership, Not Security Scanning
 
@@ -38,7 +38,7 @@ The bot includes an OpenSSF Scorecard signal for each proposal, but this is **on
 3. A diff against the existing catalog produces a **changeset** (`adds[]` + `updates[]`).
 4. If the changeset is non-empty, `scripts/catalog-scan/pr-open.mjs` pre-computes review signals (Scorecard, license allow-list, chart resolvability) and opens a single draft PR with labels `catalog-scan` + `needs-review`.
 
-Design context: see [catalog extensibility design doc §7.3](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-04-20-v1.23-catalog-extensibility.md) — draft-to-main + label gating + NEVER auto-merge per NFR-V123-7.
+Design context: see [catalog extensibility design doc §7.3](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-04-20-v1.23-catalog-extensibility.md) — draft-to-main + label gating + NEVER auto-merge.
 
 **Guarantees:**
 
@@ -145,7 +145,7 @@ Use this path when:
 - Addon is non-Helm (CRD-only, operator without a chart, manual-install).
 - Addon is clearly experimental / unmaintained / incompatible with Sharko's curated tier.
 
-Closing the PR also closes the bot's branch from the reviewer's perspective. Tomorrow's scan will produce a fresh PR; if you want to *prevent* a re-proposal, raise an issue or add the entry to a deny-list (V2 hardening — not yet implemented).
+Closing the PR also closes the bot's branch from the reviewer's perspective. Tomorrow's scan will produce a fresh PR; if you want to *prevent* a re-proposal, raise an issue or add the entry to a deny-list (not yet implemented).
 
 ### Edit and merge
 
@@ -216,7 +216,7 @@ The dry-run prints the markdown PR body to stdout so you can verify your plugin'
 
 ### One-time setup
 
-These got us once during V123-3.4 — confirm before relying on the bot.
+Confirm these are in place before relying on the bot.
 
 **Repo labels.** `gh pr create --label` fails if the label doesn't exist:
 
@@ -268,5 +268,5 @@ make catalog-scan-pr   # runs scanner + pr-open.mjs --dry-run
 - **`cdk-eks-blueprints` source format may drift.** The `aws-eks-blueprints` plugin's regex extractors cover both `HELM_CHART_*` constants and the `defaultProps = {...}` object-literal pattern. New patterns in upstream would require updating the regex priority order in `aws-eks-blueprints.mjs`.
 - **Signal pre-compute is best-effort.** Scorecard requires a github.com `source_url`; license requires `Chart.yaml` annotations OR an `index.yaml` `license` field; chart resolvability requires `https://` chart repos (`oci://` is skipped). Reviewers verify manually when signals are `unknown`.
 - **The bot does NOT detect deletions.** Removing an entry from upstream does not remove it from the catalog. Humans handle removals via direct CODEOWNERS-gated edits.
-- **No state between runs.** The bot doesn't remember that you closed a previous proposal for `foo`. If `foo` still appears in upstream on the next run, it will be re-proposed. (V2 hardening: persistent deny-list — not yet implemented.)
+- **No state between runs.** The bot doesn't remember that you closed a previous proposal for `foo`. If `foo` still appears in upstream on the next run, it will be re-proposed. (A persistent deny-list is not yet implemented.)
 - **Stateless concurrency guard has a small race window.** Two `workflow_dispatch` runs fired within seconds of each other could both pass the open-PR check. Acceptable risk — duplicate PRs are reviewer-visible; the second is closed immediately.

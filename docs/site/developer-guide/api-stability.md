@@ -103,9 +103,8 @@ in the release that announces it:
    (and any exported request/response struct) gets the standard Go
    `Deprecated:` doc-comment per
    [Go's deprecation convention](https://go.dev/wiki/Deprecated).
-   The V2-5.3 compat-shim audit confirmed zero `// Deprecated:`
-   comments currently exist in the codebase — v2.0.0 starts with a
-   clean slate.
+   As of v2.0.0, zero `// Deprecated:` comments exist in the codebase —
+   v2.0.0 starts with a clean slate.
 2. **Release-notes "Deprecated" section entry.** The release that
    announces the deprecation has a `### Deprecated` section in
    [`release-notes.md`](../release-notes.md) listing the endpoint
@@ -113,8 +112,7 @@ in the release that announces it:
    replacement.
 3. **Runtime WARN-level log line on invocation.** When the deprecated
    surface is invoked, the handler emits a `slog.Warn` entry with the
-   endpoint path, the integrator-supplied `request_id` (from the V2-2.2
-   correlation work — see
+   endpoint path, the integrator-supplied `request_id` (see
    [`logging.md`](logging.md)), and the slated removal version. This
    lets adopters grep their logs for `level=WARN msg="deprecated API
    invoked"` and find every caller before the removal.
@@ -186,15 +184,15 @@ Surface default: **`stable`**. The core production flow.
 | POST | `/clusters/{name}/diagnose` | `stable` | Surface default. |
 | POST | `/clusters/batch` | `stable` | Surface default. |
 | GET | `/clusters/available` | `stable` | Surface default. |
-| POST | `/clusters/adopt` | `stable` | V125-1-8 label-gate flow; shape settled. |
+| POST | `/clusters/adopt` | `stable` | Label-gate flow; shape settled. |
 | POST | `/clusters/{name}/unadopt` | `stable` | Mirrors adopt. |
-| DELETE | `/clusters/{name}/orphan` | `stable` | V125-1-7/8 ownership-label gate; settled. |
+| DELETE | `/clusters/{name}/orphan` | `stable` | Ownership-label gate; settled. |
 | GET | `/clusters/{name}/secrets` | `stable` | Surface default. |
 | POST | `/clusters/{name}/secrets/refresh` | `stable` | v4.0.0 (task #152): delivers from the Git catalog via the reconciler's plan; request bodies are ignored, optional `?addon=` must exist in Git. |
 | POST | `/clusters/{name}/addons/{addon}` | `stable` | Per-cluster addon enable. |
 | DELETE | `/clusters/{name}/addons/{addon}` | `stable` | Per-cluster addon disable. |
-| POST | `/clusters/{name}/doctor` | `beta` | New in V2-cleanup-88.4/89.5 (5 checks); check-ID vocabulary may still grow. |
-| POST | `/clusters/{name}/reconcile` | `beta` | New in V2-cleanup-89.4; `last_reconcile` outcome/message shape may still evolve. |
+| POST | `/clusters/{name}/doctor` | `beta` | Includes 5 diagnostic checks; check-ID vocabulary may still grow. |
+| POST | `/clusters/{name}/reconcile` | `beta` | The `last_reconcile` outcome/message shape may still evolve. |
 | GET | `/clusters/{cluster}/addons/{name}/values` | `stable` | Per-cluster values read. |
 | PUT | `/clusters/{cluster}/addons/{name}/values` | `stable` | Per-cluster values write. |
 | GET | `/clusters/{cluster}/addons/{name}/values/recent-prs` | `stable` | Read-only PR list. |
@@ -302,8 +300,8 @@ Surface default: **`stable`** for the read APIs.
 | GET | `/catalog/remote/{repo}/{name}/project-readme` | `stable` | Surface default. |
 | GET | `/catalog/search` | `stable` | Surface default. |
 | GET | `/catalog/repo-charts` | `stable` | Surface default. |
-| GET | `/catalog/sources` | `stable` | V123 sources API; settled. |
-| POST | `/catalog/sources/refresh` | `stable` | V123 sources API; settled. |
+| GET | `/catalog/sources` | `stable` | Sources API; settled. |
+| POST | `/catalog/sources/refresh` | `stable` | Sources API; settled. |
 | GET | `/catalog/validate` | `stable` | Surface default. |
 | POST | `/catalog/reprobe` | `beta` | Cache control; shape may evolve. |
 
@@ -356,12 +354,12 @@ Surface default: **`stable`** for core auth.
 
 ### Secrets reconcile + cluster secrets
 
-Surface default: **`stable`** (V125-1-8 reconciler API is settled).
+Surface default: **`stable`** (reconciler API is settled).
 
 | Method | Endpoint | Tier | Rationale |
 |---|---|---|---|
-| POST | `/secrets/reconcile` | `stable` | V125-1-8 reconciler trigger. |
-| GET | `/secrets/status` | `stable` | V125-1-8 reconciler status. |
+| POST | `/secrets/reconcile` | `stable` | Reconciler trigger. |
+| GET | `/secrets/status` | `stable` | Reconciler status. |
 
 ### Audit log
 
