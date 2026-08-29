@@ -684,10 +684,23 @@ func TestTheCLIInstallPageBuildsTheVersionedArchiveName(t *testing.T) {
 //     turned into the false claim in the first place;
 //   - the local half alone would suggest Sharko hands out platform credentials.
 //
-// The pinned strings are the load-bearing words, not whole sentences, so a
-// copy-editor can still reword around them: the path, so the reader knows which
-// file to protect, and "session token", so they know what is in it. A rewrite
-// that drops either one is not a rewording, it is a removal.
+// Each pinned string has to be unique to the CORRECTED sentence, and getting
+// that wrong is not hypothetical — the first version of this test failed exactly
+// there. It pinned the three generic strings "session token", the config path
+// and "platform credentials" on every page, and the break-test that reverted all
+// four files reported only three of them. docs/site/cli/overview.md walked
+// straight through, because its Authentication section already says "the CLI stores the
+// server URL and session token locally in ~/.sharko/config" and the OLD bullet
+// said "holds all platform credentials" — so all three strings were already on
+// the page and the pin proved nothing about the one page the correction was most
+// about. docs/architecture.md half-escaped the same way: an unrelated auth-flow
+// step at :379 already said "session token".
+//
+// So each page now pins text that exists ONLY in its corrected sentence, and
+// each entry was checked against that file's pre-correction copy to confirm it
+// was absent there. The strings are still phrases rather than whole sentences,
+// so a copy-editor can reword around them, but they are specific enough that
+// deleting the correction cannot pass.
 //
 // docs/architecture.md is in this list even though README.md calls it legacy raw
 // reference. It carried the false sentence word for word, it is public in the
@@ -703,13 +716,24 @@ func TestEveryPlaceThatScopesCredentialsSaysTheSessionTokenIsLocal(t *testing.T)
 		rel  string
 		want []string
 	}{
-		{"README.md", []string{"session token", configPath, "platform credentials"}},
-		{filepath.Join("docs", "site", "cli", "overview.md"),
-			[]string{"session token", configPath, "platform credentials"}},
-		{filepath.Join("docs", "site", "architecture", "overview.md"),
-			[]string{"session token", configPath, "Platform credentials stay on the cluster"}},
-		{filepath.Join("docs", "architecture.md"),
-			[]string{"session token", configPath, "platform credentials"}},
+		{"README.md", []string{
+			"holds the platform credentials",
+			"live Sharko session token to `" + configPath + "`",
+		}},
+		{filepath.Join("docs", "site", "cli", "overview.md"), []string{
+			// The bold lead, because the owner's ruling is that a reader who
+			// only skims must still learn a token sits on their machine.
+			"Platform credentials stay on the server, your login does not",
+			"live Sharko session token to `" + configPath + "`",
+		}},
+		{filepath.Join("docs", "site", "architecture", "overview.md"), []string{
+			"Platform credentials stay on the cluster",
+			"Sharko session token in `" + configPath + "`",
+		}},
+		{filepath.Join("docs", "architecture.md"), []string{
+			"holds the platform credentials",
+			"The CLI keeps only your own Sharko session token",
+		}},
 	} {
 		body, err := os.ReadFile(filepath.Join(root, page.rel))
 		if err != nil {
