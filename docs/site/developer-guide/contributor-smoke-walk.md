@@ -496,8 +496,8 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 
 Real K8s, real ArgoCD, real Helm chart. Catches integration bugs that Track A cannot. Budget 60–90 minutes; first run pulls a few GB of images.
 
-!!! tip "Now automated by `./scripts/sharko-dev.sh ready` (V124-12.1) — primary entry"
-    Track B sections B.1 (prereqs check), B.2 (kind + Helm install/rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + V124-4 regression pins + Go E2E suite) are codified under the subcommand dispatcher. The canonical first step is now a single command:
+!!! tip "Now automated by `./scripts/sharko-dev.sh ready` — primary entry"
+    Track B sections B.1 (prereqs check), B.2 (kind + Helm install/rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + regression pins + Go E2E suite) are codified under the subcommand dispatcher. The canonical first step is now a single command:
 
     1. **From any state — primary entry** → `./scripts/sharko-dev.sh ready` (creates kind + installs ArgoCD + Sharko if missing, starts both port-forwards, prints unicode-box summary with `SHARKO_URL`, `ADMIN_PW`, `TOKEN`, `ARGOCD_LOCAL_URL`, `ARGOCD_URL`, `ARGOCD_ADMIN_PW`, `ARGOCD_TOKEN`).
     2. **Capture all credentials in one shot** → `eval "$(./scripts/sharko-dev.sh ready --export)"` (no `source`, no `set -e` leak).
@@ -572,7 +572,7 @@ What the script does, in order (verified by reading `tests/e2e/setup.sh` and exe
 8. `kubectl wait --for=condition=available --timeout=60s deployment/sharko -n sharko`
 
 !!! note "Why `--server-side` for the ArgoCD manifest?"
-    Step 3 uses `kubectl apply --server-side --force-conflicts`. The ApplicationSet CRD that ships with ArgoCD has metadata that exceeds the 256 KB size limit of the `kubectl.kubernetes.io/last-applied-configuration` annotation that client-side `kubectl apply` writes. Server-side apply doesn't use that annotation. Older versions of `setup.sh` used plain `kubectl apply` and silently failed on the CRD step; this was fixed in V124-3.6. If you ever see `Request entity too large` or a missing CRD after step 3, you're running an old script — pull `main`.
+    Step 3 uses `kubectl apply --server-side --force-conflicts`. The ApplicationSet CRD that ships with ArgoCD has metadata that exceeds the 256 KB size limit of the `kubectl.kubernetes.io/last-applied-configuration` annotation that client-side `kubectl apply` writes. Server-side apply doesn't use that annotation. Older versions of `setup.sh` used plain `kubectl apply` and silently failed on the CRD step; this was fixed in a later version. If you ever see `Request entity too large` or a missing CRD after step 3, you're running an old script — pull `main`.
 
 Run it:
 
@@ -686,8 +686,8 @@ Run each step individually so you can see exactly where it breaks. Substitute `s
 
 ## B.4 Get the bootstrap admin credential
 
-!!! info "How bootstrap credentials work in real K8s (V124-3.8)"
-    On first install with no operator-supplied password, Sharko auto-generates a 16-character bootstrap password. As of V124-3.8 the credential is **logged ONCE to the pod's stdout** in a clearly-marked block, and **the `admin.initialPassword` key is then removed from the Secret** so a pod restart does not re-emit it.
+!!! info "How bootstrap credentials work in real K8s"
+    On first install with no operator-supplied password, Sharko auto-generates a 16-character bootstrap password. The credential is **logged ONCE to the pod's stdout** in a clearly-marked block, and **the `admin.initialPassword` key is then removed from the Secret** so a pod restart does not re-emit it.
 
     This means: **`kubectl get secret sharko -o jsonpath='{.data.admin\.initialPassword}'` returns empty.** That command was valid in earlier Sharko versions and is still in stale third-party docs — don't trust it. Retrieve the password from the dedicated `sharko-initial-admin-secret` Secret instead (`kubectl get secret sharko-initial-admin-secret -n sharko -o jsonpath='{.data.password}' | base64 -d`), or from `kubectl logs` if you set `SHARKO_WRITE_INITIAL_ADMIN_SECRET=false`. If neither has it, use one of the operator-supplied paths in the [Initial Credentials](../operator/installation.md#initial-credentials) section of the operator install guide.
 
@@ -754,7 +754,7 @@ Same shape as Track A's API checklist (A.4), but against `http://localhost:8080`
   }
   ```
 
-  **Expected on a fresh cluster (no Git connection configured yet):** 503 with the **sanitized JSON above** (V124-2.10 + V124-3.2). The `op` field is the operation the handler was attempting — useful for triage, never leaks internals. **Flag if:** 500 with a raw error string in plain text — that's a regression of the V124-2.10 sanitization.
+  **Expected on a fresh cluster (no Git connection configured yet):** 503 with the **sanitized JSON above**. The `op` field is the operation the handler was attempting — useful for triage, never leaks internals. **Flag if:** 500 with a raw error string in plain text — that's a regression of the error sanitization.
   **Once you've configured a Git connection in B.7,** this endpoint should return 200 with `{"clusters":[]}` (or the in-cluster record after init).
 
 - [ ] Sweep the read endpoints that should always be 200 even without a Git connection
@@ -810,9 +810,9 @@ Same shape as Track A's API checklist (A.4), but against `http://localhost:8080`
   status: 502
   ```
 
-  **Expected:** 502 with sanitized JSON error (V124-3.2 classifies upstream-dependency unavailability as 502, not 500). **Flag if:** 500 with a raw error or stack trace, or HTML.
+  **Expected:** 502 with sanitized JSON error (upstream-dependency unavailability is classified as 502, not 500). **Flag if:** 500 with a raw error or stack trace, or HTML.
 
-- [ ] `POST /api/v1/connections/` (note trailing slash) with an invalid body — verify the V124-3.3 fix (validation errors return 400, not 500)
+- [ ] `POST /api/v1/connections/` (note trailing slash) with an invalid body — verify validation errors return 400, not 500
 
   ```bash
   curl -sS -o /tmp/r.json -w '%{http_code}\n' -X POST $HOST/api/v1/connections/ \
@@ -820,14 +820,14 @@ Same shape as Track A's API checklist (A.4), but against `http://localhost:8080`
   cat /tmp/r.json | jq .
   ```
 
-  **Expected:** 400 with a JSON error explaining the missing fields. **Flag if:** 500 — V124-3.3 has regressed.
+  **Expected:** 400 with a JSON error explaining the missing fields. **Flag if:** 500 — this has regressed.
 
   !!! note "Trailing slash matters on `/connections`"
       `GET /api/v1/connections` (no trailing slash) returns 301 → `/api/v1/connections/`. Tools that don't follow redirects (e.g. `curl` without `-L`) will see the 301 instead of the body. Use the trailing slash directly, or pass `-L` to follow.
 
 ## B.6 Run the existing Go E2E suite
 
-The e2e tests log in with the bootstrap admin credential, walk a few read endpoints, and verify the contract. As of V124-3.7 they read credentials from env vars (defaults to `admin`/`admin` only in the demo image — fails on real K8s without the override).
+The e2e tests log in with the bootstrap admin credential, walk a few read endpoints, and verify the contract. They read credentials from env vars (defaults to `admin`/`admin` only in the demo image — fails on real K8s without the override).
 
 - [ ] Run the build-tagged tests with the bootstrap creds
 
@@ -906,7 +906,7 @@ There's no public test repo guaranteed to be there forever; use one of the above
 
 ### Step 3: ArgoCD connection
 
-Before the GitHub connection, the wizard's step 3 needs an ArgoCD bearer token. The full flow (port-forward → patch `argocd-cm` to enable `apiKey` capability → restart argocd-server → re-establish port-forward → `argocd login` → `argocd account generate-token`) is codified into a single subcommand (V124-9):
+Before the GitHub connection, the wizard's step 3 needs an ArgoCD bearer token. The full flow (port-forward → patch `argocd-cm` to enable `apiKey` capability → restart argocd-server → re-establish port-forward → `argocd login` → `argocd account generate-token`) is codified into a single subcommand:
 
 ```bash
 eval "$(./scripts/sharko-dev.sh argocd-token --export)"
@@ -927,7 +927,7 @@ The subcommand is idempotent — second run reuses the existing port-forward and
   - PAT: a token with `repo` scope
   - Click Test → expect green checkmark.
 
-  **If "Test" returns a 5xx error in the UI:** capture the response body and pod logs (`kubectl logs -n sharko deployment/sharko --tail=50`) — the V124-3.3 fix should give you a 400 with a clean validation error for malformed input, but a 502 from a real GitHub auth failure is also expected.
+  **If "Test" returns a 5xx error in the UI:** capture the response body and pod logs (`kubectl logs -n sharko deployment/sharko --tail=50`) — you should get a 400 with a clean validation error for malformed input, but a 502 from a real GitHub auth failure is also expected.
 
 - [ ] Initialize the repo via UI (or `POST /api/v1/init` from CLI) — Sharko should commit its bootstrap files.
 
@@ -1038,7 +1038,7 @@ Pre-seeded entries from today's pass — verify these and update status:
 
 The local dev-experience tooling is built around a single subcommand dispatcher with two underlying helper scripts. All three live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
 
-## `scripts/sharko-dev.sh` — single entry, 12 subcommands (V124-8.1 + V124-9, canonical)
+## `scripts/sharko-dev.sh` — single entry, 12 subcommands (canonical)
 
 The primary entry point for local development. Subcommand dispatch (like `git` / `kubectl`) so each scenario gets its own one-liner with `--help`:
 
@@ -1049,17 +1049,17 @@ The primary entry point for local development. Subcommand dispatch (like `git` /
 ./scripts/sharko-dev.sh rebuild           # rebuild after code change
 ./scripts/sharko-dev.sh creds             # fetch admin password (smart fallback chain)
 ./scripts/sharko-dev.sh login --export    # eval-via-pipe: ADMIN_PW + TOKEN
-./scripts/sharko-dev.sh rotate            # rotate password (verifies V124-7)
-./scripts/sharko-dev.sh argocd-token --export   # eval-via-pipe: ARGOCD_TOKEN + ARGOCD_URL (V124-9)
+./scripts/sharko-dev.sh rotate            # rotate password
+./scripts/sharko-dev.sh argocd-token --export   # eval-via-pipe: ARGOCD_TOKEN + ARGOCD_URL
 ./scripts/sharko-dev.sh smoke             # auto-extracts creds, runs smoke
 ./scripts/sharko-dev.sh status            # current env state
 ./scripts/sharko-dev.sh reset --yes       # uninstall (preserves cluster)
 ./scripts/sharko-dev.sh down --yes        # full teardown
 ```
 
-The `creds` subcommand has a five-path fallback chain (V124-6.3 secret → cache → current pod logs → previous pod logs → error with recovery hints) so the password is retrievable in every state a contributor hits while working through local setup. The `rotate` subcommand also asserts V124-7's secret-rotation behavior — the new password must land in `sharko-initial-admin-secret` or the command exits non-zero.
+The `creds` subcommand has a five-path fallback chain (secret → cache → current pod logs → previous pod logs → error with recovery hints) so the password is retrievable in every state a contributor hits while working through local setup. The `rotate` subcommand also asserts the secret-rotation behavior — the new password must land in `sharko-initial-admin-secret` or the command exits non-zero.
 
-The `argocd-token` subcommand (V124-9) codifies the 8-command apiKey gauntlet for Sharko's wizard step 3: it reuses any live port-forward to `argocd-server`, patches `argocd-cm` to enable the `apiKey` capability if missing, restarts `argocd-server` and re-establishes the port-forward, runs `argocd login` against `localhost:18080` with the bootstrap admin password, then `argocd account generate-token` for either `admin` (default) or a dedicated `sharko` service account (`--service-account`). Idempotent — second run skips the patch+restart and finishes in ~1–2 s.
+The `argocd-token` subcommand codifies the 8-command apiKey gauntlet for Sharko's wizard step 3: it reuses any live port-forward to `argocd-server`, patches `argocd-cm` to enable the `apiKey` capability if missing, restarts `argocd-server` and re-establishes the port-forward, runs `argocd login` against `localhost:18080` with the bootstrap admin password, then `argocd account generate-token` for either `admin` (default) or a dedicated `sharko` service account (`--service-account`). Idempotent — second run skips the patch+restart and finishes in ~1–2 s.
 
 Sourcing model: **eval-via-pipe**, not `source`. The `--export` flag prints ONLY export lines so:
 ```bash
@@ -1067,20 +1067,20 @@ eval "$(./scripts/sharko-dev.sh login --export)"
 ```
 captures `$ADMIN_PW` and `$TOKEN` cleanly with no `set -e` / `set -u` leak risk. The `-q` / `--quiet` mode prints only the secret/token for piping.
 
-## `scripts/dev-rebuild.sh` — kind local-build inner-loop (V124-5.1, also forwarded)
+## `scripts/dev-rebuild.sh` — kind local-build inner-loop (also forwarded)
 
 The original rebuild script. `./scripts/sharko-dev.sh rebuild` forwards to it; direct invocation also still works.
 
 ```bash
 source scripts/dev-rebuild.sh    # exports $ADMIN_PW and $TOKEN into your shell (legacy — eval-via-pipe via sharko-dev.sh login is preferred)
 ./scripts/dev-rebuild.sh         # prints the export commands instead
-./scripts/dev-rebuild.sh --auto-install  # if no helm release, fall back to sharko-dev.sh install (V124-8.2)
+./scripts/dev-rebuild.sh --auto-install  # if no helm release, fall back to sharko-dev.sh install
 ./scripts/dev-rebuild.sh -h      # show built-in help
 ```
 
 Pipeline (six steps): pre-flight → `docker build` → `kind load` → `kubectl rollout restart` → bootstrap-password extraction → port-forward + login.
 
-**V124-3.8 gotcha (read this once, then forget it):** the bootstrap admin password is logged to the pod's stdout exactly ONCE, on first install. Subsequent `rollout restart` cycles do NOT re-emit it. The script handles this by:
+**Important note:** the bootstrap admin password is logged to the pod's stdout exactly ONCE, on first install. Subsequent `rollout restart` cycles do NOT re-emit it. The script handles this by:
 
 1. Polling the new pod's logs (first install case).
 2. Falling back to the previous pod's logs (`kubectl logs --previous`).
@@ -1091,7 +1091,7 @@ The cache file is written 0600 on first successful extraction.
 
 Configurable via env: `KIND_CLUSTER_NAME` (default `sharko-e2e`), `SHARKO_NAMESPACE` (`sharko`), `SHARKO_LOCAL_PORT` (`8080`), `IMAGE_TAG` (`e2e`).
 
-## `scripts/smoke.sh` — Track A + Track B mechanical sweep (V124-5.2, also forwarded)
+## `scripts/smoke.sh` — Track A + Track B mechanical sweep (also forwarded)
 
 Replaces Track A's A.4 + A.6 and Track B's B.5 + B.6. `./scripts/sharko-dev.sh smoke` forwards to it after auto-extracting credentials; direct invocation also still works (with `$ADMIN_PW` and `$TOKEN` already exported).
 
@@ -1107,7 +1107,7 @@ Five sequential phases, all PASS/FAIL with an exit code:
 1. **Pre-flight** — kubectl context, deployment availability, port-forward, `/api/v1/health` 200.
 2. **CLI sweep** — discovers cobra subcommands by exec'ing `sharko --help` in the pod, then runs `--help` on each one.
 3. **API sweep** — read endpoints that should always 200 on a fresh cluster (no Git connection needed): `/health`, `/config`, `/audit`, `/repo/status`, `/users/me`, `/fleet/status`, `/notifications`, `/catalog/addons`, `/catalog/sources`, `/providers`. Asserts 200 + valid JSON + expected top-level key.
-4. **V124-4 regression pins** — POSTs the four write endpoints from the V124-4 fix bundle with empty `{}` bodies and asserts the post-fix status codes (BUG-017 → 400, BUG-018 → 503, BUG-019 → 400, BUG-020 → 404 with `code=endpoint_not_found`). Each check carries the BUG ID for traceability back to the relevant commit.
+4. **Regression pins** — POSTs four write endpoints with empty `{}` bodies and asserts the expected status codes (BUG-017 → 400, BUG-018 → 503, BUG-019 → 400, BUG-020 → 404 with `code=endpoint_not_found`). Each check carries the BUG ID for traceability back to the relevant commit.
 5. **Go E2E suite** — runs `go test -tags e2e ./tests/e2e/...` with `SHARKO_E2E_USERNAME=admin` + `SHARKO_E2E_PASSWORD=$ADMIN_PW`.
 
 The script intentionally does NOT automate B.7 (ArgoCD UI) or B.8 (the deep Git → init → register → addon → sync flow) — those need human eyes and a real GitHub PAT.
@@ -1116,8 +1116,8 @@ The script intentionally does NOT automate B.7 (ArgoCD UI) or B.8 (the deep Git 
 
 - [Testing Guide](testing-guide.md) — the reference doc this runbook complements (test layers, patterns, command cheatsheet)
 - [Catalog Scan Runbook](catalog-scan-runbook.md) — the operational doc for the manual-only scanner bot
-- `scripts/sharko-dev.sh` — single-entry local-dev dispatcher (V124-8.1, canonical)
-- `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the underlying helper scripts (V124-5; still callable directly for back-compat)
+- `scripts/sharko-dev.sh` — single-entry local-dev dispatcher (canonical)
+- `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the underlying helper scripts (still callable directly for back-compat)
 - `scripts/upgrade.sh` — the released-Helm-chart upgrade verifier (different flow, do not confuse)
 - `tests/e2e/setup.sh` and `tests/e2e/teardown.sh` — the scripts Track B leans on for cluster bringup/teardown
 - `internal/api/router.go` — source of truth for which routes actually exist (don't guess paths from memory)
