@@ -23,7 +23,7 @@ This guide is for platform engineers and cluster operators installing Sharko in 
 ### Minimal Install
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace
 ```
 
@@ -80,7 +80,7 @@ resources:
 ```
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace \
   -f sharko-values.yaml
 ```
@@ -163,7 +163,7 @@ bootstrapAdmin:
 ```
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace \
   --set bootstrapAdmin.password='MyChosenBootstrap!42'
 ```
@@ -193,7 +193,7 @@ bootstrapAdmin:
 ```
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace \
   --set bootstrapAdmin.existingSecret.name=sharko-bootstrap-admin
 ```
@@ -264,7 +264,7 @@ Expected health response: `{"status":"ok"}`
 ## Upgrading Sharko
 
 ```bash
-helm upgrade sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko \
   -f sharko-values.yaml
 ```
