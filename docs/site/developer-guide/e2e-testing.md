@@ -73,7 +73,7 @@ The harness exposes a small set of primitives. Tests compose them as needed:
 |---|---|
 | `harness.ProvisionTopology(t, req)` | Provision a kind topology (1 mgmt + N targets). Sentinel-labelled for safe destroy. |
 | `harness.InstallArgoCD(t, c)` | Install ArgoCD's stable release into a kind cluster. |
-| `harness.StartSharko(t, cfg)` | Boot Sharko in-process (default) via `httptest.NewServer`, or via `helm install` into a kind cluster (`SharkoModeHelm` / `E2E_SHARKO_MODE=helm`; see [Full-fidelity Helm mode](#full-fidelity-helm-mode-v125-1-13)). |
+| `harness.StartSharko(t, cfg)` | Boot Sharko in-process (default) via `httptest.NewServer`, or via `helm install` into a kind cluster (`SharkoModeHelm` / `E2E_SHARKO_MODE=helm`; see [Full-fidelity Helm mode](#full-fidelity-helm-mode)). |
 | `harness.StartGitFake(t)` | In-memory `go-git` HTTP smart-protocol server hosting one repo. The URL fed into Sharko's Git config. |
 | `harness.StartGitMock(t)` | In-memory `gitprovider.GitProvider` mock — overrides the real GitHub API for read/write paths. |
 | `harness.NewClient(t, sharko, user, pass)` | Typed HTTP client that owns auth state (login + retry-on-401). |
@@ -631,7 +631,7 @@ This suite constructs `gitprovider.GiteaProvider` directly (the same way
 `internal/demo` and the unit tests do) — it never goes through Sharko's
 HTTP connection-creation path, so the git-host allowlist in
 `internal/service/connection.go::deriveProviderFromURL` (see
-[In-cluster gitfake](#in-cluster-gitfake-v125-1-13x) above) never comes
+[In-cluster gitfake](#in-cluster-gitfake) above) never comes
 into play here. That allowlist's own gap — helm-mode tests needing an
 env-gated escape hatch to point at a non-`github.com` host — was already
 closed by the `SHARKO_E2E_GIT_HOSTS_ALLOWLIST` work described above; this
