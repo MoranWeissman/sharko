@@ -26,7 +26,7 @@ serving traffic, capture forensic state, rotate every credential,
 notify downstream consumers. The on-call procedure here is
 incident-response shaped, not diagnose-and-mitigate shaped.
 
-The V125-1-7 token-leak class (where an API token's hash collision
+The token-hash collision class (where an API token's hash collision
 let a fake token authenticate) is the canonical reference; the
 remediation pattern below applies to it and to the broader category.
 
@@ -231,21 +231,20 @@ Three patterns map to three distinct bugs. The detection method
 points to the fix.
 
 - If Test A (invalid password accepted) — login handler is broken.
-  Check `internal/auth/login.go` (or wherever the password verification
-  lives). Possible cause: bcrypt comparison returning true for
+  This is a Sharko bug, not a configuration problem. Likely cause:
+  the password comparison returning true for
   empty / malformed inputs; admin-init code path running on every
   login and overwriting verification result.
 - If Test B (expired cookie honored) — session validation is broken.
-  Check the session-middleware in `internal/api/router.go` or
-  `internal/auth/session.go`. Possible cause: expiry check using
-  wrong field (e.g. `Created` instead of `Expires`), or the session
-  store cache not honoring the in-memory `Expires`.
+  Also a Sharko bug. Likely cause: the expiry check reading the wrong
+  timestamp, or the session cache not honouring the expiry it was
+  given.
 - If Test C (revoked token honored) — token-revocation propagation is
   broken. The 60s cache TTL should bound the staleness; longer-than-60s
   indicates the cache is not being invalidated on revocation, or the
   token hash is being looked up incorrectly.
 
-The V125-1-7 reference: a token-hash collision allowed a forged token
+The worked example: a token-hash collision allowed a forged token
 to authenticate as a legitimate one. Operator-side detection was the
 audit-log anomaly (token_created without preceding login_succeeded);
 fix was a hash-format change.
@@ -305,7 +304,8 @@ trust second, return to service third.
    - For Test B (expired cookie honored): same — upgrade or stay
      scaled to zero.
    - For Test C (revoked token honored): if the hash format is the
-     issue (V125-1-7 pattern), the fix is in the released version;
+     issue (the token-hash collision pattern), the fix is in the
+     released version;
      upgrade. If the cache invalidation is the issue, a restart
      clears the in-memory cache and resumes correct behavior — but
      verify after restart that revoked tokens are now rejected.
@@ -356,10 +356,9 @@ Diagnostic signature: Test A (Diagnosis step 1) returns 200. The
 audit log shows `login_succeeded` events for users whose
 `login_failed` count is zero.
 
-Why it happens: a code-path regression in `internal/auth/login.go`
-where verification logic was refactored and a fallback "allow"
-branch was introduced. Caught by Test A. The fix is in code, not in
-configuration — upgrade Sharko.
+Why it happens: a regression in Sharko's password verification, where
+a refactor introduced a fallback "allow" branch. Caught by Test A. The
+fix is in code, not in configuration — upgrade Sharko.
 
 ### Session expiry bug
 
@@ -395,7 +394,7 @@ Fix is upgrade Sharko. Short-term mitigation: restart Sharko after
 every token revoke (clears the cache). Document this expectation
 explicitly while waiting for the fix.
 
-### V125-1-7 token-hash collision (HISTORICAL)
+### Token-hash collision (HISTORICAL)
 
 A token-hash format issue let a forged value pass the hash comparison
 as a legitimate token. The forged value never appeared in
@@ -435,13 +434,15 @@ However:
   pages when `rate(sharko_login_failed_total[15m]) == 0` and
   `rate(sharko_login_attempts_total[15m]) > 0`. That pattern would catch
   Test A's "every login is accepted" signal automatically. Wiring
-  requires the `sharko_login_*_total` metrics — in V2-3.x scope.
+  requires the `sharko_login_*_total` metrics, which Sharko does not
+  export today.
 
 - **Monitoring — token-created-without-login alert.** Sharko does not
   export this metric today. The alert below is a design sketch for a
   future release, not something you can deploy now. A `token_created`
   audit event with no preceding `login_succeeded` for the same session
-  is the V125-1-7 fingerprint, and the sketch detects it like this —
+  is the fingerprint of a forged token, and the sketch detects it like
+  this —
 
   ```
   sum(rate(sharko_audit_events_total{event="token_created"}[5m]))
@@ -451,7 +452,7 @@ However:
   ```
 
   — alerting when non-zero. It requires audit metrics that do not exist
-  yet, V2-3.x scope.
+  yet.
 
 - **Gating — auth integration test in CI.** Add a CI test that runs
   the three Diagnosis tests (A/B/C) against every PR. If a code
@@ -463,9 +464,8 @@ However:
   expensive class of bug; coverage is the cheapest defense.
 
 - **Scheduled work — quarterly auth red-team drill.** Once per quarter,
-  the maintainer or a designated reviewer attempts to bypass Sharko's
-  auth in a staging instance. Documented attempts and outcomes go in
-  the security report. Forces explicit confirmation that the bypass
+  you or someone you designate attempts to bypass Sharko's auth in a
+  staging instance. Write down what was tried and what happened. Forces explicit confirmation that the bypass
   surface is closed.
 
 ---

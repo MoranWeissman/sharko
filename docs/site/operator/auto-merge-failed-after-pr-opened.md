@@ -69,9 +69,8 @@ What an operator sees when this fires:
   }
   ```
 
-- **`kubectl logs` line** (Error level — call site is
-  `cluster.go:335` for RegisterCluster; analogous emitters exist in
-  every PR-opening endpoint):
+- **`kubectl logs` line** (Error level — the same shape comes from
+  every operation that opens a PR):
 
   ```
   {"time":"...","level":"ERROR","msg":"RegisterCluster: PR opened but auto-merge failed","cluster":"prod-eu","pr_url":"https://github.com/<org>/<repo>/pull/<id>","error":"merging PR <id>: <github-error>"}
@@ -420,7 +419,7 @@ levers:
   operation and the cluster) and alert on more than 0 over 5 minutes.
   The bounded blast radius keeps this at P1; the counter would catch the
   slow drift cases — branch protection rules added after Sharko was
-  deployed — at first-fail. V2-4.x follow-up.
+  deployed — at first-fail. Planned, not built.
 
 - **Gating — pre-flight branch protection check on `sharko init`.**
   The init flow could query branch protection on the base branch
@@ -428,7 +427,7 @@ levers:
   the rules, fail init with a clear "configure branch protection
   for Sharko's bot identity, or disable `prAutoMerge`" error. This
   catches Root cause pattern 1 at install time rather than at the
-  first operator-driven write. V2-4.x follow-up.
+  first operator-driven write. Planned, not built.
 
 - **Scheduled work — quarterly auto-merge health check.** Walk the
   dashboard's PR panel, flag any PR open >24h that's expected to

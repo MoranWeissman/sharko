@@ -1,4 +1,4 @@
-# Cluster Reconciler (V1.25)
+# Cluster Reconciler
 
 > **Reference page (architecture) + embedded troubleshooting
 > mini-runbooks.** The first two-thirds of this page documents the
@@ -47,8 +47,8 @@ bootstrap Git repo and reconciles ArgoCD's cluster Secret state to
 match. Every cluster Sharko creates carries the ownership label
 `app.kubernetes.io/managed-by: sharko`; the reconciler only ever
 mutates Secrets that carry that label. Externally-created cluster
-Secrets are surfaced for adoption (V125-2 backlog) and never touched
-by the reconciler.
+Secrets are surfaced for adoption and never touched by the
+reconciler.
 
 The reconciler is the V1.25 architectural answer to the
 PR-closed-without-merge orphan bug — Secrets are now only ever created
@@ -76,9 +76,8 @@ metadata:
     # ...plus any addon-enable labels Sharko writes from managed-clusters.yaml
 ```
 
-The label is applied at Secret-create time inside
-`internal/clusterreconciler/labels.go` via `ApplyManagedBySharkoLabel`
-and the reconciler's `createOne` path. Idempotent — re-applies are no-ops.
+The label is applied when the Secret is created. It is idempotent —
+re-applying it is a no-op.
 
 ### Why it exists
 
@@ -87,11 +86,11 @@ ArgoCD reports", with no way to distinguish Sharko-created Secrets
 from operator-created or kubectl-created Secrets. That made two
 surfaces unsafe to ship:
 
-- The V125-1-7 "Delete cluster Secret" orphan-cleanup flow could
-  destroy a user's manually-created cluster Secret if it happened to
-  be absent from `managed-clusters.yaml`.
-- The V125-2 Adopt UI (planned) needs to surface exactly the
-  *unmanaged* Secrets — the inverse of the orphan-cleanup set.
+- The "Delete cluster Secret" orphan-cleanup flow could destroy a
+  user's manually-created cluster Secret if it happened to be absent
+  from `managed-clusters.yaml`.
+- The Adopt UI (planned) needs to surface exactly the *unmanaged*
+  Secrets — the inverse of the orphan-cleanup set.
 
 The label is the gate that makes both surfaces safe: Sharko mutates
 only labeled Secrets, and the Adopt UI surfaces only unlabeled ones.
@@ -107,10 +106,10 @@ unlabeled legacy Sharko-Secrets in the field).
 Sharko stops touching the Secret. From the reconciler's perspective
 the Secret no longer exists — it falls out of the "labeled Secrets in
 argocd" set used for diff. The cluster also disappears from the
-orphan-resolver lane (V125-1-7), so the "Discard cancelled
-registration" UI button won't act on it either. The Secret enters
-"externally managed" territory; V125-2's Adopt UI will surface it as
-an adoption candidate.
+orphan-resolver lane, so the "Discard cancelled registration" UI
+button won't act on it either. The Secret enters "externally managed"
+territory; the planned Adopt UI will surface it as an adoption
+candidate.
 
 ### What happens if a user adds the label to a Secret Sharko didn't create
 
@@ -132,15 +131,13 @@ the reconciler's purview.
 
 Two triggers drive a `PollOnce` call:
 
-- **Periodic tick** — default 30 seconds (`DefaultTickInterval` in
-  `internal/clusterreconciler/reconciler.go`). Hardcoded in v1.25;
-  Helm-values configurability is deferred to a V125-2 polish pass.
-- **Immediate post-merge trigger** — `cmd/sharko/serve.go` wires
-  `prTracker.SetOnMergeFn` so that every Sharko-opened PR that merges
-  calls `reconciler.Trigger()`. The trigger channel has buffer 1, so
-  back-to-back merges coalesce — the reconciler will see *at least
-  one* tick after the last merge and converge.
-- **Manual "Sync now" trigger** (V2-cleanup-89.4) — `POST
+- **Periodic tick** — default 30 seconds. Fixed, not configurable from
+  Helm values today.
+- **Immediate post-merge trigger** — every Sharko-opened PR that merges
+  triggers a reconcile straight away. Back-to-back merges coalesce, so
+  the reconciler sees *at least one* tick after the last merge and
+  converges.
+- **Manual "Sync now" trigger** — `POST
   /api/v1/clusters/{name}/reconcile` fires the same `Trigger()` channel
   on demand. It's a fleet-wide pass, not a scoped single-cluster
   reconcile (`pollOnce` always diffs the full desired-vs-live set in
@@ -159,14 +156,14 @@ The 30s periodic tick is the safety net for:
 - vault transient outages (the next tick retries).
 
 End-to-end convergence latency in the happy path (PR merged via
-Sharko-UI auto-merge) is under 5 seconds, proved by
-`tests/e2e/lifecycle/reconciler_test.go::TestE2E_RegisterCluster_PostMergeReconcile_CreatesSecret`.
+Sharko-UI auto-merge) is under 5 seconds, measured end to end against a
+real cluster.
 
 ---
 
 ## Per-cluster reconcile visibility (`last_reconcile`)
 
-Before V2-cleanup-89.4, a reconcile failure for one specific cluster (a
+In earlier versions, a reconcile failure for one specific cluster (a
 vault fetch error, a rejected K8s API call, a self-managed connection
 still waiting on the user to create its Secret) went to the server log
 and the audit log only — ArgoCD would show a failed apply, and Sharko
@@ -193,7 +190,7 @@ server instance yet (fresh startup, or a registration PR that hasn't
 merged). In the UI, this renders as a "Last sync" line on the cluster
 detail page.
 
-### Label-fight detection (V2-cleanup-89.5)
+### Label-fight detection
 
 For a **self-managed** connection, the reconciler only ever merges
 addon labels onto the Secret you created — it never touches anything
@@ -219,13 +216,13 @@ secret](self-managed-connections.md#when-another-argocd-application-also-renders
 
 The reconciler handles one direction automatically (Git → ArgoCD) and
 defers the other direction (ArgoCD → Git) to a human-initiated Adopt
-action (V125-2 backlog).
+action.
 
 | Source change                                       | Reconciler action                              | Direction               | Status   |
 | --------------------------------------------------- | ---------------------------------------------- | ----------------------- | -------- |
 | New entry in `managed-clusters.yaml`                | Create labeled Secret in argocd namespace      | Git → ArgoCD (auto)     | ✓ shipped |
 | Entry removed from `managed-clusters.yaml`          | Delete labeled Secret                          | Git → ArgoCD (auto)     | ✓ shipped |
-| ArgoCD Secret **without** sharko label appears      | Ignored (never touched; V125-2 Adopt surfaces) | ArgoCD → Git (manual)   | ✓ shipped |
+| ArgoCD Secret **without** sharko label appears      | Ignored (never touched; Adopt surfaces it)     | ArgoCD → Git (manual)   | ✓ shipped |
 | Labeled Secret deleted out-of-band                  | Re-create from Git + vault on next tick        | Git → ArgoCD (auto)     | ✓ shipped |
 | Unlabeled Secret deleted                            | Untracked — never Sharko's problem             | none                    | ✓ shipped |
 
@@ -276,16 +273,16 @@ recovery window, or immediately if you click **Sync now** (or `POST
 
 ### What if `managed-clusters.yaml` has a schema-validation error?
 
-The reconciler refuses to act on the invalid file. The V125-1-9
-read-time validator (integrated into `models.LoadManagedClusters`)
-returns a structured error, the reconciler audit-logs
+The reconciler refuses to act on the invalid file. The read-time
+validator returns a structured error, the reconciler audit-logs
 `schema_validation_failed`, and **no partial reconcile happens** —
 existing labeled Secrets remain untouched until the file validates
 again. The fix is to correct the YAML via a follow-up PR; the next
 tick after the fix converges normally.
 
-This is the operational-safety guarantee V125-1-9 was built to
-provide. Run `sharko validate-config configuration/` locally to
+That is the operational-safety guarantee: a bad file stops the
+reconciler rather than letting it act on a wrong picture of the fleet.
+Run `sharko validate-config configuration/` locally to
 exercise the same validator surface before opening a PR.
 
 ### What if Git is rate-limited or unreachable?
@@ -310,7 +307,7 @@ the reconciler. They show up in ArgoCD's dashboard as
 ArgoCD-known clusters, but Sharko's "in-git" list does not include
 them and the orphan-cleanup flow refuses to touch them.
 
-**Future direction:** the V125-2 Adopt UI (planned) will surface these
+**Future direction:** the planned Adopt UI will surface these
 unmanaged Secrets and let you import them into Sharko management — the
 Adopt action writes a `managed-clusters.yaml` entry **and** adds the
 sharko ownership label to the existing Secret, bringing it under
@@ -318,8 +315,8 @@ management without re-registering or rotating credentials.
 
 > **Do not** try to delete an unlabeled Secret via Sharko's "Discard
 > cancelled registration" button (formerly "Delete cluster Secret").
-> The orphan-delete endpoint now refuses (HTTP 400, V125-1-8.2
-> tightening) for Secrets without the sharko label. If you want to
+> The orphan-delete endpoint refuses with HTTP 400 for Secrets without
+> the sharko label. If you want to
 > delete an externally-managed cluster Secret, use `kubectl -n argocd
 > delete secret <name>` directly.
 
@@ -370,7 +367,7 @@ converging ArgoCD state to match the declared Git state. Two fixes:
 
 ### "How do I force a reconcile right now without waiting 30s?"
 
-Two ways, as of V2-cleanup-89.4:
+Two ways:
 
 - **UI:** click **Sync now** on the cluster's detail page.
 - **API:** `POST /api/v1/clusters/{name}/reconcile` — returns `202`
@@ -417,40 +414,6 @@ for trouble by name alone, without also reading `result`.
 Each entry also carries a `changes` field — `applied`, `none`,
 `not_applicable`, or absent. See
 [Audit log — retention model](audit-log.md#the-changes-field).
-
----
-
-## Implementation references
-
-- **`internal/clusterreconciler/reconciler.go`** — the `Reconciler`
-  struct, `Start` / `Stop` / `Trigger` lifecycle, and `pollOnce` diff +
-  act loop with per-cluster error isolation. ~200 LoC mirroring the
-  shape of `internal/prtracker/tracker.go`.
-- **`internal/clusterreconciler/labels.go`** — `LabelManagedBy` /
-  `LabelValueSharko` constants and the `IsManagedBySharko` /
-  `ApplyManagedBySharkoLabel` helpers.
-- **`internal/clusterreconciler/poll_test.go`** — 7 unit tests covering
-  create / delete / skip-unlabeled / idempotency / per-cluster vault
-  failure / invalid YAML rejection / git-fetch failure.
-- **`internal/clusterreconciler/reconciler_test.go`** +
-  **`labels_test.go`** — lifecycle and label-helper unit coverage.
-- **`tests/e2e/lifecycle/reconciler_test.go`** — 3 end-to-end tests
-  running against the kind harness: register → post-merge Secret
-  creation, remove → reconciler deletion, accidental-delete →
-  self-healing.
-- **`cmd/sharko/serve.go`** — production wiring: `clusterreconciler.New`
-  near the prtracker bootstrap, `prTracker.SetOnMergeFn(reconciler.Trigger)`
-  for immediate post-merge convergence, `recon.Start(ctx)` for the
-  periodic tick.
-- **`internal/api/clusters_orphan_delete.go`** +
-  **`internal/api/clusters_orphan_ownership.go`** — V125-1-8.2 label
-  gate on the orphan-delete endpoint (rejects unlabeled Secrets with
-  HTTP 400).
-- **`internal/api/clusters_orphans.go`** — V125-1-8.2 resolver gate
-  (only surfaces labeled Secrets in the orphan lane).
-- **`internal/gitops/yaml_mutator_cluster.go`** — V125-1-8.3
-  envelope-aware writer replacing the legacy line-level mutators
-  (closes task #257).
 
 ---
 

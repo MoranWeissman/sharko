@@ -110,8 +110,8 @@ What an operator sees when this fires:
 - **Settings UI** shows the AI provider as either `Not configured`
   (the simple case) or `Configured but failing`.
 - **No specific Prometheus alert fires today.** Surfacing an alert
-  on `outcome=llm_error` rate >5% over 15 minutes is a V2-4.x
-  follow-up.
+  on `outcome=llm_error` rate >5% over 15 minutes is planned, not
+  built.
 
 If the symptom is **HTTP 422 with `"Secret-like content detected"`**,
 this is **not** the runbook — the guard hard-blocked. See
@@ -407,8 +407,8 @@ levers:
   `sharko_ai_annotate_total{outcome="..."}` metric carries the
   outcome label. Alert on sustained `not_configured > 0` for 1
   hour (operators expect AI to work or to have explicitly
-  disabled it) and on `llm_error > 5%` over 15 minutes. V2-4.x
-  follow-up.
+  disabled it) and on `llm_error > 5%` over 15 minutes. Planned, not
+  built.
 
 - **Gating — Settings -> AI test-connection button.** The
   Settings UI should provide a "Test connection" button that

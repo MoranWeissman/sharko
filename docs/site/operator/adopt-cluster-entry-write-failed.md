@@ -214,7 +214,7 @@ Common shapes:
   entry; this attempt is idempotent-conflicting. Usually safe to
   re-run as a no-op.
 - `unmarshal errors: ...` — incompatible schema (older
-  `managed-clusters.yaml` shape vs. the V125-1-9 envelope).
+  `managed-clusters.yaml` shape vs. the current schema envelope).
 - `failed to lookup clusters key in document` — the file exists but
   doesn't have the expected top-level structure.
 
@@ -263,9 +263,9 @@ will affect future adoptions too).
    # Validate YAML before commit:
    sharko validate-config configuration/managed-clusters.yaml
 
-   git checkout -b fix/adopt-${CLUSTER}-add-entry
+   git checkout -b sharko-adopt-${CLUSTER}-add-entry
    git commit -am "fix(adopt): add ${CLUSTER} to managed-clusters.yaml"
-   git push origin fix/adopt-${CLUSTER}-add-entry
+   git push origin sharko-adopt-${CLUSTER}-add-entry
    gh pr create --title "fix(adopt): add ${CLUSTER}" --body "Recovery for partial-adopt state. See [adopt-cluster-entry-write-failed.md](https://github.com/MoranWeissman/sharko/blob/main/docs/site/operator/adopt-cluster-entry-write-failed.md)." --base main
    gh pr merge --squash --auto
    ```
@@ -363,7 +363,7 @@ recent non-Sharko commit touching the file.
 Fix lane: Mitigation step 3 (fix the syntax) + step 1 (add the new
 entry after the fix lands).
 
-### Schema drift between V125-1-9 envelope and bare-YAML
+### Schema drift between the schema envelope and bare YAML
 
 The schema envelope (`apiVersion: sharko.dev/v1`) is the canonical
 shape for `managed-clusters.yaml`. If the existing file is a legacy
@@ -421,20 +421,20 @@ levers:
   `event=adopt_managed_clusters_yaml_write_failed,
   result=partial` in the audit ring lets dashboards catch this
   the moment it happens, not 30 seconds later when the reconciler
-  deletes the Secret. V2-4.x follow-up.
+  deletes the Secret. Planned, not built.
 
 - **Gating — bail the adopt early on `AddClusterEntry` failure.**
   The current control flow logs Error then proceeds. The right
   behavior is to **fail the per-cluster adopt** with HTTP 5xx so
   the operator sees the failure as a failure. The reconciler's
   destructive cleanup that happens 30s later is too late to be
-  user-actionable. Code fix in `adopt.go:196` — return `cr.Status =
-  "failed"` instead of continuing. V2-4.x follow-up; this runbook
-  is the operator-side recovery until that fix lands.
+  user-actionable. The fix is for the adopt to report
+  `status: "failed"` instead of carrying on. Planned, not built; this
+  runbook is the operator-side recovery until that fix lands.
 
 - **Scheduled work — quarterly managed-clusters.yaml schema audit.**
   Run `sharko validate-config configuration/managed-clusters.yaml`
-  in CI on every PR (already in place per V125-1-9) and also
+  in CI on every PR (already in place) and also
   schedule it as a periodic check that runs against the deployed
   main branch. Catches corruption from non-Sharko commits.
 
@@ -449,7 +449,7 @@ levers:
   the adopt.
 - [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
   — the P0 sibling "Warn-but-proceed silently" pattern in the
-  orchestrator. Both flagged by the V2-2.3 logging audit.
+  orchestrator. Both are the same "log it and carry on" shape.
 - [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
   — if the adopt PR doesn't merge at all, this isn't the runbook.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.

@@ -16,14 +16,13 @@
 A single cluster's ArgoCD-shaped Secret in the `argocd` namespace is
 corrupt in one of three closely-related ways:
 
-1. **Empty server URL** — `data["server"]` is missing or empty
-   (provider.go:325).
+1. **Empty server URL** — `data["server"]` is missing or empty.
 2. **Invalid base64 in CA data** — `tlsClientConfig.caData` is not
-   valid base64 (provider.go:332).
+   valid base64.
 3. **Synthesized kubeconfig fails to parse** — the bearer-token
    kubeconfig Sharko constructs from the Secret won't round-trip
-   through `clientcmd.RESTConfigFromKubeConfig` (provider.go:409),
-   typically because one of the strings Sharko interpolated contains
+   when it is parsed back, typically because one of the strings
+   Sharko interpolated contains
    characters that break YAML.
 
 All three look the same to the operator: `POST
@@ -79,10 +78,9 @@ What an operator sees when this fires:
   {"time":"...","level":"ERROR","msg":"[provider] argocd cluster secret not found","request_id":"req-...","cluster":"<name>","namespace":"argocd","error":"..."}
   ```
 
-  Note: the `slog.Error` line at provider.go:253 only fires when
-  `findClusterSecret` itself fails. For the three corruption shapes
-  above, the error returns from `buildBearerTokenKubeconfig` and is
-  caught by the API handler — look for the wrapped error in the
+  Note: that "not found" line only fires when Sharko cannot find the
+  Secret at all. For the three corruption shapes above, the failure is
+  caught by the API handler instead — look for the wrapped error in the
   handler's `request_id`-correlated logs (Diagnosis step 2).
 
 - **UI** shows the cluster row with status **Test failed** and the
@@ -205,7 +203,7 @@ What to look for per sub-case:
   ```
 
 Note the `app.kubernetes.io/managed-by` label — if it's `sharko`, the
-Secret was originally written by Sharko (V125-1-8 ownership label).
+Secret was originally written by Sharko — that is its ownership label.
 That's a strong signal the corruption happened AFTER Sharko wrote it
 (external `kubectl edit`, GitOps replay with wrong value, manual
 config script). If the label is absent or different, the Secret was
@@ -463,8 +461,8 @@ Fix: Mitigation step 1 with the new server URL.
 - [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
   — escalate here if every cluster's Secret read fails (provider
   itself is down).
-- [`cluster-reconciler.md`](cluster-reconciler.md) — the V125-1-8
-  reconciler rebuilds these Secrets when the upstream
+- [`cluster-reconciler.md`](cluster-reconciler.md) — the reconciler
+  rebuilds these Secrets when the upstream
   `managed-clusters.yaml` changes; if the reconciler is also stuck,
   external repair is the only path.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.

@@ -258,13 +258,12 @@ The `command` value drives which Mitigation step unblocks the operator.
    The cluster remains in ArgoCD; Sharko just stops listing it in the
    dashboard.
 
-5. **Last resort — contribute a native GCP/Azure provider.** Sharko's
-   `internal/providers/gcp.go` and `azure.go` ship stub
-   `ClusterCredentialsProvider` implementations with detailed
-   implementation guidance in the package doc comments (see
+5. **Last resort — contribute a native GCP/Azure provider.** Sharko
+   ships stubs for GCP and Azure, with implementation guidance for
+   contributors (see
    [`azure-gcp-provider-unimplemented.md`](azure-gcp-provider-unimplemented.md)).
    Native GCP/Azure identity minting would close this gap the same way
-   V2-cleanup-88.2 closed it for AWS. Community contributions welcome.
+   it is already closed for AWS. Community contributions welcome.
 
 ---
 

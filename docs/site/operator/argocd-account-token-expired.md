@@ -374,7 +374,7 @@ or a documented rotation schedule.
 
 ### Token revoked by an admin
 
-A security review walked through ArgoCD's active tokens (via
+Someone auditing ArgoCD's active tokens (via
 `argocd account get` or the UI's Settings → Tokens) and revoked the
 Sharko token because it appeared unused, looked suspicious, or was
 issued by someone no longer on the team.
@@ -445,7 +445,7 @@ in ArgoCD).
   call `argocd account get-user-info` (or any minimally-privileged
   authenticated endpoint) and refuse to start if it returns
   401/403. Catches the misconfiguration before any operation fails.
-  Already partially in place via the V125-1-9 startup wiring; verify
+  Sharko already does some startup checking; verify
   it covers the auth-failure case.
 
 - **Gating — exclude Sharko token from auto-rotation tools.** If
@@ -485,8 +485,8 @@ in ArgoCD).
 - [`argocd-pr-merge-no-converge.md`](argocd-pr-merge-no-converge.md)
   — sibling failure: Sharko writes succeed but ArgoCD doesn't
   converge (different upstream issue).
-- [`cluster-reconciler.md`](cluster-reconciler.md) — V125-1-8
-  reconciler context; reconciler also fails on auth errors.
+- [`cluster-reconciler.md`](cluster-reconciler.md) — reconciler
+  context; the reconciler also fails on auth errors.
 - [`auth-bypass.md`](auth-bypass.md) — P0 security-related auth
   failure on the Sharko-side (operators authenticating to Sharko,
   not Sharko-to-ArgoCD).

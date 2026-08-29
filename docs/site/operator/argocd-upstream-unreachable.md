@@ -72,8 +72,8 @@ is **not** the runbook. Either the request path doesn't reach ArgoCD (the
 caller never set up an ArgoCD connection — see Configuration), or the
 specific addon's chart is broken (per-addon Degraded Application is a
 P1 failure mode tracked in
-[`failure-mode-index.md`](failure-mode-index.md) — runbook in V2-4.3
-PR 2b scope). This runbook is for the **fleet-wide** "every ArgoCD
+[`failure-mode-index.md`](failure-mode-index.md) with its own
+runbook). This runbook is for the **fleet-wide** "every ArgoCD
 path fails" case.
 
 ---
@@ -140,7 +140,7 @@ probe timestamp without leaking the token. If `argocd_reachable: false`
 matches the Diagnosis step 2 outcome, the Sharko-side detection is correct
 and you can trust the symptom triage.
 
-For log-driven diagnosis, the V2-2.2 `request_id` pattern joins every
+For log-driven diagnosis, the `request_id` pattern joins every
 handler's per-request lines into one stream:
 
 ```sh
@@ -167,7 +167,7 @@ The order matches the most-likely-to-work-fastest first. Stop at the
 first step that restores reachability — don't keep walking the list.
 
 1. **Restart Sharko's pod to re-discover ArgoCD's Service endpoint.**
-   The `autoDiscoverArgoCD()` path in `internal/argocd/client.go` probes
+   At startup Sharko probes
    every Service in `SHARKO_ARGOCD_NAMESPACE` at startup; if ArgoCD was
    redeployed (new ClusterIP, renamed Service), Sharko's cached endpoint
    is stale and a pod restart picks the new one up. This is the cheapest
@@ -458,7 +458,7 @@ levers — one monitoring, one gating, one scheduled work item.
 
 ## Related runbooks
 
-- [`budget-burn-runbook.md`](budget-burn-runbook.md) — V2-3.3 burn-rate
+- [`budget-burn-runbook.md`](budget-burn-runbook.md) — burn-rate
   alerts. The `SharkoClusterRegistrationFastBurn` /
   `SharkoAddonCycleFastBurn` / `SharkoDashboardReadFastBurn` alerts all
   cross-link here when ArgoCD-unreachable is the root cause.
@@ -472,7 +472,7 @@ levers — one monitoring, one gating, one scheduled work item.
 - [`failure-mode-index.md`](failure-mode-index.md) — the master
   inventory of every operator-facing failure mode in Sharko.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  V2-2.2 `request_id` correlation pattern, used in every diagnosis
+  the `request_id` correlation pattern, used in every diagnosis
   step above.
 
 ## Escalation

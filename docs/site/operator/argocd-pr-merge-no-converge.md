@@ -19,7 +19,7 @@ split-state: Git says "this cluster is registered," ArgoCD says "I've
 never heard of it." Page on-call.
 
 This is a P0 because the failure indicates one of two **architectural
-breakdowns**: either the V125-1-8 reconciler is stuck (a P0 in itself —
+breakdowns**: either the reconciler is stuck (a P0 in itself —
 see [`reconciler-crash-loop.md`](reconciler-crash-loop.md)) or the
 ArgoCD Application controller is degraded. The diagnosis path
 **distinguishes which side**, then routes to the side-specific runbook.
@@ -396,13 +396,13 @@ change you intended to keep:
   — paging when it stays non-zero for more than 90 seconds. It would
   catch both the reconciler-side and ArgoCD-side cases. Wiring requires
   Sharko to emit `sharko_audit_events_total` as a Counter labelled by
-  `event` and `result`, a P1 follow-up in V2-3.x.
+  `event` and `result`, which it does not do today.
 
 - **Gating — startup RBAC probe.** Sharko at startup should call
   `kubectl auth can-i create secrets -n <argocd-ns>` against its own
   SA, and refuse to start if the answer is no. Catches the
   "RBAC was tightened" cause before any registration silently fails.
-  Implementation belongs in `cmd/sharko/serve.go` startup checks.
+  It belongs in Sharko's startup checks.
 
 - **Gating — startup `Trigger()` wiring probe.** Sharko at startup
   should send a no-op `Trigger()` and verify the reconciler receives
@@ -426,14 +426,13 @@ change you intended to keep:
   reconciler-side failure path. This runbook routes to it.
 - [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md) —
   ArgoCD-side failure path. This runbook routes to it.
-- [`cluster-reconciler.md`](cluster-reconciler.md) — V125-1-8
-  architectural reference for the reconciler and the
-  `prTracker.SetOnMergeFn → recon.Trigger()` wiring.
+- [`cluster-reconciler.md`](cluster-reconciler.md) — the reference
+  page for the reconciler and for the reconcile-on-merge trigger.
 - [`secret-push-silently-failed.md`](secret-push-silently-failed.md) —
   adjacent silent-failure mode (addon secret push failed). Symptoms
   feel similar; the diagnosis is different.
-- [`budget-burn-runbook.md`](budget-burn-runbook.md) — V2-3 alerts that
-  fire when this is sustained.
+- [`budget-burn-runbook.md`](budget-burn-runbook.md) — the burn-rate
+  alerts that fire when this is sustained.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   `request_id` correlation pattern; `recon-` and `recon-fanout-`

@@ -22,11 +22,11 @@ This is **a graceful-degradation Warn, not a failure**. The cluster
 gets adopted; the operator-visible result is success. The Warn line
 exists so that **post-adopt forensics work**: if it turns out the
 Secret was previously managed by another tool (and the rejection
-that FR-4.6 implements should have kicked in), the Warn line is the
+Sharko normally applies should have kicked in), the Warn line is the
 forensic anchor.
 
 The blast radius is **minimal**: one cluster's adoption proceeds
-when FR-4.6 might have rejected it. The downstream concern is that
+when Sharko might have rejected it. The downstream concern is that
 **another tool's resource is being claimed by Sharko**. In practice
 this only happens when:
 
@@ -75,11 +75,11 @@ What an operator sees when this fires:
 
   The Warn line is **the only signal**. If the operator doesn't look
   at the logs, they may believe the adoption ran cleanly when
-  actually the FR-4.6 safety check was bypassed.
+  actually the managed-by safety check was skipped.
 
 - **Audit log** records the adopt as `result=success` (no per-step
   result for the label-read). The audit shape does not surface this
-  failure — log-only. A V2-4.x follow-up should add an
+  failure — log-only. A future release should add an
   `event=adopt_label_read_failed` audit entry so this is visible from
   the audit query path.
 
@@ -100,7 +100,7 @@ What an operator sees when this fires:
 
 If the symptom is **the adopt-flow returning `status: "failed"`**
 with `"is managed by <tool>, not sharko — cannot adopt"`, that's the
-**successful** FR-4.6 rejection (label read succeeded, returned
+**successful** managed-by rejection (label read succeeded, returned
 non-`sharko`). This runbook does not apply; the operator should
 either remove the conflicting label upstream or accept that the
 cluster cannot be adopted.
@@ -227,7 +227,7 @@ shapes.
    Success indicator: re-run Diagnosis step 3 — `kubectl auth can-i`
    returns `yes`. The next adopt call's Warn line does not appear.
 
-2. **Re-run the affected adoption to verify FR-4.6 ran correctly.**
+2. **Re-run the affected adoption to verify the managed-by check ran.**
    Since the previous adoption proceeded WITHOUT the label check,
    the operator may want to verify the cluster was actually safe to
    adopt. Read the cluster's previous state from the audit log to
@@ -356,14 +356,14 @@ levers:
   signal is log-only; add `event=adopt_label_read_failed,
   result=warn` so dashboards / audit queries surface this. The
   failure mode is bounded but post-hoc forensics shouldn't require
-  digging through raw logs. V2-4.x follow-up.
+  digging through raw logs. Planned, not built.
 
 - **Gating — pre-flight RBAC check at adopt request time.** Before
   any adopt call, Sharko could `kubectl auth can-i get secret` from
   inside the pod and surface a clear error to the operator if RBAC
   is wrong. That moves the failure from "Warn line operators miss"
-  to "explicit 412 Precondition Failed with the missing verb." V2-4.x
-  follow-up.
+  to "explicit 412 Precondition Failed with the missing verb."
+  Planned, not built.
 
 - **Scheduled work — quarterly RBAC drift check.** A scheduled task
   that runs the `auth can-i` matrix for every Sharko-relevant
@@ -388,8 +388,8 @@ levers:
   `app.kubernetes.io/managed-by` discipline.
 - [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
   — the P0 sibling "Warn-but-proceed silently" pattern. Different
-  surface, related discipline. Both are flagged by the V2-2.3 logging
-  audit.
+  surface, related discipline. Both are the same "log it and carry on"
+  shape.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
   `request_id` correlation pattern. Flags this and other

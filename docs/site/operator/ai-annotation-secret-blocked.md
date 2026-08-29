@@ -89,9 +89,8 @@ What an operator sees when this fires:
   ```
 
 - **A secondary audit entry** with `event=secret_leak_blocked` and
-  `surface=ai_annotate` is emitted (per `emitSecretLeakAuditBlock` in
-  `internal/api/ai_annotate.go:156`) so the security review can
-  enumerate every blocked attempt across handlers with one query:
+  `surface=ai_annotate` is emitted, so you can enumerate every blocked
+  attempt across every handler with one query:
 
   ```sh
   curl -sS -H "Authorization: Bearer ${SHARKO_TOKEN}" \
@@ -106,8 +105,8 @@ What an operator sees when this fires:
   `ok|not_configured|empty_input|oversize|secret_blocked|timeout|llm_error|parse_error|opted_out|disabled`.
 
 - **The cluster operation that triggered the annotation completes
-  successfully** with `ai=secret_blocked` in the response (per
-  `internal/api/addons_write.go:170-176`). The addon enables / updates
+  successfully** with `ai=secret_blocked` in the response. The addon
+  enables / updates
   on the cluster fine; only the LLM-generated `# description` comments
   are absent in the rendered `addons-global-values/<addon>.yaml`.
 
@@ -120,7 +119,7 @@ What an operator sees when this fires:
 - **No specific Prometheus alert fires today.** A sustained
   rise in `secret_blocked` per addon may indicate a chart-side
   regression (upstream chart starts shipping example credentials)
-  — wiring an alert on the metric is a V2-4.x follow-up.
+  — wiring an alert on the metric is planned, not built.
 
 If the symptom is **HTTP 503** with `"AI is not configured"` (no
 provider configured) instead of HTTP 422, this is a different
@@ -138,7 +137,7 @@ pattern fired, decide whether the upstream chart needs a fix.
 
 Cross-reference the `request_id` from the operator's request with
 the audit entry, per the
-[V2-2.2 correlation pattern](../developer-guide/logging.md#correlation-ids):
+[request-id correlation pattern](../developer-guide/logging.md#correlation-ids):
 
 ```sh
 REQUEST_ID=req-<from operator's response headers>
@@ -156,8 +155,7 @@ the same batch.
 ### 2. Identify which pattern fired
 
 The response body's `matches` array names the pattern but not the
-content. Common patterns and what they catch (per
-`internal/orchestrator/secrets_scan.go`):
+content. Common patterns and what they catch:
 
 | Pattern name | Catches |
 |---|---|
@@ -371,7 +369,7 @@ levers:
   growth per addon.** A normal addon should annotate cleanly across
   the fleet; a rising `secret_blocked` count is a signal that an
   upstream chart's values changed in a way that newly trips the
-  guard. Wire an alert on >0 per chart per day. V2-4.x follow-up.
+  guard. Wire an alert on >0 per chart per day. Planned, not built.
 
 - **Gating — catalog scan validates chart values at scan time.** The
   catalog scanner bot (manual-only, run via `workflow_dispatch`;
@@ -382,9 +380,8 @@ levers:
   the operator sees the warning before configuring the addon.
 
 - **Scheduled work — quarterly review of the heuristic regex set.**
-  The `ScanForSecrets` patterns at
-  `internal/orchestrator/secrets_scan.go` will drift relative to the
-  shape of real upstream chart values over time. A quarterly review
+  Sharko's secret-shaped patterns will drift relative to the shape of
+  real upstream chart values over time. A quarterly review
   checks false-positive rate (audit log: `secret_blocked` count vs.
   ground-truth real-credential count) and adjusts the patterns. Too
   loose -> credentials leak; too strict -> annotation rarely works.

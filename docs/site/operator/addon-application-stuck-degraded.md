@@ -430,7 +430,7 @@ levers:
   during PR review (Helm's `helm template`) and surface render
   errors as PR comments. That would catch Root cause pattern 1
   (wrong values) before the PR merges and ArgoCD attempts a sync.
-  Wiring this into the PR-open flow is a V2-4.x follow-up.
+  Wiring this into the PR-open flow is planned, not built.
 
 - **Scheduled work — quarterly addon health audit.** Walk the Fleet
   Dashboard and flag any Application that's been Degraded for
