@@ -2,20 +2,15 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The wrapping
-> error surface is verified against
-> `internal/orchestrator/git_helpers.go` (every Git op funnels through
-> `commitChangesWithMeta`; rate-limit errors bubble up from
-> `g.git.CreateBranch / BatchCreateFiles / CreatePullRequest` calls) and
-> against the GitHub provider implementation in
-> `internal/gitprovider/github.go:70-100` (every `Repositories.GetContents`
-> returning `*github.ErrorResponse` with HTTP 403 + `X-RateLimit-Remaining: 0`
-> is rate-limit-shaped). The reconciler-side surface for the
-> `managed-clusters.yaml` 403 is verified against
-> `internal/clusterreconciler/reconciler.go:345-372` (the `audit.action=git_read`
-> failure entry). Re-verify before changing the go-github version pinned
-> in `go.mod` (v68 at audit time) or the `commitChangesWithMeta` error
-> wrapping; both anchors are load-bearing for the symptoms below.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. Every Git
+> operation funnels through one commit-and-open-PR path, so a rate-limit
+> error from creating a branch, writing files or opening a PR bubbles up
+> with the same shape. On GitHub the rate-limited response is HTTP 403
+> with `X-RateLimit-Remaining: 0` — that pair, not the message text, is
+> what identifies it. When it is the reconciler's own read of
+> `managed-clusters.yaml` that gets rate-limited, the audit log records
+> `audit.action=git_read` with a failure result.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A burst of cluster registrations, addon enables, or reconciler ticks is
 hitting the Git provider's per-token rate limit. GitHub responds with

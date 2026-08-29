@@ -2,20 +2,15 @@
 
 **Severity:** P1
 
-> **Verified:** Updated 2026-08-25 for BF14 revision 2 (the `source`
-> log field and the API `url` field are now always the fixed word
-> `redacted`, and the `err` field is rewritten by the log pipeline);
-> log-line and API shapes verified against the test suite on that
-> date. Originally authored 2026-06-01 against `main` HEAD. The Warn log
-> line `"catalog source fetch failed"` is verified against
-> `internal/catalog/sources/fetcher.go:681`, which fires when either
-> `f.httpGetPinned(ctx, rawURL, pinnedIPs)` (the runtime-SSRF-guarded
-> path) OR `f.httpGet(ctx, rawURL)` (the AllowPrivate fallback)
-> returns a non-nil error. The fetcher records the failure via
-> `recordFailure(rawURL, startAt, err)` and the source-status enum
-> flips to **Failed**; the previous snapshot's entries are retained
-> per the source-merger contract. Re-verify when the SSRF guard or
-> the pinning client refactor changes the call shape.
+> **Verified:** Updated 2026-08-25 — the `source` log field and the API
+> `url` field are now always the fixed word `redacted`, and the `err`
+> field is rewritten by the log pipeline; log-line and API shapes were
+> re-checked on that date. Originally authored 2026-06-01 against Sharko
+> as shipped. The Warn log line `"catalog source fetch failed"` is
+> verified verbatim; it fires when the fetch fails on either the
+> SSRF-guarded path or the AllowPrivate fallback. The source's status
+> flips to **Failed** and the previous snapshot's entries are kept.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A third-party catalog source declared in `SHARKO_CATALOG_URLS`
 returned a transport-level failure: DNS lookup failed, TCP connect

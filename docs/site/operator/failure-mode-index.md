@@ -1,24 +1,23 @@
 # Failure Mode Index
 
-> **Verified:** Inventory compiled 2026-06-01 against `main` HEAD at
-> the start of the V2-4 sprint. Sources audited:
-> `internal/api/router.go` + per-route handlers (50 handler files, ~395
-> error-emitting sites bucketed into operator-observable failure
-> modes), `internal/clusterreconciler/`, `internal/argosecrets/`,
-> `internal/orchestrator/`, `internal/providers/`, `internal/catalog/`,
-> `internal/catalog/sources/`, and the audit-log action codes
-> documented in `docs/site/developer-guide/logging.md`. Re-audit each
-> minor release; remove entries as runbooks close `GAP` markers.
+> **Verified:** Inventory compiled 2026-06-01 against Sharko as shipped.
+> Every route handler, the cluster reconciler, the ArgoCD cluster-Secret
+> writer, the orchestrator, the credentials providers and the catalog
+> loader and source fetcher were walked for operator-observable failures,
+> together with the audit-log action codes documented in
+> [`../developer-guide/logging.md`](../developer-guide/logging.md).
+> Re-audit each minor release; remove entries as runbooks close `GAP`
+> markers.
 >
-> **Updated 2026-08-11 (provider-error hotfix, `fix/provider-error-leaks`):**
-> every credentials-backend failure row below was re-checked. Sharko no
-> longer puts a credentials backend's own error text in a log line, an
-> API response, an audit entry, a reconcile record or a Kubernetes
-> event — that text can carry credential material. Rows that used to
-> tell you to Ctrl-F an AWS message now tell you which `step` field to
-> read instead. **Ctrl-F still works, but search for the `step` value or
-> the log `msg`, not for an AWS error code** — an AWS error code will
-> not appear in Sharko's output at all.
+> **Updated 2026-08-11:** every credentials-backend failure row below was
+> re-checked. Sharko no longer puts a credentials backend's own error text
+> in a log line, an API response, an audit entry, a reconcile record or a
+> Kubernetes event — that text can carry credential material. Rows that
+> used to tell you to Ctrl-F an AWS message now tell you which `step`
+> field to read instead. **Ctrl-F still works, but search for the `step`
+> value or the log `msg`, not for an AWS error code** — an AWS error code
+> will not appear in Sharko's output at all.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 This page is **the first place an operator should search when they hit
 a Sharko error.** Ctrl-F your error message, find the failure-mode

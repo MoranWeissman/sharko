@@ -2,17 +2,15 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The error
-> response body `"encryption key not configured"` and the
-> `os.Getenv("SHARKO_ENCRYPTION_KEY") == ""` precondition check are
-> verified verbatim against `internal/api/users_me.go:107-110` (set
-> personal GitHub token) and `internal/api/users_me.go:188-191`
-> (test personal GitHub token) as shipped. Both paths return
-> HTTP 500 — the encryption key is a deployment-time invariant; a
-> running pod without it cannot store or retrieve personal
-> connection config. Re-verify before changing the env-var name
-> (currently `SHARKO_ENCRYPTION_KEY`) or the response-body string —
-> both are anchors for the diagnosis below.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The error
+> response body `"encryption key not configured"` is verified verbatim. It
+> comes back with HTTP 500 from both personal-GitHub-token endpoints — set
+> and test — whenever `SHARKO_ENCRYPTION_KEY` is empty. The encryption key
+> is a deployment-time invariant: a running pod without it cannot store or
+> retrieve personal connection config. Re-verify before changing the
+> env-var name or the response-body string — both are what an operator
+> searches for.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A user-facing API call to set or test a personal GitHub token
 (used for Tier 2 per-user attribution per the

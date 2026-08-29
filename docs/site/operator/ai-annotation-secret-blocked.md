@@ -2,20 +2,14 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The hard-
-> block path (audit `event=ai_annotate_blocked`, log line
-> `"ai annotate hard-blocked: secret-leak pattern matched"`, HTTP 422
-> with the `aiAnnotateBlockedResponse` envelope, and the
-> `SecretLeakError` typed error) is verified verbatim against
-> `internal/orchestrator/ai_annotate.go:124-131` and
-> `internal/api/ai_annotate.go:144-163` as shipped. The
-> `ScanForSecrets` heuristic runs BEFORE any LLM network call — by
-> design, the values payload never leaves the Sharko process when
-> the guard fires. The locked decision (no override flag, no opt-out
-> per request) is encoded at the call site. Re-verify before the
-> heuristic regex set changes (`internal/orchestrator/secrets_scan.go`)
-> or the audit event name changes — both are anchors for the
-> diagnosis below.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> hard-block path — audit `event=ai_annotate_blocked`, log line
+> `"ai annotate hard-blocked: secret-leak pattern matched"`, and HTTP 422
+> — is verified verbatim. The secret scan runs BEFORE any LLM network
+> call, so by design the values payload never leaves the Sharko process
+> when the guard fires. There is no override flag and no per-request
+> opt-out.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The AI annotation pass on an addon's `values.yaml` was blocked
 because Sharko's secret-leak guard matched a credential-shaped

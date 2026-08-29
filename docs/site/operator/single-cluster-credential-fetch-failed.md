@@ -2,22 +2,17 @@
 
 **Severity:** P1
 
-> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
-> after the provider-error hotfix. The per-cluster error-isolation
-> contract is unchanged and re-read in
-> `internal/clusterreconciler/reconciler.go`: one cluster's credential
-> failure returns from the per-cluster path and the tick continues, and
-> the audit entry is still `action=get_credentials` / `result=failure`.
-> What changed: neither the log line nor the audit `error` field carries
-> the credentials backend's own error text any more. The log line now
-> carries `cluster`, `cred_key` and `step=get-credentials`; the audit
-> `error` field carries the fixed sentence from `internal/credsafe`, and
-> the entry is sanitized at `audit.Log.Add` so nothing unsafe is ever
-> stored (`GET /audit` is open to the viewer role). Verified by
-> `internal/clusterreconciler/cred_error_sentinel_test.go` and
-> `internal/audit/sanitize_test.go`. Re-verify before changing the
-> error-isolation contract, the audit-entry shape, or the credsafe
-> boundary.
+> **Verified:** Re-authored 2026-08-11 after the provider-error fix. The
+> per-cluster error isolation is unchanged: one cluster's credential
+> failure ends that cluster's turn and the tick carries on, and the audit
+> entry is still `action=get_credentials` with `result=failure`. What
+> changed: neither the log line nor the audit `error` field carries the
+> credentials backend's own error text any more. The log line now carries
+> `cluster`, `cred_key` and `step=get-credentials`; the audit `error`
+> field carries a fixed safe sentence, and the entry is sanitized as it is
+> stored, so nothing unsafe is ever kept — `GET /audit` is open to the
+> viewer role.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 One specific cluster's credential fetch from the configured secrets
 provider (AWS Secrets Manager, Kubernetes Secrets, or Vault) is failing

@@ -2,19 +2,17 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The Error log
-> line `"failed to add cluster entry"` is verified verbatim against
-> `internal/orchestrator/adopt.go:191-197` as shipped — `addEntryErr`
-> from `gitops.AddClusterEntry(clusterAddonsData, ...)` is logged but
-> the flow CONTINUES (the values file is committed without the
-> managed-clusters.yaml entry being updated). This is by design for the
-> "freshly-bootstrapped repo" carve-out (empty managed-clusters.yaml ->
-> bootstrap to `clusters:\n`), but for non-bootstrap cases it produces
-> a **partial-state outcome**: ArgoCD Secret is labeled (post-merge),
-> the cluster's values file exists, but `managed-clusters.yaml` does
-> NOT list the cluster. Re-verify before changing the error-isolation
-> contract in adopt.go — the partial-state outcome is the symptom
-> below.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The Error
+> log line `"failed to add cluster entry"` is verified verbatim: the
+> error is logged but the flow CONTINUES (the values file is committed
+> without the `managed-clusters.yaml` entry being updated). This is by
+> design for the "freshly-bootstrapped repo" carve-out (an empty
+> `managed-clusters.yaml` is bootstrapped to a bare `clusters:` key), but
+> for non-bootstrap cases it produces a **partial-state outcome**: the
+> ArgoCD Secret is labeled (post-merge), the cluster's values file
+> exists, but `managed-clusters.yaml` does NOT list the cluster. That
+> partial-state outcome is the symptom below.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The adopt flow tried to add a new cluster entry to
 `configuration/managed-clusters.yaml` (the canonical "Sharko-managed

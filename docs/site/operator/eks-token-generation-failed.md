@@ -2,22 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
-> after the provider-error hotfix. Both emission sites re-read in
-> `internal/providers/aws_auth.go`: the config-load failure logs
-> `step=load-aws-config` and the presign failure logs
-> `step=presign-get-caller-identity`, and NEITHER logs the AWS SDK
-> error's value. `internal/providers/aws_sm.go` logs `step=sts` on a
-> mint failure with no error value and no `tokenPrefix`.
-> `internal/providers/argocd_provider.go` returns
-> `ArgoCDProviderError{Code: argocd_provider_iam_required}` whose
-> `Detail` is Sharko's own sentence — the mint error is kept on the
-> unexported `Cause`, which never serializes. The API response carries
-> the safe sentence from `internal/credsafe`. Verified by
-> `TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix`,
-> `TestGetEKSToken_LogsCarryNoPresignedURLAndNoLength` and
-> `internal/api/cred_error_sentinel_test.go`. Re-verify when the
-> token-mint flow or the credsafe boundary changes.
+> **Verified:** Re-authored 2026-08-11 after the provider-error fix. Both
+> emission sites were re-read: the config-load failure logs
+> `step=load-aws-config`, the presign failure logs
+> `step=presign-get-caller-identity`, and NEITHER logs the AWS SDK error's
+> value. A mint failure on the secrets path logs `step=sts` with no error
+> value and no token prefix. The cluster-test path returns the wire code
+> `argocd_provider_iam_required` with Sharko's own sentence as the detail;
+> the underlying mint error is kept internally and never serialized. The
+> API response carries the fixed safe sentence.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A specific EKS cluster's credential fetch failed at the AWS STS
 token-mint step. The cluster's AWS-SM secret is the structured JSON

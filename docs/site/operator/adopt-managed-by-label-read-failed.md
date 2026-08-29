@@ -2,17 +2,14 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The Warn log
-> line `"could not read managed-by label — proceeding with adoption"`
-> and the proceed-anyway control flow are verified verbatim against
-> `internal/orchestrator/adopt.go:58-67` as shipped. The lookup uses
-> `o.argoSecretManager.GetManagedByLabel(ctx, clusterName)`; on error
-> the adopt flow logs Warn and proceeds (idempotent label add at the
-> end of the adopt flow). The FR-4.6 reject is only triggered when the
-> label read SUCCEEDS but returns a non-empty, non-`sharko` value. Re-
-> verify before changing the Warn-then-proceed control flow or the
-> `GetManagedByLabel` interface — both are anchors for the diagnosis
-> below.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The Warn
+> log line `"could not read managed-by label — proceeding with adoption"`
+> and the proceed-anyway behaviour are verified verbatim: on a failed
+> label read the adopt flow logs Warn and proceeds, and the last step of
+> the adopt flow sets the label anyway. The adopt is only rejected when
+> the label read SUCCEEDS and returns a non-empty value that is not
+> `sharko`.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The cluster adopt flow tried to read the
 `app.kubernetes.io/managed-by` label on the existing ArgoCD cluster

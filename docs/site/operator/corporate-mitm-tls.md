@@ -2,16 +2,15 @@
 
 **Severity:** P2
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD as part of
-> V2-4.4 (existing-runbook style compliance refresh). The
-> `argocd-repo-server` mount path and ConfigMap shape are verified
-> against the upstream argo-cd Helm chart values surface as shipped
-> with ArgoCD 2.x. The `openssl s_client` capture and the
-> `kubectl exec` mount probe were re-run from a smoke shell against a
-> kind cluster. Re-verify before changing the ConfigMap name in
-> Sharko's `values.yaml` informational comment block — the comment and
-> this runbook share a name and an operator searching that comment will
-> Ctrl-F the same string here.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> `argocd-repo-server` mount path and ConfigMap shape are verified against
+> the upstream argo-cd Helm chart values surface as shipped with ArgoCD
+> 2.x. The `openssl s_client` capture and the `kubectl exec` mount probe
+> were re-run from a shell against a kind cluster. Re-verify before
+> changing the ConfigMap name in Sharko's `values.yaml` comment block —
+> that comment and this runbook share a name, and an operator who reads
+> the comment will Ctrl-F the same string here.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 Public Git fetches from `argocd-repo-server` are failing because your
 corporate network is terminating outbound TLS at an inspection proxy

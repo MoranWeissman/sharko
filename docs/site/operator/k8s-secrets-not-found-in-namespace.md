@@ -2,18 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD; RBAC section
-> corrected 2026-08-08 (Story 152.F) against `charts/sharko/templates/rbac.yaml`
-> after the least-privilege rework. The error
-> message `"secret for cluster %q not found in namespace %q. Set
-> --secret-path to specify the exact secret name"` is verified
-> against `internal/providers/k8s_secrets.go:142`. The slog.Error at
-> the same site emits with `step="fetch"` and an `error` value
-> mentioning the namespace. The provider tries the exact cluster
-> name as the Secret name (`fetchK8sSecret`) and if that fails,
-> searches for similar names via `searchSimilarK8s` (line 149) to
-> surface suggestions. Re-verify when the `GetCredentials` two-step
-> lookup is refactored or `searchSimilarK8s` filters change.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped; the RBAC
+> section was corrected 2026-08-08 against
+> `charts/sharko/templates/rbac.yaml` after the least-privilege rework.
+> The error message `"secret for cluster %q not found in namespace %q.
+> Set --secret-path to specify the exact secret name"` is verified
+> verbatim, and the Error log at the same point carries `step="fetch"`
+> and an `error` value naming the namespace. Sharko tries the cluster
+> name as the Secret name first, and if that misses it searches for
+> similar names so it can suggest one.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A single cluster's K8s-Secrets-provider credential fetch failed
 because no Secret with the cluster's name (and a `kubeconfig` data

@@ -1,10 +1,9 @@
 # Upgrading & Rollback Safety
 
-> **Verified:** 2026-07-05 — guard behavior verified by unit tests
-> (`internal/schema/apiversion_forwardguard_v2cleanup60_test.go`,
-> `internal/clusterreconciler/sweep_guard_v2cleanup60_test.go`) against the
-> V2-cleanup-60.2 implementation; the v2.1.x-reads-v2.2.0-file failure
-> mode itself was verified during the 2026-07-05 post-feature review.
+> **Verified:** 2026-07-05 — the version guards are covered by unit tests,
+> and the failure they prevent (an older Sharko reading a newer
+> data-file format) was reproduced by hand on 2026-07-05.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 This page covers what can go wrong **across Sharko versions** when you
 upgrade or roll back. Read it before your first upgrade to v2.2.0 or

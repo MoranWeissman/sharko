@@ -2,20 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The ArgoCD
-> account-token bearer auth path is the canonical Sharko↔ArgoCD
-> bridge (per `.claude/team/k8s-expert.md` — "Account token (Bearer
-> auth), NOT ServiceAccount/RBAC"). The 401/403 failure surface
-> originates in `internal/argocd/client.go` HTTP read paths and
-> `internal/argocd/client_write.go` write paths; both wrap responses
-> with status-code-aware error returns. The audit-log signal for the
-> success counterpart `cluster_secret_create` lives in
-> `internal/argosecrets/manager.go` (canonical writer) and
-> `internal/clusterreconciler/` (V125-1-8 reconciler path). The
-> failure-mode-index entry calls out this is distinct from the
-> "ArgoCD unreachable" P0 case (connectivity fine, just unauthorized).
-> Re-verify when ArgoCD client write paths change or when ArgoCD's
-> token rotation API contract changes upstream.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. Sharko
+> talks to ArgoCD with an ArgoCD **account token** as a bearer token —
+> not a Kubernetes ServiceAccount. Both read and write calls surface
+> ArgoCD's 401/403 with the status code preserved in the error. The
+> audit-log signal for the success counterpart is
+> `cluster_secret_create`, written by the cluster-Secret writer and by
+> the cluster reconciler. This failure is distinct from the "ArgoCD
+> unreachable" P0 case: connectivity is fine, the request is just
+> unauthorized.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 ArgoCD's HTTP API is **reachable** from the Sharko pod (TCP connect
 + TLS succeed), but every authenticated call returns 401 Unauthorized

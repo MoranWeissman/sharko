@@ -2,21 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The 503
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The 503
 > response body `"AI is not configured; configure a provider in
-> Settings -> AI"` is verified verbatim against
-> `internal/api/ai_annotate.go:90-92` as shipped — the handler returns
-> 503 when `s.aiClient == nil || !s.aiClient.IsEnabled()`. The same
-> shape surfaces from every AI-using endpoint (changelog summary at
-> `internal/api/addons_changelog.go`, addon catalog suggestions, smart-
-> values annotation). The per-provider auth-error variant returns
-> through `aiClient.Summarize` returning a wrapped provider-specific
-> 401/403; the wrapping originates in
-> `internal/orchestrator/ai_annotate.go:141` (the LLM call site) and
-> the failure surfaces as the `SkipReason=llm_error` outcome instead
-> of HTTP 503. Re-verify after changing the AI client interface
-> (`IsEnabled()`, `Summarize()`) or the Settings UI's AI provider
-> configuration shape — both are anchors here.
+> Settings -> AI"` is verified verbatim — Sharko returns 503 when no AI
+> provider is configured or the configured one is disabled. The same
+> shape surfaces from every AI-using endpoint (changelog summary, addon
+> catalog suggestions, smart-values annotation). The per-provider
+> auth-error variant is different: the provider's own 401/403 comes back
+> wrapped, and the failure surfaces as the `llm_error` outcome instead of
+> HTTP 503.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The AI features in Sharko (smart-values annotation, addon changelog
 summaries, catalog discovery suggestions) are returning HTTP 503 or

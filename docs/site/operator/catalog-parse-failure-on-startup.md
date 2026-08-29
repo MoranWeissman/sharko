@@ -2,19 +2,15 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The error
-> message `"catalog: parse yaml: <reason>"` is verified against
-> `internal/catalog/loader.go:332`, which fires inside
-> `LoadBytesWithSource` when `yaml.NewDecoder(...).Decode(&root)`
-> returns a non-EOF error. The same loader handles BOTH the embedded
-> catalog (called via `Load()` → `LoadBytes(catalogembed.Bytes)`)
-> and third-party catalog bodies fetched by the source-fetcher
-> (called via `LoadBytesWithSource` / `LoadBytesWithVerifierAndSource`
-> at `internal/catalog/sources/fetcher.go:702-704`). The
-> "no entries found under 'addons:'" error at line 335 is a sibling
-> shape with the same operator surface. Re-verify when the loader's
-> YAML decoder library changes or when the embedded catalog source
-> file is replaced.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The error
+> message `"catalog: parse yaml: <reason>"` is verified verbatim; it fires
+> when the YAML decoder returns anything other than a clean end of input.
+> The same loader handles BOTH the embedded catalog and any third-party
+> catalog body fetched from a configured source, so the message alone does
+> not tell you which one broke — whether the pod starts at all does, and
+> that is the first thing the diagnosis below checks. The sibling message
+> `"no entries found under 'addons:'"` has the same operator surface.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The catalog YAML parser failed. This runbook covers both flavors of
 the failure mode that share the same emission site

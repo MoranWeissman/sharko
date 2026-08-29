@@ -2,21 +2,15 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. Both stub
-> error messages are verified against source: `"Azure Key Vault
-> provider is not yet implemented — community contributions welcome
-> at https://github.com/MoranWeissman/sharko"` at
-> `internal/providers/azure.go:28` and `"GCP Secret Manager provider
-> is not yet implemented — community contributions welcome at
-> https://github.com/MoranWeissman/sharko"` at
-> `internal/providers/gcp.go:28`. Both stubs return the same error
-> from `NewAzureKeyVaultProviderFromAddonConfig` /
-> `NewGCPSecretManagerProviderFromAddonConfig`, fail every method on
-> the `SecretProvider` interface, and ship implementation guidance in
-> the package doc comments. The grouping of these two rows into one
-> runbook follows the style guide's "same root cause + same
-> mitigation" rule. Re-verify when either provider ships an
-> implementation that flips the stub.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. Both stub
+> error messages are verified verbatim: `"Azure Key Vault provider is not
+> yet implemented — community contributions welcome at
+> https://github.com/MoranWeissman/sharko"` and `"GCP Secret Manager
+> provider is not yet implemented — community contributions welcome at
+> https://github.com/MoranWeissman/sharko"`. Both stubs fail every call,
+> so there is no partial support to fall back on. The two share one
+> runbook because they share one cause and one mitigation.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The operator configured Sharko's provider type (Helm
 `secrets.provider`, env var `SHARKO_CONN_PROVIDER_TYPE` /

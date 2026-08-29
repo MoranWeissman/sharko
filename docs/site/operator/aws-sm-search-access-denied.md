@@ -2,27 +2,22 @@
 
 **Severity:** P1
 
-> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
-> after the provider-error hotfix. `internal/providers/aws_sm.go`'s
-> `SearchSecrets` still degrades gracefully — `searchSimilar` fails,
-> the Warn line fires, and the function returns an empty result set
-> with a nil error, so the primary fetch path is untouched. What
-> changed: that Warn line no longer logs the AWS SDK error's value.
-> It now carries `query`, `prefix` and `step=list-secrets`. This was
-> a real leak found by extending the log-source guard
-> (`TestAWSSMProvider_LogsCarryNoRawErrorAndNoTokenPrefix`) to this
-> file — it was not in the original hotfix's file:line list.
+> **Verified:** Re-authored 2026-08-11 after the provider-error fix.
+> Searching AWS Secrets Manager still degrades gracefully — the search
+> fails, the Warn line fires, and the search returns an empty result with
+> no error, so the primary fetch path is untouched. What changed: that
+> Warn line no longer logs the AWS SDK error's value. It now carries
+> `query`, `prefix` and `step=list-secrets`.
 >
-> One more change worth knowing about on this page: the suggestions are
-> now offered only when the secret is genuinely ABSENT, decided by the
-> `credsafe.MarkNotFound` marker the provider sets where AWS returned
-> `ResourceNotFoundException`. Before, the handler searched the error text
-> for the words "not found", so an **AccessDenied whose message happened
-> to contain those words offered suggestions too** — sending the operator
-> to hunt a typo when the real problem was the missing IAM permission this
+> One more change worth knowing about on this page: the secret-name
+> suggestions are now offered only when the secret is genuinely ABSENT,
+> decided by a marker Sharko sets where AWS returned
+> `ResourceNotFoundException`. Before, Sharko searched the error text for
+> the words "not found", so an **AccessDenied whose message happened to
+> contain those words offered suggestions too** — sending the operator to
+> hunt a typo when the real problem was the missing IAM permission this
 > page is about. That no longer happens, and it is an improvement.
->
-> Re-verify when SearchSecrets degradation or the log line changes.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A single IAM role for the Sharko pod is missing the
 `secretsmanager:ListSecrets` permission. Sharko's AWS-SM provider

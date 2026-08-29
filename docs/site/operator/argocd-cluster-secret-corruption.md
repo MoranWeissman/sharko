@@ -2,21 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. Three closely
-> related parse-time failure paths in `internal/providers/argocd_provider.go`
-> all surface from the same code region in
-> `buildBearerTokenKubeconfig`: empty server URL (line 325), invalid
-> base64 in `tlsClientConfig.caData` (line 332), and the round-trip
-> kubeconfig parse via `clientcmd.RESTConfigFromKubeConfig` (line
-> 409). All three are returned as plain `fmt.Errorf` (no sentinel /
-> wire code) and bubble up to the API layer as a generic 500 with
-> the wrapped reason. The grouping of these three rows into one
-> runbook follows the runbook style guide's rule
-> (`docs/site/developer-guide/runbook-style-guide.md`): same
-> diagnosis path (inspect the Secret YAML directly), same mitigation
-> (re-create or repair the Secret). Re-verify when
-> `buildBearerTokenKubeconfig` is restructured or sentinel-error
-> typed errors are introduced for these paths.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. Three
+> closely related parse-time failures all surface while Sharko builds a
+> kubeconfig from the ArgoCD cluster Secret: an empty server URL,
+> invalid base64 in `tlsClientConfig.caData`, and a kubeconfig that will
+> not parse on the round trip. All three come back as a generic HTTP 500
+> with the reason in the message — there is no distinct error code to
+> match on. They share one runbook because they share one diagnosis
+> (inspect the Secret YAML directly) and one mitigation (repair or
+> re-create the Secret).
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A single cluster's ArgoCD-shaped Secret in the `argocd` namespace is
 corrupt in one of three closely-related ways:

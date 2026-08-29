@@ -2,19 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The log line
-> `"init operation abandoned — no heartbeat from client"` and the
-> `IsAlive(2 * time.Minute)` heartbeat-deadline check are verified
-> verbatim against `internal/api/init.go:383-386` as shipped. The
-> 2-minute heartbeat window is hard-coded in the wait-for-merge loop;
-> the session entry stays in `operations.StatusInProgress` after the
-> server abandons polling (no terminal-state transition; the audit log
-> shows `init_run` start with no completion). Currently logged at
-> `Info` level; will be reclassified to `Warn` per the V2-2.3 logging
-> audit.
-> Re-verify after the level reclassification ships, after the
-> heartbeat window changes, or after the session-state model is
-> updated.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The log
+> line `"init operation abandoned — no heartbeat from client"` and the
+> two-minute heartbeat deadline are verified verbatim. The two-minute
+> window is fixed and not configurable. After the server gives up
+> polling, the operation stays in its in-progress state — it never
+> reaches a terminal one, so the audit log shows an `init_run` start with
+> no completion. The line is logged at `Info` today, which is lower than
+> the failure deserves; that is a known gap, not a mis-reading of your
+> logs.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The init operation (`POST /api/v1/init`) is the documented async
 exception in Sharko's otherwise synchronous API surface. The handler

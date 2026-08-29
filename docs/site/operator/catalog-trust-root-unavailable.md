@@ -2,16 +2,12 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The TUF-backed
-> `trusted_root.json` fetch path is verified against
-> `internal/catalog/signing/tufroot.go:65-101`, where the function
-> `GetTarget("trusted_root.json")` is the canonical load and
-> `"parse trusted_root.json"` is the canonical parse error string.
-> Catalog signing surface (sources + signing) is bounded by
-> `internal/catalog/signing/verify.go`. Reference page for trust-policy
-> semantics is [`catalog-trust-policy.md`](catalog-trust-policy.md).
-> Re-verify when TUF client library or the trusted-root target name
-> changes.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. Sharko
+> loads the Sigstore trust root by fetching the `trusted_root.json` target
+> over TUF; `"parse trusted_root.json"` is the exact parse-error string it
+> reports. Trust-policy semantics are on
+> [`catalog-trust-policy.md`](catalog-trust-policy.md).
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 Sharko cannot load Sigstore's `trusted_root.json` from the public-good
 TUF infrastructure. Every catalog entry that depends on signature

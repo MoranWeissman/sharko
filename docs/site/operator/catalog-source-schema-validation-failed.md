@@ -3,25 +3,19 @@
 **Severity:** P1
 
 > **Verified:** Updated 2026-08-25 (second pass): the example log lines
-> now show what the log pipeline actually writes into the `err` field —
-> a fixed type-derived label, never the schema complaint's own words —
-> verified on that date by rendering real schema failures through the
-> production log handler (`logging.NewHandler`) and by reproducing the
-> complaint locally with `sharko validate-catalog`. Earlier the same
-> day: the `source` log field and the API `url` field are always the
-> fixed word `redacted` (BF14 revision 2); log-line and API shapes
-> verified against the test suite.
-> Originally authored 2026-06-01 against `main` HEAD. The Warn log
-> line `"catalog source schema validation failed"` is verified against
-> `internal/catalog/sources/fetcher.go:708`, where it surfaces when the
-> downstream `catalog.LoadBytesWithSource` /
-> `catalog.LoadBytesWithVerifierAndSource` call returns a parse / enum
-> / required-field error. The fetcher does NOT discard the prior
-> snapshot on schema failure (per fetcher.go:710 +
-> `recordSchemaFailure`); the previously-loaded entries from this
-> source remain merged into the curated set. Re-verify when
-> `LoadBytesWithSource` error wrapping or the fetcher status enum
-> changes.
+> now show what the log pipeline actually writes into the `err` field — a
+> fixed type-derived label, never the schema complaint's own words —
+> checked on that date by rendering real schema failures through the
+> production log handler and by reproducing the complaint locally with
+> `sharko validate-catalog`. Earlier the same day: the `source` log field
+> and the API `url` field are always the fixed word `redacted`; log-line
+> and API shapes re-checked then. Originally authored 2026-06-01 against
+> Sharko as shipped. The Warn log line
+> `"catalog source schema validation failed"` is verified verbatim; it
+> fires on a parse, enum or required-field error in a fetched catalog
+> body. Sharko does NOT discard the prior snapshot on a schema failure —
+> the entries already loaded from that source stay in the merged set.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A third-party catalog source declared in `SHARKO_CATALOG_URLS` (or the
 equivalent Helm value) returned a body that parsed as YAML but failed

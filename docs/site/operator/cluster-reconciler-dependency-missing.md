@@ -2,20 +2,18 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The three
-> Warn-level skip messages are verified verbatim against
-> `internal/clusterreconciler/reconciler.go:324-342` as shipped:
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The three
+> Warn-level skip messages are verified verbatim:
 >
-> - `"[clusterreconciler] no GitProvider getter configured, skipping reconcile"` (line 325)
-> - `"[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile"` (line 336)
-> - `"[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile"` (line 340)
+> - `"[clusterreconciler] no GitProvider getter configured, skipping reconcile"`
+> - `"[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile"`
+> - `"[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile"`
 >
-> Each is a precondition guard in `pollOnce`; the reconciler returns
-> without doing work but does NOT panic — the goroutine stays alive
-> for the next tick. This distinguishes the failure from
-> [`reconciler-crash-loop.md`](reconciler-crash-loop.md) (P0). Re-verify
-> before changing the dependency-injection shape in `Deps` or the
-> Warn-level skip-log strings — both are anchors here.
+> Each is a precondition check at the top of a reconcile tick. The
+> reconciler returns without doing work but does NOT crash — it stays
+> alive for the next tick. That is what separates this failure from
+> [`reconciler-crash-loop.md`](reconciler-crash-loop.md) (P0).
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The cluster reconciler is running but is a no-op. Each 30s tick logs
 a Warn line saying which dependency is missing and returns without

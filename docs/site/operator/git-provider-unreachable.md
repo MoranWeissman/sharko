@@ -2,17 +2,13 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01, re-verified 2026-08-20 (B1). The 502
-> body is now one fixed sentence, `credsafe.NoActiveGitConnectionMessage`,
-> written by the single shared helper `writeNoActiveGitConnection` in
-> `internal/api/connection_gate.go`. Every handler in the set routes through
-> it; `internal/api/connection_gate_guard_test.go` holds the list of which,
-> and `internal/credsafe/connmessage_test.go` pins the sentence by exact
-> text. The
-> `request_id` correlation pattern referenced in Diagnosis is the V2-2.2
-> shipped surface ([`../developer-guide/logging.md`](../developer-guide/logging.md)).
-> Re-verify before changing the `writeError` body string or the V2-3
-> recording-rule names.
+> **Verified:** Authored 2026-06-01, re-verified 2026-08-20. The 502 body
+> is now one fixed sentence, written in one shared place, and every
+> handler in the affected set goes through it — so the sentence is the
+> same wherever you meet it. Diagnosis uses the `request_id` correlation
+> pattern documented in
+> [`../developer-guide/logging.md`](../developer-guide/logging.md).
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 Every API path that needs to open a PR is failing. Every cluster
 registration, every adoption, every addon enable/disable, every secret

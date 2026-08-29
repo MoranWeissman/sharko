@@ -1,14 +1,15 @@
 # Budget-Burn Runbook
 
-> **Verified:** Updated 2026-08-25 for BF14 revision 2 (the log
-> `source` field is now always the fixed word `redacted`, so the
-> identify-the-source step reads the API instead of grouping logs).
-> Originally authored 2026-06-01 against the V2-3.3 alerts shipped in
-> `charts/sharko/templates/prometheusrules.yaml` (PR #372). Every alert in
-> that file has a 1:1 section below; section anchors match the
-> `runbook_url` annotation of each alert. Re-verify before changing alert
-> names, expressions, or thresholds — the recording-rule names, alert
-> names, and runbook anchors are load-bearing together.
+> **Verified:** Updated 2026-08-25 — the log `source` field is now always
+> the fixed word `redacted`, so the identify-the-source step reads the API
+> instead of grouping logs. Originally authored 2026-06-01 against the
+> burn-rate alerts shipped in
+> `charts/sharko/templates/prometheusrules.yaml`. Every alert in that file
+> has a 1:1 section below, and each section anchor matches that alert's
+> `runbook_url` annotation. Re-verify before changing alert names,
+> expressions or thresholds — the recording-rule names, the alert names
+> and the anchors here are load-bearing together.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 This page is what on-call reads when a Sharko SLO burn-rate alert fires.
 Each section maps to one alert and tells you what it means, where to

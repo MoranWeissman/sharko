@@ -1,12 +1,12 @@
 # SLOs — Service Level Objectives for v2.0.0
 
-> **Verified:** 2026-05-24 — targets derived from the V2-1 perf
-> baselines captured by the in-process e2e harness on a developer
-> workstation (see
-> [`docs/site/operator/perf-baselines.md`](perf-baselines.md)). No
-> production data exists yet; targets are headroom-sized over the
-> baseline and re-tighten after V2-1.4 CI baselines + the first 90
-> days of production telemetry.
+> **Verified:** 2026-05-24 — targets derived from the performance
+> baselines captured by the in-process end-to-end harness on a developer
+> workstation (see [`perf-baselines.md`](perf-baselines.md)). No
+> production data exists yet; targets are headroom-sized over the baseline
+> and will be re-tightened once CI baselines and the first 90 days of
+> production telemetry exist.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 ## v2.0.0 SLO commitment
 

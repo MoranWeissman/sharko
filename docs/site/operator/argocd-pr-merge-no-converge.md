@@ -2,16 +2,14 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The audit-event
-> shape (`pr_merged`, `cluster_secret_create`, `cluster_secret_reconcile`)
-> is verified against the V2-2 audit codes documented in
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> audit-event shape (`pr_merged`, `cluster_secret_create`,
+> `cluster_secret_reconcile`) is verified against the audit codes in
 > [`../developer-guide/logging.md`](../developer-guide/logging.md) and
-> the V125-1-8 reconciler design referenced in
-> [`cluster-reconciler.md`](cluster-reconciler.md). The
-> `prTracker.SetOnMergeFn → recon.Trigger()` wiring lives in
-> `cmd/sharko/serve.go` and the reconciler implements it in
-> `internal/clusterreconciler/reconciler.go`. Re-verify if the audit
-> event names or the on-merge trigger wiring change.
+> the reconciler behaviour described in
+> [`cluster-reconciler.md`](cluster-reconciler.md). A merged PR triggers
+> a reconcile immediately, rather than waiting for the next tick.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A cluster (or addon) registration's PR was merged. The audit log shows
 `pr_merged`. The Sharko API view of the cluster says `managed: true`.

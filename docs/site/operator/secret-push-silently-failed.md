@@ -2,16 +2,14 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The error log
-> line `"[secrets] failed to create secret, continuing"` and the
-> `result.Failed` accumulator are verified verbatim against
-> `internal/orchestrator/secrets.go:110` as shipped. The "continuing"
-> path is the canonical silent-data-loss surface flagged by the
-> V2-2.3 logging audit (see [`../developer-guide/logging.md`](../developer-guide/logging.md)
-> for the discipline this failure mode violates).
-> Re-verify before changing the `"continuing"` log string or the
-> `result.Failed` accumulator shape — both are anchors for log greps
-> and audit-log correlation.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The Error
+> log line `"[secrets] failed to create secret, continuing"` and the
+> failed-secret tally in the operation result are verified verbatim. The
+> "continuing" path is the canonical silent-data-loss surface — see
+> [`../developer-guide/logging.md`](../developer-guide/logging.md) for
+> the discipline it violates. Re-verify before changing the
+> `"continuing"` log string — it is what an operator greps for.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 Sharko's API returned `201 Created` for a cluster registration. The
 operator received the success response, the PR was opened, the PR was

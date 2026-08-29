@@ -2,18 +2,15 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The 502 error
-> string is now one fixed sentence written by `writeNoActiveArgocdConnection`
-> in `internal/api/connection_gate.go` (B1, 2026-08-20). The pre-B1 wording
-> below was verified verbatim against
-> `internal/api/addon_ops.go:73,190`, `internal/api/addons_upgrade.go:58,132`,
-> `internal/api/addons_write.go:67,241,331`, and
-> `internal/api/ai_annotate.go:97` as shipped. Diagnosis queries reference
-> the V2-3 metric family in `internal/metrics/` and the
-> `request_id` correlation pattern documented in
-> [`../developer-guide/logging.md`](../developer-guide/logging.md). Re-verify
-> before changing the `writeError` body string or the V2-3 burn-rate
-> recording rules — both anchors are load-bearing here.
+> **Verified:** Authored 2026-06-01, re-verified 2026-08-20. The 502
+> error body is now one fixed sentence for every affected endpoint, with
+> no underlying transport error in it. Older Sharko versions put the
+> underlying error in the body; that older wording is kept below so a log
+> search from an older release still lands here. Diagnosis queries use
+> the SLO metric families and the `request_id` correlation pattern
+> documented in
+> [`../developer-guide/logging.md`](../developer-guide/logging.md).
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 Every API path that touches ArgoCD is failing. Every cluster write, every
 addon enable, every addon upgrade, every adopt, every dashboard read that

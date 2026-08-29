@@ -2,15 +2,14 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The reconciler
-> tick body (`pollOnce`), the `recon-<unix_ts>` and `recon-fanout-<unix_ts>`
-> correlation-ID shapes, and the `DefaultTickInterval = 30s` cadence are
-> verified against `internal/clusterreconciler/reconciler.go` as shipped.
-> The cross-link to the V125-1-8 design and ownership-label semantics
-> points at [`cluster-reconciler.md`](cluster-reconciler.md), which is
-> the established reference page. Re-verify when the reconciler's
-> tick cadence, correlation-ID shape, or panic-recovery wrapper changes
-> — all three are load-bearing in Diagnosis.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> reconcile tick body, the `recon-<unix_ts>` and
+> `recon-fanout-<unix_ts>` correlation-id shapes, and the 30-second tick
+> cadence are verified against Sharko as shipped. The reconciler's
+> behaviour and its ownership-label semantics are described on
+> [`cluster-reconciler.md`](cluster-reconciler.md), which is the
+> reference page for it.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The Sharko pod is alive — the API still answers, the UI still loads —
 but the cluster-secret reconciler goroutine is gone. Every 30 seconds

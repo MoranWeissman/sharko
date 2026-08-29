@@ -1,12 +1,12 @@
 # Migrating Off Pasted (Inline) Credentials
 
-> **Verified:** 2026-08-18 — every door this page uses already exists and was
-> verified against the code and the product ruling's migration-path check
-> (2026-08-17): the credentials providers, the schema-validated
-> `managed-clusters.yaml` write, the read-only connection check, and the
-> guarded repair. The end-to-end playground walk of this exact sequence is
-> part of the current round's acceptance gate and is scheduled, not yet run —
-> this header will be updated when it has.
+> **Verified:** 2026-08-18 — every door this page uses already exists and
+> was verified against Sharko as shipped: the credentials providers, the
+> schema-validated `managed-clusters.yaml` write, the read-only
+> connection check, and the guarded repair. The end-to-end playground walk
+> of this exact sequence is scheduled and not yet run — this header will
+> be updated when it has been.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A cluster registered with a **pasted (inline) kubeconfig** carries a
 credential that exists **only in the live ArgoCD cluster Secret**. It is never

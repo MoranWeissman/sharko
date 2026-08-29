@@ -2,26 +2,22 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The
-> `RedactHandler` wrapper in `internal/logging/redact.go` is the V2-2.4
-> shipped surface; it is **first in the slog handler chain** wired in
-> `cmd/sharko/serve.go`, so credential-shaped attribute values are
-> redacted before serialization (verified per the architecture diagram
-> in [`../developer-guide/logging.md`](../developer-guide/logging.md)).
-> The bootstrap-admin-password emission site at
-> `internal/auth/store.go:634` is the canonical "headline finding" from
-> the V2-2.3 logging audit.
-> Re-verify when handler-chain order changes or new auth init call sites
-> appear in `internal/auth/`.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. Sharko
+> redacts credential-shaped log attributes in the **first** log handler in
+> the chain, so a value is redacted before anything serializes it (the
+> chain is drawn in
+> [`../developer-guide/logging.md`](../developer-guide/logging.md)). The
+> bootstrap admin password is the canonical example this page is built
+> around.
 >
-> **Updated 2026-08-11 (provider-error hotfix,
-> `fix/provider-error-leaks`):** a third failure mode was added below —
-> a credentials backend's own ERROR TEXT reaching a log line, a response,
-> or the audit log. That is a different problem from the two here: the
-> value is not an attribute the `RedactHandler` can inspect, it is prose
-> inside an error string. It is now handled structurally by
-> `internal/credsafe`, which marks credentials-backend errors by TYPE and
-> gives every public boundary one fixed safe sentence to say instead.
+> **Updated 2026-08-11:** a third failure mode was added below — a
+> credentials backend's own ERROR TEXT reaching a log line, a response, or
+> the audit log. That is a different problem from the two above: the value
+> is not an attribute the redacting handler can inspect, it is prose
+> inside an error string. Sharko now marks credentials-backend errors by
+> type and gives every public boundary one fixed safe sentence to say
+> instead.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A credential — admin password, kubeconfig bearer token, JWT, base64-
 encoded vault secret, GitHub PAT — appeared verbatim in Sharko's

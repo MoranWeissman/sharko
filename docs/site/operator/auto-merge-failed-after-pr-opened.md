@@ -2,20 +2,16 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The log line
-> `"RegisterCluster: PR opened but auto-merge failed"` and the
-> partial-success result envelope (`Status: "partial"`, `FailedStep:
-> "pr_merge"`, `Message` containing the PR URL) are verified verbatim
-> against `internal/orchestrator/cluster.go:335-343` as shipped. The
-> wrapping error path in `commitChangesWithMeta` at
-> `internal/orchestrator/git_helpers.go:148-153` returns
-> `"PR created but merge failed: <wrapped error>"` when
-> `o.git.MergePullRequest` fails after a successful PR creation. The
-> same partial-success shape is emitted by `adopt.go` (cluster adopt
-> flow) and by every other PR-opening operation that uses
-> `commitChangesWithMeta`. Re-verify before changing the
-> `Status: "partial"` shape or the `FailedStep` constant — both are
-> grep anchors for the failure mode.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The log
+> line `"RegisterCluster: PR opened but auto-merge failed"` and the
+> partial-success response envelope (`Status: "partial"`,
+> `FailedStep: "pr_merge"`, and a `Message` carrying the PR URL) are
+> verified verbatim. The wrapped message reads
+> `"PR created but merge failed: <underlying error>"`. The same
+> partial-success shape comes back from cluster adopt and from every
+> other operation that opens a PR, so `Status: "partial"` and
+> `FailedStep` are the two fields to search on.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A write operation (`POST /clusters`, `POST /clusters/adopt`,
 `DELETE /clusters/{name}`, `PATCH /addons/{name}`, `POST /addons`,

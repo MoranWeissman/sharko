@@ -2,19 +2,14 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-07-09 against `main` HEAD as part of
-> V2-cleanup-88.6 (connection-redesign documentation), updating this
-> runbook for the reality shipped by V2-cleanup-88.2 (#509): Sharko now
+> **Verified:** Authored 2026-07-09 against Sharko as shipped. Sharko
 > recognizes and mints tokens for the two well-known AWS
 > `execProviderConfig` commands (`argocd-k8s-auth aws`,
-> `aws-iam-authenticator`) instead of rejecting every exec-plugin
-> shape outright. This runbook now covers only the remaining
-> genuinely-unsupported case: an exec command Sharko doesn't recognize
-> as AWS. The `ArgoCDProviderCodeExecUnsupported` =
-> `"argocd_provider_exec_unsupported"` sentinel, `isKnownAWSExecCommand`,
-> and the dispatch in `resolveExecProviderConfig` are verified against
-> `internal/providers/argocd_provider.go`. Re-verify if a third AWS
-> exec command is added to the known set, or if GCP/Azure support ships.
+> `aws-iam-authenticator`) instead of rejecting every exec-plugin shape
+> outright. This runbook covers the remaining genuinely-unsupported
+> case: an exec command Sharko does not recognize as AWS. The wire code
+> for it is `argocd_provider_exec_unsupported`.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 `POST /api/v1/clusters/{name}/test` returns 503 on a specific cluster
 because that cluster's ArgoCD-shaped Secret uses **exec-plugin auth**

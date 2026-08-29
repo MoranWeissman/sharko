@@ -2,15 +2,14 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The auth
-> surface is `internal/auth/` (login, session, API token paths) and
-> `internal/api/auth.go` (route handlers). The `login_failed` audit
-> code documented here matches the V2-2 audit-log surface in
-> [`../developer-guide/logging.md`](../developer-guide/logging.md).
-> The V125-1-7 token-leak class referenced in the failure-mode index
-> is shipped — this runbook covers operator-side detection and
-> mitigation. Re-verify when auth handlers or session-cookie shape
-> changes.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> `login_failed` audit code documented here matches the audit-log
+> surface in
+> [`../developer-guide/logging.md`](../developer-guide/logging.md). The
+> token-hash collision described further down is fixed in current
+> Sharko; it is kept here because it is the worked example of what this
+> class of failure looks like from the operator's side.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The login endpoint is accepting invalid credentials, OR a session
 cookie remains honored after its expiry timestamp, OR an API token

@@ -2,15 +2,13 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The init
-> async-operation surface is `internal/api/init.go` —
-> `event="init_run"` audit code, heartbeat-poll abandonment log line
-> `"init operation abandoned — no heartbeat from client"` at
-> `init.go:384`, and the operation-id terminal-state model are
-> verified against the shipped source. The async-init pattern is the
-> documented exception to Sharko's synchronous write API per the
-> product-manager memory. Re-verify when init handler shape or
-> operation-id state-machine changes.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The init
+> surface is verified against Sharko as shipped: the `init_run` audit
+> code, the heartbeat-abandonment log line
+> `"init operation abandoned — no heartbeat from client"`, and the
+> operation-id terminal-state model. Init is the one place Sharko's write
+> API is asynchronous rather than synchronous.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The bootstrap init operation was started — `POST /api/v1/init` returned
 `202 Accepted` with an `operation_id` — but the operation never reaches

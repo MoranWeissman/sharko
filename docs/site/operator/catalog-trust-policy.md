@@ -2,21 +2,17 @@
 
 **Severity:** P1
 
-> **Verified:** Updated 2026-08-25 for BF14 revision 2 (the `source`
-> log field is now always the fixed word `redacted`); log-line shapes
-> re-checked against the test suite on that date. Originally authored
-> 2026-06-01 against `main` HEAD as part of
-> V2-4.4 (existing-runbook style compliance refresh). The env-var
-> names, default identity list, default workflow_ref regex, log
-> messages (`catalog signature verification failed`,
-> `catalog source sidecar verification errored`), and the startup
-> validation error format are verified against
-> `internal/catalog/signing/policy.go` and
-> `internal/catalog/signing/verify.go` as shipped in v1.23 (V123-2.3)
-> and v1.24 (V124-1.4). Re-verify before changing the env-var names,
-> the `<defaults>` magic-token semantics, or the startup error
-> message — operators searching for this page will Ctrl-F the verbatim
-> error string.
+> **Verified:** Updated 2026-08-25 — the `source` log field is now always
+> the fixed word `redacted`; log-line shapes re-checked on that date.
+> Originally authored 2026-06-01 against Sharko as shipped. The env-var
+> names, the default identity list, the default workflow_ref regex, the
+> log messages (`catalog signature verification failed`,
+> `catalog source sidecar verification errored`) and the startup
+> validation error format are all verified verbatim. Re-verify before
+> changing the env-var names, the `<defaults>` magic-token semantics or
+> the startup error message — an operator who finds this page will Ctrl-F
+> the exact error string.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 If you are here because your marketplace shows entries as
 **Unverified** when you expected them verified, jump to

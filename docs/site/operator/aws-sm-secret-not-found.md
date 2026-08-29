@@ -2,29 +2,25 @@
 
 **Severity:** P1
 
-> **Verified:** Re-authored 2026-08-11 against `fix/provider-error-leaks`
-> after the provider-error hotfix. `internal/providers/aws_sm.go`'s
-> `GetCredentials` still tries the configured `prefix + clusterName`
-> first and the bare cluster name second, and still logs
-> `step=all-lookups` with the `tried` list.
+> **Verified:** Re-authored 2026-08-11 after the provider-error fix.
+> Fetching from AWS Secrets Manager still tries the configured
+> `prefix + clusterName` first and the bare cluster name second, and
+> still logs `step=all-lookups` with the `tried` list.
 >
-> What changed: the error it returns is marked as a credentials-backend
-> failure (`internal/credsafe`), and a marked error SAYS the fixed safe
+> What changed: the error Sharko returns is now marked as a
+> credentials-backend failure, and a marked error says one fixed safe
 > sentence. So the API response — and anything else that prints the error
 > — carries that sentence, never the "Tried: ..." text. The `tried` list
 > is still in the log line, which is where you read it.
 >
 > The secret-name suggestions still appear, and they are now decided by a
-> TYPE rather than by searching the error text for the words "not found".
-> The provider sets `credsafe.MarkNotFound` where AWS returned
-> `ResourceNotFoundException`, and the handler asks
-> `credsafe.IsNotFound`. One behaviour change that is deliberate and an
-> improvement: an **AccessDenied no longer produces suggestions**, even
-> when its message happens to contain the words. See the AccessDenied
-> runbook — that failure needs an IAM fix, not a name to pick from a list.
->
-> Re-verify when the lookup order, the credsafe boundary, or the
-> not-found marker's placement changes.
+> marker Sharko sets where AWS returned `ResourceNotFoundException`,
+> rather than by searching the error text for the words "not found". One
+> behaviour change that is deliberate and an improvement: an
+> **AccessDenied no longer produces suggestions**, even when its message
+> happens to contain those words. See the AccessDenied runbook — that
+> failure needs an IAM fix, not a name to pick from a list.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A single cluster's credential fetch failed because the AWS Secrets
 Manager provider could not find the cluster's secret at any of the

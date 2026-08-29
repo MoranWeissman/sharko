@@ -2,17 +2,13 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-07-09 against `main` HEAD as part of
-> V2-cleanup-88.6 (connection-redesign documentation), updating this
-> runbook for the reality shipped by V2-cleanup-88.2 (#509): Sharko now
+> **Verified:** Authored 2026-07-09 against Sharko as shipped. Sharko
 > **parses** the `awsAuthConfig` shape (and the two known AWS
 > `execProviderConfig` commands) and mints an EKS token using its own
-> AWS identity, instead of refusing the shape outright. The
-> `ArgoCDProviderCodeIAMRequired` = `"argocd_provider_iam_required"`
-> sentinel and the two failure messages below are verified verbatim
-> against `resolveAWSAuthConfig` and `mintTokenKubeconfig` in
-> `internal/providers/argocd_provider.go`. Re-verify if the mint
-> failure messages or the wire code change.
+> AWS identity, instead of refusing the shape outright. The wire code
+> `argocd_provider_iam_required` and the two failure messages below are
+> verified verbatim.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 Operators registering (or adopting) an EKS cluster whose ArgoCD cluster
 Secret uses AWS IAM authentication (the `awsAuthConfig` shape, or an

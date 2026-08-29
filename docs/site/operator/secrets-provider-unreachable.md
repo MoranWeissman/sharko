@@ -2,26 +2,21 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The provider
-> interface (`ClusterCredentialsProvider`) and the AWS / K8s-Secrets /
-> stub provider implementations live in `internal/providers/`. The
-> EKS-STS token mint failure path at `internal/providers/aws_auth.go`
-> and the AWS-SM secret-not-found path at
-> `internal/providers/aws_sm.go:150` are verified against the source as
-> shipped. Per-cluster (P1) failure modes are tracked in
-> [`failure-mode-index.md`](failure-mode-index.md); this P0 runbook
-> covers the **fleet-wide** failure where the entire provider is
-> unreachable. Re-verify when provider constructors or the
-> `health.Check` interface change.
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> AWS-STS token mint failure path and the AWS Secrets Manager
+> secret-not-found path are verified against Sharko as shipped.
+> Per-cluster (P1) failure modes are tracked in
+> [`failure-mode-index.md`](failure-mode-index.md); this P0 runbook covers
+> the **fleet-wide** failure where the whole provider is unreachable.
 >
-> **Updated 2026-08-11 (provider-error hotfix,
-> `fix/provider-error-leaks`):** no credentials-backend error text
-> reaches a log line, an API response, an audit entry or a Kubernetes
-> event any more — it can carry credential material. The symptom
-> examples and diagnosis below were rewritten around what Sharko
-> actually reports: **request id, cluster, region, and step**. The
-> provider's own reason still comes from probing the provider directly
-> from the pod, which every diagnosis step here already did.
+> **Updated 2026-08-11:** no credentials-backend error text reaches a log
+> line, an API response, an audit entry or a Kubernetes event any more —
+> it can carry credential material. The symptom examples and diagnosis
+> below were rewritten around what Sharko actually reports: **request id,
+> cluster, region, and step**. The provider's own reason still comes from
+> probing the provider directly from the pod, which every diagnosis step
+> here already did.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The active secrets provider — AWS Secrets Manager, Kubernetes Secrets,
 or a future Vault backend — is completely unreachable. Every cluster

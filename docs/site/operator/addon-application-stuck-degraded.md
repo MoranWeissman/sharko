@@ -2,17 +2,15 @@
 
 **Severity:** P1
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The Sharko-side
-> audit codes `addon_enabled_on_cluster` and `cluster_secret_create`
-> success-shape are verified against the addon-cycle audit emitters in
-> `internal/orchestrator/addon.go` and the audit conventions documented
-> in `docs/site/developer-guide/logging.md`. The ArgoCD-side checks
-> below use the standard ArgoCD CLI (`argocd app get`) and the
-> ApplicationSet pattern described in the architecture overview at
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
+> Sharko-side audit codes `addon_enabled_on_cluster` and
+> `cluster_secret_create` success shape are verified against the
+> addon-cycle audit entries and the audit conventions in
+> [`../developer-guide/logging.md`](../developer-guide/logging.md). The
+> ArgoCD-side checks below use the standard ArgoCD CLI
+> (`argocd app get`) and the ApplicationSet pattern described in
 > [`../architecture/repo-structure.md`](../architecture/repo-structure.md).
-> Re-verify before changing the addon-cycle audit event names or the
-> ApplicationSet template's per-cluster values-extraction shape — those
-> are anchors for the diagnosis below.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 A single addon's ArgoCD Application is sitting in `Degraded` (or
 `Unknown` / `OutOfSync`) state on a specific cluster, even though
