@@ -666,18 +666,20 @@ jobs:
   # binary doesn't reach main unnoticed. Builds locally (push: false,
   # load: true) — this job never publishes anything, it only scans.
   #
-  # trivy-action is pinned to a full commit SHA, not the mutable "0.35.0"
+  # trivy-action is pinned to a full commit SHA, not the mutable "0.36.0"
   # tag, and that's deliberate rather than the repo's usual convention
   # (most actions here use a floating major-version tag). On 2026-03-19
   # aquasecurity/trivy-action was compromised for ~12 hours: 76 of its 77
   # version tags were force-pushed with a credential-stealing payload
   # (CVE-2026-33634) that dumps CI runner memory for SSH keys, cloud
   # credentials, and Kubernetes secrets — exactly the class of thing this
-  # whole sprint exists to stop leaking. 0.35.0 was the one tag confirmed
-  # never touched; pinning the SHA behind it (rather than the tag) means
-  # even a future force-push to "0.35.0" can't silently change what this
-  # job runs. Verified 57a97c7e7821a5776cebc9bb87c984fa69cba8f1 is exactly
-  # what "0.35.0" points at via the GitHub API before using it here.
+  # whole sprint exists to stop leaking. Pinning the SHA behind the tag,
+  # rather than the tag itself, means even a future force-push to
+  # "0.36.0" can't silently change what this job runs. 0.36.0 was
+  # published on 2026-04-22, after the compromise window closed, and
+  # ed142fd0673e97e23eac54620cfb913e5ce36c25 was verified as exactly what
+  # "0.36.0" points at via the GitHub API before using it here. The pin
+  # before this one was 0.35.0, the one tag the incident left untouched.
   #
   # severity CRITICAL,HIGH + ignore-unfixed is the starting bar — a base
   # image can carry MEDIUM/LOW findings or CRITICAL/HIGH ones with no
@@ -706,7 +708,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=container-image-scan
 
       - name: Scan image for known vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.35.0 — see comment above job, pinned to commit SHA not tag
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0 — see comment above job, pinned to commit SHA not tag
         with:
           image-ref: sharko:ci-scan
           format: table
