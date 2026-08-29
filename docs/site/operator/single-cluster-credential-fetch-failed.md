@@ -126,8 +126,8 @@ What an operator sees when this fires:
   clusters fans into
   [`SharkoClusterRegistrationSlowBurn`](budget-burn-runbook.md#sharkoclusterregistrationslowburn)
   once the error budget is consumed; a single isolated cluster
-  staying stuck is operator-detected, not auto-alerted (V2-4.x
-  follow-up).
+  staying stuck is something you have to notice yourself; there is no
+  alert for it.
 
 If the audit log shows `action=get_credentials` with `result=failure`
 **for every cluster** in the same tick — not just one — this is
@@ -146,8 +146,8 @@ provider's own reason first-hand.
 
 ### 1. Confirm the failure is per-cluster, not fleet-wide
 
-Per the contract in `reconciler.go`, a single cluster's vault failure
-returns from the per-cluster path but does NOT abort the tick. Verify
+A single cluster's credential failure ends that cluster's turn but does
+NOT abort the tick. Verify
 by looking at the same tick's audit entries — other clusters should
 have `action=cluster_secret_create` or `cluster_secret_skip` with
 `result=success`.
@@ -455,8 +455,8 @@ levers:
   cluster, the most-recent `cluster_secret_reconcile` audit
   `result` and `error`. A red-row per stuck cluster catches Root
   cause pattern 1 (path drift) at first-fail, not at error-budget
-  burn. Wiring this panel into the dashboard view is a V2-4.x
-  follow-up.
+  burn. Wiring this panel into the dashboard view is planned, not
+  built.
 
 - **Gating — pre-flight check on `add-cluster`.** When an operator
   runs `sharko add-cluster <name>`, Sharko could probe the
@@ -465,7 +465,7 @@ levers:
   cluster to `managed-clusters.yaml` and then have it stuck
   forever. The existing connection-test endpoint (`POST /clusters/{name}/test`)
   is the right shape; wiring it into the register flow as a
-  pre-flight is a V2-4.x follow-up.
+  pre-flight is planned, not built.
 
 - **Scheduled work — periodic credential-freshness audit.** A
   daily cron that walks `managed-clusters.yaml`, probes each

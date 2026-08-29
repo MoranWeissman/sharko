@@ -46,8 +46,8 @@ account-wide IAM), but the operator-visible UX is similar.
 What an operator sees when this fires:
 
 - **API: `POST /api/v1/clusters/{name}/test`** (or any
-  cluster-credential-needing operation) returns 502 / 500 with the
-  exact error from `internal/providers/k8s_secrets.go:142`:
+  cluster-credential-needing operation) returns 502 / 500 with this
+  exact error:
 
   Without suggestions:
   ```
@@ -61,7 +61,7 @@ What an operator sees when this fires:
   {"error":"secret for cluster \"prod-eu\" not found in namespace \"sharko-secrets\". Similar secrets: cluster-prod-eu-kubeconfig, prod-eu-staging. Set --secret-path to specify the exact secret name"}
   ```
 
-- **Sharko logs the failure at error level** (k8s_secrets.go:142):
+- **Sharko logs the failure at error level:**
 
   ```
   {"time":"...","level":"ERROR","msg":"[provider] GetCredentials failed (k8s)","request_id":"req-...","cluster":"prod-eu","step":"fetch","error":"secret not found in namespace sharko-secrets"}
@@ -82,8 +82,8 @@ What an operator sees when this fires:
   wrong) fans up into
   [`SharkoClusterRegistrationFastBurn`](budget-burn-runbook.md#sharkoclusterregistrationfastburn).
 
-- **If the error says "no 'kubeconfig' key"** (different shape, from
-  `k8s_secrets.go:104`), the Secret exists at the expected name but
+- **If the error says "no 'kubeconfig' key"** — a different shape —
+  the Secret exists at the expected name but
   doesn't have the required data key. That's a Secret-shape problem,
   not a not-found — see Mitigation step 3.
 
@@ -132,8 +132,8 @@ helm get values sharko -n <sharko-ns> | grep -A3 -E 'provider:|addonSecretProvid
 (or the connection saved in the Settings UI, if it was set there instead
 of via Helm) is the only place to read it today.
 
-The default per `internal/providers/k8s_secrets.go:29` is the literal
-string `sharko` — **not** the release namespace Sharko itself is
+The default is the literal string `sharko` — **not** the release
+namespace Sharko itself is
 installed into, unless that also happens to be named `sharko`. If the
 namespace field was left empty, that literal default is the one the
 provider looks in; if a Helm value set it explicitly, that's the one.
@@ -227,8 +227,7 @@ RoleBinding — as long as the target namespace is listed in
 
 3. **If the Secret exists at expected name but lacks the
    `kubeconfig` key, add it.** The K8s-Secrets provider requires
-   the data key to be exactly `kubeconfig` (per
-   `k8s_secrets.go:102-104`):
+   the data key to be exactly `kubeconfig`:
 
    ```sh
    # Extract current kubeconfig from your local context:
@@ -240,7 +239,8 @@ RoleBinding — as long as the target namespace is listed in
      -p="[{\"op\":\"add\",\"path\":\"/data/kubeconfig\",\"value\":\"$KUBECONFIG_B64\"}]"
    ```
 
-   Add the ownership label too (V125-1-8 convention):
+   Add the ownership label too — that is what marks the Secret as
+   Sharko's:
 
    ```sh
    kubectl -n "$NS" label secret "$CLUSTER" \
@@ -251,8 +251,8 @@ RoleBinding — as long as the target namespace is listed in
 
 4. **If RBAC is the gap (Diagnosis step 4 returns "no"), re-apply
    the Helm chart to restore the namespaced Role + RoleBinding.**
-   As of Story 152.F, Sharko's chart does **not** ship a
-   cluster-wide grant for Secrets — it ships a namespaced `Role`
+   Since v4, Sharko's chart does **not** ship a cluster-wide grant for
+   Secrets — it ships a namespaced `Role`
    named `<release>-secrets-provider` (`get/list`, no `watch`, no
    write) in the release namespace plus any namespace listed under
    `rbac.k8sSecretsProviderNamespaces`. If the target namespace
@@ -454,9 +454,8 @@ namespace without also granting RBAC there produces a 403, not a
 - [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md)
   — adjacent failure: Secret found, fetch succeeded, but parse
   failed.
-- [`cluster-reconciler.md`](cluster-reconciler.md) — V125-1-8
-  reconciler context for `app.kubernetes.io/managed-by` label
-  ownership.
+- [`cluster-reconciler.md`](cluster-reconciler.md) — reconciler context
+  for `app.kubernetes.io/managed-by` label ownership.
 - [`budget-burn-runbook.md#sharkoclusterregistrationfastburn`](budget-burn-runbook.md#sharkoclusterregistrationfastburn)
   — fleet-wide registration alert.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.

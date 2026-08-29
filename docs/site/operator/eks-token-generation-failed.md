@@ -87,20 +87,20 @@ What an operator sees when this fires:
   AWS SDK's error value.** Read the `step` field — it is what tells the
   three possible failures apart:
 
-  Config load failed (`aws_auth.go`) — the SDK could not even load
+  Config load failed — the AWS SDK could not even load
   credentials:
   ```
   {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","step":"load-aws-config"}
   ```
 
-  Presigning failed (`aws_auth.go`) — credentials loaded, the STS call
+  Presigning failed — credentials loaded, but the STS call
   itself was refused or misrouted:
   ```
   {"time":"...","level":"ERROR","msg":"[auth] EKS token generation failed","request_id":"req-...","cluster":"prod-eu","region":"us-east-1","step":"presign-get-caller-identity"}
   ```
 
-  The mint failed as seen by the caller (`aws_sm.go` for an AWS-SM
-  secret, `argocd_provider.go` for an AWS-IAM connection):
+  The mint failed as seen by the caller (`step=sts` on the
+  addon-secrets path, `step=mint-eks-token` on an AWS-IAM connection):
   ```
   {"time":"...","level":"ERROR","msg":"[provider] GetCredentials failed","cluster":"prod-eu","region":"eu-west-1","step":"sts"}
   {"time":"...","level":"ERROR","msg":"[provider] EKS token mint failed for argocd cluster — Sharko has no usable AWS identity for this cluster","cluster":"prod-eu","server":"https://...","eksClusterName":"prod-eu","region":"eu-west-1","step":"mint-eks-token"}
@@ -422,9 +422,9 @@ Sharko pod's IRSA role to assume it (Mitigation step 3).
      --secret-string "$(cat /tmp/kc.yaml)"
    ```
 
-   Sharko's AWS-SM provider auto-detects raw-vs-structured (see
-   `aws_sm.go:107`) and routes the raw-kubeconfig path, skipping
-   `getEKSToken` entirely.
+   Sharko's AWS-SM provider works out on its own whether the secret is a
+   raw kubeconfig or a structured entry, and a raw kubeconfig skips the
+   EKS token mint entirely.
 
    Long-lived tokens are a security trade-off. Rotate on a cadence.
 

@@ -61,8 +61,8 @@ What an operator sees when this fires:
   {"time":"...","level":"INFO","msg":"init operation abandoned — no heartbeat from client","session_id":"<op-id>"}
   ```
 
-  (Per the V2-2.3 logging audit, this should be reclassified to `Warn`
-  — but the message itself is the signal regardless of level.)
+  (This deserves `Warn`, not `Info` — but the message itself is the
+  signal regardless of level.)
 
 - **Audit-log entry**: `event=init_run` with `result=started` exists
   but no corresponding `result=success` or `result=failed` entry.
@@ -132,7 +132,7 @@ is wedged. Proceed.
 
 ### 2. Determine which step of init wedged
 
-Init runs a multi-step pipeline (per `.claude/team/k8s-expert.md`):
+Init runs a multi-step pipeline:
 
 ```
 Step 1 — Check if repo initialized (409 if exists)
@@ -429,17 +429,14 @@ For Mitigation step 5 (manual bootstrap):
   manifest as init failures (clean state to recover from) rather
   than indefinite hangs.
 
-- **Code change — promote the abandonment log to `Warn` level.** Per
-  the V2-2.3 logging audit, the abandonment line at `init.go:384`
-  should be `Warn`, not
-  `Info` — it's an operator-actionable event, not informational. The
-  change is one line; tracked as a V2-4.x follow-up.
+- **Code change — promote the abandonment log to `Warn` level.** The
+  abandonment line should be `Warn`, not `Info` — it is an
+  operator-actionable event, not informational. Planned, not built.
 
 - **Gating — pre-init dependency health probe.** Before starting
   init, probe Git and ArgoCD reachability. If either is unreachable,
   fail init early with a clear error instead of starting a wedge-prone
-  multi-step process. Implementation in `internal/api/init.go`'s
-  pre-flight.
+  multi-step process. That check does not exist today.
 
 - **Operator procedure — re-run init is safe.** Document explicitly
   in [`installation.md`](installation.md) and the API reference that

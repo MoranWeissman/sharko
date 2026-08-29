@@ -2,9 +2,9 @@
 
 **Severity:** P1
 
->  **Verified:** Re-checked 2026-08-21 against `main` HEAD. The handler
+>  **Verified:** Re-checked 2026-08-21 against Sharko as shipped. The handler
 > response codes (`400`, `401`, `200`) and exact error bodies are verified
-> verbatim against `internal/api/webhooks.go`. There is now exactly ONE
+> verbatim. There is now exactly ONE
 > refusal message — `"the Git webhook accepts only a request signed with
 > the shared secret set by an operator"` — and it is what a caller gets
 > whether no shared secret is set, no signature arrived, or a signature
@@ -26,8 +26,8 @@ This runbook covers two adjacent failure-mode rows from the
 [failure-mode index](failure-mode-index.md):
 
 - "Webhook handler returns 401 (Git provider webhook signature didn't
-  validate)" — `internal/api/webhooks.go` writes the single refusal
-  message with `HTTP 401`.
+  validate)" — Sharko writes the single refusal message with
+  `HTTP 401`.
 - "Webhook receive error (any code path)" — the broader bucket
   covering 400s (`"could not read request body"`,
   `"invalid push event payload"`) and any other non-2xx response.
@@ -106,8 +106,8 @@ What an operator sees when this fires:
   "seconds" to "up to 30 seconds." Operators usually catch the
   failure when the lag becomes user-visible.
 - **No specific Prometheus alert fires for webhook 401s today.**
-  This is a V2-4.x follow-up — wire a per-status-code metric on the
-  webhook handler and alert on sustained 401 / 400 rate.
+  Planned, not built — a per-status-code metric on the webhook handler,
+  with an alert on a sustained 401 / 400 rate.
 
 If the symptom is **HTTP 502** or **HTTP 5xx** on webhook delivery,
 this is **not** the runbook — Sharko itself is unreachable, not
@@ -205,8 +205,8 @@ match. The mitigation lane assumes you regenerate.
 For the signature math, GitHub computes
 `hmac.sha256(secret).hexdigest(body)` and sends
 `sha256=<hex>` in `X-Hub-Signature-256`. Sharko's
-`verifyGitHubSignature` (in `internal/api/webhooks.go`) does the same
-computation and `hmac.Equal`s the result. With no shared secret set on
+webhook handler does the same computation and compares the two in
+constant time. With no shared secret set on
 Sharko there is nothing to compute against, and the call is refused
 rather than waved through.
 
@@ -377,8 +377,8 @@ levers:
   future release, not something you can deploy now. The sketch: record
   per-status-code rates on the webhook handler (e.g.
   `sharko_webhook_requests_total{status="200|400|401"}`) and alert on a
-  sustained 4xx rate above 5% over 5 minutes. Wiring this into
-  `internal/metrics/` and `prometheusrules.yaml` is a V2-4.x follow-up.
+  sustained 4xx rate above 5% over 5 minutes. Neither the metric nor the
+  alert rule exists today.
   The bounded-impact nature (the reconciler self-heals) keeps this at P1
   even with full webhook breakage; the alert would catch the silent
   state-divergence earlier.
@@ -392,7 +392,7 @@ levers:
   Sharko startup that says "webhook secret is set; webhook is
   configured with matching secret? (run a self-test)" would catch
   rotation drift at the moment it happens. The self-test belongs in
-  a `sharko self-test webhook` CLI subcommand (V2-4.x follow-up).
+  a `sharko self-test webhook` CLI subcommand. Planned, not built.
 
 - **Scheduled work — quarterly webhook redelivery drill.** A
   scheduled task that picks a random recent delivery in the GitHub

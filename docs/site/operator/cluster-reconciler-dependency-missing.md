@@ -90,9 +90,9 @@ What an operator sees when this fires:
 - **`audit.action=reconcile` with `result=skipped`** (when the
   reconciler audit emitter records the skip):
 
-  Today the skip path returns from `pollOnce` without emitting an
-  audit entry; the only signal is the Warn log line. A V2-4.x
-  follow-up should add `event=cluster_secret_reconcile, action=reconcile,
+  Today the skip returns without writing an audit entry; the only signal
+  is the Warn log line. A future release should add
+  `event=cluster_secret_reconcile, action=reconcile,
   result=skipped, error=<which dep was nil>` so the failure mode is
   visible from the audit-log surface, not just from logs.
 
@@ -138,8 +138,8 @@ deployment surface:
 | Warn message | Dependency | Comes from |
 |---|---|---|
 | `no GitProvider getter configured` | Active Git provider | Connection config: a configured Git connection ("active" connection) |
-| `no ArgoClient (k8s clientset) configured` | Kubernetes clientset for the `argocd` namespace | Server initialization at `cmd/sharko/serve.go`; `rest.InClusterConfig()` |
-| `no Vault (cluster-credentials provider) configured` | Cluster-credentials provider (AWS-SM, K8s Secrets, etc.) | `internal/providers/` initialization from Helm values |
+| `no ArgoClient (k8s clientset) configured` | Kubernetes API access to the `argocd` namespace | Set up at server start, from the pod's in-cluster credentials |
+| `no Vault (cluster-credentials provider) configured` | Cluster-credentials provider (AWS-SM, K8s Secrets, etc.) | Set up at server start, from your Helm values |
 
 ```sh
 kubectl -n <sharko-ns> logs -l app=sharko --tail=1000 \
@@ -388,7 +388,7 @@ levers:
   path is log-only; add `event=cluster_secret_reconcile,
   action=reconcile, result=skipped, error=<dep>` so the failure
   surfaces on the audit-log query path (which dashboards already
-  consume). V2-4.x follow-up.
+  consume). Planned, not built.
 
 - **Gating — Helm chart `required` guards for the credentials
   provider.** The chart could require `clusterRegSourceProvider`

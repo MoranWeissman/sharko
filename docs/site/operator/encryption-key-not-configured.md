@@ -133,9 +133,7 @@ Three outcomes:
 
 ### 2. Inspect the Helm values for `config.connectionSecretName`
 
-Per the
-[k8s-expert.md role file](https://github.com/MoranWeissman/sharko/blob/main/.claude/team/k8s-expert.md)
-and `charts/sharko/values.yaml`, the encryption key is typically
+Per `charts/sharko/values.yaml`, the encryption key is typically
 wired via a K8s Secret referenced by `config.connectionSecretName`
 (default: `sharko-connections`). The Sharko deployment template
 reads a key from that secret into `SHARKO_ENCRYPTION_KEY`.
@@ -306,8 +304,8 @@ deployment surface is being updated.
      Helm values; verify against the current chart). Operators
      accept the partial functionality until the key is provisioned.
    - **API**: return HTTP 501 `Not Implemented` instead of 500. Not
-     wired today; a V2-4.x follow-up if the
-     `features.personalTokens` flag isn't in place.
+     wired today. It is worth doing if the `features.personalTokens`
+     flag isn't in place.
 
    This step is the **least-good** mitigation — it papers over the
    misconfiguration without fixing it. Prefer step 1 or 2.
@@ -376,12 +374,11 @@ How to make this failure mode less likely going forward. Three
 levers:
 
 - **Monitoring — pre-flight startup check.** Sharko could refuse to
-  start (fail-fast in `cmd/sharko/serve.go`) when the personal-token
-  endpoints are wired into the router but `SHARKO_ENCRYPTION_KEY`
-  is empty. Operators see the failure at install time (pod
+  start when the personal-token endpoints are reachable but
+  `SHARKO_ENCRYPTION_KEY` is empty. Operators see the failure at install time (pod
   CrashLoopBackOff with a clear startup error) instead of at first
   user-facing 500. Wiring this into the startup-validation path is
-  a V2-4.x follow-up.
+  planned, not built.
 
 - **Gating — Helm chart NOTES.txt / template guard.** The Helm chart
   could include a `required` Sprig function call that surfaces the

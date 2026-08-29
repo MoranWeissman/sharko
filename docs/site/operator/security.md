@@ -211,8 +211,8 @@ one shared install with mixed trust levels.
 
 ### Where the mapping lives
 
-The full action → role table is `internal/authz/authz.go`
-(`authz.ActionRequirements`). It is enforced identically on two surfaces:
+One table maps every action to the role it needs, and it is enforced
+identically on two surfaces:
 
 - **REST API** — every mutating handler (`POST`/`PUT`/`PATCH`/`DELETE`) calls
   `authz.RequireWithResponse` naming its action before doing anything else.
@@ -222,10 +222,10 @@ The full action → role table is `internal/authz/authz.go`
   assistant to "enable datadog on prod" gets the identical refusal a direct
   API call would get.
 
-Both surfaces are covered by a test that mechanically re-derives the route
-and tool inventory from the source (rather than trusting a hand-maintained
-list to stay in sync): `internal/api/authz_coverage_test.go` and
-`internal/api/ai_tools_authz_parity_test.go`.
+Both surfaces are covered by tests that re-derive the route and tool
+inventory from the code, rather than trusting a hand-maintained list to
+stay in step. A new route or a new AI tool with no role requirement fails
+the build.
 
 ## Pod Security
 
@@ -323,7 +323,7 @@ instead.
 ## RBAC
 
 Sharko's default install grants **no cluster-wide access to Secrets**. As of
-v4 (Story 152.F), every Secret read the Sharko ServiceAccount does on the
+v4, every Secret read the Sharko ServiceAccount does on the
 host cluster is scoped to the one namespace it actually needs, not the
 whole cluster. This is a real tightening from earlier versions, which
 carried a cluster-wide `secrets: get,list` rule — `list` on Secrets hands
@@ -342,8 +342,8 @@ rbac:
 | Object | Scope | What it's for |
 |---|---|---|
 | `ClusterRole` (`sharko`) | cluster-wide | `get/list/watch` on ArgoCD CRDs (Applications, AppProjects, ApplicationSets) — read-only, no write access to the Kubernetes API. Also `get/list` on Nodes if `config.nodeAccess: true` (default). **No Secrets rule.** |
-| `Role` (`sharko-argocd-secrets`), in `rbac.argocdNamespace` | one namespace | Full CRUD on **every** Secret in the ArgoCD namespace, not only the ones Sharko created — this is where Sharko reads and writes the ArgoCD cluster-connection Secrets (`internal/argosecrets`, `internal/clusterreconciler`). |
-| `Role` (`sharko-secrets-provider`), one per namespace in `k8sSecretsProviderNamespaces` (the release namespace is always included, whether or not you list it) | one namespace each | `get/list` on **every** Secret in that namespace — there is no `resourceNames` restriction, so this is not limited to the Secrets Sharko manages. It exists for the **k8s-secrets** cluster-credential provider and/or the **k8s-secrets** addon-secret provider (`internal/providers/k8s_secrets.go`), but it is granted even when neither is configured. |
+| `Role` (`sharko-argocd-secrets`), in `rbac.argocdNamespace` | one namespace | Full CRUD on **every** Secret in the ArgoCD namespace, not only the ones Sharko created — this is where Sharko reads and writes the ArgoCD cluster-connection Secrets. |
+| `Role` (`sharko-secrets-provider`), one per namespace in `k8sSecretsProviderNamespaces` (the release namespace is always included, whether or not you list it) | one namespace each | `get/list` on **every** Secret in that namespace — there is no `resourceNames` restriction, so this is not limited to the Secrets Sharko manages. It exists for the **k8s-secrets** cluster-credential provider and/or the **k8s-secrets** addon-secret provider, but it is granted even when neither is configured. |
 | `Role` (`sharko-auth`), in the release namespace | one namespace, mostly name-scoped | **Write** access to Sharko's own operational Secrets (auth store, connections, API tokens), restricted to specific `resourceNames`. Two rules in it are not name-scoped: `create` on Secrets (Kubernetes cannot scope `create` by name) and `get/list/create/update/delete` on ConfigMaps. |
 
 **Read this row twice if you install Sharko into a shared namespace.**
@@ -792,9 +792,9 @@ The guard runs in addition to (not instead of) any Kubernetes NetworkPolicy fron
 
 ## Secret-leak guard on AI annotation
 
-When AI annotation is enabled (V121-7), Sharko scans every upstream `values.yaml` for secret-like patterns (AWS keys, GitHub PATs, JWTs, PEM blocks, Slack tokens, Google API keys, generic API key/password assignments, high-entropy base64 blobs). On a match the LLM call is **hard-blocked** — there is no override.
+When AI annotation is enabled, Sharko scans every upstream `values.yaml` for secret-like patterns (AWS keys, GitHub PATs, JWTs, PEM blocks, Slack tokens, Google API keys, generic API key/password assignments, high-entropy base64 blobs). On a match the LLM call is **hard-blocked** — there is no override.
 
-Every block emits a dedicated audit-log entry with the event name `secret_leak_blocked` so security review can grep one stable token across the audit log:
+Every block emits a dedicated audit-log entry with the event name `secret_leak_blocked`, so you can grep one stable token across the audit log:
 
 ```bash
 curl -H "Authorization: Bearer $SHARKO_TOKEN" \

@@ -466,8 +466,8 @@ For Mitigation step 5 (break-glass account) — after the incident:
   ```
 
   — which would page before exhaustion rather than after. Wiring
-  requires Sharko to surface the rate-limit headers as a metric, a P1
-  follow-up under the V2-3.x metric backlog.
+  requires Sharko to surface the rate-limit headers as a metric, which
+  it does not do today.
 
 - **Gating — make the PAT no-expiry, and document the rotation cadence.**
   Set the PAT to "no expiry" at creation, and put a 90-day rotation
@@ -500,7 +500,7 @@ For Mitigation step 5 (break-glass account) — after the incident:
 - [`corporate-mitm-tls.md`](corporate-mitm-tls.md) — corporate-proxy
   TLS-interception failures. Surfaces with similar 502s when the
   corporate CA isn't in Sharko's trust store.
-- [`budget-burn-runbook.md`](budget-burn-runbook.md) — V2-3 burn-rate
+- [`budget-burn-runbook.md`](budget-burn-runbook.md) — burn-rate
   alerts. `SharkoClusterRegistrationFastBurn` /
   `SharkoAddonCycleFastBurn` fire when this failure is sustained.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.

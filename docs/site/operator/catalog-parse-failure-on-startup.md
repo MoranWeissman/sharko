@@ -12,9 +12,8 @@
 > `"no entries found under 'addons:'"` has the same operator surface.
 > Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
-The catalog YAML parser failed. This runbook covers both flavors of
-the failure mode that share the same emission site
-(`internal/catalog/loader.go:332`):
+The catalog YAML parser failed. This runbook covers both flavours of
+the failure, which report the same message:
 
 1. **Embedded catalog parse failure on startup** — extremely rare;
    indicates a development bug or a build-time corruption of
@@ -77,9 +76,8 @@ What an operator sees when this fires:
 
 ### Case 2: Third-party catalog source parse failure
 
-- **Sharko logs the warn line at the fetcher level**
-  (`internal/catalog/sources/fetcher.go:708` wraps the parse error
-  in the "schema validation failed" surface — see
+- **Sharko logs a Warn line for the failing source**, which wraps the
+  parse error in the "schema validation failed" surface — see
   [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md)
   for the merged failure path).
 
@@ -400,11 +398,10 @@ actual `.yaml` file rather than an API endpoint).
   independent failure domains.
 
 - **Scheduled work — quarterly catalog schema audit.** Sharko's
-  embedded loader has strict validation (`allowedCategories`,
-  `allowedCuratedBy`, required fields). Quarterly, confirm the
-  schema constants in `internal/catalog/loader.go` still match the
-  shipped `catalog/addons.yaml` and that third-party source authors
-  have been notified of any tightening.
+  embedded loader validates categories, the `curated_by` value and the
+  required fields. Quarterly, run `sharko validate-catalog` against the
+  catalog you ship and confirm third-party source authors have been told
+  about any tightening.
 
 ---
 

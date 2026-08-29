@@ -26,10 +26,9 @@ fails. The fleet is in a state where no new cluster operations can
 proceed and ongoing ones stall. Page on-call.
 
 This is distinct from **per-cluster** secret failures (one cluster's
-vault path moved, one cluster's RBAC is broken) — those are P1 GAPs
-tracked in
-[`failure-mode-index.md`](failure-mode-index.md) (PR 2b scope). This
-runbook is for the case where **every** provider call fails — typically
+vault path moved, one cluster's RBAC is broken) — see
+[`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md).
+This runbook is for the case where **every** provider call fails — typically
 because the provider itself is down (AWS SM regional outage), the
 provider's auth is broken (IRSA misconfigured, IAM role deleted), or
 the network path is blocked (NetworkPolicy, VPC endpoint).
@@ -108,8 +107,9 @@ What an operator sees when this fires:
     provider.
 
 If the symptom is "one cluster's credential fetch fails," this is the
-**per-cluster** failure mode (P1, runbook in PR 2b). This runbook
-applies when **every** call to the provider fails.
+**per-cluster** failure mode — see
+[`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md).
+This runbook applies when **every** call to the provider fails.
 
 ---
 
@@ -537,13 +537,12 @@ For Mitigation step 5 (provider type switch):
   ```
 
   — which requires Sharko to emit a per-provider reachability metric
-  first, a V2-3.x follow-up.
+  first, which it does not do today.
 
 - **Gating — startup IRSA probe.** Sharko at startup should call
   `aws sts get-caller-identity` once and refuse to start if it fails.
   Catches the "IRSA misconfigured" cause before any cluster
-  registration silently fails. Implementation in
-  `cmd/sharko/serve.go` startup checks.
+  registration silently fails. That check does not exist today.
 
 - **Gating — startup RBAC probe for K8s-Secrets.** Similar to above
   — `kubectl auth can-i list secrets -n <provider-ns>` against the

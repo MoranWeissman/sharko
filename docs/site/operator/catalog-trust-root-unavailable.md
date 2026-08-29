@@ -223,8 +223,8 @@ defaults to Unverified).
 3. **If the TUF fetch returns a malformed body, you cannot point Sharko
    at a trusted root on disk.** Sharko has no such override. The only
    Sigstore path setting it reads is `SHARKO_SIGSTORE_TUF_CACHE`
-   (`internal/catalog/signing/tufroot.go`, default `/tmp/sigstore-tuf`),
-   and that names the directory TUF *caches into* — it does not bypass TUF
+   (default `/tmp/sigstore-tuf`), and that names the directory TUF
+   *caches into* — it does not bypass TUF
    and it will not accept a hand-placed `trusted_root.json` as a substitute
    for a TUF fetch.
 
@@ -390,9 +390,8 @@ For Mitigation step 4 (trust-policy permissive mode):
   not something you can deploy now. The sketch: register
   `sharko_catalog_verifier_initialized{result="success|failed"}` as a
   Counter incremented once at startup, and alert when the failed-bucket
-  count is non-zero. Nothing in `internal/catalog/signing/` registers or
-  writes it, so the only startup signal available right now is the log
-  line.
+  count is non-zero. Nothing in Sharko registers or writes it, so the
+  only startup signal available right now is the log line.
 
 - **Monitoring — TUF fetch reachability.** Sharko does not export this
   metric today. The alert below is a design sketch for a future release,

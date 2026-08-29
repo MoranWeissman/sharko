@@ -326,8 +326,9 @@ that excludes the broader ListSecrets call (which operates on `*`).
    and you can't add `ListSecrets`, but you can use a K8s-Secret
    alternative, the K8s-Secrets provider has different RBAC
    semantics (`list secrets` in a single namespace, NOT account-wide
-   IAM). See [the k8s-expert role file](https://github.com/MoranWeissman/sharko/blob/main/.claude/team/k8s-expert.md)
-   for the K8s-Secrets provider config and
+   IAM). See
+   [`configuration.md`](configuration.md) for the K8s-Secrets provider
+   config and
    [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md)
    for the sibling not-found failure mode.
 

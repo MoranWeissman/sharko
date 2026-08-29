@@ -27,9 +27,8 @@ as `result=success`. The addon's failure shows up minutes-to-hours later
 when ArgoCD syncs, and the operator has to trace the failure backwards
 to the secret push — a slow, error-prone diagnosis.
 
-The canonical reference for the underlying bug shape is the V2-2.3
-logging audit's finding on
-"continuing on error" — this runbook is the operator-facing companion.
+The bug shape underneath it is "log the error and carry on" — the
+failure is real, but nothing above it ever hears about it.
 
 ---
 
@@ -330,7 +329,7 @@ Fix:
   `/secrets/refresh`.
 - Long-term: add a CI check that validates every catalog entry's secret
   paths against the actual vault tree before publishing. The path
-  validation is in scope for a follow-up V2-4.x ticket.
+  validation is planned, not built.
 
 ### Remote-cluster namespace doesn't exist
 
@@ -410,24 +409,22 @@ For Mitigation step 5 (catalog-level addon removal):
 ## Prevention
 
 - **Code change — turn "continuing" into a hard failure**, or surface
-  it explicitly in the HTTP response. Per the V2-2.3 logging audit,
-  the `"continuing"` path in
-  `internal/orchestrator/secrets.go:110` is the canonical
-  silent-data-loss surface. The fix is one of:
+  it explicitly in the HTTP response. The `"continuing"` path is the
+  canonical silent-data-loss surface. The fix is one of:
   - Return the failed secret push as part of the
     `POST /api/v1/clusters` response body so the caller knows.
   - Mark the cluster registration as partial success (HTTP 207
     Multi-Status or 202 Accepted with a follow-up endpoint).
   - Hard-fail the cluster registration and require the operator to
     re-run after fixing the secret config.
-  This is the V2-4.x code-level prevention. Tracking required.
+  This is the code-level prevention. Planned, not built.
 
 - **Monitoring — alert on per-addon secret-push failures.** Sharko does
   not export this metric today. The alert below is a design sketch for a
   future release, not something you can deploy now. The sketch: register
   a counter `sharko_addon_secret_push_failures_total` and alert when its
-  rate exceeds 0 for any 5-minute window. Wiring would be a small change
-  in `internal/orchestrator/secrets.go`.
+  rate exceeds 0 for any 5-minute window. That metric does not exist
+  today.
 
 - **Scheduled work — daily reconciliation of secret state.** Sharko
   already runs the cluster-secret reconciler at 30s cadence; add an
@@ -444,8 +441,8 @@ For Mitigation step 5 (catalog-level addon removal):
   the related failure mode where the provider (AWS SM / vault / k8s
   Secrets) is unreachable. Often the upstream cause of the
   fetching-side failures here.
-- [`cluster-reconciler.md`](cluster-reconciler.md) — V125-1-8
-  reconciler for ArgoCD cluster Secrets. The addon-secret reconciler
+- [`cluster-reconciler.md`](cluster-reconciler.md) — the reconciler for
+  ArgoCD cluster Secrets. The addon-secret reconciler
   pattern modeled in Prevention would mirror this.
 - [`argocd-pr-merge-no-converge.md`](argocd-pr-merge-no-converge.md) —
   related symptom (operator thinks the cluster is set up; ArgoCD

@@ -1,20 +1,20 @@
 # Perf Baselines — Critical-Path p50/p95/p99
 
 This page records the measured p50/p95/p99 latency baselines for
-Sharko's 4 critical paths, as captured by the V2-1 perf harness. The
-phase boundaries are locked in
-[`docs/site/developer-guide/perf-harness.md`](../developer-guide/perf-harness.md)
-and `tests/e2e/harness/phases.go`. Re-run `make test-e2e-perf` on the
-measurement environment to refresh these numbers.
+Sharko's 4 critical paths, as captured by the performance harness. The
+phase boundaries are defined in
+[`perf-harness.md`](../developer-guide/perf-harness.md). Re-run
+`make test-e2e-perf` on the measurement environment to refresh these
+numbers.
 
 ## Measurement environment
 
 | Field | Value |
 |-------|-------|
 | **Date captured** | 2026-05-26 |
-| **Sharko version** | `1.25.0-pre.0` (from `cmd/sharko/root.go`) |
+| **Sharko version** | `1.25.0-pre.0` |
 | **Sample count** | 30 iterations per path per phase (see "skip notes" below for exceptions) |
-| **Runner type** | Developer workstation (NOT CI — CI baselines come in V2-1.4) |
+| **Runner type** | Developer workstation (NOT CI — a CI baseline is planned and not built) |
 | **Hardware** | Apple Silicon (arm64) — Docker Desktop 28.3.2, 4 CPUs, 15.6 GiB allocated |
 | **OS** | macOS 26.4.1 |
 | **kind version** | `v0.20.0` (`kindest/node:v1.31.0`) |
@@ -25,9 +25,9 @@ measurement environment to refresh these numbers.
 
 > **Note on the dev-workstation runner.** These baselines are the
 > floor — a developer-laptop measurement on a quiet machine. CI
-> baselines (which will replace this table when V2-1.4 lands) will be
+> baselines (which will replace this table once they exist) will be
 > higher and noisier because the GitHub Actions runner is shared
-> hardware with cold caches. Until V2-1.4 wires the CI gate, treat
+> hardware with cold caches. Until the CI gate is wired, treat
 > these numbers as the lower-bound expectation; production SLO
 > targets get sized on top of the CI baselines, not these.
 
@@ -53,16 +53,15 @@ ArgoCD installed in the management cluster.
   iterations. By iteration ~20 the cumulative state growth slows the
   Eventually-loop enough that some iterations time out at 20s; the
   ones that completed still produce valid samples and the partial
-  baseline is the canonical reading until V2-1.4's CI gate replaces
-  the dev-workstation runner.
+  baseline is the canonical reading until a CI gate replaces the
+  dev-workstation runner.
 
 - `ui_submit` p99 of 2150ms is dominated by iteration 0's
   `bootstrap managed-clusters.yaml` cost (logged as `managed-clusters.yaml
   not found, bootstrapping`). Subsequent iterations are an order of
   magnitude faster (p50 = 22ms) — this is the steady-state cost.
-  V2-1.3 SLO targets should consider whether the first-register
-  bootstrap is treated as a separate SLI or absorbed into the
-  registration SLI's budget.
+  The SLO targets have to decide whether the first-register bootstrap is
+  a separate SLI or absorbed into the registration SLI's budget.
 
 ### 2. `addon_cycle`
 
@@ -132,23 +131,23 @@ make test-e2e-perf
 #    feature work.
 ```
 
-When the V2-1.4 CI regression gate lands, the canonical refresh path
+When a CI regression gate lands, the canonical refresh path
 becomes "trigger the baseline-refresh workflow on the CI runner +
 merge the resulting docs PR". Until then, refreshes are
 developer-driven.
 
 ## Downstream consumers
 
-- **V2-1.3** — SLO targets per path. Targets are operational
-  headroom over these baselines (rule of thumb: p99 target = 1.5–3×
-  measured p99, sized per path based on whether the latency surface
-  is user-blocking or background).
-- **V2-1.4** — CI regression gate. Fires when any phase's p99
-  regresses >20% over the recorded value above. The 20% threshold
-  absorbs the developer-workstation → CI variance shift expected
-  when the runner moves from a quiet laptop to a GitHub Actions
+- **The SLO targets per path** ([`slos.md`](slos.md)). Targets are
+  operational headroom over these baselines (rule of thumb: p99 target =
+  1.5–3× measured p99, sized per path based on whether the latency
+  surface is user-blocking or background).
+- **A CI regression gate** (planned, not built). It would fire when any
+  phase's p99 regresses more than 20% over the recorded value above. The
+  20% threshold absorbs the developer-workstation → CI variance shift
+  expected when the runner moves from a quiet laptop to a GitHub Actions
   runner.
-- **V2-3.1** — Prometheus histogram bucket sizing. Pick bucket
+- **Prometheus histogram bucket sizing.** Pick bucket
   boundaries that put ~5 buckets above the recorded p99 and ~3
   below the p50 so the resulting histogram has high resolution
   around the operational range.

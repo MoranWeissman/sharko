@@ -36,8 +36,7 @@ a private IP at fetch time even though it didn't at startup.
 
 What an operator sees when this fires:
 
-- **Sharko logs the warn line at the source-level fetch loop**
-  (`internal/catalog/sources/fetcher.go:681`):
+- **Sharko logs a Warn line for the failing source:**
 
   ```
   {"time":"...","level":"WARN","msg":"catalog source fetch failed","source":"redacted","err":"dns chain=*url.Error > *net.OpError > *net.DNSError"}
@@ -75,15 +74,15 @@ What an operator sees when this fires:
 
 - **The Marketplace UI** shows the source as **Failed** in the
   source-status panel, and continues to surface the previous
-  snapshot's entries from this source (per
-  `internal/catalog/sources/merger.go` "embedded wins, third-party
-  prior-snapshot retained on transient failure"). New entries the
-  source may have added are not visible.
+  snapshot's entries from this source — the embedded catalog always
+  wins, and a third-party source's previous snapshot is retained through
+  a transient failure. New entries the source may have added are not
+  visible.
 
 - **If the failure is the SSRF runtime guard**, the log line is the
   adjacent
-  `"catalog source blocked by runtime SSRF guard"` (line 659 of
-  fetcher.go) NOT this runbook's line. That has its own runbook —
+  `"catalog source blocked by runtime SSRF guard"`, NOT this runbook's
+  line. That has its own runbook —
   [`catalog-sources.md`](catalog-sources.md) — and is distinct from
   HTTP fetch failure.
 
@@ -212,9 +211,8 @@ kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   sh -c "wget -q -O - '$FAILING_URL' | wc -c"
 ```
 
-The fetcher's body clamp default is large (read the
-`internal/catalog/sources/fetcher.go` constant in your installed
-version). If the source legitimately needs more headroom, that's a
+The default limit on how much body Sharko will read from a source is
+large. If the source legitimately needs more headroom, that's a
 Sharko config change (Helm value
 `catalog.sources.maxBodyBytes`). If the source body is unexpectedly
 huge, the source author may have accidentally bundled a giant payload
@@ -289,8 +287,8 @@ If the SSRF-guard line is the one firing, jump to
 
 4. **For timeout-driven failures, raise the per-source timeout (or
    the source author needs to optimize their serving).** Sharko's
-   default per-fetch timeout is documented in the fetcher constants
-   (`fetcher.go`). If your source legitimately takes >5s to serve
+   default per-fetch timeout is 5 seconds. If your source legitimately
+   takes longer than that to serve
    (large catalog, slow upstream CDN), the fix is on the source
    author's side — they should optimize. Sharko's clamp protects
    against runaway fetchers; bypassing it is a Sharko config change

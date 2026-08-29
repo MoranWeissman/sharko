@@ -31,10 +31,9 @@ K8s-Secrets for now and migrate when the native provider ships, (b)
 implement the provider locally and contribute upstream, or (c) wait
 for v2 when one or both of the providers ship.
 
-Both providers' stubs include detailed implementation guidance in
-the package doc comments (`internal/providers/azure.go:8-21` and
-`internal/providers/gcp.go:8-21`) for contributors. The Sharko
-maintainer welcomes community PRs; the stubs define the interface
+Both stubs carry detailed implementation guidance for contributors, in
+the source itself. The Sharko maintainer welcomes community pull
+requests; the stubs define the interface
 boundary so implementation is straightforward once the
 authentication chain (Workload Identity / ADC) is set up.
 
@@ -127,7 +126,7 @@ If the value is `azure` or `gcp`, this runbook applies. If it's
 
 ### 2. Identify which provider surface is hitting the stub
 
-Sharko has three provider surfaces (per V125-1-11):
+Sharko has three provider surfaces:
 
 - `AddonSecretProvider` — used by the addon-secret reconciler. Helm
   key: `secrets.provider`.
@@ -211,12 +210,10 @@ GitHub URL for contributions.
    The pod restarts; the configured provider initializes.
 
 2. **Implement the provider locally as a fork and contribute
-   upstream.** The stubs in
-   `internal/providers/azure.go` and
-   `internal/providers/gcp.go` include detailed implementation
-   guidance in the package doc comments:
+   upstream.** Both stubs carry detailed implementation guidance in the
+   source itself. In summary:
 
-   **Azure Key Vault stub guidance** (from `azure.go:8-21`):
+   **Azure Key Vault stub guidance:**
    - Authentication: `github.com/Azure/azure-sdk-for-go/sdk/azidentity.NewDefaultAzureCredential`
      (Workload Identity on AKS, Azure CLI / env vars for local dev)
    - Secret access:
@@ -229,7 +226,7 @@ GitHub URL for contributions.
      prefix convention (e.g. `clusters-{cluster-name}`) using
      `client.NewListSecretPropertiesPager`.
 
-   **GCP Secret Manager stub guidance** (from `gcp.go:8-21`):
+   **GCP Secret Manager stub guidance:**
    - Authentication: `golang.org/x/oauth2/google.DefaultTokenSource`
      (Workload Identity on GKE, ADC for local dev)
    - Secret access:

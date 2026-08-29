@@ -80,9 +80,9 @@ What an operator sees when this fires:
 
 If the symptom is "the reconciler ticks but reports errors per cluster,"
 this is not the runbook — see
-[`reconciler-per-cluster-failure.md`](failure-mode-index.md) (P1 GAP,
-PR 2b scope). This runbook is for the case where the goroutine itself
-exits or panics.
+[`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md).
+This runbook is for the case where the reconcile loop itself exits or
+panics.
 
 ---
 
@@ -311,10 +311,8 @@ the 30s cadence, all with the same panic string. The
 the panic is in code, not data.
 
 Why it happens: a recent Sharko upgrade introduced the bug. The
-`internal/clusterreconciler/` package depends on
-`internal/argosecrets/manager.go`'s `BuildSecretConfigJSON` /
-`BuildClusterSecretLabels` wrappers — a regression there propagates
-into the reconciler.
+reconciler builds each ArgoCD cluster Secret through shared code, so a
+regression in how that Secret is built shows up here.
 
 Fix: file a P0 bug with the goroutine dump and panic log lines. The
 maintainer needs the panic stack frame and the `managed-clusters.yaml`
@@ -344,16 +342,16 @@ chain. File a P1 bug with the dump attached.
 
 ### Reconciler dependency missing at startup
 
-The reconciler is constructed in `serve.go` with dependencies
-(GitProvider, ArgoClient, Vault). If any is nil at startup, the
-reconciler runs but every tick is a no-op (`"no GitProvider getter
-configured, skipping reconcile"` warning per V2-2.3 audit).
+The reconciler needs three things at startup: a Git provider, Kubernetes
+API access to the ArgoCD namespace, and a cluster-credentials provider.
+If any is missing, the reconciler runs but every tick is a no-op, and it
+says so — `"no GitProvider getter configured, skipping reconcile"`.
 
 Diagnostic signature: ticks ARE running (you see `recon-<ts>` IDs) but
 every tick logs at WARN: `"no GitProvider getter configured, skipping
 reconcile"` or `"no ArgoClient (k8s clientset) configured"` or
-`"no Vault (cluster-credentials provider) configured"` from
-`reconciler.go:325-340`. The `audit.action=reconcile`
+`"no Vault (cluster-credentials provider) configured"`.
+The `audit.action=reconcile`
 `audit.result=skipped` lines appear.
 
 This is not a crash loop — it's a misconfiguration. The reconciler
@@ -361,8 +359,8 @@ loop is alive; it's just intentionally no-op-ing.
 
 Fix: review the Helm values for `secrets.GITHUB_TOKEN`,
 `config.connectionSecretName`, and provider credentials. Restart
-Sharko after correcting. The full per-dependency runbook is a P1 GAP
-(PR 2b scope).
+Sharko after correcting. The per-dependency runbook is
+[`cluster-reconciler-dependency-missing.md`](cluster-reconciler-dependency-missing.md).
 
 ### OOMKill on the pod
 
@@ -436,8 +434,7 @@ kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
   — paging when that stays true for more than 2 minutes. It would catch
   the silent failure mode before any user-visible cluster operation
   misbehaves. Wiring requires Sharko to emit
-  `sharko_reconciler_ticks_total`, a P1 follow-up in the V2-3.x metric
-  backlog.
+  `sharko_reconciler_ticks_total`, which it does not export today.
 
 - **Gating — pprof endpoint in non-prod, opt-in in prod.** The
   goroutine dump in Diagnosis step 3 depends on
@@ -459,8 +456,8 @@ kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
 
 ## Related runbooks
 
-- [`cluster-reconciler.md`](cluster-reconciler.md) — V125-1-8
-  architectural overview of the reconciler. Read this for the
+- [`cluster-reconciler.md`](cluster-reconciler.md) — the reference page
+  for the reconciler. Read this for the
   ownership-label semantics and the two-direction policy.
 - [`oom-restart-loop.md`](oom-restart-loop.md) — when the pod itself
   is CrashLoopBackoff'ing. Often the cause when the reconciler tick

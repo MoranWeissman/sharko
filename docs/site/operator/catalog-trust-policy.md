@@ -96,7 +96,7 @@ The `reason` field is the discriminator:
   → the SAN regex check failed. The signer is valid; the policy does
   not trust it. Skip to Mitigation step 1.
 - `cert-claim assertion failed: workflow_ref ... does not match policy ...`
-  → the SAN check passed but the V124-1.4 workflow_ref claim does
+  → the SAN check passed but the workflow_ref claim does
   not match. Skip to Mitigation step 2.
 - `signature bundle invalid` / `cert chain validation failed` /
   `rekor inclusion proof missing` → the signature itself is broken,
@@ -189,7 +189,7 @@ marketplace entry should flip to Verified within one fetch cycle
 `POST /api/v1/catalog/sources/refresh` endpoint to confirm without
 waiting).
 
-### 2. Adjust the workflow_ref policy (V124-1.4 layer)
+### 2. Adjust the workflow_ref policy
 
 The SAN matched but `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` does not
 permit the workflow ref the signer ran against. Either widen the
@@ -202,8 +202,8 @@ of tags):
 SHARKO_CATALOG_TRUSTED_WORKFLOW_REF='^refs/heads/(main|release-.*)$'
 ```
 
-Or accept any ref (escape hatch — re-disables the V124-1.4
-cryptographic assertion; do this only if you are intentionally
+Or accept any ref (escape hatch — this turns the cryptographic
+assertion off; do this only if you are intentionally
 willing to trust non-tag-built signatures from the SAN-matched
 identity):
 
@@ -282,9 +282,9 @@ operators on-boarding multiple internal teams' catalogs hit this
 each time a new team's signing identity surfaces. The fix is
 Mitigation step 1.
 
-### V124-1.4 cert-claim assertion mismatch
+### Cert-claim assertion mismatch
 
-After V124-1.4 landed, Sharko cryptographically asserts the cert's
+Sharko cryptographically asserts the cert's
 `workflow_ref` claim against `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF`
 in addition to the SAN regex. Operators whose release pipeline signs
 from a non-tag ref (e.g. nightly main-branch signing) hit this even
@@ -403,7 +403,7 @@ allows.
 ## What the policy does
 
 When Sharko loads a catalog entry that carries a `signature.bundle`
-sidecar URL (the per-entry signing path landed in **v1.23 / V123-2.2**), it:
+sidecar URL, it:
 
 1. Fetches the Sigstore bundle.
 2. Verifies the cert chain against the public-good Fulcio root.
@@ -424,7 +424,7 @@ this conservative default list:
 | Pattern | Why |
 |---------|-----|
 | `^https://github\.com/cncf/.*/\.github/workflows/.*$` | Any signed workflow under the CNCF org. Sharko's positioning targets CNCF-curated addons, so trusting CNCF workflows out of the box matches the project's curation stance. |
-| `^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/heads/main$` | Sharko's own release workflow. From V123-2.5 onwards the release pipeline signs the embedded catalog; this default keeps fresh installs showing "Verified" pills on the embedded entries without operator intervention. The SAN anchors to `refs/heads/main` because Fulcio mints `job_workflow_ref` (the workflow file's ref at job start), not the triggering tag — release.yml runs as a `workflow_run`-triggered job whose `job_workflow_ref` is always `refs/heads/main`. Tag-context is enforced cryptographically by `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` (V124-1.4 — see below). |
+| `^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/heads/main$` | Sharko's own release workflow. The release pipeline signs the embedded catalog, this default keeps fresh installs showing "Verified" pills on the embedded entries without operator intervention. The SAN anchors to `refs/heads/main` because Fulcio mints `job_workflow_ref` (the workflow file's ref at job start), not the triggering tag — release.yml runs as a `workflow_run`-triggered job whose `job_workflow_ref` is always `refs/heads/main`. Tag-context is enforced cryptographically by `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` (see below). |
 
 Operators with no internal catalogs can ship the defaults as-is. Operators
 with internal catalogs typically want **defaults + their own org regex**
@@ -470,7 +470,7 @@ double-quoted YAML scalar.
 | `^https://github\.com/myorg/.*/\.github/workflows/.*$` | your org only | Override entirely — defaults excluded by intent |
 | `^$` | one regex matching no string | "Trust nothing" escape hatch — every signed entry surfaces as Unverified |
 
-## Workflow_ref claim assertion (V124-1.4)
+## Workflow_ref claim assertion
 
 `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` adds a cryptographic assertion on
 the cert's GitHub `workflow_ref` claim — the Fulcio extension that
@@ -480,7 +480,7 @@ for an entry to verify.
 
 ### Why it matters
 
-Pre-V124-1.4 the SAN regex was the only narrowing on WHO signed. Sharko's
+In earlier versions the SAN regex was the only narrowing on WHO signed. Sharko's
 own `release.yml` gates on `if: startsWith(workflow_run.head_branch, 'v')`
 to ensure only tag-built releases sign — but that's a **trigger-time
 guard**, not a **cryptographic assertion**. An attacker who matched the
@@ -590,7 +590,7 @@ naming the offending pattern:
 load catalog trust policy: SHARKO_CATALOG_TRUSTED_IDENTITIES: invalid regex "[unbalanced": ...
 ```
 
-This matches the V123-1.1 `SHARKO_CATALOG_URLS` posture: misconfiguration
+This matches the `SHARKO_CATALOG_URLS` posture: misconfiguration
 gets caught at the point of deployment, not later when an entry
 mysteriously fails to verify.
 
@@ -607,20 +607,21 @@ surface is deliberately env-driven and restart-only for v1.23. A future
 release may add a hot-reload watcher; until then a restart is the
 supported way to apply policy changes.
 
-## What lands in v1.23 vs later
+## How catalog signing arrived
 
-- **v1.23 — V123-2.2 (already shipped):** per-entry verification path,
-  `verified` and `signature_identity` JSON fields on every catalog
-  endpoint.
-- **v1.23 — V123-2.3 (this page):** `SHARKO_CATALOG_TRUSTED_IDENTITIES`
-  env-var parser with `<defaults>` magic-token semantics.
-- **v1.23 — V123-2.4:** UI verified badge + "Signed only" pseudo-filter
-  on Browse.
-- **v1.23 — V123-2.5:** the Sharko release pipeline starts signing the
-  embedded catalog — the second default identity finally has signatures
-  to verify against.
-- **v1.24 — V124-1.4 (this page):** `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF`
-  cert-claim assertion layered on top of the SAN regex. Default
-  `^refs/tags/v.*$` cryptographically pins trust to tag-built signatures.
+Every piece below ships today. The order is here because it explains why
+the settings are shaped the way they are.
+
+- **Per-entry verification**, with `verified` and `signature_identity`
+  fields on every catalog endpoint.
+- **`SHARKO_CATALOG_TRUSTED_IDENTITIES`**, with `<defaults>` magic-token
+  semantics — the subject of this page.
+- **The verified badge in the UI**, plus a "Signed only" filter on the
+  browse surface.
+- **The Sharko release pipeline signing the embedded catalog**, so the
+  second default identity has signatures to verify against.
+- **`SHARKO_CATALOG_TRUSTED_WORKFLOW_REF`**, a cert-claim assertion on
+  top of the SAN regex. The default `^refs/tags/v.*$` cryptographically
+  pins trust to tag-built signatures.
 - **Future:** hot reload, per-source policy overrides, Settings-page
   exposure of the policy.

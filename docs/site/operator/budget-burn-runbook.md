@@ -21,8 +21,8 @@ surface.
 Each Sharko SLO path has a 99.9% target (error budget = 0.001 — at most
 1 in 1000 requests may fail in a rolling 30-day window). A "burn rate"
 is the multiple of that budget being consumed right now: 1× exhausts the
-budget exactly at day 30; 14.4× exhausts it in ~2 days. The alerts in
-V2-3.3 fire when the burn rate exceeds a threshold over **both** a short
+budget exactly at day 30; 14.4× exhausts it in ~2 days. The alerts fire
+when the burn rate exceeds a threshold over **both** a short
 window and a long window simultaneously — this is the multi-window
 multi-burn-rate pattern from the
 [Google SRE workbook](https://sre.google/workbook/alerting-on-slos/),
@@ -149,14 +149,15 @@ Page on-call.
 - **Webhook backpressure** — cert-manager / external-secrets webhooks
   block Secret creation; failure surfaces as a kube API error inside
   the `argocd_secret_created` phase.
-- **First-register bootstrap stall** — V2-1.2 baselines documented a
+- **First-register bootstrap stall** — the performance baselines record a
   one-time 2-second bootstrap cost on iteration 0. If this alert
   triggered immediately after a Sharko install with no prior cluster,
   the bootstrap may be racing with the very first registration.
   Re-trying typically clears it. Decision rationale lives in
   [`slos.md` first-register bootstrap decision](slos.md).
-- **Per-phase wiring follow-up (V2-3.x)** — PR 1 wired end-to-end only
-  for `cluster_registration`. Once per-phase wiring lands (`ui_submit`,
+- **Per-phase wiring, planned and not built** — only
+  `cluster_registration` is wired end to end today. Once per-phase
+  wiring lands (`ui_submit`,
   `argocd_secret_created`, `argocd_application_reachable`), the `phase`
   label on the histogram pinpoints which phase is failing without
   reading logs.
@@ -261,13 +262,13 @@ Page on-call.
 
 2. **Per-action breakdown** — the histogram carries a `phase` label. At
    runtime Sharko emits exactly two values on this surface: `enable` and
-   `disable` (`internal/api/addon_ops.go`). Pivot by phase in Grafana to
+   `disable`. Pivot by phase in Grafana to
    see whether a single action is failing or both.
 
     Do not go looking for an `upgrade_global` phase in Prometheus. Names
     like `enable_dry_run` and `upgrade_global` are **performance-harness
-    step ids** (`tests/e2e/harness/phases.go`), used to label the
-    measurements in [`slos.md`](slos.md) and
+    step ids**, used to label the measurements in
+    [`slos.md`](slos.md) and
     [`perf-baselines.md`](perf-baselines.md). They are not values the
     running server ever puts on the `phase` label. Two different
     vocabularies, same word.
@@ -320,9 +321,8 @@ Page on-call.
   the merge, but the downstream ArgoCD sync never reaches Healthy. The
   addon_cycle counter logs an error because the cycle didn't close.
   Triage the Application directly in ArgoCD UI.
-- **Catalog signing key rotated without trust update** — recent
-  V125-1-7 / catalog-signing surface; rotation requires updating the
-  trust policy in lockstep. See
+- **Catalog signing key rotated without trust update** — rotation
+  requires updating the trust policy in lockstep. See
   [`catalog-trust-policy.md`](catalog-trust-policy.md).
 - **Per-phase wiring follow-up** — once per-phase wiring lands
   (`pr_open`, `pr_merged`, `reconciler_converged`, `argo_sync`), this
@@ -419,7 +419,7 @@ breaks addon discovery for every operator. Page on-call.
     clamp_min(sum by (phase) (rate(sharko_catalog_scan_total[5m])), 1e-9)
     ```
 
-    Phases: `total` today; V2-3.x will split into `catalog_load`,
+    Phases: `total` today; a later release will split it into `catalog_load`,
     `list_addons`, and `sources_refresh` per
     [`metrics-naming.md`](metrics-naming.md#catalog_scan).
 
@@ -701,7 +701,7 @@ during business hours.
 - [`metrics-naming.md`](metrics-naming.md) — the metric inventory,
   exposed labels, and the OTEL-aligned naming scheme every recording
   rule and alert depends on.
-- [`perf-baselines.md`](perf-baselines.md) — the V2-1.2 baselines
+- [`perf-baselines.md`](perf-baselines.md) — the measured baselines
   that informed both histogram bucket sizing and the SLO target
   headroom multipliers.
 - [`slos.md`](slos.md) — the per-path 99.9% target, the error-budget
@@ -716,8 +716,7 @@ during business hours.
 - [Google SRE workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/)
   — the multi-window multi-burn-rate pattern these alerts implement.
 
-> **Note:** If a future V2-4 runbook style guide lands, this runbook
-> may be restructured to match — tracked as
-> `v2-3-4-runbook-alignment-followup`. The 1:1 alert-to-section
+> **Note:** This runbook may be restructured later to match the shape
+> of the other runbooks. The 1:1 alert-to-section
 > mapping must be preserved across any restructure so the alert
 > `runbook_url` anchors keep resolving.

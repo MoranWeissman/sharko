@@ -43,8 +43,7 @@ source was authored for v1.x+M).
 
 What an operator sees when this fires:
 
-- **Sharko logs the warn line at the source-level fetch loop**
-  (`internal/catalog/sources/fetcher.go:708`):
+- **Sharko logs a Warn line for the failing source:**
 
   ```
   {"time":"...","level":"WARN","msg":"catalog source schema validation failed","source":"redacted","err":"unclassified chain=*errors.errorString"}
@@ -100,8 +99,8 @@ What an operator sees when this fires:
   do NOT appear.
 
 - **No Prometheus alert fires for a single-source schema failure
-  today.** This is per-source per-cadence; the proactive metric is on
-  the V2-3.x follow-up list.
+  today.** This is per-source per-cadence; a metric that would let you
+  alert on it is planned, not built.
 
 If the symptom is "every catalog source is failing" (including the
 embedded one), this is **not** the right runbook — see
@@ -178,9 +177,9 @@ sharko validate-catalog /tmp/failing-catalog.yaml
 # artifacthub-verified, artifacthub-official).
 ```
 
-The exact schema lives in `catalog/schema.json` (embedded) and is
-mirrored in `internal/catalog/loader.go` (constants
-`allowedCategories`, `allowedCuratedBy`). If the failing field is
+The exact schema is `catalog/schema.json`, shipped inside Sharko, and
+the allowed `category` and `curated_by` values are fixed in the same
+release. If the failing field is
 outside these enums, the source author needs to update their YAML; if
 inside the enum but spelled differently (e.g. `"observability "` with
 a trailing space), the author has a typo.
@@ -232,9 +231,8 @@ step 4 covers the rollback / Helm pin path.
    step 2): `sharko validate-catalog` prints the exact error.
 
    While waiting: the marketplace continues to surface the previous
-   snapshot's entries from this source (per
-   `internal/catalog/sources/fetcher.go:710` —
-   `recordSchemaFailure` does NOT clear the prior entries). Operators
+   snapshot's entries from this source — recording a schema failure does
+   NOT clear the entries already loaded. Operators
    experience zero user-visible degradation as long as the prior
    snapshot is recent.
 
@@ -324,8 +322,8 @@ step 4 covers the rollback / Helm pin path.
 
 The most common cause. The source author added a new entry with
 `category: telemetry` or `curated_by: home-grown` — values outside
-the embedded `allowedCategories` / `allowedCuratedBy` sets defined
-in `internal/catalog/loader.go`. The catalog rejects the entire
+the allowed `category` and `curated_by` sets Sharko ships with. The
+catalog rejects the entire
 file because the loader fails on the first invalid entry rather than
 skipping it (intentional — schema-violating entries are unsafe to
 surface as curated content).
@@ -351,8 +349,8 @@ Fix is Mitigation step 2 — correct the URL.
 
 ### Sharko schema tightened between releases
 
-Sharko's `allowedCategories` / `allowedCuratedBy` sets are versioned
-constants in `internal/catalog/loader.go`. A future minor adds
+Sharko's allowed `category` and `curated_by` sets are fixed per
+release. Suppose a future minor adds
 `network-security` to allowed categories; an older third-party
 catalog using `network-security` would now succeed, but a future
 removal of `developer-tools` would reject older catalogs that still

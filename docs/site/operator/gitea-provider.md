@@ -77,10 +77,9 @@ trailer (plus a `Co-authored-by:` trailer when the acting user isn't the
 commit author).
 
 - **With a resolved per-user identity**, the commit's author and committer
-  are that identity — mirroring exactly how the GitHub provider does it
-  (`internal/gitprovider/github_write.go`'s `commitAuthorFor`, and Gitea's
-  own `commitIdentityFor`, both read the same `CommitAttribution` off the
-  request context and both call `EffectiveAuthor()` for the same
+  are that identity — mirroring exactly how the GitHub provider does it.
+  Both providers read the same commit attribution off the request and
+  resolve it the same way, for the same
   (name, email) pair).
 - **Without one**, both author and committer fall back to Sharko's service
   identity (`Sharko Bot <sharko-bot@users.noreply.github.com>` — the same
@@ -103,10 +102,9 @@ commit author).
   connection behaves as if no personal token exists.
 - **`repo_url` is the field that actually matters at write time**, even
   though connection validation accepts `owner` + `repo` alone. Sharko
-  builds the Gitea API client's base URL exclusively from `repo_url`
-  (`deriveGiteaBaseURL` in `internal/service/connection.go` and
-  `deriveBaseURL` in `internal/api/tiered_git.go`); a connection saved with
-  only `owner`/`repo` and no `repo_url` passes validation but fails the
+  builds the Gitea API client's base URL exclusively from `repo_url`, so
+  a connection saved with only `owner`/`repo` and no `repo_url` passes
+  validation but fails the
   first time Sharko actually tries to talk to Gitea, with "repo_url is
   empty". Always send `repo_url`.
 - **No native batch-commit API.** `BatchCreateFiles` falls back to one

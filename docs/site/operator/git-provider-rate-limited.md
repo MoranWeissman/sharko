@@ -24,9 +24,8 @@ become no-ops until the quota resets).
 This covers two adjacent failure-mode rows from the
 [failure-mode index](failure-mode-index.md):
 
-- "Git provider rate limit hit" — generic burst-driven quota exhaustion
-  observed at `internal/orchestrator/git_helpers.go` (and every Git op
-  funnelled through it).
+- "Git provider rate limit hit" — generic burst-driven quota
+  exhaustion, reachable from every Git operation.
 - "GitHub Contents API 403 on `managed-clusters.yaml` read" —
   reconciler-side surface, logged as `audit.action=git_read` with
   `git_fetch_failed` shape in the reconciler tick log.
@@ -138,7 +137,7 @@ mitigation.
 
 Grep the Sharko logs for the 403 + `rate limit` shape, joined by
 `request_id` per the
-[V2-2.2 correlation pattern](../developer-guide/logging.md#correlation-ids):
+[request-id correlation pattern](../developer-guide/logging.md#correlation-ids):
 
 ```sh
 SHARKO_NS=<sharko-ns>
@@ -466,8 +465,8 @@ levers, in order of leverage:
   `sharko_github_rate_limit_remaining`), alerting when it falls below
   20% of `X-RateLimit-Limit` for 5 minutes. That would give the operator
   a 15-30 minute warning before the budget hits zero — long enough to
-  throttle a burst or rotate a PAT preemptively. Wiring this metric into
-  `internal/metrics/` is a V2-4.x follow-up.
+  throttle a burst or rotate a PAT preemptively. Sharko does not export
+  that metric today.
 
 - **Gating — document the per-operation API cost in onboarding
   scripts.** Each cluster registration costs ~3-4 GitHub API calls;
@@ -505,8 +504,8 @@ levers, in order of leverage:
 - [`failure-mode-index.md`](failure-mode-index.md) — the master
   inventory of every operator-facing failure mode in Sharko.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  V2-2.2 `request_id` correlation pattern, used throughout
-  Diagnosis above.
+  the `request_id` correlation pattern, used throughout Diagnosis
+  above.
 
 ## Escalation
 

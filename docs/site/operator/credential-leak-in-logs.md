@@ -30,12 +30,11 @@ of the three credential-shape detectors).
 This runbook covers **two related but distinct failure modes** that
 share the same diagnosis + mitigation:
 
-1. **Bootstrap admin password leak** — the admin password emitted to
-   logs as plain-text during the bootstrap-init code path at
-   `internal/auth/store.go:634`. The `RedactHandler` (V2-2.4) now
-   collapses the value to `[REDACTED]`, but the call site is still
-   wrong (per the V2-2.3 logging audit's headline finding); a
-   regression in the wrapper would re-expose admin credentials.
+1. **Bootstrap admin password leak** — the admin password handed to the
+   logger as a plain-text attribute while Sharko bootstraps its first
+   admin. Redaction now collapses the value to `[REDACTED]`, but the
+   password is still handed over, so a regression in redaction would
+   re-expose admin credentials.
 2. **Kubeconfig / bearer-token / generic credential leak** — any
    credential-shaped value that bypasses the `RedactHandler`'s three
    detectors (attribute name patterns, JWT shape, base64 shape).
@@ -142,55 +141,47 @@ For each hit, capture:
 - The credential type (JWT? PAT? kubeconfig? bcrypt hash?
   base64 blob?)
 
-### 2. Identify the call site
+### 2. Work out which credential leaked
 
-The attribute key from step 1 maps to the call site in code. Search:
+The attribute key from step 1 tells you what to rotate. That is the
+decision this step exists to make — rotate the right thing, and rotate
+it first.
 
-```sh
-# Find where the attribute is emitted (relative to the worktree):
-cd /path/to/sharko-source
-grep -rn '"<attribute-key>"' internal/ cmd/
-```
-
-Common call sites by attribute key:
-
-| Attribute key | Likely package | Notes |
+| Attribute key | What leaked | What to rotate |
 |---|---|---|
-| `"token"` | `internal/auth/` or `internal/argocd/` | Bearer token leaked |
-| `"kubeconfig"` | `internal/providers/`, `internal/remoteclient/` | Cluster credential leaked |
-| `"password"` | `internal/auth/store.go:634` | Bootstrap admin password (canonical case) |
-| `"secret"` | `internal/orchestrator/secrets.go` | Addon secret value leaked |
-| `"data"` | various (Helm chart values, secret payloads) | Generic credential |
+| `"token"` | An ArgoCD account token or a Sharko API token | The ArgoCD token, or revoke the Sharko token |
+| `"kubeconfig"` | A cluster's credentials | The cluster credential in your secrets backend |
+| `"password"` | The bootstrap admin password | Run `sharko reset-admin` |
+| `"secret"` | An addon's secret value | The addon secret at its source |
+| `"data"` | A generic credential — Helm values or a Secret payload | Whatever the value is; read the surrounding fields to tell |
 
-Verify the call site against the known headline finding (bootstrap
-admin password, `internal/auth/store.go:634`) to see whether this is
-that same finding or a new instance.
+If the key is `"password"`, this is the bootstrap-admin case named at the
+top of this page. Any other key is a new leak site and needs reporting
+against the Sharko version you are running, with the attribute key and
+the surrounding log fields — never the value.
 
-### 3. Verify the `RedactHandler` is wired
+### 3. Check whether redaction is working at all
 
-The handler must be FIRST in the chain. Check
-`cmd/sharko/serve.go`:
+You cannot inspect the log wiring from outside the pod, but you can tell
+the two cases apart from the logs themselves. Count the redaction marker
+in the same window:
 
 ```sh
-grep -A 5 "slog.New\|NewRedactHandler\|JSONHandler" cmd/sharko/serve.go
+kubectl logs -n sharko deploy/sharko --since=24h | grep -c '\[REDACTED\]'
 ```
 
-Expected: `RedactHandler` wraps the `JSONHandler` and the wrapped
-handler is passed to `slog.New(...)` then `slog.SetDefault(...)`. Per
-the architecture in
-[`../developer-guide/logging.md`](../developer-guide/logging.md):
+- **Some `[REDACTED]` values, and your leaked key is not one of the names
+  redaction covers** — redaction is running and this one emission slipped
+  past its detectors. Go to step 4.
+- **No `[REDACTED]` anywhere, while `"password"` or `"token"` attributes
+  appear with real values** — redaction is not running at all in this
+  build. That is the worse of the two: treat every credential in the
+  window as compromised, rotate, and report it. The redaction order is
+  drawn in
+  [`../developer-guide/logging.md`](../developer-guide/logging.md); it is
+  meant to run before anything serializes a log line.
 
-```
-slog.Info(...) → RedactHandler → JSONHandler → stdout
-```
-
-If the order is reversed (`JSONHandler` first), redaction never
-runs. **This is the most common wiring regression.**
-
-If the wrapper is wired correctly but the leak still happens, the
-specific call site bypasses the heuristics — see step 4.
-
-### 4. Determine why `RedactHandler` missed the leak
+### 4. Determine why redaction missed the leak
 
 The handler has three detectors:
 
@@ -311,10 +302,9 @@ exposed credential second, purge logs third.
    - **Don't log the value at all** — replace `slog.Info("...", "token",
      tok)` with `slog.Info("...")`. Log structural info (length, hash
      prefix) if useful, never the value itself.
-   - **Add the attribute name to the `RedactHandler` pattern list** —
-     extend `internal/logging/redact.go` to recognize the new
-     attribute name. This is the lighter-touch fix but still relies
-     on the wrapper being correctly wired.
+   - **Add the attribute name to the redaction list** so Sharko
+     recognizes the new attribute name. This is the lighter-touch fix
+     but still relies on redaction being correctly wired.
 
    File a PR with the fix. Until the PR ships, the call site keeps
    leaking on every code path that hits it.
@@ -472,9 +462,9 @@ Diagnostic signature: every log line that should have been redacted
 shows the credential verbatim, EVEN for attribute keys that are on
 the redaction pattern list.
 
-Why it happens: a recent refactor of `cmd/sharko/serve.go`
-re-ordered the handler chain. Code review didn't catch the order
-mistake because both handlers are present.
+Why it happens: a refactor re-ordered Sharko's log handlers. It is easy
+to miss, because both handlers are still there — only their order is
+wrong.
 
 Fix: re-order the chain so `RedactHandler` wraps `JSONHandler` (NOT
 the other way round). Add an integration test that asserts the
@@ -515,11 +505,6 @@ back rotations on a credential whose log presence isn't fully purged.
   attribute value, and asserts the stdout output is `[REDACTED]`.
   Catches the wiring-regression cause.
 
-- **Code review — credential field `json:"-"` audit.** Standing
-  reviewer instruction: every struct definition with a credential
-  field must have `json:"-"` on that field. Add as a guideline in
-  `.claude/team/code-reviewer.md`.
-
 - **Tooling — pre-commit hook for `slog.Info("..., "token", ...)`
   patterns.** A simple regex pre-commit hook that flags
   `slog\.(Info|Warn|Error|Debug)\(.*"(token|password|secret|kubeconfig|pat)"`
@@ -549,7 +534,7 @@ back rotations on a credential whose log presence isn't fully purged.
   security incidents.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  V2-2.4 RedactHandler architecture and the slog handler chain order.
+  how redaction works and where it sits in the log handler chain.
 
 ## Escalation
 

@@ -11,7 +11,7 @@
 ## v2.0.0 SLO commitment
 
 Sharko's v2.0.0 production launch ships with measurable Service Level
-Objectives on the **4 critical paths** that the V2-1 perf harness
+Objectives on the **4 critical paths** that the performance harness
 instruments:
 
 1. `cluster_registration` — UI submit → ArgoCD Secret → ArgoCD
@@ -41,8 +41,8 @@ this rule of thumb (from
 
 Initial v2.0.0 targets carry **extra headroom (~3× p99 vs. the more
 typical 1.5×)** to accommodate the gap between developer-workstation
-baselines and the production runtime. After V2-1.4 lands the CI gate
-and the first 90 days of production data is in hand, the targets get
+baselines and the production runtime. Once a CI baseline gate exists and
+the first 90 days of production data is in hand, the targets get
 re-tightened (see "Re-baselining" at the bottom of this page).
 
 ### Error budget framing
@@ -66,9 +66,9 @@ book's multi-window, multi-burn-rate pattern:
   short window (sudden break) or a sustained moderate burn over a
   longer window (steady degradation that will exhaust the budget).
 
-Concrete PromQL recording + alerting rules ship with
-[V2-3.3](#cross-references) — this doc fixes the *thresholds*; that
-epic wires them into Prometheus.
+The concrete PromQL recording and alerting rules ship in the Helm chart
+— this page fixes the *thresholds*, the chart wires them into
+Prometheus.
 
 ---
 
@@ -338,15 +338,15 @@ p99 targets in any rolling 30-day window.**
 The targets above are sized over **developer-workstation baselines**.
 Two events will shift the numbers:
 
-1. **V2-1.4 — CI baseline gate.** When CI runs the perf harness on
+1. **A CI baseline gate.** When CI runs the performance harness on
    shared GitHub Actions hardware, the recorded baselines will be
    higher and noisier than the dev-workstation numbers. The current
    targets carry extra headroom (~3× p99 vs. the more typical 1.5×)
    precisely to absorb this shift without an SLO breach. Re-evaluate
-   the headroom multiplier when V2-1.4's CI baselines land.
+   the headroom multiplier when the CI baselines land.
 
-2. **First 90 days of production telemetry.** Once V2-3 wires up
-   Prometheus histograms and Sharko has 90 days of real production
+2. **First 90 days of production telemetry.** Once Sharko has 90 days of
+   real production
    p50 / p95 / p99 data, the targets get re-tightened to match the
    observed operational envelope. The aim is to converge on
    ~1.5× p99 headroom over real production data, not the conservative
@@ -365,12 +365,11 @@ mixing with feature work.
 - [`docs/site/developer-guide/perf-harness.md`](../developer-guide/perf-harness.md) —
   the locked phase boundaries the harness, baselines, and these
   targets all consume.
-- `docs/site/operator/budget-burn-runbook.md` — what to do when a
-  burn-rate trigger fires. **(forthcoming, V2-3.4 / V2-4; not yet
-  published)**
-- V2-3 — Prometheus exposition for these SLI surfaces; the metric
-  recording + alerting rules that operationalize the burn-rate
-  triggers above.
+- [`budget-burn-runbook.md`](budget-burn-runbook.md) — what to do when a
+  burn-rate trigger fires.
+- [`metrics-naming.md`](metrics-naming.md) — the Prometheus exposition
+  for these SLI surfaces, and the recording and alerting rules that turn
+  the burn-rate triggers above into something Prometheus evaluates.
 
 ## Refreshing this doc
 

@@ -2,8 +2,8 @@
 
 Sharko exposes Prometheus metrics on the unauthenticated `/metrics`
 endpoint of its HTTP listener. This page documents the naming scheme,
-the per-metric inventory for the four V2-3 SLO surfaces, and the
-operational choices the maintainers locked when shipping V2-3.1 / V2-3.2.
+the per-metric inventory for the four SLO surfaces, and the operational
+choices Sharko locked in when it started exporting them.
 
 ## Naming scheme
 
@@ -24,7 +24,7 @@ sharko_<surface>_<verb>_<unit>
 - `<unit>` — `seconds` for histograms, omitted for counters (since
   counts are unitless).
 
-The four V2-3 SLO surfaces map to three metric families each:
+The four SLO surfaces map to three metric families each:
 
 | Path id                | Histogram                                    | Total counter                 | Error counter                        |
 | ---------------------- | -------------------------------------------- | ----------------------------- | ------------------------------------ |
@@ -33,9 +33,9 @@ The four V2-3 SLO surfaces map to three metric families each:
 | `catalog_scan`         | `sharko_catalog_scan_duration_seconds`       | `sharko_catalog_scan_total`   | `sharko_catalog_scan_errors_total`   |
 | `dashboard_read`       | `sharko_dashboard_read_duration_seconds`     | `sharko_dashboard_read_total` | `sharko_dashboard_read_errors_total` |
 
-The path ids match the V2-1.2 baselines in
-[`perf-baselines.yaml`](perf-baselines.md) verbatim — renaming any of
-them invalidates the baselines and breaks the V2-3.3 recording rules.
+The path ids match the recorded baselines in
+[`perf-baselines.md`](perf-baselines.md) verbatim — renaming any of them
+invalidates the baselines and breaks the shipped recording rules.
 
 ## SLO surface inventory
 
@@ -48,23 +48,24 @@ the `code` label.
 - Right edge: 5.0 s (~2.3x headroom).
 - Histogram buckets (seconds):
   `0.005, 0.010, 0.020, 0.050, 0.100, 0.250, 0.500, 1.0, 2.5, 5.0`
-- Phase label values: `total` (end-to-end), V2-3.x follow-up will add
-  `ui_submit`, `argocd_secret_created`, `argocd_application_reachable`
-  once handler structure permits per-phase wiring.
+- Phase label values: `total` (end to end). A later release will add
+  `ui_submit`, `argocd_secret_created` and
+  `argocd_application_reachable`, once the handlers can report each
+  phase separately.
 - Code label values: HTTP status (`200`, `201`, `400`, `502`, ...).
 
 ### `addon_cycle`
 
-- Sized to baseline: **N/A** — V2-1.2 baselines only cover dry-run
+- Sized to baseline: **N/A** — the recorded baselines only cover dry-run
   phases (sub-ms). The real SLO surface is the multi-second-to-minute
   PR-open → merge → reconciler-converge → ArgoCD-sync cycle.
 - Histogram buckets (seconds): Prometheus defaults
   (`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10`).
-- TODO V2-3.x: refresh bucket sizing once the perf harness measures the
-  real async cycle, not just dry-run phases.
-- Phase label values: `enable`, `disable` (PR 1 wires both at the
-  handler boundary). V2-3.x follow-up will split each into
-  `pr_open`, `pr_merged`, `reconciler_converged`, `argo_sync`.
+- Bucket sizing still needs a refresh, once the performance harness
+  measures the real async cycle rather than just the dry-run phases.
+- Phase label values: `enable`, `disable` — both wired at the handler
+  boundary. A later release will split each into `pr_open`, `pr_merged`,
+  `reconciler_converged` and `argo_sync`.
 - Code label values: HTTP status.
 
 ### `catalog_scan`
@@ -74,9 +75,9 @@ the `code` label.
   catalog sweeps).
 - Histogram buckets (seconds):
   `0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.010, 0.025, 0.050`
-- Phase label values: `total` (PR 1). V2-3.x will add `catalog_load`,
-  `list_addons`, `sources_refresh` once `AddonService.GetCatalog` is
-  refactored to expose its internal phases.
+- Phase label values: `total`. A later release will add `catalog_load`,
+  `list_addons` and `sources_refresh`, once the catalog read reports its
+  internal phases.
 - Code label values: HTTP status.
 
 ### `dashboard_read`
@@ -117,8 +118,8 @@ content negotiation. The route is intentionally omitted from
 
 ### Histogram exemplars (OpenMetrics)
 
-Histogram observations attach a `request_id` exemplar when the V2-2.2
-correlation middleware has populated one on the request context. The
+Histogram observations attach a `request_id` exemplar when the request
+already carries one. The
 exemplar wire-up requires:
 
 - Prometheus 2.43+ with `--enable-feature=exemplar-storage`.
@@ -138,7 +139,7 @@ correctly, only the click-through join is unavailable.
 
 ### BYO scrape config — ServiceMonitor deferred
 
-V2-3.1 does not ship a `ServiceMonitor` CR in the Helm chart. Operators
+Sharko does not ship a `ServiceMonitor` CR in the Helm chart. Operators
 can write their own:
 
 ```yaml
@@ -158,8 +159,8 @@ spec:
       interval: 30s
 ```
 
-A first-party `ServiceMonitor` (gated by a chart value) is tracked as a
-V2-3.x follow-up.
+A first-party `ServiceMonitor`, gated by a chart value, is planned and
+not built.
 
 ### Cardinality budget
 
@@ -176,21 +177,18 @@ inventory so the budget stays bounded. New high-cardinality labels
 
 ## Legacy metrics (default registry)
 
-Sharko's `/metrics` endpoint also exposes the historical metric families
-registered via `promauto` in `internal/metrics/metrics.go` (cluster
-status, addon health, reconciler runs, catalog source fetching, API
-request counters, auth, AI, Scorecard, etc.). The V2-3 SLO surfaces are
-composed on top via `prometheus.Gatherers{prometheus.DefaultGatherer,
-metrics.SLORegistry()}` so a single scrape returns both.
+Sharko's `/metrics` endpoint also exposes the older metric families —
+cluster status, addon health, reconciler runs, catalog source fetching,
+API request counters, auth, AI, Scorecard and so on. The SLO surfaces are
+served alongside them, so a single scrape returns both.
 
-Legacy metric names predate the OTEL-aligned V2-3 naming scheme. New SLO
-work follows the V2-3 scheme exclusively.
+Those older names predate the OTEL-aligned naming scheme above. New SLO
+work follows the scheme above only.
 
 ### Ten of these are registered but never written
 
-Do not build anything on these ten. They are declared in
-`internal/metrics/metrics.go`, so they are part of the registry, but no
-code anywhere in Sharko ever sets a value on them:
+Do not build anything on these ten. They are declared, so they are part
+of the registry, but nothing in Sharko ever sets a value on them:
 
 `sharko_cluster_count`, `sharko_cluster_status`,
 `sharko_cluster_last_verified_timestamp`,
@@ -217,6 +215,5 @@ the same thing as when the merge happened. See
 [Metrics](metrics.md#everything-else-sharko-exports).
 
 Whether the remaining ten get wired up or deleted is an open product
-decision. Until it is made, this page is the warning, and
-`internal/metrics/contract_writers_test.go` is the guard that keeps the
-list from drifting.
+decision. Until it is made, this page is the warning, and Sharko's own
+tests keep the list on this page from drifting away from the code.

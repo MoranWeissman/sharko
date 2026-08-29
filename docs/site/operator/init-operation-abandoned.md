@@ -232,10 +232,8 @@ Mitigation step 2 handles the cleanup.
 
 2. **If the work was incomplete, ask the operator to re-run
    `POST /api/v1/init` with a stable heartbeat client.** Re-running
-   init re-uses the existing repo / branch / PR if one was opened
-   (per the `findOpenPRForCluster` idempotent-retry pattern at
-   `internal/orchestrator/cluster.go`); a fresh PR is only opened
-   if there is no open prior one.
+   init re-uses the existing repo, branch and PR if one was already
+   opened; a fresh PR is only opened when there is no open prior one.
 
    ```sh
    # CLI side, re-run with a session that won't disconnect:
@@ -383,22 +381,22 @@ levers:
   Wiring a counter into `internal/metrics/` for every abandonment
   event gives operators a signal: if abandonments are happening
   >1/day, the heartbeat window is too short for the deployment's
-  network reality. Alert on sustained >0 per hour. V2-4.x
-  follow-up.
+  network reality. Alert on sustained >0 per hour. Planned, not
+  built.
 
 - **Gating — UI must run init in foreground.** The UI's init wizard
   should refuse to start when the tab can't reliably send heartbeats
   (e.g. via the Page Visibility API). Display a banner: "Keep this
   tab focused until init completes; otherwise the operation will be
-  abandoned after 2 minutes." A V2-4.x UI follow-up.
+  abandoned after 2 minutes." Planned, not built.
 
 - **Scheduled work — periodic abandoned-session cleanup.** A
   scheduled task that walks `s.opsStore` and removes sessions whose
   `last_heartbeat` is >10 minutes old. Today these sessions sit in
   memory until pod restart; aging them out is cheap and prevents
   long-running pods from accumulating stale state. Wire into the
-  reconciler tick (the reconciler already runs on a timer). V2-4.x
-  follow-up.
+  reconciler tick (the reconciler already runs on a timer). Planned,
+  not built.
 
 ---
 

@@ -6,7 +6,7 @@ Sharko serves metrics on the unauthenticated `/metrics` endpoint, in standard Pr
 
 ## SLO surface metrics
 
-Four request paths are instrumented as "SLO surfaces": `cluster_registration`, `addon_cycle`, `catalog_scan`, `dashboard_read`. Each one exports the same three-metric pattern, defined in `internal/metrics/slo.go` and `internal/metrics/slo_registry.go`:
+Four request paths are instrumented as "SLO surfaces": `cluster_registration`, `addon_cycle`, `catalog_scan`, `dashboard_read`. Each one exports the same three-metric pattern:
 
 | Metric name pattern | Type | Labels | Meaning |
 |---|---|---|---|
@@ -18,7 +18,7 @@ So for `cluster_registration` you get `sharko_cluster_registration_duration_seco
 
 ## Everything else Sharko exports
 
-These are the metrics registered in `internal/metrics/metrics.go` (the "legacy" default-registry metrics, served alongside the SLO surfaces above). Together with the 12 SLO families that makes 44 metric families in total.
+These are the older metric families, served alongside the SLO surfaces above. Together with the 12 SLO families that makes 44 metric families in total.
 
 !!! warning "Ten of the metrics below are registered but never written"
 
@@ -26,7 +26,7 @@ These are the metrics registered in `internal/metrics/metrics.go` (the "legacy" 
 
     All ten carry labels, and a labelled Prometheus collector with no children publishes nothing at all — so they are simply absent from a scrape and a query against them returns no data. None of them shows you a number that is not true; they show you nothing, which is the honest answer for something nobody measures.
 
-    Whether these get wired up or removed is an open product decision. The rows below describe what each one *would* mean. `internal/metrics/contract_writers_test.go` holds the same list in code, so this warning and the product cannot drift apart.
+    Whether these get wired up or removed is an open product decision. The rows below describe what each one *would* mean. Sharko's own tests hold the same list, so this warning and the product cannot drift apart.
 
 ### Clusters
 

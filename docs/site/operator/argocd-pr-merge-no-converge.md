@@ -75,8 +75,9 @@ What an operator sees when this fires:
 If the symptom is "PR was opened but not merged," the diagnosis path is
 entirely different — see
 [`git-provider-unreachable.md`](git-provider-unreachable.md) (Git
-provider issue) or `auto-merge-failed.md` (PR open, merge blocked —
-P1 GAP, PR 2b scope). This runbook is for "PR confirmed merged but
+provider issue) or
+[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
+(PR open, merge blocked). This runbook is for "PR confirmed merged but
 ArgoCD doesn't reflect it."
 
 ---
@@ -107,7 +108,8 @@ If the cluster entry IS present in `main`, the PR was genuinely merged.
 If it's NOT, the audit log lies — the PR-tracker thinks the merge
 landed but the merge actually failed or was reverted out-of-band. In
 that case, this runbook does not apply; see
-`auto-merge-failed.md` (P1 GAP) or treat as a Git-provider /
+[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
+or treat as a Git-provider /
 PR-tracker bug.
 
 ### 2. Determine which side is broken — reconciler vs. ArgoCD

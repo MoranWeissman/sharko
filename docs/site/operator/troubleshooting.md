@@ -2,9 +2,8 @@
 
 > **Redirector page.** This page used to be a catch-all troubleshooting
 > grab bag with multiple unrelated failure modes glued together. After
-> V2-4, each failure mode has its own runbook in `docs/site/operator/`
-> following the
-> [runbook style guide](../developer-guide/runbook-style-guide.md). The
+> a rewrite, each failure mode has its own runbook in this Operator
+> Manual, all following the same shape. The
 > [`failure-mode-index.md`](failure-mode-index.md) is the master
 > inventory — start there, Ctrl-F your error message, and follow the
 > Runbook URL column to the specific page.
@@ -74,7 +73,7 @@ kubectl logs -n sharko -l app.kubernetes.io/name=sharko --previous
 # Events
 kubectl get events -n sharko --sort-by='.lastTimestamp'
 
-# Filter by request_id (V2-2.2 correlation pattern — every Sharko log
+# Filter by request_id (every Sharko log
 # line carries one; a single request_id joins lines across middleware,
 # service, orchestrator, reconciler, and audit)
 kubectl logs -n sharko deploy/sharko --tail=2000 \
@@ -86,12 +85,12 @@ The full correlation pattern lives in
 
 ## Why this page is a redirector now
 
-Pre-V2-4, this page was a catch-all troubleshooting bag glued together
+This page used to be a catch-all troubleshooting bag glued together
 from multiple unrelated failure modes. Each mini-section was a tiny
 runbook ("Connection refused", "401 Unauthorized", "502 Bad Gateway",
 etc.) without symptoms / diagnosis / mitigation / root-cause /
-prevention separation. After V2-4 the failure-mode index and the
-per-failure runbooks shipped, and each of those mini-sections has a
+prevention separation. The failure-mode index and the per-failure
+runbooks now exist, and each of those mini-sections has a
 proper runbook now. Keeping this page as a catch-all would duplicate
 content and let it drift; keeping it as a redirector preserves the
 inbound URL without the duplication.
@@ -104,5 +103,5 @@ inbound URL without the duplication.
   — the rubric every runbook in
   `docs/site/operator/` follows.
 - [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  the V2-2.2 `request_id` correlation pattern used in diagnosis steps
-  across every runbook.
+  the `request_id` correlation pattern used in diagnosis steps across
+  every runbook.
