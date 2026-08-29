@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Sharko is a server-first system. The server runs in-cluster alongside ArgoCD and holds all credentials. The CLI, UI, and integrations are thin clients that talk to the server's REST API.
+Sharko is a server-first system. The server runs in-cluster alongside ArgoCD and holds the platform credentials. The CLI, UI, and integrations are thin clients that talk to the server's REST API.
 
 ## System Diagram
 
@@ -28,7 +28,7 @@ Sharko Server (in-cluster):
 
 ## Why Server-First
 
-- **Credentials stay on the cluster.** No ArgoCD tokens, Git tokens, or AWS credentials on developer laptops.
+- **Platform credentials stay on the cluster.** No ArgoCD tokens, Git tokens, or AWS credentials on developer laptops. The CLI does keep your own Sharko session token in `~/.sharko/config` on the machine you run it from.
 - **One `sharko login`** replaces configuring ArgoCD + Git + AWS locally.
 - **Every consumer uses the same API** — the UI, CLI, Backstage, Terraform, and CI/CD pipelines all talk to the same REST endpoints.
 - **Centralized audit trail** — all operations go through one server, making it easy to log and monitor.

@@ -32,7 +32,7 @@ Sharko Server (in-cluster):
 ```
 
 **Why server-first:**
-- The server holds all credentials (ArgoCD token, Git token, secrets provider access). No credentials on developer laptops.
+- The server holds the platform credentials (ArgoCD token, Git token, secrets provider access), and none of them reach a developer laptop. The CLI keeps only your own Sharko session token, in `~/.sharko/config`.
 - One `sharko login` replaces configuring ArgoCD + Git + AWS locally.
 - Every consumer (UI, CLI, Backstage, Terraform, CI/CD) talks to the same API.
 - Sharko already behaves like an operator whose desired state lives in Git, not in a CustomResource — a CRD-based build was tried and shelved (see "Future Directions" below); there's no plan to bring it back.

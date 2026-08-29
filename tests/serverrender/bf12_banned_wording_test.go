@@ -274,6 +274,52 @@ var bannedWordings = []string{
 	strings.Join([]string{"sharko", "darwin", "amd64.tar.gz"}, "_"),
 	strings.Join([]string{"sharko", "darwin", "arm64.tar.gz"}, "_"),
 	strings.Join([]string{"latest", "download", "sharko"}, "/"),
+	// CREDS-CLAIM, 2026-08-29. "No credentials on developer laptops" was false,
+	// and it was a SECURITY claim, which is the worst kind of sentence to get
+	// wrong: a reader who believes it will not protect a file that is worth
+	// protecting.
+	//
+	// What the code actually does, read out of cmd/sharko/client.go rather than
+	// taken from anybody's summary: SharkoConfig has exactly two fields, server
+	// and token. sharko login POSTs to /api/v1/auth/login and, only after that
+	// succeeds, saves the returned session token into ~/.sharko/config at mode
+	// 0600 inside a 0700 directory. Every later command reads it back and sends
+	// it as "Authorization: Bearer". So the laptop holds a live credential — one
+	// that is enough on its own to act as that user against the server for the
+	// whole 24-hour session lifetime.
+	//
+	// The true statement has two halves and the corrected copy states both: the
+	// PLATFORM credentials (ArgoCD token, Git token, secrets-provider access)
+	// stay server-side, and the session token does not.
+	//
+	// The stored phrase carries "developer" on purpose, and that one word is
+	// what keeps this ban narrow enough to be correct. The shorter stem
+	// "credentials on developer laptops" also matches
+	// docs/site/architecture/overview.md's "No ArgoCD tokens, Git tokens, or AWS
+	// credentials on developer laptops" — an enumeration of platform credentials
+	// only, which is TRUE and has to stay sayable. Banning the enumeration would
+	// force an accurate sentence out of the docs, which is the failure this
+	// guard exists to prevent, pointed the other way.
+	//
+	// Honest limitation, in the same spirit as the notes above: this is a
+	// literal phrase, not the rule. The rule is "a sentence about where
+	// credentials live must say which credentials it means". Nearby shapes that
+	// this ban does NOT catch exist today in an unreferenced historical vision
+	// record, docs/sharko-framework-vision.md — "No credentials on laptops" at
+	// :211 and "Nobody stores credentials on their laptop" at :88 and :451.
+	// Those are left alone deliberately: that file is a brainstorming record of
+	// what was once intended, not a current-state page, and a ban that forces a
+	// historical record to be rewritten is the thing this file has repeatedly
+	// refused to do. If that page is ever promoted back into live documentation,
+	// its sentences need this same treatment first.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly over all
+	// 2780 tracked files of every type: three hits, all of them the identical
+	// false claim, all three fixed by this same change — README.md:153,
+	// docs/architecture.md:35 and docs/site/cli/overview.md:7. Nothing else in
+	// the repository carries it, including the records under docs/design and
+	// .bmad.
+	strings.Join([]string{"no", "credentials", "on", "developer", "laptops"}, " "),
 }
 
 // Why the published GitHub release page is allowed to say the banned sentence.
@@ -618,6 +664,71 @@ func TestTheCLIInstallPageBuildsTheVersionedArchiveName(t *testing.T) {
 				"page is the only supported way to get the CLI and it was verified against a real "+
 				"published release; if it changed shape, run it from an empty directory and prove the "+
 				"new one works before changing this test.", want)
+		}
+	}
+}
+
+// TestEveryPlaceThatScopesCredentialsSaysTheSessionTokenIsLocal is the other
+// half of the CREDS-CLAIM guard, and the half that actually protects the reader.
+//
+// Banning "no credentials on developer laptops" only forbids the false sentence.
+// A page that simply deletes it satisfies the ban completely and leaves the
+// reader knowing nothing at all about the file on their own machine — which is
+// the same outcome the false sentence produced, reached by a different route. So
+// the second half of the truth is pinned by exact text, in every place that
+// makes a claim about where credentials live.
+//
+// Both halves have to be on the page, because either one alone misleads:
+//
+//   - the platform half alone ("the server holds the credentials") is what
+//     turned into the false claim in the first place;
+//   - the local half alone would suggest Sharko hands out platform credentials.
+//
+// The pinned strings are the load-bearing words, not whole sentences, so a
+// copy-editor can still reword around them: the path, so the reader knows which
+// file to protect, and "session token", so they know what is in it. A rewrite
+// that drops either one is not a rewording, it is a removal.
+//
+// docs/architecture.md is in this list even though README.md calls it legacy raw
+// reference. It carried the false sentence word for word, it is public in the
+// repository, and it is inside this sweep's own "docs" root — so the ban above
+// cannot pass while it still says the old thing. Fixed rather than exempted.
+func TestEveryPlaceThatScopesCredentialsSaysTheSessionTokenIsLocal(t *testing.T) {
+	root := repoRoot(t)
+	// The path is written with a placeholder for the tilde-slash prefix so that
+	// this file's own copy cannot be mistaken for documentation prose, and is
+	// assembled here into the exact text the pages carry.
+	configPath := "~" + "/.sharko/config"
+	for _, page := range []struct {
+		rel  string
+		want []string
+	}{
+		{"README.md", []string{"session token", configPath, "platform credentials"}},
+		{filepath.Join("docs", "site", "cli", "overview.md"),
+			[]string{"session token", configPath, "platform credentials"}},
+		{filepath.Join("docs", "site", "architecture", "overview.md"),
+			[]string{"session token", configPath, "Platform credentials stay on the cluster"}},
+		{filepath.Join("docs", "architecture.md"),
+			[]string{"session token", configPath, "platform credentials"}},
+	} {
+		body, err := os.ReadFile(filepath.Join(root, page.rel))
+		if err != nil {
+			t.Errorf("cannot read %s, so nothing about its credentials claim is pinned: %v", page.rel, err)
+			continue
+		}
+		text := string(body)
+		for _, want := range page.want {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s no longer contains %q.\n\n"+
+					"That page makes a claim about where credentials live, so it has to say both "+
+					"halves of the truth. The platform credentials — the ArgoCD token, the Git token "+
+					"and secrets-provider access — stay server-side. The CLI session token does NOT: "+
+					"sharko login writes a live one into the config file under the user's home "+
+					"directory at mode 0600, and every later command sends it as a bearer token. A "+
+					"reader who is not told that will not protect a file that is worth protecting. "+
+					"Check cmd/sharko/client.go and cmd/sharko/login.go before changing this test.",
+					page.rel, want)
+			}
 		}
 	}
 }

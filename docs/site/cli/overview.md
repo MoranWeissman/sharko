@@ -4,7 +4,7 @@ The Sharko CLI (`sharko`) is a thin HTTP client for the Sharko API — similar t
 
 ## Design Philosophy
 
-- **No credentials on developer laptops** — the CLI authenticates to the Sharko server, which holds all platform credentials (ArgoCD token, Git token, secrets provider access)
+- **Platform credentials stay on the server, your login does not** — the CLI authenticates to the Sharko server, which holds the platform credentials (ArgoCD token, Git token, secrets provider access). `sharko login` writes a live Sharko session token to `~/.sharko/config` on the machine you run it from, with file mode 0600 in a 0700 directory. Treat that file as a secret.
 - **One login** — `sharko login` replaces configuring ArgoCD + Git + AWS locally
 - **Same API as the UI** — every CLI command calls the same REST endpoint the UI uses
 

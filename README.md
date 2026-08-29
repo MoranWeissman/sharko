@@ -150,7 +150,7 @@ Sharko Server (in-cluster):
   +-- Swagger UI (/swagger/index.html)
 ```
 
-The server holds all credentials. The CLI is a thin HTTP client — like `kubectl` to the Kubernetes API. No credentials on developer laptops.
+The server holds the platform credentials — the ArgoCD token, the Git token, and secrets-provider access. The CLI is a thin HTTP client, like `kubectl` to the Kubernetes API, and never receives any of them. It does keep one credential locally: `sharko login` writes a live Sharko session token to `~/.sharko/config` (file mode 0600, directory 0700), so treat that file as a secret.
 
 ## Tech Stack
 
