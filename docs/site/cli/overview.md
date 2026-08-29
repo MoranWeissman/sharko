@@ -15,9 +15,10 @@ only supported way to get it. There is no Homebrew formula, and the Go module
 proxy has no v4 of this module, so the Go toolchain cannot fetch a current
 version either.
 
-Every archive filename carries its version — `sharko_4.0.1_linux_amd64.tar.gz`
-and so on — so the commands below build the name from the tag you set. Four
-platforms are published: `darwin` and `linux`, each for `amd64` and `arm64`.
+Every archive filename carries its own version, in the shape
+`sharko_X.Y.Z_<os>_<arch>.tar.gz`, so the commands below build the name from the
+tag you set rather than asking you to type it out. Four platforms are published:
+`darwin` and `linux`, each for `amd64` and `arm64`.
 
 === "macOS"
 
