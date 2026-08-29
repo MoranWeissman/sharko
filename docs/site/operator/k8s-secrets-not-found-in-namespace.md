@@ -388,10 +388,9 @@ Secrets live in a different namespace.
 Fix is Mitigation step 5 — set `connection.provider.namespace` /
 `connection.addonSecretProvider.namespace` to the correct value, and
 add that same namespace to `rbac.k8sSecretsProviderNamespaces` so the
-Sharko ServiceAccount actually has permission to read it (as of Story
-152.F, RBAC is scoped per namespace — updating the provider's target
-namespace without also granting RBAC there produces a 403, not a
-"not found").
+Sharko ServiceAccount actually has permission to read it. RBAC is
+scoped per namespace, so changing the provider's target namespace
+without also granting RBAC there produces a 403, not a "not found".
 
 ---
 

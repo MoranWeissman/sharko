@@ -108,9 +108,8 @@ If the cluster entry IS present in `main`, the PR was genuinely merged.
 If it's NOT, the audit log lies — the PR-tracker thinks the merge
 landed but the merge actually failed or was reverted out-of-band. In
 that case, this runbook does not apply; see
-[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
-or treat as a Git-provider /
-PR-tracker bug.
+[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md),
+or treat it as a Git-provider or PR-tracker bug.
 
 ### 2. Determine which side is broken — reconciler vs. ArgoCD
 

@@ -2,13 +2,14 @@
 
 **Severity:** P0
 
-> **Verified:** Authored 2026-06-01 against `main` HEAD. The
+> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
 > CrashLoopBackoff detection patterns (kubectl Restarts column, pod
 > `Last State: Terminated, Reason: OOMKilled`, pod `lastTerminationReason`)
 > are standard Kubernetes signals. Sharko-specific Helm chart memory
 > defaults live in `charts/sharko/values.yaml` under `resources.limits`.
 > Re-verify when Helm chart memory defaults change or when pprof / heap
 > endpoint surface changes.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The Sharko pod is restarting in a tight loop. `kubectl get pod` shows
 `STATUS: CrashLoopBackOff` with rising `RESTARTS` count over the last

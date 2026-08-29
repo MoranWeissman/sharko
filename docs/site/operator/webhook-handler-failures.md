@@ -15,6 +15,7 @@
 > payload"`) are unchanged. HMAC-SHA256 verification at
 > `verifyGitHubSignature` uses `hmac.Equal` for constant-time comparison;
 > the shared secret is read from the `SHARKO_WEBHOOK_SECRET` env var.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
 
 The Git provider's webhook delivery is reaching Sharko but the
 handler is rejecting it. The provider's webhook-management UI shows

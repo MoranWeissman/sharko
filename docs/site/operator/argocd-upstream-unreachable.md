@@ -435,9 +435,9 @@ levers — one monitoring, one gating, one scheduled work item.
   ```
 
   If it existed and were true for more than 60 seconds, it would page,
-  and it would do so before any user-visible API returned 502. Wiring it
-  into `internal/metrics/` is a P1 follow-up; the index entry stays a P0
-  GAP until then, because the *user-impact* surface is page-grade.
+  and it would do so before any user-visible API returned 502. Sharko
+  does not export that metric, so until it does, this failure is one you
+  find from the 502s themselves.
 
 - **Gating — pre-flight the ArgoCD account in CI.** Add a CI check to
   the Helm chart that verifies the configured ArgoCD account has the

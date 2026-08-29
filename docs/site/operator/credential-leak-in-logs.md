@@ -124,8 +124,7 @@ only an explicit search of the log stream surfaces the leak.
 
 The goal of diagnosis is to (a) confirm the leak is real, (b) identify
 the specific credential leaked, (c) scope which downstream copies of
-the log exist, and (d) identify the emission call site so it can be
-fixed.
+the log exist, and (d) report it precisely enough that it can be fixed.
 
 ### 1. Confirm the leak in live logs
 
@@ -137,7 +136,7 @@ For each hit, capture:
 - The `request_id` (correlates to the calling operation)
 - The `time` (bounds the window)
 - The attribute key (e.g. `"token"`, `"kubeconfig"`, `"password"`) —
-  this is the leak's call-site fingerprint
+  this is what identifies which credential leaked
 - The credential type (JWT? PAT? kubeconfig? bcrypt hash?
   base64 blob?)
 
@@ -151,7 +150,7 @@ it first.
 |---|---|---|
 | `"token"` | An ArgoCD account token or a Sharko API token | The ArgoCD token, or revoke the Sharko token |
 | `"kubeconfig"` | A cluster's credentials | The cluster credential in your secrets backend |
-| `"password"` | The bootstrap admin password | Run `sharko reset-admin` |
+| `"password"` | The bootstrap admin password | Run `sharko reset-admin` (Mitigation step 1) |
 | `"secret"` | An addon's secret value | The addon secret at its source |
 | `"data"` | A generic credential — Helm values or a Secret payload | Whatever the value is; read the surrounding fields to tell |
 
@@ -167,7 +166,7 @@ the two cases apart from the logs themselves. Count the redaction marker
 in the same window:
 
 ```sh
-kubectl logs -n sharko deploy/sharko --since=24h | grep -c '\[REDACTED\]'
+kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 | grep -c '\[REDACTED\]'
 ```
 
 - **Some `[REDACTED]` values, and your leaked key is not one of the names
@@ -183,7 +182,7 @@ kubectl logs -n sharko deploy/sharko --since=24h | grep -c '\[REDACTED\]'
 
 ### 4. Determine why redaction missed the leak
 
-The handler has three detectors:
+Redaction has three detectors:
 
 - **Attribute-name pattern match** — keys like `password`, `token`,
   `secret`, `pat`, `kubeconfig`, `auth` are redacted by name.
