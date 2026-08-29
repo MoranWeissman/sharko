@@ -525,20 +525,36 @@ jobs:
             || { echo "::error::sharko-engine chart rendered NO AppProject from the fixture repo"; exit 1; }
           echo "engine chart render guard passed: ApplicationSet + AppProject present"
 
-  # Renamed from "security-scan" (story 152.H). All this job ever did was
-  # grep for forbidden content (original org name, internal domains,
-  # employee emails, real AWS account IDs — see CLAUDE.md Content Policy).
-  # The old name oversold it: someone reading the checks list would think
-  # Sharko runs a real security scanner here. It doesn't — the actual
-  # static-analysis, dependency, and image scanning live in the gosec,
-  # ui-deps-audit, and container-image-scan jobs below.
+  # This job greps for ONE string: a legacy internal hostname that must never
+  # come back. That is all it has ever done, and the display name now says so.
+  #
+  # It has been renamed twice for the same reason. It started as
+  # "security-scan", which made a reader of the checks list think a real
+  # scanner ran here (it doesn't — the actual static-analysis, dependency and
+  # image scanning live in the gosec, ui-deps-audit and container-image-scan
+  # jobs below). Then it was "Forbidden Content Check", which oversold it the
+  # other way: that name promised the whole Content Policy in CLAUDE.md — the
+  # original organisation, internal domains, employee emails, real AWS account
+  # ids — while the grep only ever tested one hostname. The policy as a whole
+  # is now tested by the content-sweep job below, which is a separate check
+  # with its own name so that neither name has to cover for the other.
+  #
+  # The logic and the pattern are untouched on purpose. The string itself is
+  # already public in this file and has been for many releases, so keeping it
+  # exposes nothing new, and losing this check would let the hostname back in.
+  #
+  # The job id stays `forbidden-content-check`. It is a machine identifier:
+  # security-gate's `needs:` list and its NON_SECURITY_JOBS list key on it, and
+  # so do several role and documentation files outside this workflow. Renaming
+  # the id buys nothing a reader can see and breaks all of that; the display
+  # name is what shows up in the checks list, and that is what was wrong.
   forbidden-content-check:
-    name: Forbidden Content Check
+    name: Legacy Internal Hostname String (one grep)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for forbidden content
+      - name: Check for the legacy internal hostname string
         run: |
           FORBIDDEN_PATTERNS=(
             "aap-server"
@@ -554,16 +570,55 @@ jobs:
               --exclude-dir="docs/superpowers/plans" \
               2>/dev/null || true)
             if [ -n "$MATCHES" ]; then
-              echo "Forbidden pattern '$pattern' found in:"
+              echo "Legacy internal hostname string '$pattern' found in:"
               echo "$MATCHES"
               FOUND=1
             fi
           done
           if [ "$FOUND" -eq 1 ]; then
-            echo "Forbidden content check failed: forbidden content detected."
+            echo "This check failed: the legacy internal hostname string is back. Remove it."
             exit 1
           fi
-          echo "Forbidden content check passed."
+          echo "The legacy internal hostname string is absent. That is the only thing this check tested."
+
+  # The Content Policy in CLAUDE.md, actually tested: every tracked text file
+  # read, and a failure on a credential-shaped string or an email address on a
+  # domain this project does not use. Implemented as a Go test under
+  # tests/contentsweep/ so it also runs under plain `go test ./...` — a
+  # developer sees a problem before pushing, not after.
+  #
+  # It is a separate job from the one-string grep above because the two check
+  # different things, and one check doing two jobs is how the old name came to
+  # mean less than it said.
+  #
+  # What this does NOT cover, stated here so the next reader does not trust the
+  # name further than it goes: it is not a secret scanner. The platform's own
+  # secret scanning and push protection already refuse live keys and live
+  # tokens at push time, and they cover shapes this sweep knows nothing about.
+  # What this adds is the part the platform ignores — the organisation content
+  # policy, and credential-shaped strings that are not live secrets.
+  #
+  # go-build-test already runs this test as part of `go test ./...`. The
+  # duplication is deliberate: this job gives the sweep its own line in the
+  # checks list, so a reader can see the content policy was tested without
+  # opening a log, and security-gate can name it.
+  content-sweep:
+    name: Content Sweep (credential shapes and email domains)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The sweep asks git for the tracked files, so it needs the checkout's
+      # index — which the default checkout gives it. It reads files only; it
+      # writes nothing and needs no credentials.
+      - name: Sweep every tracked file
+        run: go test ./tests/contentsweep/... -v
 
   # New in story 152.H (task #152, Secret Sync security closure). gosec is
   # a real static-analysis security scanner for Go — it looks for the
@@ -768,6 +823,7 @@ jobs:
     needs:
       - go-build-test          # carries govulncheck + the -race tests
       - forbidden-content-check
+      - content-sweep
       - gosec
       - ui-deps-audit
       - container-image-scan
