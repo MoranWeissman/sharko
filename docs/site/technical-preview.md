@@ -1,138 +1,60 @@
-# Technical preview — read this before you point Sharko at a cluster
+# Current limitations and supported use
 
-Sharko is published as an **open-source technical preview**. It is **not
-production ready**, and this page exists so that you can decide for
-yourself, from facts, rather than from a promise.
+Sharko v4 is released as a technical preview, for evaluation and staging
+environments. The supported setup today is one Sharko instance, one team, one
+ArgoCD installation and one addons repository. The activity history is held in
+memory only, and high availability is not supported yet.
 
-Here is the difference, in the plainest words we have:
-
-- A **technical preview** is safe enough to read, install somewhere that
-  does not matter, experiment with, and send us feedback about.
-- A **production-ready release** would be one where we tell you to trust
-  it with the credentials to your real clusters. Sharko is not there. Getting
-  there needs more real operational use, and a security assessment by
-  someone outside this project.
-
-Nobody outside this project has assessed Sharko's security. That is the
-single most important sentence on this page.
-
-The eight sections below are the things we think you need to know. Each one
-has its own heading so you can find it and read it on its own.
+This page sets out where the boundaries are today, and the safest way to
+evaluate Sharko. No independent external security assessment of this
+repository has been completed. The review work the project has done on itself,
+what it found, and what it did not cover, is written up in
+[Security review history](developer-guide/security-review-history.md).
 
 ---
 
-## 1. What we know about credential leaks, wrong permissions, and Sharko saying something finished when it did not
+## Suitable today
 
-**The honest claim is "no known", not "none".**
+- **Reading the code and the repository to decide whether Sharko fits.**
+- **A test or staging environment**, with clusters that are not serving
+  production traffic, and with credentials that only reach those clusters.
+- **Trying the GitOps workflow** — validate, preview, open a pull request — to
+  see whether the shape of it suits you.
+- **A small fleet run by one team**, in an environment where an unplanned
+  sign-out is an annoyance rather than an incident. Sharko is built for one
+  team with one ArgoCD and one addons repository, and that is the case it
+  handles properly.
+- **Reading a fleet you already run.** Sharko can be pointed at an existing
+  ArgoCD and used to look, and it joins an existing setup as a guest without
+  taking ownership. **This is the lowest-risk way to evaluate Sharko against
+  something real.**
 
-As of **20 August 2026**, at commit **`6c0e8410`**, there are no *known*
-credential leaks, no *known* ways to get past Sharko's permission checks,
-and no *known* places where Sharko reports success for work that failed.
+## Not yet supported
 
-That is a much smaller claim than it sounds, and here is why.
-
-### What we found and fixed just before writing this
-
-The round of work that produced this page went looking for these problems
-on purpose, and found a long series of them. Not one of them was found by a
-test going red. Every one was found by a person reading the code and asking
-"what exactly travels out of here?".
-
-**A Git repository address usually has the password inside it.** People
-write repository addresses like
-`https://x-access-token:SECRET@github.example/org/repo.git`. The token is
-part of the address. Anything that prints the address prints the token, and
-at the place where the code does it, it looks completely innocent — it looks
-like helpfully saying *which* repository had a problem.
-
-That address was being handed out by:
-
-- 64 different error replies, from endpoints at every permission level,
-  including read-only ones
-- a status call anybody could make during first-time setup
-- the cluster comparison page, on an ordinary reply where nothing had gone
-  wrong
-- the observability page, the dashboard, and the addon detail page, where it
-  was a link you could click
-- the addon list, the catalog pages, and the catalog sources page
-- the context handed to the AI assistant, so it could come back out of the
-  assistant's answers too
-- the server log
-
-**Sharko also said things that were not true.** It promised to rebuild a
-cluster connection on paths where it never would. It told you it would not
-create a connection for clusters where it does in fact create one. When a
-batch of clusters all got halfway and stopped, it wrote "nothing changed"
-into the activity history. When an adoption of several clusters all got
-halfway and stopped, it wrote "success, changes applied". Five commands
-printed "done" and exited with a success code for work that had failed.
-
-**Three numbers on the metrics page published a zero** when nothing was
-measuring them at all, so a dashboard showed a confident, wrong number
-instead of a gap.
-
-All of those are fixed at the commit named above, and each fix is held in
-place by a test that fails if it comes back.
-
-### How much the tests that claim to cover everything have themselves been tested
-
-Some of Sharko's tests do not check one example. They claim to have looked at
-everything: every endpoint, every message, every file in a tree, every entry
-in a list. A test like that is the reason we can say a whole class of problem
-is gone rather than "gone in the case we tried". So it matters a great deal
-whether those tests are telling the truth.
-
-**There are 82 of them.** That number comes from counting every Go test
-function that finds what it checks by reading the project's own committed
-files — walking the source tree, the manual pages under `docs/`, or the Helm
-chart — rather than a file the test itself just wrote. Anyone can repeat the
-count that way and get the same set. A handful of the 82 sit on the edge of
-that rule, so read it as a solid figure for that rule, not as a law of
-nature.
-
-**Sixteen of them have been deliberately attacked.** Attacked means somebody
-broke, on purpose, the thing the test exists to protect, then ran the test to
-see whether it went red. Four were attacked by a reviewer working
-independently of the people who wrote them. Twelve more were attacked in a
-round of work that set out to do nothing else.
-
-**Several of the attacked ones did not hold**, and the failures were not
-near misses. All four the reviewer attacked stayed green while a live
-endpoint with no permission check, no activity record and no tier sat in the
-running server: those four found endpoints by searching the source text for
-one exact phrase, and the endpoint had been added through a one-line helper
-instead. Two more stayed green in the later round, because they read a
-hand-written list of files and the problem they hunt had been written into a
-file nobody had listed. A test guarding what goes into the log had the same
-shape of hole, twice over. Every one of these has been repaired.
-
-**Nothing dangerous was hiding behind them.** Once each was repaired and
-re-run against the real code, no credential leak and no way past a permission
-check came out from underneath. The tests were wrong about their own reach;
-they were not covering up a defect.
-
-Sixty-six of the 82 were in neither of those two rounds. Later rounds
-attacked and repaired a few more, and widened three so they see more than
-they did — so the number nobody has attacked is a little under sixty-six, and
-it is still the large majority. Those tests pass. Passing is the only thing
-we know about them, and a test that has never been made to fail has never
-been shown to work.
-
-We are saying this because it is the sort of thing a project would normally
-keep quiet. The good news in it is real — the tests were attacked at all,
-the broken ones were found by us and fixed — and it is still not the same as
-"the tests cover everything".
-
-### Why you should still not read this as "audited"
-
-We looked hard in one round and found a great deal. That is evidence that
-the code had not been looked at hard before — it is not evidence that there
-is nothing left. There has been no independent security assessment of this
-repository. If you find something, section 8 tells you where to send it.
+- **Anything where the activity history is a compliance requirement.** The
+  history is held in memory, it does not survive a restart, and no setting
+  changes that. See section 4.
+- **More than one team who must not see each other's clusters.** Sharko's
+  three roles apply to the whole installation. There is no way to give an
+  operator access to some clusters and not others. Everyone who can sign in
+  can see the whole fleet.
+- **High availability.** Sharko runs as a single pod and cannot be given a
+  second one. See section 5.
+- **Real production credentials, before your own security review.** Section 2
+  sets out what somebody who took over the Sharko pod would have: the
+  credentials to every cluster ArgoCD knows about, and write access to your
+  addons repository. No independent external security assessment has been
+  completed.
+- **Chart repositories that need a sign-in.** Catalog repository addresses
+  must be credential-free — see section 1. Naming a Kubernetes Secret or an
+  AWS Secrets Manager entry instead is work for after the preview.
+- **Anything hosted where you do not control how many copies run.**
+- **Installing it and then leaving it alone.** Expect bugs, expect things to
+  change between releases, and expect to read the release notes.
 
 ---
 
-## 2. How Sharko keeps credentials out of what it says
+## 1. How Sharko keeps credentials out of what it says
 
 The design idea is short: **Sharko decides what is safe to say by the
 *type* of a value, never by looking at the words in it.** Checking the words
@@ -274,7 +196,7 @@ starts with no users configured. It does not run without authentication.
 
 ---
 
-## 3. What Sharko can do to your clusters and your repository — the worst case
+## 2. What Sharko can do to your clusters and your repository — the worst case
 
 If someone took over the Sharko pod, here is what they would have. This is
 read from the chart in `charts/sharko/`, not from memory.
@@ -399,7 +321,7 @@ Linux capability dropped.
 
 ---
 
-## 4. Connection kinds Sharko can only partly check, and the legacy one
+## 3. Connection kinds Sharko can only partly check, and the legacy one
 
 Sharko can look at a cluster's ArgoCD connection and tell you whether it
 matches what your repository says it should be. **How much of that it can
@@ -479,7 +401,7 @@ who holds it and stops there.
 
 ---
 
-## 5. The activity history lives in memory and is gone when Sharko restarts
+## 4. The activity history lives in memory and is gone when Sharko restarts
 
 Sharko records what happened — who registered a cluster, who added an addon,
 what a background job did — into an in-memory list that holds the **last
@@ -515,7 +437,7 @@ substitute for the full history, and both should be treated as partial.
 
 ---
 
-## 6. Only one copy of Sharko can run. This is a hard limit, not a suggestion
+## 5. Only one copy of Sharko can run. This is a hard limit, not a suggestion
 
 **Run exactly one replica.** The chart ships `replicaCount: 1` and you must
 leave it at 1.
@@ -548,50 +470,7 @@ Plan upgrades for a moment when signing everyone out is fine.
 
 ---
 
-## 7. What Sharko is supported for, and what it is not
-
-These are two lists, not advice to interpret.
-
-### Supported
-
-- **Reading the code and the repository to decide whether Sharko is
-  interesting.** That is what a preview is for.
-- **A test or staging environment**, with clusters you would not mind
-  breaking, and with credentials that only reach those clusters.
-- **Trying out the GitOps workflow** — the validate, preview, open a pull
-  request path — to see whether you like the shape of it.
-- **A small fleet run by one team**, in an environment where an unplanned
-  sign-out is an annoyance rather than an incident. Sharko is built for one
-  team with one ArgoCD and one addons repository, and that is the case it
-  handles properly.
-- **Reading a fleet you already run.** Sharko can be pointed at an existing
-  ArgoCD and used to look, and it joins an existing setup as a guest without
-  taking ownership. This is the lowest-risk way to try it on something real.
-
-### Not supported
-
-- **Anything where the activity history is a compliance requirement.** See
-  section 5. The history does not survive a restart, and there is no setting
-  that changes that.
-- **More than one team who must not see each other's clusters.** Sharko's
-  three roles apply to the whole installation. There is no way to give an
-  operator access to some clusters and not others. Everyone who can sign in
-  can see the whole fleet.
-- **High availability.** See section 6. One replica, by design, today.
-- **Real production credentials, without your own security review first.**
-  Section 3 is what a compromised Sharko gets: the credentials to your whole
-  fleet, and write access to your repository. Nobody outside this project has
-  checked our work.
-- **Chart repositories that need a sign-in.** Catalog repository addresses
-  must be credential-free — see section 2. Naming a Kubernetes Secret or an
-  AWS Secrets Manager entry instead is work for after the preview.
-- **Anything hosted where you do not control how many copies run.**
-- **Running it and forgetting about it.** This is a preview. Expect bugs,
-  expect us to change things, and expect to have to read release notes.
-
----
-
-## 8. Reporting a security problem
+## 6. Reporting a security problem
 
 **Please do not open a public GitHub issue for a security problem.** A public
 report gives an attacker a head start on everyone who has Sharko installed.

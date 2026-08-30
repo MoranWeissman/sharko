@@ -39,7 +39,7 @@ extra_css:
 
 nav:
   - Home: index.md
-  - 'Technical Preview — Read This First': technical-preview.md
+  - 'Current Limitations and Supported Use': technical-preview.md
   - Release Notes: release-notes.md
   - Getting Started:
     - Quick Start: getting-started/quickstart.md
@@ -146,6 +146,7 @@ nav:
     - Overview: developer-guide.md
     - Developing with AI: developer-guide/developing-with-ai.md
     - 'Architecture & Design History': developer-guide/design-history.md
+    - 'Security Review History': developer-guide/security-review-history.md
     - API Stability Contract: developer-guide/api-stability.md
     - Local Playground: developer-guide/playground.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md

@@ -16,7 +16,7 @@ secrets, first-run setup, incoming webhooks.
     nowhere else — no disk, no database, no volume, no log stream. Any
     restart empties it completely. **Do not rely on this as your record of
     what happened.** See
-    [Technical preview](../technical-preview.md#5-the-activity-history-lives-in-memory-and-is-gone-when-sharko-restarts).
+    [Technical preview](../technical-preview.md#4-the-activity-history-lives-in-memory-and-is-gone-when-sharko-restarts).
 
 ## Where the entries go
 
