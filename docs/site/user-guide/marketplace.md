@@ -22,7 +22,7 @@ Sharko gives you three discovery paths. Pick the one that matches what you alrea
 | **Search ArtifactHub** | You know the chart name (e.g. `loki`, `vault`) and want to discover it across both our curated catalog and the wider ArtifactHub corpus. | Marketplace tab → Search subtab |
 | **Manual Add Addon** | You're installing a chart that isn't in our catalog and isn't on ArtifactHub — internal repos, vendor charts hosted on a homepage CDN, custom forks. | Catalog tab → **Add Addon** button — see [Managing Addons](addons.md#adding-an-addon-to-the-catalog) |
 
-All three paths land in the same place: a PR against your `catalog.yaml`, a generated global values file, and an audited `addon_added` event with a `source` detail field that records which path you used.
+All three paths land in the same place: a PR against your `catalog.yaml`, a generated global values file, and an `addon_added` entry in the in-memory activity history with a `source` detail field that records which path you used. The pull request is the durable record; the activity history is held in memory only and starts empty again after a restart.
 
 ## Browsing the catalog
 
