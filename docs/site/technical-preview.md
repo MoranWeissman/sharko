@@ -43,8 +43,7 @@ what it found, and what it did not cover, is written up in
 - **Real production credentials, before your own security review.** Section 2
   sets out what somebody who took over the Sharko pod would have: the
   credentials to every cluster ArgoCD knows about, and write access to your
-  addons repository. No independent external security assessment has been
-  completed.
+  addons repository.
 - **Chart repositories that need a sign-in.** Catalog repository addresses
   must be credential-free — see section 1. Naming a Kubernetes Secret or an
   AWS Secrets Manager entry instead is work for after the preview.
