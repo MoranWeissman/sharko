@@ -435,7 +435,8 @@ The fix, structurally:
 - Every public boundary — API responses, log lines, audit entries,
   reconcile records, Kubernetes events, CLI output — says one fixed
   sentence instead of the text. Errors that did NOT come from a
-  credentials backend keep their text, so the audit trail stays useful.
+  credentials backend keep their text, so the activity history and the log
+  lines stay useful.
 - `audit.Log.Add` sanitizes before storing AND before fanning out to SSE
   subscribers, so nothing unsafe is ever held in memory. `GET
   /api/v1/audit` is open to the **viewer** role, which is why the write

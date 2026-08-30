@@ -20,7 +20,7 @@ Sharko-owned YAML files (`managed-clusters.yaml`, `addon-catalog.yaml`) ship in 
 
 ## Smart values AI pipeline with secret-leak detection (V124)
 
-When you add an addon, Sharko pre-fetches the chart's upstream `values.yaml`, runs a heuristic split (cluster-specific fields like `host`, `replicaCount`, `resources.*` are commented out at their original position; a per-cluster template block is appended at the bottom), and stamps a self-describing header. With an AI provider configured, Sharko optionally adds inline descriptive comments via the LLM — but a regex pre-scan blocks the call hard if the values file contains anything matching an AWS key, GitHub PAT, JWT, Google API key, Slack token, PEM private key, or high-entropy generic credential pattern. There is no override. The latency and token caps make Add Addon non-blocking on slow LLMs, and the audit trail distinguishes heuristic-only from LLM-annotated output.
+When you add an addon, Sharko pre-fetches the chart's upstream `values.yaml`, runs a heuristic split (cluster-specific fields like `host`, `replicaCount`, `resources.*` are commented out at their original position; a per-cluster template block is appended at the bottom), and stamps a self-describing header. With an AI provider configured, Sharko optionally adds inline descriptive comments via the LLM — but a regex pre-scan blocks the call hard if the values file contains anything matching an AWS key, GitHub PAT, JWT, Google API key, Slack token, PEM private key, or high-entropy generic credential pattern. There is no override. The latency and token caps make Add Addon non-blocking on slow LLMs, and the activity history distinguishes heuristic-only from LLM-annotated output.
 
 ## Defense-in-depth logging redaction (V2-2.4)
 

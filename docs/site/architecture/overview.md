@@ -31,7 +31,7 @@ Sharko Server (in-cluster):
 - **Platform credentials stay on the cluster.** No ArgoCD tokens, Git tokens, or AWS credentials on developer laptops. The CLI does keep your own Sharko session token in `~/.sharko/config` on the machine you run it from.
 - **One `sharko login`** replaces configuring ArgoCD + Git + AWS locally.
 - **Every consumer uses the same API** — the UI, CLI, Backstage, Terraform, and CI/CD pipelines all talk to the same REST endpoints.
-- **Centralized audit trail** — all operations go through one server, making it easy to log and monitor.
+- **One place records every operation** — all operations go through one server, so there is a single in-memory activity history and a single stream of log lines to monitor.
 
 ## The Orchestrator Pattern
 
@@ -255,7 +255,7 @@ Audit entries capture:
 - `detail` — optional additional context (e.g., PR URL created, error message on failure)
 - `timestamp` — RFC3339 UTC
 
-The audit log is in-memory (not persisted to disk or Git). It survives pod restarts only if persistence is enabled (`persistence.enabled: true`). For production audit requirements, ship logs to an external system via standard structured logging output.
+The activity history lives only in that ring buffer. It is never written to disk or to Git, and `persistence.enabled: true` does not change that — that volume backs the on-disk state under `/app/data`, and no activity entry is ever written there. Every entry is gone when the pod restarts. Sharko's own pod log carries ordinary log lines rather than activity entries, so shipping it to a log system does not reproduce this list either; the durable record of what changed is the Git/PR history in your repo.
 
 ## GitOps Flow
 

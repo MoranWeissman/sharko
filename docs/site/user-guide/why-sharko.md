@@ -70,7 +70,7 @@ ArgoCD reads the labels Sharko wrote and deploys the actual Helm charts. ArgoCD 
 Sharko never deploys workloads. It never creates ArgoCD Applications or ApplicationSets. It never manages the spoke cluster connection directly.
 
 - **ArgoCD owns:** the connection to the spoke cluster (the cluster Secret's Data field — kubeconfig, CA, token), the workload-to-cluster sync, and the Application lifecycle.
-- **Sharko owns:** the addon-assignment layer (which addons go where, as labels on the cluster Secret), the addon-secret injection for those addons, and the GitOps workflow for changing those assignments (preview-before-change, pull requests, audit trail).
+- **Sharko owns:** the addon-assignment layer (which addons go where, as labels on the cluster Secret), the addon-secret injection for those addons, and the GitOps workflow for changing those assignments (preview-before-change, pull requests, and an in-memory activity history of what Sharko did).
 
 If you remove Sharko, ArgoCD keeps running. Your workloads stay deployed. The ArgoCD ApplicationSets stop seeing new addon-assignment labels (because Sharko was the thing writing them from Git), but the existing Applications continue syncing. For a full teardown guide, see [If You Remove Sharko (no lock-in)](../operator/removing-sharko.md).
 
@@ -88,7 +88,7 @@ Many ArgoCD shops build a custom repository to manage fleet-wide addons in Git. 
 1. **UI + API + CLI** — no hand-editing YAML, no need to learn your custom repo layout.
 2. **Catalog / marketplace** — browse and discover addons instead of knowing them by heart.
 3. **Preview before every change** — "here's exactly what this PR will do" instead of reading a raw YAML diff.
-4. **Review gate + audit trail** — every change is a PR with a human-readable summary and a recorded actor.
+4. **Review gate + reviewable Git/PR history** — every change is a pull request with a human-readable summary and a recorded actor.
 5. **Works without a secret store** — ESO is optional. Sharko can push encrypted secret values itself for teams that don't run ESO.
 6. **Lower barrier** — a non-GitOps-expert can run a fleet.
 

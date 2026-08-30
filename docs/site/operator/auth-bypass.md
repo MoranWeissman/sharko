@@ -397,9 +397,9 @@ explicitly while waiting for the fix.
 ### Token-hash collision (HISTORICAL)
 
 A token-hash format issue let a forged value pass the hash comparison
-as a legitimate token. The forged value never appeared in
-`POST /api/v1/tokens`'s audit trail — first appearance in audit was
-the API call that used it. Fixed in v1.25; documented here as the
+as a legitimate token. The forged value never appeared in the activity
+entry for `POST /api/v1/tokens` — its first appearance in the activity
+history was the API call that used it. Fixed in v1.25; documented here as the
 canonical reference for "credential collision class."
 
 Diagnostic signature: audit log contains `api_call` events with a
