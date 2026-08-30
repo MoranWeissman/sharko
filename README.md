@@ -17,17 +17,15 @@
 
 ---
 
-> **Sharko v4 is a technical preview. Do not use Sharko in production.** Install only published `v4.0.1`-or-later artifacts. `v3.0.0` and earlier remain retired and unsupported. There is no patch for the `v3` line. See [SECURITY.md](SECURITY.md#why-v300-is-retired) for what went wrong. Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
+> **Sharko v4 is currently intended for evaluation and staging environments.** Start with the [latest published v4 release](https://github.com/MoranWeissman/sharko/releases/latest) and read the [current limitations](docs/site/technical-preview.md) before wider deployment.
 
-> **Sharko is a technical preview, not production ready.** There are no *known* credential leaks, permission bypasses, or places where Sharko says work finished when it did not — but nobody outside this project has assessed its security, the activity history is lost on every restart, and only one copy of Sharko can run at a time. Read [Technical preview — read this before you point Sharko at a cluster](docs/site/technical-preview.md) before you give it real cluster credentials.
+**Sharko manages the addons on your Kubernetes fleet — cert-manager, monitoring, logging, and anything else you run everywhere — and puts an API in front of the whole thing.** Somebody asks for a change: a person clicking in the UI, or a portal, a pipeline, or a Terraform run calling the API. Sharko checks the request against your catalog and the file schema, shows you the exact file changes it would make, and then opens a Git pull request that somebody can review — and that records who asked for it. Nothing reaches a cluster until that pull request is merged, and even then Sharko is not the thing deploying: **ArgoCD does the deployment**, by syncing the merged files from Git.
 
 Full documentation: **https://sharko.readthedocs.io/**
 
-**Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — every change to what runs on your cluster goes through a PR you review, never straight to your cluster behind your back.**
-
 Sharko's deploy logic lives in one place: [`sharko-engine`](charts/sharko-engine), a versioned, signed Helm chart published next to the server image. Your repo pins one version of it; when Sharko ships new deploy logic, you get a small pin-bump PR to review, not a migration. Everything else in your repo is small, readable data files — no template logic to write or maintain. Your repo, Sharko's format: read it any time, write through Sharko.
 
-Three doors lead to the same pipeline: the UI for a person, the REST API for a portal, Backstage, Terraform, or a pipeline acting on someone's behalf, and the CLI, which wraps that same API. All three do the same three things — validate, preview, then open a PR. **Sharko proposes, ArgoCD enforces:** Sharko doesn't deploy workloads — ArgoCD does that, by syncing from Git — but Sharko does manage the ArgoCD connection Secrets and addon secrets on your clusters. If you remove Sharko, everything ArgoCD deployed keeps running and syncing from Git.
+Three doors lead to the same pipeline: the UI for a person, the REST API for a portal, Backstage, Terraform, or a pipeline acting on someone's behalf, and the CLI, which wraps that same API. All three do the same three things — validate, preview, then open a PR. One thing does not go through Git: Sharko writes the ArgoCD connection Secrets and the addon secrets straight onto your clusters. If you remove Sharko, everything ArgoCD deployed keeps running and syncing from Git.
 
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
@@ -39,7 +37,7 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD. Install
 
 Fair question — it's usually the first one ArgoCD users ask. If your platform team is comfortable with ApplicationSets, the app-of-apps pattern, and the public [gitops-bridge](https://github.com/gitops-bridge-dev/gitops-bridge) approach, you can build most of this yourselves: fleet-wide addon rollout, per-cluster values selected by labels on ArgoCD cluster secrets, Git as the source of truth. That's a legitimate choice, and Sharko doesn't replace that pattern — it sits on top of the exact same one.
 
-What Sharko adds on top: a UI, REST API, and audit trail that people who *didn't* author the repo can use safely; a curated catalog with cosign-signed entries and OpenSSF Scorecard data; an upgrade advisor; and non-destructive adoption of an existing shared ArgoCD, joining as a guest, never taking ownership.
+What Sharko adds on top: a UI and a REST API that people who *didn't* author the repo can use safely, with every change landing as a reviewable Git pull request that records who asked for it; a curated catalog with cosign-signed entries and OpenSSF Scorecard data; an upgrade advisor; and non-destructive adoption of an existing shared ArgoCD, joining as a guest, never taking ownership.
 
 If DIY serves you well, keep it. Sharko is for teams who want that same pattern productized. For the full comparison — including where secret-delivery tools, GitOps promoters, and cluster-fleet managers fit — see [Sharko vs. the Alternatives](docs/site/user-guide/comparison.md).
 
@@ -62,7 +60,7 @@ If DIY serves you well, keep it. Sharko is for teams who want that same pattern 
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **ArgoCD diagnostics** — ArgoCD connection state surfaced per cluster; bootstrap app health shown on dashboard and observability view
 - **Auto-refresh** — dashboard, cluster detail, cluster overview, and addon detail pages refresh automatically (30s); addon catalog refreshes every 60s
-- **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
+- **In-memory activity history** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`. It is held in memory only, so it starts empty again after a restart. The durable record of what changed is the Git/PR history in your repo.
 - **Multi-cloud provider stubs** — interface stubs for GCP and Azure so contributors can fill in those providers without redesigning the secrets layer
 - **End-to-end test framework** — test against a real ArgoCD + Kind cluster (`make test-e2e-fast` for a fast in-process pass, `make test-e2e` for the full kind-backed suite)
 
@@ -80,9 +78,7 @@ make demo
 
 Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `admin` (admin role) or `qa` / `sharko` (viewer role).
 
-## Quick Start (Production)
-
-> **Sharko v4 is a technical preview. Do not use Sharko in production.** Install only published `v4.0.1`-or-later artifacts. Do not install any Sharko chart version below `v4.0.1` — all earlier release lines are retired and unsupported. See [SECURITY.md](SECURITY.md#why-v300-is-retired).
+## Getting started on a cluster
 
 ### 1. Install Sharko
 
@@ -90,6 +86,8 @@ Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `a
 helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace
 ```
+
+Install only published `v4.0.1`-or-later artifacts. Do not pin any Sharko chart version below `v4.0.1` — all earlier release lines are retired and unsupported.
 
 If using AWS Secrets Manager for cluster credentials, add the IAM Roles for Service Accounts (IRSA) annotation so the pod can assume an AWS role:
 
@@ -206,7 +204,7 @@ Sharko exposes a REST API that every consumer uses — the CLI, the UI, and exte
 | GET | `/api/v1/clusters/{name}/comparison` | Git vs ArgoCD comparison, including ArgoCD connection state |
 | GET | `/api/v1/addons/version-matrix` | Version matrix: addon × cluster grid |
 | GET | `/api/v1/upgrade/{addonName}/recommendations` | Upgrade recommendations (next patch, next minor, latest stable) |
-| GET | `/api/v1/audit` | Audit log: actor, action, result, timestamp |
+| GET | `/api/v1/audit` | In-memory activity history: actor, action, result, timestamp |
 | POST | `/api/v1/clusters` | Register a cluster |
 | POST | `/api/v1/clusters/adopt` | Adopt one or more discovered ArgoCD clusters |
 | PATCH | `/api/v1/clusters/{name}` | Update a cluster's addon assignments |
@@ -276,12 +274,18 @@ The full documentation site is at **https://sharko.readthedocs.io/**:
 |----------|-------------|
 | [Getting Started](docs/site/getting-started/quickstart.md) | Quick start: install, first run, wizard walkthrough |
 | [User Guide](docs/site/user-guide/why-sharko.md) | Day-to-day guide: connections, clusters, addons, upgrades, drift detection |
-| [Operator Manual](docs/site/operator/installation.md) | Install, configure, and run Sharko in production |
+| [Operator Manual](docs/site/operator/installation.md) | Install, configure, secure, and troubleshoot a Sharko deployment |
 | [API Reference](docs/site/api/overview.md) | Full API reference: endpoints, request/response shapes, and the OpenAPI spec |
 | [Architecture](docs/site/architecture/overview.md) | Server-first architecture, orchestrator pattern, provider interfaces |
 | [Developer Guide](docs/site/developer-guide.md) | Project structure, coding patterns, testing, adding new features |
 
 The legacy `docs/api-contract.md`, `docs/architecture.md`, `docs/user-guide.md`, and `docs/developer-guide.md` files remain in the repo as raw reference only — the docs site above is the maintained version.
+
+## Versioning and security
+
+Sharko v4 is published as a technical preview. It follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes land only in a MAJOR version bump.
+
+`v3.0.0` and earlier remain retired and unsupported, and there is no patch for the `v3` line. [SECURITY.md](SECURITY.md#why-v300-is-retired) explains what went wrong there, and it is also where you report a security problem.
 
 ## Community
 
