@@ -1,9 +1,13 @@
 # Current limitations and supported use
 
-Sharko v4 is released as a technical preview, for evaluation and staging
-environments. The supported setup today is one Sharko instance, one team, one
-ArgoCD installation and one addons repository. The activity history is held in
-memory only, and high availability is not supported yet.
+**Sharko v4 is a technical preview, for evaluation and staging environments. It
+is not supported in production.** Start with the
+[latest published v4 release](https://github.com/MoranWeissman/sharko/releases/latest)
+and read the boundaries on this page before deploying it more widely.
+
+The supported setup today is one Sharko instance, one team, one ArgoCD
+installation and one addons repository. The activity history is held in memory
+only, and high availability is not supported yet.
 
 This page sets out where the boundaries are today, and the safest way to
 evaluate Sharko. No independent external security assessment of this
@@ -43,7 +47,7 @@ what it found, and what it did not cover, is written up in
 - **Real production credentials, before your own security review.** Section 2
   sets out what somebody who took over the Sharko pod would have: the
   credentials to every cluster ArgoCD knows about, and write access to your
-  addons repository.
+  addons repository. No reviewer outside this project has checked that work.
 - **Chart repositories that need a sign-in.** Catalog repository addresses
   must be credential-free — see section 1. Naming a Kubernetes Secret or an
   AWS Secrets Manager entry instead is work for after the preview.

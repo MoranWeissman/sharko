@@ -2,8 +2,12 @@
 
 This guide is for platform engineers and cluster operators installing Sharko on a cluster.
 
-!!! info "Sharko v4 is currently intended for evaluation and staging environments"
-    Read the [current limitations](../technical-preview.md) before wider deployment.
+!!! warning "Sharko v4 is a technical preview, for evaluation and staging environments. It is not supported in production."
+    Start with the
+    [latest published v4 release](https://github.com/MoranWeissman/sharko/releases/latest)
+    and read the [current limitations](../technical-preview.md) before deploying
+    it more widely.
+
     Install only published `v4.0.1`-or-later artifacts. Do not install any
     Sharko chart version below `v4.0.1` — all earlier release lines are
     retired and unsupported. There is no patch for the `v3` line.

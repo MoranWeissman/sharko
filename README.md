@@ -17,7 +17,7 @@
 
 ---
 
-> **Sharko v4 is currently intended for evaluation and staging environments.** Start with the [latest published v4 release](https://github.com/MoranWeissman/sharko/releases/latest) and read the [current limitations](docs/site/technical-preview.md) before wider deployment.
+> **Sharko v4 is a technical preview, for evaluation and staging environments. It is not supported in production.** Start with the [latest published v4 release](https://github.com/MoranWeissman/sharko/releases/latest) and read the [current limitations](docs/site/technical-preview.md) before deploying it more widely.
 
 **Sharko manages the addons on your Kubernetes fleet — cert-manager, monitoring, logging, and anything else you run everywhere — and puts an API in front of the whole thing.** Somebody asks for a change: a person clicking in the UI, or a portal, a pipeline, or a Terraform run calling the API. Sharko checks the request against your catalog and the file schema, shows you the exact file changes it would make, and then opens a Git pull request that somebody can review — and that records who asked for it. Nothing reaches a cluster until that pull request is merged, and even then Sharko is not the thing deploying: **ArgoCD does the deployment**, by syncing the merged files from Git.
 

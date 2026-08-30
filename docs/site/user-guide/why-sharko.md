@@ -200,4 +200,4 @@ Once you understand the two-loop model, the rest of Sharko's documentation focus
 - [Managing Clusters](clusters.md) — registration, connection types, credentials
 - [Managing Addons](addons.md) — enabling, upgrading, per-cluster values
 - [Drift Detection and Sync](drift-and-sync.md) — how Sharko detects and optionally self-heals when someone edits the cluster Secret out of band
-- [Operator Manual](../operator/installation.md) — installation, configuration, and production considerations
+- [Operator Manual](../operator/installation.md) — install, configure, secure, and troubleshoot a Sharko deployment

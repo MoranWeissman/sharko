@@ -992,7 +992,20 @@ func TestTheOldDefectListDoesNotOpenTheFrontDoor(t *testing.T) {
 //     which is exactly what the third warning block did. It also fails if the
 //     note is DELETED — a README with no status note at all satisfies "not
 //     twice" completely, and that is worse than the thing being fixed. The
-//     sentence names no patch version, so it does not go stale at v4.0.2.
+//     sentence names no patch version, so it does not go stale at v4.0.2, and
+//     it deliberately reads "Sharko v4", not "Sharko v4.0.1", so it does not
+//     collide with the bannedWordings entries that ban the patch-pinned forms.
+//
+// The sentence carries the boundary, not only the status: it says Sharko is not
+// supported in production. That half is the load-bearing half. An earlier round
+// of this cleanup replaced "do not use Sharko in production" with "currently
+// intended for evaluation and staging environments" on all five reader pages at
+// once, and the result was a repository where SECURITY.md forbade production use
+// and every page a user actually reads no longer said so. If this sentence is
+// reworded again, keep a plain prohibition in it, and keep the same wording on
+// README.md, docs/site/index.md, docs/site/technical-preview.md,
+// docs/site/getting-started/installation.md, docs/site/getting-started/quickstart.md
+// and docs/site/operator/installation.md, so one search still checks all of them.
 //
 // Honest limitation: neither count catches a second status warning written as a
 // plain bold paragraph rather than a blockquote, in words that are not the
@@ -1046,7 +1059,8 @@ func TestTheReadmeSaysItsStatusOnceInItsOpening(t *testing.T) {
 
 	// The sentence itself, counted over the whole file, so a second copy lower
 	// down is caught as well.
-	note := "Sharko v4 is currently intended for evaluation and staging environments"
+	note := "Sharko v4 is a technical preview, for evaluation and staging environments. " +
+		"It is not supported in production."
 	if n := strings.Count(text, note); n != 1 {
 		t.Errorf("README.md says %q %d time(s), not once.\n\n"+
 			"More than one means the status warning has been repeated somewhere below the opening, "+
