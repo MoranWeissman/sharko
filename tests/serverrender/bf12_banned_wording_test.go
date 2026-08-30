@@ -320,6 +320,110 @@ var bannedWordings = []string{
 	// the repository carries it, including the records under docs/design and
 	// .bmad.
 	strings.Join([]string{"no", "credentials", "on", "developer", "laptops"}, " "),
+	// PRESENTATION-CLEANUP, 2026-08-30. Sharko's front door read like a
+	// security-review diary. The limitations page told the reader a technical
+	// preview was safe enough to install somewhere that does not matter and to
+	// experiment with; README.md and docs/site/index.md both opened on a list
+	// of old defect categories; and the operator install page called its own
+	// main recipe a production install directly under a callout forbidding
+	// production use. All of that text is gone now. These five phrases stop the
+	// retired shapes drifting back under a new heading.
+	//
+	// Two of the six things this guard now covers are deliberately NOT in this
+	// list, and the reason is written out beside each test at the bottom of
+	// this file. The "no known credential leaks, permission bypasses"
+	// paragraph is legitimate history that has to stay sayable on
+	// docs/site/developer-guide/security-review-history.md, which is inside
+	// wordingSweptRoots — so it is checked per file instead of globally. And
+	// "the README states its status once, not three times" is a count, which a
+	// list of literal phrases cannot express at all.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly (strip
+	// each line, drop leading `#/*->`, trim `` `*.,:;!?()[]{}"' `` off each
+	// word's edges, lowercase, join with single spaces) over all 2783 tracked
+	// files of every type: ZERO hits for all five. So none of them collides
+	// with anything, including the historical records under docs/design/ and
+	// .bmad/, docs/site/release-notes.md, and
+	// docs/site/developer-guide/security-review-history.md. Zero rather than
+	// "only the files this change fixes" because the content work removed the
+	// text first — a phrase cannot be banned while the tree still says it, or
+	// the guard fails on its own tree the moment it is added.
+	//
+	// Every one of the five is longer than its obvious stem, and every one was
+	// narrowed for a MEASURED reason rather than a guessed one:
+	//
+	//   - "somewhere that does not matter", not "does not matter". The short
+	//     stem is ordinary English and is already written once in the tree, at
+	//     internal/api/route_registry.go:28. That is a Go file and so outside
+	//     wordingSweptExtensions today, but banning a run of words that plain
+	//     prose uses innocently is how a guard starts failing for the wrong
+	//     reason.
+	//   - "experiment with and send us feedback about" — the whole
+	//     introductory run that shipped, not the two words "experiment with".
+	//     The product owner ruled out globally banning "experiment", and
+	//     "experiment with" is ordinary English: a page may perfectly well tell
+	//     somebody to experiment with a values file. Measured for the record:
+	//     "experiment with" is at zero in the tree today, so the collision rule
+	//     would have permitted it. It is left out on the owner's ruling and on
+	//     ordinary-use grounds, NOT because it collides with anything.
+	//   - "recommended production install", not "production install". The short
+	//     stem has EIGHT hits, and they are the reason a bare ban was
+	//     impossible: SECURITY.md:95, .goreleaser.yaml:89,
+	//     catalog/addons.yaml:304,
+	//     docs/design/2026-05-13-cluster-connectivity-test-redesign.md:20 and
+	//     :91,
+	//     docs/design/2026-07-21-operator-phase0-reconciler-coverage-matrix.md:97,
+	//     docs/site/operator/argocd-account-token-expired.md:191, and
+	//     tests/serverrender/releasesurface_meta_test.go:70. Two of those are
+	//     historical design records; one is a runbook explaining that a bare
+	//     production install is the WRONG way to wire ArgoCD. Every one of them
+	//     is a correct sentence, and three of the files are inside this sweep's
+	//     own roots, so a ban on the stem would have gone red immediately.
+	//   - "install configure and run sharko in production", not "run sharko in
+	//     production". The short stem measures zero today, so the collision
+	//     rule would have permitted it, and it is still the wrong ban: it would
+	//     forbid the honest prohibition "do not run Sharko in production".
+	//     Sharko's support boundary has to stay sayable. The near neighbour "do
+	//     not use Sharko in production" is written eight times in the tree —
+	//     SECURITY.md:95, GOVERNANCE.md:122, CONTRIBUTING.md:457,
+	//     .claude/team/product-manager.md:15, .goreleaser.yaml:89,
+	//     docs/site/release-notes.md:23 and :56, and
+	//     releasesurface_meta_test.go:70 — and the wider "sharko in production"
+	//     has twelve hits, most of them inside this sweep's own roots. So only
+	//     the affirmative capability claim that actually shipped is banned: the
+	//     documentation table in README.md said the Operator Manual was for
+	//     "Install, configure, and run Sharko in production".
+	//   - "operators installing sharko in a production environment", not
+	//     "installing sharko in a production environment". Same reason, same
+	//     shape: the shorter form also reads naturally inside a prohibition
+	//     ("we do not support installing Sharko in a production environment").
+	//     Keeping "operators" ties the ban to the guide-audience framing that
+	//     shipped at docs/site/operator/installation.md:3 — "This guide is for
+	//     platform engineers and cluster operators installing Sharko in a
+	//     production environment" — which is a claim about what the guide is
+	//     for, not a limit on what Sharko is for.
+	//
+	// Substring check, because sweepProvenToFindAPlantedCopy requires every
+	// phrase to be reported EXACTLY once in the planted page and a phrase
+	// sitting inside another one would be counted twice: none of these five
+	// contains another of them, and none contains or is contained by any of the
+	// 31 entries above. Verified by comparing all 36 phrases against each other
+	// pairwise, and by building plantedControlBody's output for all 36 and
+	// confirming each is found once and only once in the flattened result.
+	//
+	// Honest limitation, in the same spirit as every note above: these are
+	// literal phrases, not the rule. The rules are "do not tell the reader
+	// their cluster is disposable", "do not frame the reader as a test
+	// subject", and "do not promise production on a page whose own callout
+	// says evaluation and staging". A future writer who invents a new way to
+	// say any of those — "point it at a cluster you do not care about", "have a
+	// play with it", "the production-grade recipe" — walks straight past this
+	// list. Only a reviewer catches that.
+	strings.Join([]string{"somewhere", "that", "does", "not", "matter"}, " "),
+	strings.Join([]string{"experiment", "with", "and", "send", "us", "feedback", "about"}, " "),
+	strings.Join([]string{"recommended", "production", "install"}, " "),
+	strings.Join([]string{"install", "configure", "and", "run", "sharko", "in", "production"}, " "),
+	strings.Join([]string{"operators", "installing", "sharko", "in", "a", "production", "environment"}, " "),
 }
 
 // Why the published GitHub release page is allowed to say the banned sentence.
@@ -754,5 +858,201 @@ func TestEveryPlaceThatScopesCredentialsSaysTheSessionTokenIsLocal(t *testing.T)
 					page.rel, want)
 			}
 		}
+	}
+}
+
+// TestTheOldDefectListDoesNotOpenTheFrontDoor is the third thing the
+// PRESENTATION-CLEANUP guard has to catch, and it is checked PER FILE rather
+// than added to bannedWordings. That is deliberate, and it is the whole point
+// of the test.
+//
+// The paragraph is "There are no known credential leaks, permission bypasses,
+// or places where Sharko says work finished when it did not". It opened
+// README.md and it opened docs/site/index.md, and the product owner ruled it
+// out of both: it is security-review history, not introductory product copy. A
+// new reader who meets a list of old defect categories before the product is
+// described reads it as a warning about the product, not as a record of work
+// somebody did.
+//
+// It is not false and it is not being deleted. It now lives on
+// docs/site/developer-guide/security-review-history.md along with the rest of
+// that write-up, and quoting the old claim in the words it was made in is that
+// page's entire job.
+//
+// So a phrase in bannedWordings could not work here. wordingSweptRoots includes
+// the whole docs/ tree, the history page is inside it, and a global ban would
+// make this guard fail on the project's own historical record — the one thing
+// every note in this file has refused to do. Measured, not assumed: the natural
+// stem "no known credential leaks" has exactly ONE hit across all 2783 tracked
+// files, and it is that history page, at line 16. Narrowing the phrase would
+// not fix it either, because the history page has to be able to write the claim
+// out in full or it stops being a record. So this check names the two pages the
+// paragraph must not open, and says nothing whatever about anywhere else.
+//
+// Both halves read the FLATTENED text rather than the raw file, because the
+// docs/site/index.md copy was wrapped across lines 10-11 where it shipped and a
+// line-by-line reader would have walked straight past it.
+//
+// The second half is here for the same reason
+// TestEveryPlaceThatScopesCredentialsSaysTheSessionTokenIsLocal above has a
+// second half: a ban is also satisfied by deleting the record, and that is its
+// own kind of failure. So the history page is required to still carry the
+// claim. If a copy-editor rewords it, update the expected text here to the new
+// wording — do NOT delete this half, and do not answer a failure by taking the
+// paragraph off the history page.
+func TestTheOldDefectListDoesNotOpenTheFrontDoor(t *testing.T) {
+	root := repoRoot(t)
+	// Assembled from its words, the way bannedWordings is, so this file is not
+	// itself a searchable copy of the paragraph it is moving.
+	defectList := strings.Join([]string{"credential", "leaks", "permission", "bypasses"}, " ")
+	saidItFinished := strings.Join([]string{
+		"places", "where", "sharko", "says", "work", "finished", "when", "it", "did", "not",
+	}, " ")
+
+	for _, rel := range []string{"README.md", filepath.Join("docs", "site", "index.md")} {
+		body, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Errorf("cannot read %s, so nothing about how it opens is pinned: %v", rel, err)
+			continue
+		}
+		flat := flattenForWording(string(body))
+		for _, phrase := range []string{defectList, saidItFinished} {
+			at := flat.occurrences(phrase)
+			if len(at) == 0 {
+				continue
+			}
+			var where []string
+			for _, line := range at {
+				where = append(where, filepath.ToSlash(rel)+":"+itoa(line))
+			}
+			t.Errorf("%s says %q at %s.\n\n"+
+				"That is the security-review paragraph, and it is not introductory product copy. A "+
+				"reader meeting a list of old defect categories before the product is described reads "+
+				"it as a warning about the product. It is kept — in full, in its own words — on "+
+				"docs/site/developer-guide/security-review-history.md, which is where the whole "+
+				"review write-up lives and where saying it is correct. Link to that page from here "+
+				"instead of restating it, and do not answer this failure by editing the history page.",
+				filepath.ToSlash(rel), phrase, strings.Join(where, ", "))
+		}
+	}
+
+	// The other half: the record still exists, so this ban cannot be satisfied
+	// by deleting the history instead of moving it.
+	history := filepath.Join("docs", "site", "developer-guide", "security-review-history.md")
+	body, err := os.ReadFile(filepath.Join(root, history))
+	if err != nil {
+		t.Errorf("cannot read %s, so nothing proves the paragraph was moved rather than deleted: %v",
+			history, err)
+		return
+	}
+	claim := strings.Join([]string{"no", "known", "credential", "leaks"}, " ")
+	if len(flattenForWording(string(body)).occurrences(claim)) == 0 {
+		t.Errorf("%s no longer says %q.\n\n"+
+			"The two pages above are forbidden from opening with that paragraph precisely because "+
+			"this page keeps it. If it is gone from here as well, the project has quietly dropped a "+
+			"true statement about what its own review did and did not cover, which is worse than the "+
+			"presentation problem the ban was for. Put the claim back on this page, or reword this "+
+			"expectation to match the new wording — do not delete this check.",
+			filepath.ToSlash(history), claim)
+	}
+}
+
+// TestTheReadmeSaysItsStatusOnceInItsOpening is the sixth thing the
+// PRESENTATION-CLEANUP guard has to catch, and it is a COUNT rather than a
+// phrase, because bannedWordings cannot express "at most one".
+//
+// README.md used to carry three warning blocks: two blockquotes back to back at
+// the top and a third under the Quick Start heading, each restating that Sharko
+// is a technical preview and must not be used in production. Nothing about any
+// one of those sentences was bannable on its own. The defect was that there
+// were three of them, and a reader told the same thing three times before the
+// product is described reads a product that is apologising for itself.
+//
+// "The README's top block" means every line above the first line beginning with
+// "## ". That boundary is written down here on purpose, so this check cannot
+// quietly drift into meaning something else later. It is the right boundary for
+// this file because README.md's title is an HTML `<h1 align="center">` rather
+// than a markdown heading, so "## " is the FIRST structural break anywhere in
+// the file and everything above it is what a reader meets before any section
+// starts. Today that is lines 1-35: the logo, the badges, a horizontal rule,
+// the one status note at line 20, and the product description.
+//
+// Two counts, because either one alone is escapable:
+//
+//   - Exactly one blockquote BLOCK in the top block. A block is a run of
+//     consecutive lines beginning with ">", so a note wrapped over several
+//     lines still counts once. This is the count that catches a SECOND warning
+//     written in different words. It is deliberately not a count over the whole
+//     file: the README having exactly one blockquote anywhere in it is true
+//     today, but a whole-file count would also fail on a perfectly good
+//     blockquote added far below, in a section about something else, and that is
+//     not what is being protected.
+//   - Exactly one copy of the status sentence itself, counted over the whole
+//     file. This is the count that catches the note being repeated further down,
+//     which is exactly what the third warning block did. It also fails if the
+//     note is DELETED — a README with no status note at all satisfies "not
+//     twice" completely, and that is worse than the thing being fixed. The
+//     sentence names no patch version, so it does not go stale at v4.0.2.
+//
+// Honest limitation: neither count catches a second status warning written as a
+// plain bold paragraph rather than a blockquote, in words that are not the
+// pinned sentence. There is no structural mark to count for that shape. A
+// reviewer still has to read the opening.
+func TestTheReadmeSaysItsStatusOnceInItsOpening(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatalf("cannot read README.md, so nothing about its opening is pinned: %v", err)
+	}
+	text := string(body)
+	lines := strings.Split(text, "\n")
+
+	// Where the opening ends. Both failures below are fatal because a boundary
+	// that silently means "the whole file" or "nothing" would make the count
+	// pass whatever the README said.
+	top := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "## ") {
+			top = i
+			break
+		}
+	}
+	if top < 0 {
+		t.Fatal("README.md has no \"## \" heading anywhere in it, so this test cannot tell the " +
+			"opening from the rest of the file and any count it reported would be meaningless")
+	}
+	if top == 0 {
+		t.Fatal("README.md begins at a \"## \" heading, so its top block is empty and this count " +
+			"would pass whatever the file said")
+	}
+
+	blocks := 0
+	inBlock := false
+	for _, line := range lines[:top] {
+		quoted := strings.HasPrefix(strings.TrimSpace(line), ">")
+		if quoted && !inBlock {
+			blocks++
+		}
+		inBlock = quoted
+	}
+	if blocks != 1 {
+		t.Errorf("README.md's opening — the %d lines above its first \"## \" heading — holds %d "+
+			"blockquote block(s), not 1.\n\n"+
+			"The opening carries ONE status note. It used to carry three warnings, and being told "+
+			"the same thing three times before the product is described is what made the README "+
+			"read like an apology. If there is more than one now, fold them into the single note. "+
+			"If there is none, the status has gone missing entirely, which is the opposite mistake.",
+			top, blocks)
+	}
+
+	// The sentence itself, counted over the whole file, so a second copy lower
+	// down is caught as well.
+	note := "Sharko v4 is currently intended for evaluation and staging environments"
+	if n := strings.Count(text, note); n != 1 {
+		t.Errorf("README.md says %q %d time(s), not once.\n\n"+
+			"More than one means the status warning has been repeated somewhere below the opening, "+
+			"which is what the third warning block used to do. None means the README no longer "+
+			"states its status at all — say it once, in the opening. If the sentence itself is being "+
+			"reworded, change it here in the same commit, and keep it free of a patch version so it "+
+			"does not go stale at the next release.", note, n)
 	}
 }
