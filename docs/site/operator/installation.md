@@ -1,8 +1,9 @@
 # Operator Installation
 
-This guide is for platform engineers and cluster operators installing Sharko in a production environment.
+This guide is for platform engineers and cluster operators installing Sharko on a cluster.
 
-!!! danger "Sharko v4 is a technical preview — do not use Sharko in production"
+!!! info "Sharko v4 is currently intended for evaluation and staging environments"
+    Read the [current limitations](../technical-preview.md) before wider deployment.
     Install only published `v4.0.1`-or-later artifacts. Do not install any
     Sharko chart version below `v4.0.1` — all earlier release lines are
     retired and unsupported. There is no patch for the `v3` line.
@@ -42,9 +43,9 @@ in the `sharko-connections` Kubernetes Secret. See
     setting. The chart does this for you. See
     [the listen port](configuration.md#service-links).
 
-### Recommended Production Install
+### Recommended Installation
 
-Use a values file for production deployments:
+Use a values file so the whole configuration sits in one reviewable place:
 
 ```yaml
 # sharko-values.yaml
@@ -87,13 +88,13 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
 
 ## Initial Credentials
 
-Sharko ships with a single bootstrap `admin` user. There are three ways to set the bootstrap password — pick one based on how production-grade your install is.
+Sharko ships with a single bootstrap `admin` user. There are three ways to set the bootstrap password — pick one based on how sensitive the environment is.
 
 ### 1. Auto-generated (default)
 
 If you set neither `bootstrapAdmin.password` nor `bootstrapAdmin.existingSecret.name`, Sharko generates a random 16-character password on first install. There are then two ways to retrieve it:
 
-#### (a) Dedicated `sharko-initial-admin-secret` (recommended for production)
+#### (a) Dedicated `sharko-initial-admin-secret` (recommended)
 
 Sharko writes a dedicated Secret carrying the plaintext of the **current** initial admin password — mirrors ArgoCD's `argocd-initial-admin-secret` pattern. Retrieve with:
 
@@ -168,14 +169,14 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --set bootstrapAdmin.password='MyChosenBootstrap!42'
 ```
 
-!!! warning "Insecure for production"
-    The plaintext password lives in your Helm values file (and any release-history Secret Helm keeps). Use `bootstrapAdmin.existingSecret` for production installs.
+!!! warning "Not safe in a sensitive environment"
+    The plaintext password lives in your Helm values file (and any release-history Secret Helm keeps). Use `bootstrapAdmin.existingSecret` in a sensitive environment.
 
 Sharko bcrypt-hashes the value into `admin.password` and **does NOT log it**. The `BOOTSTRAP ADMIN CREDENTIAL` block does not appear when an operator-supplied password is in use.
 
 The password does not go into the Deployment. The chart writes the plaintext into its own Secret under the key `admin.bootstrapPassword`, and the pod reads it from there with `valueFrom.secretKeyRef` — the same way the existing-Secret path below works. So `kubectl get deployment -o yaml`, `helm get manifest` and a rendered-manifest Git repository all show a reference and never the value.
 
-### 3. Operator-supplied via existing Secret (recommended for production)
+### 3. Operator-supplied via existing Secret (recommended for a sensitive environment)
 
 Pre-create a Secret in the Sharko namespace with the bootstrap password, then point Helm at it:
 
@@ -223,9 +224,9 @@ kubectl port-forward svc/sharko -n sharko 8080:80
 
 Open [http://localhost:8080](http://localhost:8080).
 
-## Production: Ingress Setup
+## Ingress Setup
 
-For production, configure ingress so the UI and API are reachable from outside the cluster. The example below uses nginx-ingress with cert-manager for TLS:
+Configure ingress so the UI and API are reachable from outside the cluster. The example below uses nginx-ingress with cert-manager for TLS:
 
 ```yaml
 ingress:
