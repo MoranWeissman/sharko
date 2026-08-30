@@ -51,4 +51,4 @@ To clear all notifications, click **Mark all as read** at the top of the notific
 Notifications are generated on every health check cycle. The check interval is controlled server-side and is not currently user-configurable. Future versions will support configurable alert channels (Slack, PagerDuty, email).
 
 !!! note "External alerting"
-    For production alerting (on-call, Slack channels), expose Sharko's health endpoint `/api/v1/health` and fleet status endpoint `/api/v1/fleet/status` to your existing monitoring stack (Prometheus, Datadog, etc.). These endpoints return structured JSON suitable for alert rules.
+    For alerting through your own on-call tooling (paging, chat channels), expose Sharko's health endpoint `/api/v1/health` and fleet status endpoint `/api/v1/fleet/status` to your existing monitoring stack (Prometheus, Datadog, etc.). These endpoints return structured JSON suitable for alert rules.

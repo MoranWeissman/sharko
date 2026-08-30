@@ -1,6 +1,6 @@
 # Security
 
-This page documents Sharko's security posture and hardening recommendations for production deployments.
+This page documents Sharko's security posture and the hardening recommendations for a sensitive environment.
 
 ## Security Headers
 
@@ -507,7 +507,7 @@ use — is the right answer and is work for after the preview.
 
 ## Network Policy
 
-Sharko does not ship a NetworkPolicy by default. For production, create one that restricts inbound traffic to your ingress controller and ArgoCD, and restricts outbound traffic to ArgoCD and your Git provider:
+Sharko does not ship a NetworkPolicy by default. In a sensitive environment, create one that restricts inbound traffic to your ingress controller and ArgoCD, and restricts outbound traffic to ArgoCD and your Git provider:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -537,7 +537,7 @@ spec:
           protocol: TCP
 ```
 
-## A worked example: locking down a production install
+## A worked example: a hardened installation
 
 This section puts RBAC, the AWS IRSA policy, and a NetworkPolicy together
 into one example, so you have something to copy and adapt rather than

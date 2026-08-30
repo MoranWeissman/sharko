@@ -59,7 +59,7 @@ Delete carries its own safety gates, checked again at the moment you confirm, no
 
 - Only a secret that still carries **Sharko's own ownership label and provenance marker** is eligible — the same labels that make a row show up as Sharko-managed anywhere else on this page.
 - The secret is **re-checked against Git right then** — if something in Git has started asking for it again since the row last loaded, or if its ownership marker changed, the delete is refused and nothing is touched.
-- The action is **audited**, the same as every other write Sharko makes.
+- The action is **recorded in the in-memory activity history**, the same as every other write Sharko makes.
 
 If a delete is refused, the UI shows the server's plain-English reason — never a raw error — so you know exactly why nothing happened.
 

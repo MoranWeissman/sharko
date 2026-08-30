@@ -225,7 +225,7 @@ still run as this one `sharko-hub-role` principal, since a plain
 `GetSecretValue` call doesn't assume a per-provider role today (only the
 EKS-token-mint path for cluster credentials supports a per-cluster
 `roleArn`). See
-[Security → A worked example](security.md#a-worked-example-locking-down-a-production-install)
+[Security → A worked example](security.md#a-worked-example-a-hardened-installation)
 for the fuller picture and that limit spelled out. Scope the
 `sts:AssumeRole` resource to the same explicit spoke-role list as ArgoCD's
 role in (a) — Sharko never needs to assume a role ArgoCD itself couldn't

@@ -66,6 +66,8 @@ Supported filter predicates for clusters: `env:<value>`, `health:<value>`, `addo
 
 Audit log entries include: `id`, `timestamp`, `actor` (username or API key name), `action` (e.g., `register_cluster`, `upgrade_addon`), `target` (cluster or addon name), `result` (`success` / `failure`), and an optional `detail` string.
 
+Sharko holds this activity history in memory only. It starts empty again after a restart, so it is not a durable record — the durable record of what changed is the Git/PR history in your repo. See [Activity history](../operator/audit-log.md) for what it keeps and for how long.
+
 ---
 
 ## Write Endpoints

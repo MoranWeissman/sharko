@@ -1,10 +1,7 @@
 # Quick Start
 
-!!! danger "Sharko v4 is a technical preview — do not use Sharko in production"
-    Install only published `v4.0.1`-or-later artifacts. Do not install any
-    Sharko chart version below `v4.0.1` — all earlier release lines are
-    retired and unsupported. There is no patch for the `v3` line.
-    See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
+!!! info "Sharko v4 is currently intended for evaluation and staging environments"
+    Read the [current limitations](../technical-preview.md) before wider deployment.
 
 **Sharko is a GitOps agent with an API: your portal or pipeline asks for "a cluster with these addons," and Sharko opens a pull request — it never changes your cluster behind your back.**
 
@@ -21,6 +18,11 @@ Registering a cluster is an API call that tells ArgoCD about a new cluster and i
 helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace
 ```
+
+Install only published `v4.0.1`-or-later artifacts. Do not install any
+Sharko chart version below `v4.0.1` — all earlier release lines are
+retired and unsupported. There is no patch for the `v3` line.
+See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
 
 ## 2. Get the Admin Password
 
@@ -95,6 +97,6 @@ This opens one pull request that adds `cert-manager` to `catalog.yaml` (created 
 ## Next Steps
 
 - [Add more addons to the catalog](../user-guide/addons.md)
-- [Configure ingress for production access](installation.md#access-the-ui)
+- [Configure ingress so the UI and API are reachable](installation.md#access-the-ui)
 - [Enable the AI assistant](../operator/configuration.md#ai-provider)
 - [Set up API keys for CI/CD](../user-guide/connections.md#api-keys)

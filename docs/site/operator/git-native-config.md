@@ -111,7 +111,7 @@ If your ArgoCD serves `https://` with a **self-signed or internal-CA certificate
 
 Pick one of these, in order of preference:
 
-1. **Trust the CA** — give the Sharko pod your internal CA (mount it into the container's trust store). Verification then passes with no Sharko setting at all. This is the right answer for production.
+1. **Trust the CA** — give the Sharko pod your internal CA (mount it into the container's trust store). Verification then passes with no Sharko setting at all. This is the right answer for a sensitive environment.
 2. **Opt out explicitly** — set `connection.argocd.insecure: "true"` in Helm values (emits `SHARKO_CONN_ARGOCD_INSECURE=true`), or tick "Skip TLS certificate verification" on the connection in Settings, or send `"argocd": {"insecure": true}` on the connection via the API. Sharko then skips verification for that one connection and logs a warning at startup so the choice stays visible.
 
 There is no silent fallback: Sharko never retries without verification on its own. A plain `http://` in-cluster ArgoCD URL (the common auto-discovered setup) is unaffected — there is no certificate to verify there.

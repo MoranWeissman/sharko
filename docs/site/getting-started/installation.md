@@ -1,10 +1,7 @@
 # Installation
 
-!!! danger "Sharko v4 is a technical preview — do not use Sharko in production"
-    Install only published `v4.0.1`-or-later artifacts. Do not install any
-    Sharko chart version below `v4.0.1` — all earlier release lines are
-    retired and unsupported. There is no patch for the `v3` line.
-    See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
+!!! info "Sharko v4 is currently intended for evaluation and staging environments"
+    Read the [current limitations](../technical-preview.md) before wider deployment.
 
 ## Prerequisites
 
@@ -19,6 +16,11 @@ That's it. Connection credentials (Git token, ArgoCD token) are entered through 
 helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace
 ```
+
+Install only published `v4.0.1`-or-later artifacts. Do not install any
+Sharko chart version below `v4.0.1` — all earlier release lines are
+retired and unsupported. There is no patch for the `v3` line.
+See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
 
 Verify the pod is running:
 
@@ -59,7 +61,7 @@ kubectl port-forward svc/sharko 8080:80 -n sharko
 
 Open [http://localhost:8080](http://localhost:8080).
 
-**Via Ingress (production):**
+**Via Ingress:**
 
 ```bash
 helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
