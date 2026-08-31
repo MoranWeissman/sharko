@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -179,6 +180,53 @@ const (
 	correctActivityTerm = "in-memory activity history"
 )
 
+// retiredActivityTermPattern is how the ban is actually matched: the two words
+// with a hyphen OR whitespace between them, read off already-flattened text.
+//
+// A plain strings.Contains on retiredActivityTerm missed "audit-trail". The
+// flatteners treat whitespace and the two-character escapes as separators and
+// leave a hyphen exactly where it is, so the hyphenated spelling walked straight
+// past a guard built to catch a wrapped line. It is the one variant a person
+// could plausibly type into a Go doc comment, and to a reader it promises the
+// same durable record the ban exists to prevent.
+//
+// The hyphen is handled HERE and deliberately not in the flatteners. Turning
+// hyphens into spaces there would flatten every description to "in memory
+// activity history" while correctActivityTerm still reads "in-memory", so
+// TestAuditSwagger_TheActivityHistoryIsNamedInTheSpec would go red — one hole
+// closed by opening a worse one. Both callers, the sweep over the generated
+// files and the sweep over the parsed descriptions, use this one pattern, so
+// neither path can be the narrow one.
+//
+// retiredActivityTerm stays the phrase every failure message names. A stranger
+// reading a red build needs to be told "audit trail", not a regular expression.
+//
+// The match is a substring with no word boundary, which is what catches the
+// plural "audit trails". The accepted cost is that a longer word starting with
+// "trail" is caught too — "audit trailing", "audit trailer", and, because the
+// file sweep flattens a whole file rather than one description at a time, a
+// description whose last word is "audit" followed by a key beginning "trail",
+// which flattens to "audit trailhead: yes" and flags. Measured on all three
+// generated files as they stand: zero hits, so no such join exists today. A word
+// boundary was rejected because it would lose the plural, and the plural is far
+// likelier to be typed than any of those.
+//
+// Honest limitation: markdown emphasis splitting the phrase is not caught.
+// "**audit** trail" keeps its asterisks through flattening, and swag descriptions
+// render as markdown in Redoc, so a reader would see the retired term while this
+// stays quiet. Contrived rather than likely, and written down here instead of
+// paid for in matcher complexity — the same way
+// TestTheReadmeSaysItsStatusOnceInItsOpening in
+// tests/serverrender/bf12_banned_wording_test.go records the shape its counts
+// cannot see. A reviewer still has to read the wording.
+//
+// Not covered because nothing can write them: a line break landing INSIDE either
+// word, and a zero-width character between them (U+200B, U+2060, U+00AD). And a
+// literal backslash-n between the words — the escape written twice — is
+// correctly NOT caught, because it renders as a visible \n rather than a space,
+// so the published text does not say the phrase.
+var retiredActivityTermPattern = regexp.MustCompile(`audit[\s-]+trail`)
+
 // swag writes three files from the same annotations and all three ship. A ban
 // proved in one of them while another still carries the wrong term is not a ban.
 const (
@@ -243,15 +291,15 @@ func flattenEscapedWording(s string) string {
 // a routing table is one more thing that can send a file to the blind matcher.
 func retiredTermHit(body string) string {
 	flat := flattenEscapedWording(body)
-	i := strings.Index(flat, retiredActivityTerm)
-	if i < 0 {
+	at := retiredActivityTermPattern.FindStringIndex(flat)
+	if at == nil {
 		return ""
 	}
-	from := i - 120
+	from := at[0] - 120
 	if from < 0 {
 		from = 0
 	}
-	to := i + len(retiredActivityTerm) + 120
+	to := at[1] + 120
 	if to > len(flat) {
 		to = len(flat)
 	}
@@ -324,7 +372,10 @@ func TestAuditSwagger_NoDescriptionCallsTheActivityHistoryAnAuditTrail(t *testin
 	for _, d := range descriptions {
 		// Flattened, not raw: swag keeps the doc comment's line breaks, so the
 		// term arrives split across two lines as often as not. See flattenWording.
-		if !strings.Contains(flattenWording(d.text), retiredActivityTerm) {
+		// Matched through the shared pattern, not a Contains on the constant, so
+		// this path sees the hyphenated spelling as well — see
+		// retiredActivityTermPattern.
+		if !retiredActivityTermPattern.MatchString(flattenWording(d.text)) {
 			continue
 		}
 		t.Errorf("%s\nat JSON path %s\ncalls Sharko's memory-only Activity feed an %q. "+
@@ -488,6 +539,18 @@ func TestAuditSwagger_TheWordingCheckSeesALineBreak(t *testing.T) {
 			want:     true,
 		},
 		{
+			// The hyphenated spelling. A hyphen is not whitespace and is not one
+			// of the escapes, so the flatteners leave it exactly where it is and
+			// "audit-trail" walked past every earlier version of this guard. It
+			// is the one variant a person could plausibly type into a Go doc
+			// comment, and to a reader it promises the same durable record the
+			// ban exists to prevent, so it has to be caught here.
+			name:     "hyphenated, which reads the same to a reader",
+			fromFile: "any",
+			body:     "Counted from results[].status, which the audit-trail and the printed summary both read.",
+			want:     true,
+		},
+		{
 			// The ban stays narrow. "audit log" is the real name of a real endpoint
 			// (/api/v1/audit) and is not retired. Measured: it appears 7 times in
 			// each generated file, across 5 descriptions and 2 summaries — a check
@@ -510,7 +573,7 @@ func TestAuditSwagger_TheWordingCheckSeesALineBreak(t *testing.T) {
 		}
 		if tc.want {
 			t.Errorf("%s: retiredTermHit missed the retired term in this shape from %s, so the "+
-				"guard is blind to a phrase that wrapped across two lines — the exact hole "+
+				"guard is blind to a phrase a reader still reads as the retired term — the exact hole "+
 				"this fixture exists to hold shut:\n%s", tc.name, tc.fromFile, tc.body)
 			continue
 		}
