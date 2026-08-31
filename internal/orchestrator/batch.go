@@ -44,8 +44,8 @@ type BatchResult struct {
 	// has to do arithmetic to get it.
 	//
 	// Counted from results[].status by fanout.Count, which is the same
-	// function the audit trail, the printed summary and the CLI's exit code
-	// read. One count, four surfaces, no disagreement.
+	// function the in-memory activity history, the printed summary and the
+	// CLI's exit code read. One count, four surfaces, no disagreement.
 	Outcome fanout.Outcome          `json:"outcome"`
 	Results []RegisterClusterResult `json:"results"`
 }

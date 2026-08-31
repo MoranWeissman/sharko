@@ -11289,7 +11289,7 @@
             "type": "object",
             "properties": {
                 "outcome": {
-                    "description": "Outcome is the accurate trio: how many clusters fully completed, how\nmany stopped part-way, and how many failed outright. This response\nused to carry NO aggregate counts at all — a client had to walk\nresults[] and classify each status itself to find out whether the\nadoption had worked, and HTTP 200 told it nothing, because an\nadoption in which every cluster failed also answers 200.\n\nCounted from results[].status by fanout.Count, the same function the\naudit trail, the printed summary and the CLI's exit code read.",
+                    "description": "Outcome is the accurate trio: how many clusters fully completed, how\nmany stopped part-way, and how many failed outright. This response\nused to carry NO aggregate counts at all — a client had to walk\nresults[] and classify each status itself to find out whether the\nadoption had worked, and HTTP 200 told it nothing, because an\nadoption in which every cluster failed also answers 200.\n\nCounted from results[].status by fanout.Count, the same function the\nin-memory activity history, the printed summary and the CLI's exit\ncode read.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_fanout.Outcome"
@@ -11312,7 +11312,7 @@
                     "type": "integer"
                 },
                 "outcome": {
-                    "description": "Outcome is the accurate trio the wire never used to carry: how many\nclusters fully completed, how many stopped part-way, and how many\nfailed outright with nothing landed. The older counters above are\nuntouched — `failed` still means \"did not fully succeed\" and still\ndecides the HTTP status — so a client that reads them keeps working,\nand a client that wants the truth about outright failures no longer\nhas to do arithmetic to get it.\n\nCounted from results[].status by fanout.Count, which is the same\nfunction the audit trail, the printed summary and the CLI's exit code\nread. One count, four surfaces, no disagreement.",
+                    "description": "Outcome is the accurate trio the wire never used to carry: how many\nclusters fully completed, how many stopped part-way, and how many\nfailed outright with nothing landed. The older counters above are\nuntouched — `failed` still means \"did not fully succeed\" and still\ndecides the HTTP status — so a client that reads them keeps working,\nand a client that wants the truth about outright failures no longer\nhas to do arithmetic to get it.\n\nCounted from results[].status by fanout.Count, which is the same\nfunction the in-memory activity history, the printed summary and the\nCLI's exit code read. One count, four surfaces, no disagreement.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_fanout.Outcome"

@@ -1406,7 +1406,8 @@ definitions:
           adoption in which every cluster failed also answers 200.
 
           Counted from results[].status by fanout.Count, the same function the
-          audit trail, the printed summary and the CLI's exit code read.
+          in-memory activity history, the printed summary and the CLI's exit
+          code read.
       results:
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult'
@@ -1435,8 +1436,8 @@ definitions:
           has to do arithmetic to get it.
 
           Counted from results[].status by fanout.Count, which is the same
-          function the audit trail, the printed summary and the CLI's exit code
-          read. One count, four surfaces, no disagreement.
+          function the in-memory activity history, the printed summary and the
+          CLI's exit code read. One count, four surfaces, no disagreement.
       partial:
         description: |-
           Partial is how many of Failed were partials — clusters that changed

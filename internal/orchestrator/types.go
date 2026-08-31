@@ -368,7 +368,8 @@ type AdoptClustersResult struct {
 	// adoption in which every cluster failed also answers 200.
 	//
 	// Counted from results[].status by fanout.Count, the same function the
-	// audit trail, the printed summary and the CLI's exit code read.
+	// in-memory activity history, the printed summary and the CLI's exit
+	// code read.
 	Outcome fanout.Outcome       `json:"outcome"`
 	Results []AdoptClusterResult `json:"results"`
 }
