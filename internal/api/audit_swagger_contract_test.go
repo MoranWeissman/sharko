@@ -20,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -164,5 +166,83 @@ func TestAuditSwagger_ChangesFieldIsInTheSpec(t *testing.T) {
 				t.Fatalf("%s documents changes with enum %v; the type's own values are %v", ref, got, want)
 			}
 		}
+	}
+}
+
+// The wording this repository settled on: durable repository history is
+// "reviewable Git/PR history", and Sharko's own Activity feed — a ring buffer
+// in memory that empties on every restart — is the "in-memory activity
+// history". That feed is never called an audit trail, because the name
+// promises a durable record Sharko does not keep.
+const (
+	retiredActivityTerm = "audit trail"
+	correctActivityTerm = "in-memory activity history"
+)
+
+// collectSwaggerDescriptions walks the whole document and returns every
+// description string in it, keyed by the JSON path it was found at. Every
+// depth, every map and every slice — the two descriptions that were wrong
+// once are not the interesting set; the next annotation somebody writes is.
+func collectSwaggerDescriptions(node any, path string, out map[string]string) {
+	switch n := node.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(n))
+		for k := range n {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			child := path + "/" + k
+			if s, ok := n[k].(string); ok && k == "description" {
+				out[child] = s
+				continue
+			}
+			collectSwaggerDescriptions(n[k], child, out)
+		}
+	case []any:
+		for i, v := range n {
+			collectSwaggerDescriptions(v, path+"/"+strconv.Itoa(i), out)
+		}
+	}
+}
+
+// TestAuditSwagger_NoDescriptionCallsTheActivityHistoryAnAuditTrail keeps the
+// retired term out of the published spec.
+//
+// MkDocs copies this same swagger.json into the built site as
+// api/openapi.json (docs/hooks/copy_openapi.py, wired in mkdocs.yml), so a
+// description here is public documentation, not an internal note. Two
+// annotations on the orchestrator's aggregate counters used to call the
+// memory-only feed an audit trail and shipped that wording to Read the Docs.
+//
+// This walks descriptions rather than the two known sites so that a new
+// annotation anywhere in the API cannot reintroduce the term quietly.
+func TestAuditSwagger_NoDescriptionCallsTheActivityHistoryAnAuditTrail(t *testing.T) {
+	doc := loadSwagger(t)
+
+	descriptions := make(map[string]string)
+	collectSwaggerDescriptions(doc, "", descriptions)
+	if len(descriptions) == 0 {
+		t.Fatalf("walked %s and found no description at all — a sweep that reads nothing "+
+			"passes on every document, including an empty one", swaggerJSONPath)
+	}
+	t.Logf("swept %d description strings in %s", len(descriptions), swaggerJSONPath)
+
+	paths := make([]string, 0, len(descriptions))
+	for p := range descriptions {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	for _, p := range paths {
+		if !strings.Contains(strings.ToLower(descriptions[p]), retiredActivityTerm) {
+			continue
+		}
+		t.Errorf("%s\nat JSON path %s\ncalls Sharko's memory-only Activity feed an %q. "+
+			"That feed keeps no durable record, so say %q instead.\n"+
+			"Fix the Go doc comment the description is generated from, then re-run\n"+
+			"  swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal\n"+
+			"The description reads:\n%s",
+			swaggerJSONPath, p, retiredActivityTerm, correctActivityTerm, descriptions[p])
 	}
 }
