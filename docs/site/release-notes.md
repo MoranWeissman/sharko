@@ -365,7 +365,7 @@ v3.0.0 is Sharko's **first public release** — the addon-management server for
 Kubernetes clusters, built on ArgoCD. Sharko is a guest on your ArgoCD: Git stays
 the source of truth, ArgoCD deploys the workloads, and Sharko owns the
 assignment-and-secrets layer between Git and your clusters, with a UI/API/CLI, an
-addon catalog, preview-before-change, and an audit trail on top.
+addon catalog, preview-before-change, and an in-memory activity history on top.
 
 ### Breaking changes
 
