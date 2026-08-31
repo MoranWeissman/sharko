@@ -179,11 +179,104 @@ const (
 	correctActivityTerm = "in-memory activity history"
 )
 
-// collectSwaggerDescriptions walks the whole document and returns every
-// description string in it, keyed by the JSON path it was found at. Every
-// depth, every map and every slice — the two descriptions that were wrong
-// once are not the interesting set; the next annotation somebody writes is.
-func collectSwaggerDescriptions(node any, path string, out map[string]string) {
+// swag writes three files from the same annotations and all three ship. A ban
+// proved in one of them while another still carries the wrong term is not a ban.
+const (
+	swaggerYAMLPath   = "../../docs/swagger/swagger.yaml"
+	swaggerDocsGoPath = "../../docs/swagger/docs.go"
+)
+
+// flattenWording collapses every run of whitespace — line breaks included — to
+// a single space and lowercases the result, so a phrase that got wrapped across
+// two lines still reads as one phrase.
+//
+// This is not a nicety. swag copies a Go doc comment's line breaks straight
+// into the description as real newline characters: 287 of the 1403 descriptions
+// in swagger.json carry at least one. Go comments wrap around column 72, so a
+// two-word phrase landing on a line boundary is ordinary rather than exotic.
+// Redoc and Swagger UI reflow those breaks into one visible paragraph, so the
+// raw string is not what a reader sees, and a literal single-space match cannot
+// see "audit" + newline + "trail" at all — the term ships and the guard stays
+// silent.
+//
+// Same mechanism as flattenForWording in
+// tests/serverrender/bf12_banned_wording_test.go, which this repository added
+// after the identical failure over there. It does NOT strip comment markers the
+// way that helper does, and does not need to: swag drops the "// " prefix when
+// it reads a doc comment, so no description value or generated file carries one.
+func flattenWording(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// flattenEscapedWording is flattenWording for a file read as RAW TEXT, where a
+// line break inside a string may be the TWO characters backslash-n and so is
+// not whitespace at all. It treats those escapes as whitespace as well.
+//
+// All three generated files need this, for two different reasons:
+//
+//   - swagger.json and docs.go: JSON encodes a newline inside a string as the
+//     two-character escape, and docs.go holds that same JSON inside a Go RAW
+//     string literal, so the escapes survive as literal character pairs in both.
+//   - swagger.yaml: descriptions are |- block scalars holding real newlines, so
+//     whitespace collapsing is enough — but a double-quoted YAML scalar could
+//     carry the escape too, and treating it as a break there is also correct.
+//
+// Collapsing whitespace alone leaves "audit\ntrail" as one unreadable word, so a
+// check built that way is blind in exactly the files it was added for. Proved by
+// experiment, not assumed: with the phrase planted and regenerated, the raw
+// single-space term count was 0 in all three files and every break was an escape
+// in two of them.
+func flattenEscapedWording(s string) string {
+	for _, escape := range []string{`\r\n`, `\n`, `\r`, `\t`} {
+		s = strings.ReplaceAll(s, escape, " ")
+	}
+	return flattenWording(s)
+}
+
+// retiredTermHit reports the flattened text around where a generated file's raw
+// body says the retired term, or "" if it does not say it.
+//
+// The sweep over the generated files and the regression fixture below both call
+// THIS function, so the fixture pins the matcher that really runs rather than a
+// copy of its logic. There is deliberately no per-file choice of normalisation:
+// one escape-aware pass covers every shape any of the three files can hold, and
+// a routing table is one more thing that can send a file to the blind matcher.
+func retiredTermHit(body string) string {
+	flat := flattenEscapedWording(body)
+	i := strings.Index(flat, retiredActivityTerm)
+	if i < 0 {
+		return ""
+	}
+	from := i - 120
+	if from < 0 {
+		from = 0
+	}
+	to := i + len(retiredActivityTerm) + 120
+	if to > len(flat) {
+		to = len(flat)
+	}
+	return flat[from:to]
+}
+
+// swaggerDescription is one description string and the JSON path it was found at.
+type swaggerDescription struct {
+	path string
+	text string
+}
+
+// collectSwaggerDescriptions walks the whole document and appends every
+// description string in it, with the JSON path it was found at. Every depth,
+// every map and every slice — the two descriptions that were wrong once are not
+// the interesting set; the next annotation somebody writes is.
+//
+// A slice and not a map keyed by path: OpenAPI path keys contain literal
+// slashes, so "/paths" + "/" + "/audit" renders as "/paths//audit" and two
+// different JSON locations could render to one key. A map would silently
+// discard one of them, and a discarded description is never checked. The swept
+// count is quoted as evidence in the log line below, and a count that is
+// silently a lower bound is not evidence. Map keys are sorted before recursing,
+// so the order stays deterministic.
+func collectSwaggerDescriptions(node any, path string, out *[]swaggerDescription) {
 	switch n := node.(type) {
 	case map[string]any:
 		keys := make([]string, 0, len(n))
@@ -194,7 +287,7 @@ func collectSwaggerDescriptions(node any, path string, out map[string]string) {
 		for _, k := range keys {
 			child := path + "/" + k
 			if s, ok := n[k].(string); ok && k == "description" {
-				out[child] = s
+				*out = append(*out, swaggerDescription{path: child, text: s})
 				continue
 			}
 			collectSwaggerDescriptions(n[k], child, out)
@@ -220,22 +313,18 @@ func collectSwaggerDescriptions(node any, path string, out map[string]string) {
 func TestAuditSwagger_NoDescriptionCallsTheActivityHistoryAnAuditTrail(t *testing.T) {
 	doc := loadSwagger(t)
 
-	descriptions := make(map[string]string)
-	collectSwaggerDescriptions(doc, "", descriptions)
+	var descriptions []swaggerDescription
+	collectSwaggerDescriptions(doc, "", &descriptions)
 	if len(descriptions) == 0 {
 		t.Fatalf("walked %s and found no description at all — a sweep that reads nothing "+
 			"passes on every document, including an empty one", swaggerJSONPath)
 	}
 	t.Logf("swept %d description strings in %s", len(descriptions), swaggerJSONPath)
 
-	paths := make([]string, 0, len(descriptions))
-	for p := range descriptions {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-
-	for _, p := range paths {
-		if !strings.Contains(strings.ToLower(descriptions[p]), retiredActivityTerm) {
+	for _, d := range descriptions {
+		// Flattened, not raw: swag keeps the doc comment's line breaks, so the
+		// term arrives split across two lines as often as not. See flattenWording.
+		if !strings.Contains(flattenWording(d.text), retiredActivityTerm) {
 			continue
 		}
 		t.Errorf("%s\nat JSON path %s\ncalls Sharko's memory-only Activity feed an %q. "+
@@ -243,6 +332,190 @@ func TestAuditSwagger_NoDescriptionCallsTheActivityHistoryAnAuditTrail(t *testin
 			"Fix the Go doc comment the description is generated from, then re-run\n"+
 			"  swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal\n"+
 			"The description reads:\n%s",
-			swaggerJSONPath, p, retiredActivityTerm, correctActivityTerm, descriptions[p])
+			swaggerJSONPath, d.path, retiredActivityTerm, correctActivityTerm, d.text)
+	}
+}
+
+// TestAuditSwagger_TheActivityHistoryIsNamedInTheSpec is the other half of the
+// ban, and the half that was missing.
+//
+// A check that only forbids the wrong words is satisfied by saying nothing.
+// Delete the sentence, or blur it into something vague, and the sweep above
+// stays green — so the wording it exists to protect is not actually protected.
+// This repository has been burned by that exact shape before: a wrong
+// explanation survived four rounds of review because its only test asserted the
+// text was not empty.
+//
+// So: name the two places the correct term really lives and require it there.
+// This is also what makes the constant's name honest — before this,
+// correctActivityTerm appeared in one place only, the text of a failure message.
+func TestAuditSwagger_TheActivityHistoryIsNamedInTheSpec(t *testing.T) {
+	doc := loadSwagger(t)
+
+	var descriptions []swaggerDescription
+	collectSwaggerDescriptions(doc, "", &descriptions)
+
+	// The two aggregate-counter descriptions whose wording this whole change is
+	// about. Both explain that fanout.Count feeds four surfaces, and both have
+	// to name the memory-only feed by what it is.
+	const defPrefix = "/definitions/github_com_MoranWeissman_sharko_internal_orchestrator."
+	for _, want := range []string{
+		defPrefix + "AdoptClustersResult/properties/outcome/description",
+		defPrefix + "BatchResult/properties/outcome/description",
+	} {
+		found := false
+		for _, d := range descriptions {
+			if d.path != want {
+				continue
+			}
+			found = true
+			// Flattened for the same reason as the ban: the term sits one word
+			// after a line break in both descriptions today, and any re-wrap at
+			// a different column splits the term itself.
+			if !strings.Contains(flattenWording(d.text), correctActivityTerm) {
+				t.Errorf("%s\nat JSON path %s\nno longer says %q.\n"+
+					"Sharko's Activity feed is a ring buffer in memory that empties on every "+
+					"restart, and this description is one of only two places the published spec "+
+					"says so. Do not remove it and do not soften it into something vaguer — a "+
+					"client author reads this instead of the source.\n"+
+					"The description reads:\n%s",
+					swaggerJSONPath, want, correctActivityTerm, d.text)
+			}
+		}
+		if !found {
+			t.Errorf("%s has no description at JSON path %s at all.\n"+
+				"Either the field or the type was renamed — in which case fix this path — or the "+
+				"documented explanation of the in-memory Activity feed was dropped, which is the "+
+				"regression this test exists to catch.", swaggerJSONPath, want)
+		}
+	}
+}
+
+// TestAuditSwagger_NoGeneratedSwaggerFileSaysAuditTrail closes the gap the
+// description sweep cannot: that sweep parses swagger.json, and swag writes
+// THREE files from the same annotations. All three are committed and all three
+// ship, so the ban has to hold in every one of them — otherwise it can be
+// satisfied in one generated file while another still carries the wrong term.
+//
+// A hand-edit to one file does get caught in CI, by the separate job that
+// regenerates all three and diffs the directory. Nothing local caught it, which
+// is why go test could pass with the retired term live in swagger.yaml.
+//
+// These are read as raw text, not parsed. The point is that the bytes that ship
+// do not carry the phrase, whatever structure holds it.
+func TestAuditSwagger_NoGeneratedSwaggerFileSaysAuditTrail(t *testing.T) {
+	for _, path := range []string{swaggerJSONPath, swaggerYAMLPath, swaggerDocsGoPath} {
+		body, err := os.ReadFile(filepath.Clean(path))
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if len(body) == 0 {
+			t.Fatalf("%s is empty — a sweep over nothing passes on every file", path)
+		}
+		t.Logf("swept %d bytes of %s", len(body), path)
+
+		if hit := retiredTermHit(string(body)); hit != "" {
+			t.Errorf("%s calls Sharko's memory-only Activity feed an %q. That feed keeps no "+
+				"durable record, so say %q instead.\n"+
+				"Fix the Go doc comment the text is generated from — never this file — then re-run\n"+
+				"  swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal\n"+
+				"Flattened text around the hit:\n%s",
+				path, retiredActivityTerm, correctActivityTerm, hit)
+		}
+	}
+}
+
+// TestAuditSwagger_TheWordingCheckSeesALineBreak pins the hole that made the
+// first version of this guard useless, so the fix cannot rot back out.
+//
+// What happened: the check was a literal single-space match, a reviewer planted
+// "the audit\ntrail" into a Go doc comment, regenerated, and the guard swept
+// 1403 descriptions and said nothing while all three generated files shipped the
+// phrase.
+//
+// Every body below is a shape taken from a real generated file after planting
+// that phrase and regenerating — including which files encode the break as an
+// escape rather than as whitespace, because that was measured and not assumed.
+// Each case goes through retiredTermHit, the function the sweep actually calls,
+// rather than a copy of its logic: a fixture that tests a duplicate protects
+// nothing.
+func TestAuditSwagger_TheWordingCheckSeesALineBreak(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fromFile string
+		body     string
+		want     bool
+	}{
+		{
+			// The shape swagger.json really ships. JSON has no literal newline
+			// inside a string, so swag's copy of the doc comment break arrives as
+			// the two characters backslash-n — not as whitespace.
+			name:     "json, two-character newline escape",
+			fromFile: swaggerJSONPath,
+			body:     `"description": "Counted from results[].status by fanout.Count, which the audit\ntrail, the printed summary and the CLI's exit code all read."`,
+			want:     true,
+		},
+		{
+			// The shape swagger.yaml really ships: |- block scalars, so the break
+			// is a real newline plus about ten spaces of indent.
+			name:     "yaml, real newline plus block-scalar indent",
+			fromFile: swaggerYAMLPath,
+			body: "        description: |-\n          Counted from results[].status, which the audit\n" +
+				"          trail and the printed summary both read.",
+			want: true,
+		},
+		{
+			// docs.go holds that same JSON inside a Go RAW string literal, so the
+			// escapes survive as literal character pairs there too.
+			name:     "docs.go, two-character newline escape in a raw string literal",
+			fromFile: swaggerDocsGoPath,
+			body:     `"description": "Counted from results[].status, which the audit\ntrail and the printed summary both read."`,
+			want:     true,
+		},
+		{
+			name:     "docs.go, newline escape followed by a tab escape",
+			fromFile: swaggerDocsGoPath,
+			body:     `"description": "which the audit\n\ttrail and the printed summary both read."`,
+			want:     true,
+		},
+		{
+			// A real newline has to be caught as well. swag writes the escape today,
+			// but the sweep reads whole files and nothing guarantees every future
+			// break arrives escaped.
+			name:     "a real newline, whatever wrote it",
+			fromFile: "any",
+			body:     "Counted from results[].status, which the audit\ntrail and the printed summary both read.",
+			want:     true,
+		},
+		{
+			// The ban stays narrow. "audit log" is the real name of a real endpoint
+			// (/api/v1/audit) and is not retired. Measured: it appears 7 times in
+			// each generated file, across 5 descriptions and 2 summaries — a check
+			// that flagged it would turn the build red for nothing.
+			name:     "audit log stays legal, wrapped across a real newline",
+			fromFile: swaggerYAMLPath,
+			body:     "Returns the audit\nlog for this server, newest entry first.",
+			want:     false,
+		},
+		{
+			name:     "audit log stays legal wrapped across an escape too",
+			fromFile: swaggerDocsGoPath,
+			body:     `"summary": "Query the audit\nlog"`,
+			want:     false,
+		},
+	} {
+		got := retiredTermHit(tc.body) != ""
+		if got == tc.want {
+			continue
+		}
+		if tc.want {
+			t.Errorf("%s: retiredTermHit missed the retired term in this shape from %s, so the "+
+				"guard is blind to a phrase that wrapped across two lines — the exact hole "+
+				"this fixture exists to hold shut:\n%s", tc.name, tc.fromFile, tc.body)
+			continue
+		}
+		t.Errorf("%s: retiredTermHit flagged text that is allowed. Only the two-word phrase "+
+			"%q is banned; %q is the real name of a real endpoint and must stay legal:\n%s",
+			tc.name, retiredActivityTerm, "audit log", tc.body)
 	}
 }
