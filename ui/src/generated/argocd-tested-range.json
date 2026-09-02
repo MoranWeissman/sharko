@@ -1,10 +1,10 @@
 {
-  "tested_min": "v3.2",
-  "tested_max": "v3.4",
+  "tested_min": "v3.3",
+  "tested_max": "v3.5",
   "tested_versions": [
-    "v3.2.12",
-    "v3.3.12",
-    "v3.4.4"
+    "v3.3.14",
+    "v3.4.8",
+    "v3.5.2"
   ],
-  "updated": "2026-07-05"
+  "updated": "2026-08-31"
 }
