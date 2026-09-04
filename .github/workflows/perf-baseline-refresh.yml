@@ -208,7 +208,7 @@ jobs:
       # the stable major as of 2026; bump in lockstep with other
       # repos when the team is ready to absorb the change.
       - name: Create chore PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: chore/perf-baselines-refresh-${{ github.run_number }}
