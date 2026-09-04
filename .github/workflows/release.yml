@@ -535,7 +535,7 @@ jobs:
       # addons.yaml` bakes the signed bytes into the image. Mutation is
       # confined to this runner workspace; never committed back.
       - name: Download signed catalog artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: signed-catalog
           path: _dist/catalog/
@@ -884,7 +884,7 @@ jobs:
       # to the GitHub release via .goreleaser.yaml's release.extra_files
       # glob.
       - name: Download signed catalog artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: signed-catalog
           path: _dist/catalog/
