@@ -460,7 +460,6 @@ func TestDocsWording_NoAuditTrailOnSharkoPages(t *testing.T) {
 	// are not swept by this test.
 	auditTrailAllowed := map[string]string{
 		"docs/site/operator/auth-bypass.md": "means the reader's own audit trails, not Sharko's",
-		"docs/site/release-notes.md":        "release history — ruled untouchable",
 	}
 
 	// Walk all markdown and code files under docs/site/ and other roots.
@@ -495,11 +494,12 @@ func TestDocsWording_NoAuditTrailOnSharkoPages(t *testing.T) {
 				break
 			}
 		}
-		if allowed {
-			allowanceUsed[allowedKey] = true
-			continue
-		}
 
+		// Scan the file regardless of whether it's allowed. We mark an
+		// allowance "used" only when the file actually contains a banned
+		// phrase that the allowance is excusing, not when we merely
+		// encounter an allowlisted file. This keeps the stale-allowance
+		// check honest: an allowance that excuses nothing fails the test.
 		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatalf("reading %s: %v", rel, err)
@@ -512,7 +512,14 @@ func TestDocsWording_NoAuditTrailOnSharkoPages(t *testing.T) {
 			// "audit-trail" via `audit[\s-]+trail`.
 			flattened := flattenWording(prose.readable)
 			if retiredActivityTermPattern.MatchString(flattened) {
-				banned = append(banned, hit{rel, prose.number, strings.TrimSpace(prose.raw)})
+				if allowed {
+					// This allowance is actually being used to excuse a hit.
+					allowanceUsed[allowedKey] = true
+					// Don't report this hit.
+				} else {
+					// Not allowed, report it.
+					banned = append(banned, hit{rel, prose.number, strings.TrimSpace(prose.raw)})
+				}
 			}
 		}
 	}
