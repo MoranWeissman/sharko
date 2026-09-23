@@ -427,3 +427,167 @@ func TestDocsWording_UsesTheServerRulesAndTheSharedWalker(t *testing.T) {
 		t.Errorf("the shared walker reported line %d for the last line, which is line 5 — a wrong line number sends whoever is fixing a hit to the wrong place", prose[len(prose)-1].number)
 	}
 }
+
+// TestDocsWording_NoAuditTrailOnSharkoPages bans the retired "audit trail"
+// wording from Sharko's own documentation, while allowing it where it means
+// the reader's own systems or historical records.
+//
+// The wording was retired on 2026-08-21 (PR #869): Sharko's in-memory
+// activity history is not a durable audit trail, and calling it one misleads
+// readers about what durability they get. The product owner approved the
+// replacement "the gap in the activity history" on 2026-09-23.
+//
+// This guards BOTH spellings — "audit trail" (spaced) and "audit-trail"
+// (hyphenated) — because every sweep in the PR #869 round searched only for
+// the spaced form and missed two hyphenated instances that survived until
+// measured by hand against the live search index.
+//
+// Ban and pin together: a ban with no pin is satisfied by deleting the
+// sentence, which this project has been burned by before (a wrong explanation
+// survived four review rounds because its only test asserted text != ""). So
+// the test also pins the replacement text at the two places it now belongs,
+// and fails if those locations disappear or blur.
+func TestDocsWording_NoAuditTrailOnSharkoPages(t *testing.T) {
+	root := repoRootForSweep(t)
+
+	// Allowlist: places where "audit trail" is legitimate and must stay.
+	// Each is an exact file path relative to repo root, or a directory prefix
+	// ending in / to cover everything under it.
+	//
+	// This test walks README.md and docs/site/ (via docsGitRoots), so only
+	// files in those trees are included. Other legitimate uses outside those
+	// trees (SECURITY.md, .bmad/, docs/design/, ui/ code comments, .claude/skills/)
+	// are not swept by this test.
+	auditTrailAllowed := map[string]string{
+		"docs/site/operator/auth-bypass.md": "means the reader's own audit trails, not Sharko's",
+		"docs/site/release-notes.md":        "release history — ruled untouchable",
+	}
+
+	// Walk all markdown and code files under docs/site/ and other roots.
+	// For now, sweep docs/site/ where the two fixed instances lived.
+	files := docsMarkdownFiles(t, root)
+	if len(files) == 0 {
+		t.Fatal("no markdown to walk — this guard would pass vacuously")
+	}
+
+	type hit struct {
+		file string
+		line int
+		text string
+	}
+	var banned []hit
+	allowanceUsed := map[string]bool{}
+
+	for _, rel := range files {
+		// Check if this file is on the allowlist.
+		allowed := false
+		allowedKey := ""
+		for key := range auditTrailAllowed {
+			if strings.HasSuffix(key, "/") {
+				if strings.HasPrefix(rel, key) {
+					allowed = true
+					allowedKey = key
+					break
+				}
+			} else if rel == key {
+				allowed = true
+				allowedKey = key
+				break
+			}
+		}
+		if allowed {
+			allowanceUsed[allowedKey] = true
+			continue
+		}
+
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+
+		// Check each prose line (code blocks are skipped by markdownProse).
+		for _, prose := range markdownProse(string(body)) {
+			// Flatten: collapse whitespace, lowercase. Do NOT treat hyphen as
+			// whitespace — the pattern handles both "audit trail" and
+			// "audit-trail" via `audit[\s-]+trail`.
+			flattened := flattenWording(prose.readable)
+			if retiredActivityTermPattern.MatchString(flattened) {
+				banned = append(banned, hit{rel, prose.number, strings.TrimSpace(prose.raw)})
+			}
+		}
+	}
+
+	if len(banned) > 0 {
+		lines := make([]string, 0, len(banned))
+		for _, h := range banned {
+			lines = append(lines, "  "+h.file+":"+itoa(h.line)+"\n    "+h.text)
+		}
+		sort.Strings(lines)
+		t.Errorf("%d line(s) of Sharko's own documentation call the in-memory activity history an\n"+
+			"\"audit trail\". That wording was retired on 2026-08-21 because Sharko's feed is not a\n"+
+			"durable record. The product owner approved the replacement \"the gap in the activity\n"+
+			"history\" on 2026-09-23. Fix:\n\n%s\n\n"+
+			"If this is legitimately about the reader's own systems (like auth-bypass.md) or a\n"+
+			"historical record, add the path to auditTrailAllowed in this test with the reason.",
+			len(banned), strings.Join(lines, "\n"))
+	}
+
+	// Stale allowances: fail if an allowance catches nothing. Prevents the list
+	// from quietly growing into a hole.
+	var stale []string
+	for key, reason := range auditTrailAllowed {
+		if !allowanceUsed[key] {
+			stale = append(stale, "  "+key+" — reason: "+reason)
+		}
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		t.Errorf("these audit-trail allowances no longer excuse anything — remove them:\n%s",
+			strings.Join(stale, "\n"))
+	}
+
+	// Pin the replacement text at the two locations. A ban-only guard is
+	// satisfied by deleting the sentence. This project was burned by that
+	// exact hole before (a wrong explanation survived four rounds because its
+	// only test asserted != "").
+	pinned := map[string]string{
+		"docs/site/operator/argocd-pr-merge-no-converge.md": "" +
+			"The gap in the activity history is the canonical signal: PR merge succeeded, secret " +
+			"creation never happened. (line ~67, Symptoms section)",
+	}
+
+	for file, desc := range pinned {
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			t.Fatalf("reading %s to verify pinned text: %v", file, err)
+		}
+		// Flatten to catch wrapped lines.
+		flattened := flattenWording(string(body))
+		// The exact phrase, also flattened.
+		want := flattenWording("The gap in the activity history is the canonical signal")
+		if !strings.Contains(flattened, want) {
+			t.Errorf("%s no longer contains the pinned replacement text:\n"+
+				"  %s\n"+
+				"This text is one of two places Sharko's documentation says what the missing\n"+
+				"activity event means. Do not delete it or blur it into something vaguer — the\n"+
+				"operator reading this runbook needs the specific signal named.",
+				file, desc)
+		}
+	}
+
+	// Second pinned location: the monitoring heading.
+	file2 := "docs/site/operator/argocd-pr-merge-no-converge.md"
+	body2, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file2)))
+	if err != nil {
+		t.Fatalf("reading %s to verify second pinned text: %v", file2, err)
+	}
+	flattened2 := flattenWording(string(body2))
+	want2 := flattenWording("Monitoring — alert on the gap in the activity history")
+	if !strings.Contains(flattened2, want2) {
+		t.Errorf("%s no longer contains the second pinned replacement text:\n"+
+			"  \"Monitoring — alert on the gap in the activity history\" (line ~385, Prevention section)\n"+
+			"This heading names the signal the monitoring rule would watch for. Do not delete it\n"+
+			"or soften it into something vaguer.",
+			file2)
+	}
+}
