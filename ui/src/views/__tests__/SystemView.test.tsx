@@ -24,6 +24,23 @@ import SystemView, {
 } from '@/views/SystemView'
 import type { Cluster } from '@/services/models'
 import type { RepoStatusReason } from '@/services/api'
+import testedRange from '@/generated/argocd-tested-range.json'
+
+// Derive version fixtures from the generated range file so the test cannot
+// drift out of range when the weekly bot moves the range.
+function getInRangeVersion(): string {
+  // Use the first tested_versions entry — this is a real patch version the
+  // matrix actually passed against.
+  return testedRange.tested_versions[0]
+}
+
+function getOutOfRangeVersion(): string {
+  // Compute a version guaranteed outside the range by taking the tested_max
+  // major.minor and bumping the major by 6 (v3.x → v9.x).
+  const parsed = parseMajorMinor(testedRange.tested_max)
+  if (!parsed) return 'v9.9.1' // Fallback if parse fails (should never happen)
+  return `v${parsed.major + 6}.${parsed.minor}.1`
+}
 
 const mockGetSystemCapabilities = vi.fn()
 // ManagedSecretsSummaryLine (S1 — rendered at the bottom of SystemView,
@@ -106,7 +123,7 @@ function mockAll({
   repo = { initialized: true, bootstrap_synced: true },
   clusters = [],
   notifications = [],
-  argocdVersion = 'v3.2.2',
+  argocdVersion = getInRangeVersion(),
   capabilities = { aws: { detected: false, method: 'none' }, hub_platform: 'unknown' },
   homeCluster = { available: false, message: 'only available when running in-cluster' },
   sharkoVersion,
@@ -419,13 +436,14 @@ describe('testedRangeLabel', () => {
 
 describe('SystemView', () => {
   it('renders all four arrows healthy when everything is fine', async () => {
+    const inRangeVersion = getInRangeVersion()
     mockAll({
       repo: { initialized: true, bootstrap_synced: true },
       clusters: [
         { name: 'prod-1', labels: {}, connection_status: 'Successful', sharko_status: 'Connected' },
         { name: 'prod-2', labels: {}, connection_status: 'Successful', sharko_status: 'Verified' },
       ],
-      argocdVersion: 'v3.2.2',
+      argocdVersion: inRangeVersion,
     })
     renderPage()
 
@@ -446,8 +464,7 @@ describe('SystemView', () => {
       expect(within(line).getByText('2 healthy').className).toContain('text-green-700')
     })
     // Detected version shown once, no "outside the tested range" warning
-    // (v3.2 is in range)
-    expect(screen.getByText('ArgoCD v3.2.2 detected')).toBeInTheDocument()
+    expect(screen.getByText(`ArgoCD ${inRangeVersion} detected`)).toBeInTheDocument()
     expect(screen.queryByText(/outside the tested range/)).not.toBeInTheDocument()
   })
 
@@ -537,7 +554,7 @@ describe('SystemView', () => {
     mockAll({
       repo: { initialized: true, bootstrap_synced: false, reason: 'bootstrap_unreachable' },
       clusters: [],
-      argocdVersion: 'v3.2.2',
+      argocdVersion: getInRangeVersion(),
     })
     renderPage()
 
@@ -547,12 +564,13 @@ describe('SystemView', () => {
   })
 
   it('says the ArgoCD version once, with an amber warning, when it is outside the tested range', async () => {
-    mockAll({ argocdVersion: 'v9.9.1' })
+    const outOfRangeVersion = getOutOfRangeVersion()
+    mockAll({ argocdVersion: outOfRangeVersion })
     renderPage()
 
     // The full detected version, said exactly once — no separate near-duplicate line.
-    await waitFor(() => expect(screen.getByText('ArgoCD v9.9.1 detected')).toBeInTheDocument())
-    expect(screen.getAllByText('ArgoCD v9.9.1 detected')).toHaveLength(1)
+    await waitFor(() => expect(screen.getByText(`ArgoCD ${outOfRangeVersion} detected`)).toBeInTheDocument())
+    expect(screen.getAllByText(`ArgoCD ${outOfRangeVersion} detected`)).toHaveLength(1)
 
     const versionLine = screen.getByTestId('argocd-version-line')
     expect(versionLine.className).toContain('text-amber-700')
@@ -765,8 +783,9 @@ describe('SystemView — Sharko identity section (V2-cleanup-89.2)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('SystemView — home-cluster identity card (WQ-3)', () => {
   it('renders the card with Sharko/ArgoCD/Kubernetes versions and uptime', async () => {
+    const inRangeVersion = getInRangeVersion()
     mockAll({
-      argocdVersion: 'v3.2.2',
+      argocdVersion: inRangeVersion,
       homeCluster: { available: true, kubernetes_version: 'v1.29.0', node_count: 3, nodes_ready: 3 },
       sharkoVersion: '4.2.0',
       uptime: '3h12m',
@@ -776,11 +795,11 @@ describe('SystemView — home-cluster identity card (WQ-3)', () => {
     await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
     expect(await screen.findByText("Sharko's home cluster")).toBeInTheDocument()
     expect(screen.getByText('4.2.0')).toBeInTheDocument()
-    // ONE ArgoCD version source (WQ-3): the same "v3.2.2" the tested-range
+    // ONE ArgoCD version source (WQ-3): the same version the tested-range
     // banner above shows also appears in the card — never a contradicting
     // second value.
-    expect(screen.getByText('ArgoCD v3.2.2 detected')).toBeInTheDocument()
-    expect(screen.getByText('v3.2.2')).toBeInTheDocument()
+    expect(screen.getByText(`ArgoCD ${inRangeVersion} detected`)).toBeInTheDocument()
+    expect(screen.getByText(inRangeVersion)).toBeInTheDocument()
     expect(screen.getByText('v1.29.0')).toBeInTheDocument()
     expect(screen.getByText('all nodes ready')).toBeInTheDocument()
     expect(screen.getByText(/up 3h12m/)).toBeInTheDocument()
