@@ -117,7 +117,8 @@ func isExemptDocPath(rel string) bool {
 // it, with the label matchers actually written on that selector. ok is
 // false when expr is not parseable PromQL at all.
 func refsFromPromQL(expr string) (refs []reference, ok bool) {
-	parsed, err := parser.ParseExpr(expr)
+	p := parser.NewParser(parser.Options{})
+	parsed, err := p.ParseExpr(expr)
 	if err != nil {
 		return nil, false
 	}
