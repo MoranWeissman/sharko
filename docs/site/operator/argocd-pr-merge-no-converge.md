@@ -10,6 +10,7 @@
 > [`cluster-reconciler.md`](cluster-reconciler.md). A merged PR triggers
 > a reconcile immediately, rather than waiting for the next tick.
 > Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+> Reviewed 2026-09-23 — wording only; no step in this runbook changed.
 
 A cluster (or addon) registration's PR was merged. The audit log shows
 `pr_merged`. The Sharko API view of the cluster says `managed: true`.
@@ -63,8 +64,8 @@ What an operator sees when this fires:
   bounds the worst case. Two minutes without convergence is the
   threshold for "this is broken, not slow."
 - **No matching `cluster_secret_create` audit event** for the same
-  cluster. The audit-trail break is the canonical signal: PR merge
-  succeeded, secret creation never happened.
+  cluster. The gap in the activity history is the canonical signal: PR
+  merge succeeded, secret creation never happened.
 - **Alerts that may fire**:
   - `SharkoClusterRegistrationFastBurn` once registrations have
     sustained-failed (5m+1h windows). See
@@ -381,9 +382,9 @@ change you intended to keep:
 
 ## Prevention
 
-- **Monitoring — alert on the audit-trail break.** Sharko does not
-  export this metric today. The alert below is a design sketch for a
-  future release, not something you can deploy now. The sketch: a rule
+- **Monitoring — alert on the gap in the activity history.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. The sketch: a rule
   that watches for `pr_merged` events without a corresponding
   `cluster_secret_create` within 90 seconds —
 
