@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { NotificationBell } from '@/components/NotificationBell';
 
@@ -236,6 +237,7 @@ describe('NotificationBell — dropdown keyboard behavior (V2-cleanup-61.4, G2)'
   });
 
   it('closes on outside click', async () => {
+    const user = userEvent.setup();
     renderBell();
 
     fireEvent.click(screen.getByLabelText('Notifications'));
@@ -243,7 +245,11 @@ describe('NotificationBell — dropdown keyboard behavior (V2-cleanup-61.4, G2)'
       expect(screen.getByText('No notifications')).toBeInTheDocument();
     });
 
-    fireEvent.pointerDown(document.body);
+    // radix-ui 1.6.7 changed dismissable layer behavior to properly handle
+    // nested popovers — it now requires the full click event sequence
+    // (pointerdown → mousedown → mouseup → click), not just a lone
+    // pointerdown. userEvent.click() simulates what a real browser fires.
+    await user.click(document.body);
 
     await waitFor(() => {
       expect(screen.queryByText('No notifications')).not.toBeInTheDocument();
