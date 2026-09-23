@@ -94,7 +94,7 @@ jobs:
 
       - name: Publish test results
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         with:
           name: E2E Test Results
           path: _dist/e2e-junit.xml
