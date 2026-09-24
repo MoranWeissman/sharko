@@ -605,16 +605,52 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
+      # Two tag lists, pushed at two different times, and the split is the
+      # whole point.
+      #
+      # `meta` holds only the tags that belong to ONE version and never move:
+      # 4.0.2 and v4.0.2. Those go out with the build, because the image has
+      # to be in the registry before syft can scan it by digest and before
+      # cosign can attest it — so publishing them early is not a choice, it is
+      # what the evidence steps below are built on.
+      #
+      # `meta_moving` holds the three tags that MOVE from one release to the
+      # next — latest, 4.0 and 4 — and they are applied at the END of this job,
+      # after the image SBOM evidence has passed. See "Apply the moving tags"
+      # for what that buys and what it does not.
+      #
+      # flavor: latest=false is LOAD-BEARING on the immutable list, and not
+      # obviously so. metadata-action defaults to latest=auto, and for a
+      # non-prerelease semver version that means the action adds `latest` on
+      # its own — the `type=raw,value=latest` line this list used to carry was
+      # never what produced it. Deleting that line alone would have left
+      # `latest` in this list and changed nothing at all. Only latest=false
+      # actually holds it back.
+      - name: Extract Docker metadata (immutable tags only)
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ steps.version.outputs.TAG }}
+            type=semver,pattern=v{{version}},value=${{ steps.version.outputs.TAG }}
+
+      # The moving tags, computed here so the semver parsing stays in the
+      # action rather than becoming shell, and applied later. latest=false
+      # again, with `latest` listed explicitly instead: this list must be
+      # exactly the three moving tags whatever the action's defaults do.
+      - name: Extract the moving Docker tags
+        id: meta_moving
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.TAG }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.TAG }}
-            type=semver,pattern=v{{version}},value=${{ steps.version.outputs.TAG }}
             type=raw,value=latest
 
       - name: Set up Docker Buildx
@@ -701,6 +737,14 @@ jobs:
           # Sign by digest so each tag pointing at the same digest shares
           # one signature in Rekor. Iterate the tags only to provide
           # operator-friendly verify commands in the run log.
+          #
+          # $TAGS is the IMMUTABLE list, because the moving tags do not exist
+          # yet at this point in the job. They need no signature of their own:
+          # "Apply the moving tags" below points each of them at this same
+          # index digest and proves the digest is unchanged, and a cosign
+          # signature lives against the digest rather than against a tag name.
+          # So `cosign verify ghcr.io/moranweissman/sharko:latest` resolves
+          # latest to this digest and finds this signature.
           for tag in $TAGS; do
             echo "Signing $tag@${DIGEST}"
             cosign sign --yes "${tag}@${DIGEST}"
@@ -800,6 +844,132 @@ jobs:
           path: _dist/image-sboms/
           if-no-files-found: error
           retention-days: 7
+
+      # WHAT IS ALREADY PUBLIC BY THE TIME THIS STEP RUNS, and why the moving
+      # tags wait here while the immutable ones did not.
+      #
+      # Read this before writing anything anywhere that says a failed release
+      # run leaves nothing behind. For the image, that is not true.
+      #
+      # There are two completely different failure cases in this workflow and
+      # they must not be described in one sentence:
+      #
+      #   1. An evidence job fails or is skipped BEFORE anything publishes.
+      #      `release-evidence-gate` fans in the three cluster e2e jobs, the
+      #      perf gate and the strict docs build, `sign-catalog-entries` needs
+      #      it, this job needs that, and helm-package, helm-package-engine and
+      #      goreleaser all need this job. So it sits genuinely upstream of
+      #      every publish step, and its `if: always()` is there on purpose so
+      #      a SKIPPED evidence job counts as a failure too. In that case
+      #      nothing is published: no image, no tag of any kind, no chart, no
+      #      release page. "A failure prevents publication" is TRUE there.
+      #
+      #   2. A step inside THIS job fails after "Build and push image". By then
+      #      the immutable tags — 4.0.2 and v4.0.2 — are already in the public
+      #      registry, and so is the index digest they point at. Publishing
+      #      them early is not a choice: syft scans the image by digest out of
+      #      the registry and cosign attests a registry digest, so the image
+      #      has to be public before any of the evidence below it can run at
+      #      all. "A failure prevents publication" is FALSE there. What a
+      #      failure here does prevent is the rest: helm-package,
+      #      helm-package-engine and goreleaser all need this job, so a failure
+      #      leaves published container images with no GitHub release page, no
+      #      CLI archives and no published Helm chart.
+      #
+      # What holding the moving tags buys, stated without overselling it: a
+      # consumer who pulls `latest`, `4.0` or `4` never lands on a build whose
+      # image evidence failed, because those tags only ever move after this
+      # step. It does NOT make a failed run invisible — somebody who asked for
+      # 4.0.2 or v4.0.2 by name during the run already has it.
+      #
+      # RECOVERY, and the honest version of it. Retagging is forbidden in this
+      # project and published artifacts are preserved, so there is no move that
+      # repairs a half-published version in place. The recovery is to publish
+      # the next patch version. The operator-facing write-up of this — what is
+      # public, what is missing, what somebody who pulled in between is holding,
+      # and the order to do things in — is
+      # docs/site/operator/supply-chain.md, "If a release run stops part way
+      # through".
+      #
+      # HOW the tags are applied. `docker buildx imagetools create` writes new
+      # tags pointing at an index that is already in the registry; it does not
+      # rebuild and it does not re-push layers. Measured against a throwaway
+      # local registry with a two-platform index built the same way this job
+      # builds one (two real manifests plus two unknown/unknown attestation
+      # manifests): all three tags came back carrying the byte-identical index
+      # digest and all four manifests. The two checks below are not decoration
+      # — the same measurement showed that asking imagetools to retag a SINGLE
+      # architecture's manifest produces a fresh single-platform index rather
+      # than an error, which is exactly the silent regression that looks fine
+      # until somebody pulls on arm64.
+      - name: Apply the moving tags (latest, 4.0, 4)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          MOVING_TAGS: ${{ steps.meta_moving.outputs.tags }}
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+
+          # Read the newline-separated list into an array rather than relying
+          # on word splitting, so a tag is never silently split or globbed.
+          tags=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            tags+=("$tag")
+          done <<< "$MOVING_TAGS"
+
+          # An empty list would apply no moving tags and exit 0, so the release
+          # would publish with `latest` left pointing at the PREVIOUS version
+          # and nothing would say so. Fail instead.
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "::error::no moving tags were produced, so latest would be left pointing at the previous release"
+            exit 1
+          fi
+          if ! printf '%s\n' "${tags[@]}" | grep -qx "${IMAGE}:latest"; then
+            echo "::error::the moving tag list does not contain ${IMAGE}:latest"
+            printf '  got: %s\n' "${tags[@]}"
+            exit 1
+          fi
+
+          create_args=()
+          for tag in "${tags[@]}"; do
+            create_args+=(--tag "$tag")
+          done
+          echo "pointing ${#tags[@]} moving tag(s) at ${IMAGE}@${DIGEST}"
+          docker buildx imagetools create "${create_args[@]}" "${IMAGE}@${DIGEST}"
+
+          # Prove what was just done, rather than trusting the tool's exit
+          # code. Both checks matter and they catch different things.
+          for tag in "${tags[@]}"; do
+            raw=$(mktemp)
+            docker buildx imagetools inspect --raw "$tag" > "$raw"
+
+            # A digest IS the sha256 of the manifest bytes, so hashing what the
+            # registry returns for the tag gives the digest the tag resolves
+            # to, with no template support needed. Equality proves the index
+            # was copied rather than rebuilt — which also means the cosign
+            # signature made against this digest covers the tag.
+            got="sha256:$(sha256sum "$raw" | cut -d' ' -f1)"
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::${tag} resolves to ${got}, not the built index ${DIGEST}. The index was rebuilt rather than copied, so the image signature made against ${DIGEST} does not cover this tag."
+              exit 1
+            fi
+
+            # And the property an operator actually depends on, asserted
+            # directly instead of inferred: both architectures are still in
+            # the index behind the tag.
+            for arch in amd64 arm64; do
+              if ! jq -e --arg a "$arch" \
+                  '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $a)] | length > 0' \
+                  "$raw" > /dev/null; then
+                echo "::error::${tag} does not list linux/${arch}. A multi-architecture index was flattened to one architecture."
+                exit 1
+              fi
+            done
+
+            echo "  OK ${tag} -> ${got}, linux/amd64 and linux/arm64 both present"
+            rm -f "$raw"
+          done
 
   helm-package:
     name: Package & Push Helm Chart

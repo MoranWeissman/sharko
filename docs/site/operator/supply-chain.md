@@ -156,6 +156,76 @@ Treat it as a critical signal — do not deploy:
 2. Re-fetch the artifact from the release page in case of partial download.
 3. If the failure persists, file an issue with the cosign output. Do not work around verification by ignoring the error.
 
+## If a release run stops part way through
+
+A release run publishes in stages, so a run that fails does not always leave
+the registry and the releases page untouched. Which stage it got to decides what
+is public, and there are two quite different cases. Treating them as one case is
+how people come to believe a failed run is always harmless.
+
+**Case 1 — the run stops before anything publishes.** Every publishing job in
+the release workflow sits behind one fan-in job, `release-evidence-gate`. It
+collects the three cluster end-to-end suites, the performance-regression check
+and the strict documentation build, and it is written so that a suite which gets
+skipped counts the same as a suite that failed. Catalogue signing, the container
+image, both Helm charts and the CLI archives are all downstream of it. **For
+that gate, a failure really does prevent publication:** no image, no tag of any
+sort, no chart, no release page.
+
+**Case 2 — the run stops after the container image has been pushed.** The image
+has to be in the registry before its SBOM can be built, because syft scans it by
+digest out of the registry and `cosign attest` signs a registry digest. So by
+the time the image evidence steps run, that version's own fixed tags — `X.Y.Z`
+and `vX.Y.Z` — are already public, together with the index digest they point at.
+**For those steps, a failure does not prevent publication.** What it does stop
+is everything after the image: the GitHub release page, the CLI archives and
+both published Helm charts.
+
+The moving tags are held back for exactly this case. `latest`, `X.Y` and `X` are
+applied as the last thing the image job does, after the SBOM has been generated,
+checked for both Alpine packages and Go modules, tied to the per-architecture
+digest and attested. So a pull of `latest` does not land on a build whose image
+evidence failed. Somebody who asked for `X.Y.Z` by name while the run was still
+going is a different matter — they have it.
+
+### What is public after a case-2 failure
+
+| What you asked for | What you get |
+|---|---|
+| `ghcr.io/moranweissman/sharko:X.Y.Z` or `:vX.Y.Z` | A real, signed, multi-architecture image. The signature and the transparency-log entry are genuine. |
+| `ghcr.io/moranweissman/sharko:latest`, `:X.Y`, `:X` | Unchanged — still pointing wherever the run before this one left them. |
+| The release page for that version, the CLI archives, `checksums.txt` and the archive SBOMs | None of it is published for that version. |
+| `oci://ghcr.io/moranweissman/sharko/sharko` and `.../sharko-engine` at that version | Not published for that version. |
+| The image SBOM | The attestation in the registry is there if the step that makes it got that far; the `.cdx.json` release asset is uploaded by the last job of the run, so a run that stopped earlier has no asset. |
+
+Which versions finished is answered by
+[the releases page](https://github.com/MoranWeissman/sharko/releases): a version
+with no release page there did not get past the image step, whatever tags the
+registry holds for it.
+
+### Recovery is the next patch version, not a repaired one
+
+There is no move that repairs a half-published version in place, and that is a
+rule this project holds to rather than a tooling limit: **a tag is never deleted
+and never moved to a different commit, and a published artifact is never
+replaced.** A version number describes one commit for good. So the recovery is:
+
+1. **Leave the published images alone.** Deleting or overwriting `X.Y.Z` breaks
+   anybody who already pulled it, and makes its signature and transparency-log
+   entry describe something that is no longer there.
+2. **Fix the cause on a branch.** The failed workflow run's own log says which
+   step stopped it.
+3. **Publish the next patch version**, `X.Y.Z+1`. That run produces the
+   complete set — images, release page, archives, charts, SBOMs — and it is the
+   run that moves `latest`, `X.Y` and `X` forward.
+4. **Write down what happened to the stranded version**, so the images sitting
+   under `X.Y.Z` are not mistaken for a finished release. The release-notes
+   entry for the replacement version is the place for that.
+
+If you are on the receiving end rather than cutting the release: pin to a
+version that has a release page, and read a registry tag with no matching
+release page as an unfinished run rather than as something you can deploy.
+
 ## The built-in catalogue's own signatures are a separate check
 
 Everything above is about verifying a release artifact **before** you run
