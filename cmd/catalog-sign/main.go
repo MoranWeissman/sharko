@@ -41,6 +41,15 @@ type options struct {
 	// OutDir and proves every entry verifies under the production trust
 	// policy — see verify.go for why the release pipeline needs that.
 	Verify bool
+	// ReleaseCommit is the full 40-character commit being released, which
+	// the release workflow reads from the event that triggered it
+	// (`workflow_run.head_sha`) — not from a certificate and not from the
+	// tip of `main`. Verify mode requires it, because the check it performs
+	// is the runtime check, and at runtime the embedded catalogue's
+	// certificate must claim the commit the binary was released from. A
+	// gate that checked less than the runtime does would pass a catalogue
+	// the runtime then refuses.
+	ReleaseCommit string
 }
 
 // signOutputs collects the per-entry artifact paths a signer must produce.
@@ -103,6 +112,9 @@ func main() {
 	flag.BoolVar(&opts.Verify, "verify", false,
 		"verify the signed catalog and bundles already in --out instead of signing; "+
 			"exits non-zero if any entry fails")
+	flag.StringVar(&opts.ReleaseCommit, "release-commit", "",
+		"full 40-character commit being released (required with --verify); the release "+
+			"workflow passes github.event.workflow_run.head_sha")
 	flag.Parse()
 
 	var err error

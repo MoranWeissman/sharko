@@ -100,7 +100,17 @@ import (
 // (reasonSink) forwards records the verifier already emitted and reads the
 // verifier's own `reason` attribute so a failure line can name why. It
 // therefore originates no log message and carries no error into one.
-const wantSweptGoFiles = 431
+//
+// 432 since S8 added cmd/sharko/catalog_trust.go, which builds the two
+// catalogue trust policies — one for Sharko's own embedded catalogue, which
+// carries the release-commit binding, and one for third-party feeds, which
+// must not. That file makes no slog call at all: it reads the environment
+// through signing.LoadTrustPolicyFromEnv, returns two policies and an error,
+// and leaves every log line to its caller in serve.go. The startup lines that
+// say whether this build carries a release commit live there, and neither of
+// them hands slog an error value or an opaque payload — one carries a commit
+// hash, the other the raw stamp, both plain strings.
+const wantSweptGoFiles = 432
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by

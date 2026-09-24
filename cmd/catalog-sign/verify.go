@@ -22,11 +22,22 @@
 // stops before the catalogue is embedded, instead of shipping a binary
 // whose every entry silently shows up unverified.
 //
+// The release-commit binding is part of that. The runtime holds the
+// embedded catalogue to a stricter rule than any other catalogue: the
+// certificate must claim the exact commit the binary was released from
+// (see internal/catalog/signing.EmbeddedCatalogTrustPolicy). So this gate
+// applies the embedded policy, with the commit supplied by
+// --release-commit. The workflow reads that commit from the event that
+// triggered it, which is why the two sides of the comparison are
+// independent: one comes from the certificate, the other from GitHub's
+// record of what is being released.
+//
 // Fail-closed everywhere. A missing bundle, an unreadable bundle, an entry
 // with no signature URL, a URL that does not match the release-asset
-// convention, an unreachable trust root, or a signature that does not
-// verify — each of those is a failure, and the command exits non-zero
-// naming every entry that failed and why.
+// convention, an unreachable trust root, a missing or malformed
+// --release-commit, a certificate claiming a different commit, or a
+// signature that does not verify — each of those is a failure, and the
+// command exits non-zero naming every entry that failed and why.
 package main
 
 import (
@@ -179,18 +190,41 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 		return fmt.Errorf("%s has no entries under 'addons:'", signedCatalogFile)
 	}
 
-	policy, err := deps.LoadPolicy()
+	// The commit is required and must be a full hash. Fail-closed for the
+	// same reason everything else here is: a gate that accepts "no commit
+	// supplied" and checks less than the runtime does would wave through a
+	// catalogue the runtime then refuses, which is the failure this whole
+	// step exists to prevent.
+	if strings.TrimSpace(opts.ReleaseCommit) == "" {
+		return fmt.Errorf(
+			"verify: --release-commit is required; pass the full commit being released " +
+				"(the workflow reads it from github.event.workflow_run.head_sha)")
+	}
+	if !signing.IsFullCommitSHA(opts.ReleaseCommit) {
+		return fmt.Errorf(
+			"verify: --release-commit %q is not a full 40-character commit hash",
+			opts.ReleaseCommit)
+	}
+
+	base, err := deps.LoadPolicy()
 	if err != nil {
 		return fmt.Errorf("load trust policy: %w", err)
 	}
-	if len(policy.Identities) == 0 {
+	if len(base.Identities) == 0 {
 		return fmt.Errorf("trust policy has no identities — nothing could ever verify")
 	}
+	// THE EMBEDDED policy, not the base one. This catalogue is about to be
+	// copied over catalog/addons.yaml and baked into the release binaries
+	// and the container image by //go:embed, so the only policy worth
+	// checking it against is the one `sharko serve` will apply to it once
+	// it is embedded — release-commit binding included.
+	policy := signing.EmbeddedCatalogTrustPolicy(base, opts.ReleaseCommit)
 	fmt.Fprintf(w, "catalog-sign verify: %d entries in %s\n", len(raw.Addons), signedPath)
 	for i, id := range policy.Identities {
 		fmt.Fprintf(w, "catalog-sign verify: trusted identity[%d] = %s\n", i, id)
 	}
 	fmt.Fprintf(w, "catalog-sign verify: workflow_ref policy = %s\n", policy.WorkflowRef)
+	fmt.Fprintf(w, "catalog-sign verify: required release commit = %s\n", policy.ReleaseCommit)
 
 	verifier, err := deps.NewVerifier(ctx)
 	if err != nil {

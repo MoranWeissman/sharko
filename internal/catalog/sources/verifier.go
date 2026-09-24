@@ -57,6 +57,34 @@ type TrustPolicy struct {
 	// at load time). The verifier compiles it once per call — cheap and
 	// keeps a single source of truth for the pattern shape.
 	WorkflowRef string
+
+	// RequireReleaseCommit turns on the release-commit binding: the
+	// certificate's own authenticated source-commit claim must equal
+	// ReleaseCommit before an entry can verify.
+	//
+	// It is FALSE for every catalogue Sharko did not build. A third-party
+	// catalogue is signed by its own publisher from its own repository at
+	// its own commit, which has nothing to do with the commit Sharko was
+	// released from, so requiring a match there would refuse every
+	// third-party signature. Only Sharko's own embedded catalogue sets it,
+	// and only through signing.EmbeddedCatalogTrustPolicy — the single
+	// constructor that can turn it on.
+	//
+	// True with an empty ReleaseCommit is a REFUSAL, never a skip. That is
+	// the whole reason this is a separate flag rather than "non-empty
+	// ReleaseCommit means check it": a build with no release-commit stamp
+	// must come back unverified with a named reason, not sail through
+	// because there was nothing to compare against.
+	RequireReleaseCommit bool
+
+	// ReleaseCommit is the full 40-character lowercase hex commit the
+	// certificate must claim as the source it was built from. It is
+	// established independently of the certificate — see
+	// signing.EmbeddedCatalogTrustPolicy for where the value comes from
+	// and why comparing the certificate to itself would prove nothing.
+	//
+	// Ignored entirely when RequireReleaseCommit is false.
+	ReleaseCommit string
 }
 
 // SidecarVerifier is the narrow contract that Subsystem A calls into

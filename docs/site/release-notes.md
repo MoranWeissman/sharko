@@ -79,6 +79,46 @@ in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
   and has never been part of any shipped Sharko binary, so this is not a fix for
   a vulnerability that shipped to anybody.
 
+### Bug fixes
+
+- **`v4.0.1` refuses the signatures on its own catalogue, and the cause is its
+  default trust policy rather than anything wrong with the signatures.** A
+  `v4.0.1` install shows all 45 embedded catalogue entries as unverified and the
+  Marketplace **Verified** badge never lights up. The two settings it ships with
+  cannot both be satisfied by any certificate at all: the trusted-identity
+  pattern requires a signer whose workflow ref is `refs/heads/main`, while the
+  `workflow_ref` claim check requires `refs/tags/v…`. Sharko's release workflow
+  is triggered by `workflow_run`, and for that trigger the certificate records
+  the ref the workflow file itself sits on, which is always `refs/heads/main` —
+  so the second check can never pass.
+
+    **This is not evidence of tampering, and it is worth being plain about
+    that**, because "signature refused" is exactly what tampering would also
+    look like. Every published `v4.0.1` bundle was re-checked and all 45 are
+    genuine: the signature matches, the payload digest matches, the Fulcio
+    certificate chain validates, the Rekor transparency-log entry is present and
+    valid, and the signing identity is Sharko's own release workflow. Only the
+    ref check refused them, and it refused all 45 identically.
+
+    The fix replaces that check, for Sharko's own catalogue only, with a
+    stricter one: the certificate must name the exact commit the running binary
+    was built from. That accepts the catalogue signed for this release and
+    refuses a signature made from any other commit, including a perfectly valid
+    signature made later on `main`. Catalogues fetched from
+    `SHARKO_CATALOG_URLS` or from `configuration/marketplace-sources.yaml` are
+    unaffected — their publishers sign from their own repositories at their own
+    commits, and the rule applied to them has not changed. See
+    [Catalog trust policy](operator/catalog-trust-policy.md).
+
+    **A `v4.0.1` binary already on disk keeps its own copy of the old policy and
+    keeps refusing.** Nothing about changing the source reaches a binary that has
+    already been downloaded — the policy is compiled into it. An operator running
+    `v4.0.1` has two choices: move to a version that carries the fix, or set
+    `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF=^refs/heads/main$`, which is the
+    documented override and is what makes the shipped `v4.0.1` accept its own
+    catalogue. Which versions carry the fix is answered by
+    [the releases page](https://github.com/MoranWeissman/sharko/releases).
+
 ### Dependency updates that are not security fixes
 
 Named here because they are easy to read as security work, and they are not: no

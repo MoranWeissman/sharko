@@ -386,22 +386,42 @@ var serveCmd = &cobra.Command{
 			slog.Info("sigstore trust root loaded")
 		}
 		catalogVerifier := signing.NewVerifier(nil /* http client */, verifierOpts...)
-		catalogTrustPolicy, err := signing.LoadTrustPolicyFromEnv()
+		// TWO policies, deliberately — see cmd/sharko/catalog_trust.go for
+		// why Sharko's own catalogue is held to a stricter rule than
+		// everybody else's, and why mixing the two up would refuse every
+		// third-party signature.
+		catalogTrust, err := buildCatalogTrustPolicies(commit)
 		if err != nil {
 			return fmt.Errorf("load catalog trust policy: %w", err)
 		}
 		slog.Info("catalog trust policy loaded",
-			"identity_count", len(catalogTrustPolicy.Identities))
+			"identity_count", len(catalogTrust.ThirdParty.Identities))
+		// Said out loud at startup, both ways round. This is the one thing an
+		// operator cannot work out from the entries alone: whether this build
+		// is able to bind its own catalogue to a release at all.
+		if catalogTrust.ReleaseStamped {
+			slog.Info("embedded catalog signatures are bound to this build's release commit",
+				"release_commit", catalogTrust.Embedded.ReleaseCommit)
+		} else {
+			slog.Warn("this build carries no release commit, so its own embedded catalog entries "+
+				"cannot be bound to a release and will surface as unverified; "+
+				"a release binary is stamped with the commit it was built from",
+				"build_commit", catalogTrust.BuildCommit)
+		}
 
 		// Load the embedded curated catalog. Failure here is fatal — a
 		// malformed catalog indicates a build-time regression, not a runtime
 		// problem operators can work around. The catalog is loaded through
 		// LoadBytesWithVerifier so that any future signing of embedded
 		// entries lights up the verified path automatically.
+		//
+		// catalogTrust.Embedded, never catalogTrust.ThirdParty: this is the
+		// catalogue Sharko's own release workflow signed, so the certificate
+		// must claim the commit this binary was released from.
 		cat, err := catalog.LoadBytesWithVerifier(
 			context.Background(),
 			catalogembed.AddonsYAML(),
-			catalogVerifier.VerifyEntryFunc(catalogTrustPolicy),
+			catalogVerifier.VerifyEntryFunc(catalogTrust.Embedded),
 		)
 		if err != nil {
 			return fmt.Errorf("load curated catalog: %w", err)
@@ -588,12 +608,17 @@ var serveCmd = &cobra.Command{
 			// gates the embedded catalog — without this, a compromised
 			// third-party curator could flip an entry and have Sharko serve
 			// it as if signed.
-			sourcesFetcher.SetEntryVerifyFunc(catalogVerifier.VerifyEntryFunc(catalogTrustPolicy))
+			// catalogTrust.ThirdParty, never catalogTrust.Embedded. A
+			// third-party publisher signs from their own repository at their
+			// own commit, so requiring Sharko's release commit here would
+			// refuse every third-party signature. Their behaviour is
+			// unchanged by the release-commit binding.
+			sourcesFetcher.SetEntryVerifyFunc(catalogVerifier.VerifyEntryFunc(catalogTrust.ThirdParty))
 			// Install the canonical trust policy on the fetcher so its
 			// sidecar verifier (which receives the policy via
 			// Verify(... TrustPolicy)) shares the same trusted-identity
 			// list as the embedded catalog.
-			sourcesFetcher.SetTrustPolicy(catalogTrustPolicy)
+			sourcesFetcher.SetTrustPolicy(catalogTrust.ThirdParty)
 			srv.SetSourcesFetcher(sourcesFetcher)
 			sourcesFetcher.Start(context.Background())
 			defer sourcesFetcher.Stop()

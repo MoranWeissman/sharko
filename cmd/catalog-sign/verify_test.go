@@ -38,12 +38,18 @@ type fakeVerifier struct {
 	// failFor makes exactly one entry fail, keyed on a substring of the
 	// payload. Used to prove one bad entry out of many stops the job.
 	failFor string
+	// policies records the trust policy the gate handed over, per call. The
+	// gate is supposed to verify under the policy `sharko serve` will apply
+	// to the catalogue once it is embedded — release-commit binding included
+	// — so what it passes here is part of what is being tested.
+	policies []sources.TrustPolicy
 }
 
-func (f *fakeVerifier) VerifyBundleBytes(_ context.Context, payload, bundleBytes []byte, _ sources.TrustPolicy) (bool, string, error) {
+func (f *fakeVerifier) VerifyBundleBytes(_ context.Context, payload, bundleBytes []byte, policy sources.TrustPolicy) (bool, string, error) {
 	f.calls++
 	f.payloads = append(f.payloads, payload)
 	f.bundles = append(f.bundles, bundleBytes)
+	f.policies = append(f.policies, policy)
 	if f.failFor != "" && strings.Contains(string(payload), f.failFor) {
 		return false, "", nil
 	}
@@ -51,6 +57,12 @@ func (f *fakeVerifier) VerifyBundleBytes(_ context.Context, payload, bundleBytes
 }
 
 const testIdentity = "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main"
+
+// testReleaseCommit is the commit v4.0.1 was released from, taken from the
+// tag object. The release workflow supplies the equivalent value from
+// github.event.workflow_run.head_sha — from GitHub's record of what is being
+// released, never from a certificate.
+const testReleaseCommit = "faf109fbbccac14fbd17fd5fa8ffb7066b2a5406"
 
 // depsFor wires a fake verifier and the shipped production trust policy.
 func depsFor(v bundleVerifier) verifyDeps {
@@ -74,7 +86,12 @@ func buildSignedDir(t *testing.T) string {
 }
 
 func verifyOpts(dir string) options {
-	return options{OutDir: dir, ReleaseBaseURL: fakeReleaseBase, Verify: true}
+	return options{
+		OutDir:         dir,
+		ReleaseBaseURL: fakeReleaseBase,
+		Verify:         true,
+		ReleaseCommit:  testReleaseCommit,
+	}
 }
 
 // TestVerify_AcceptsAFullyVerifiedCatalog is the positive control. Without
@@ -362,4 +379,109 @@ func TestReasonSink_CarriesTheVerifierReason(t *testing.T) {
 	if got := sink.take(); got != "" {
 		t.Fatalf("sink recorded an INFO line as a failure reason: %q", got)
 	}
+}
+
+// --- S8: the release-commit binding at the release gate ---------------------
+
+// TestVerify_RequiresTheReleaseCommit — the gate refuses to run at all
+// without a commit to bind to, and refuses a value that is not a full commit
+// hash.
+//
+// Fail-closed here matters as much as anywhere else in this file. A gate that
+// accepted "no commit supplied" would check LESS than the runtime does, and
+// would wave through a catalogue `sharko serve` then refuses — which is the
+// exact shape of failure this whole step was added to stop.
+func TestVerify_RequiresTheReleaseCommit(t *testing.T) {
+	cases := []struct {
+		name    string
+		commit  string
+		wantSub string
+	}{
+		{"missing", "", "--release-commit is required"},
+		{"whitespace_only", "   ", "--release-commit is required"},
+		{"short_hash", "faf109fb", "is not a full 40-character commit hash"},
+		{"not_hex", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "is not a full 40-character commit hash"},
+		{"version_string", "4.0.2", "is not a full 40-character commit hash"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := buildSignedDir(t)
+			opts := verifyOpts(dir)
+			opts.ReleaseCommit = tc.commit
+			fv := &fakeVerifier{verified: true, issuer: testIdentity}
+			err := runVerify(context.Background(), opts, io.Discard, depsFor(fv), nil)
+			if err == nil {
+				t.Fatalf("commit %q was accepted", tc.commit)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %q does not say %q", err.Error(), tc.wantSub)
+			}
+			// And it must refuse BEFORE verifying anything, so a bad
+			// invocation cannot be mistaken for a verified catalogue.
+			if fv.calls != 0 {
+				t.Errorf("the gate verified %d entries before refusing the commit", fv.calls)
+			}
+		})
+	}
+}
+
+// TestVerify_UsesTheEmbeddedPolicy — the gate must verify under the policy
+// the RUNTIME applies to an embedded catalogue, not the looser third-party
+// one. That means the release-commit binding is on, the commit is the one
+// passed in, and the workflow_ref claim policy is the one Sharko's own
+// certificates can actually satisfy.
+//
+// Without this the gate and the runtime could disagree, and a disagreement
+// only ever shows up after publication.
+func TestVerify_UsesTheEmbeddedPolicy(t *testing.T) {
+	dir := buildSignedDir(t)
+	fv := &fakeVerifier{verified: true, issuer: testIdentity}
+	if err := runVerify(context.Background(), verifyOpts(dir), io.Discard, depsFor(fv), nil); err != nil {
+		t.Fatalf("runVerify: %v", err)
+	}
+	if len(fv.policies) == 0 {
+		t.Fatal("the gate verified nothing, so no policy was observed")
+	}
+	want := signing.EmbeddedCatalogTrustPolicy(mustShippedPolicy(t), testReleaseCommit)
+	for i, got := range fv.policies {
+		if !got.RequireReleaseCommit {
+			t.Fatalf("call %d: the gate verified under a policy with the release-commit "+
+				"binding OFF, so it checks less than the runtime does", i)
+		}
+		if got.ReleaseCommit != testReleaseCommit {
+			t.Errorf("call %d: ReleaseCommit = %q, want %q", i, got.ReleaseCommit, testReleaseCommit)
+		}
+		if got.WorkflowRef != want.WorkflowRef {
+			t.Errorf("call %d: WorkflowRef = %q, want the embedded policy's %q",
+				i, got.WorkflowRef, want.WorkflowRef)
+		}
+		if strings.Join(got.Identities, "|") != strings.Join(want.Identities, "|") {
+			t.Errorf("call %d: identities differ from the shipped policy: got %v want %v",
+				i, got.Identities, want.Identities)
+		}
+	}
+}
+
+// TestVerify_ReportsTheRequiredCommit — the report names the commit it bound
+// to. A release log that does not say which commit was required cannot be
+// audited after the fact.
+func TestVerify_ReportsTheRequiredCommit(t *testing.T) {
+	dir := buildSignedDir(t)
+	var out bytes.Buffer
+	fv := &fakeVerifier{verified: true, issuer: testIdentity}
+	if err := runVerify(context.Background(), verifyOpts(dir), &out, depsFor(fv), nil); err != nil {
+		t.Fatalf("runVerify: %v", err)
+	}
+	if !strings.Contains(out.String(), "required release commit = "+testReleaseCommit) {
+		t.Errorf("the report does not name the required release commit:\n%s", out.String())
+	}
+}
+
+func mustShippedPolicy(t *testing.T) sources.TrustPolicy {
+	t.Helper()
+	p, err := signing.LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("LoadTrustPolicyFromEnv: %v", err)
+	}
+	return p
 }

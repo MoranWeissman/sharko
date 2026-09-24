@@ -13,6 +13,20 @@
 // turn "not checked" into a clean-looking run, which is the opposite of
 // what this harness is for.
 //
+// READ THIS BEFORE RUNNING IT (S8). The policy it measures under —
+// LoadTrustPolicyFromEnv — is the THIRD-PARTY policy, and that policy still
+// asks for a `^refs/tags/v.*$` workflow_ref, which no certificate Sharko's own
+// `workflow_run`-triggered release workflow produces can satisfy. So this
+// harness still reports 45 FAIL, and that is the correct answer to the
+// question it asks: "what does the third-party policy make of Sharko's own
+// bundles?" It is the record of the S2 finding and is deliberately left alone.
+//
+// For the question that matters at runtime — "does Sharko's own build accept
+// its own catalogue?" — use TestAudit_PublishedBundlesBoundToTheReleaseCommit
+// in published_bundles_commit_test.go. That one applies the EMBEDDED policy,
+// the one `sharko serve` actually uses on the catalogue baked into it, and
+// under the correct release commit all 45 pass.
+//
 // Run it like this (paths are examples; both env vars are required):
 //
 //	SHARKO_AUDIT_CATALOG=/tmp/addons.yaml \

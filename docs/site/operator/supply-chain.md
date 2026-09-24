@@ -156,6 +156,36 @@ Treat it as a critical signal — do not deploy:
 2. Re-fetch the artifact from the release page in case of partial download.
 3. If the failure persists, file an issue with the cosign output. Do not work around verification by ignoring the error.
 
+## The built-in catalogue's own signatures are a separate check
+
+Everything above is about verifying a release artifact **before** you run
+it, with `cosign`, from outside. Sharko also verifies signatures **inside**
+itself: the curated catalogue baked into the binary carries one Sigstore
+bundle per entry, and `sharko serve` checks each one at startup and shows
+the result as the **Verified** badge in the Marketplace.
+
+Those two checks answer different questions and have separate settings, so
+a `cosign verify` that passes tells you nothing about whether the built-in
+catalogue's entries show as verified, and the other way round.
+
+Two things about that inner check are worth knowing before you read a
+refusal as a problem with an artifact:
+
+- **`v4.0.1` refuses its own built-in catalogue's signatures because of the
+  default trust policy it ships with, not because anything is wrong with
+  the signatures.** All 45 bundles published with `v4.0.1` were re-checked
+  and all 45 are genuine — signature, payload digest, Fulcio chain, Rekor
+  transparency-log entry and signing identity all correct. **So a `v4.0.1`
+  install showing every built-in entry as Unverified is not evidence of
+  tampering.** The cause and the one-line workaround are in
+  [Catalog trust policy](catalog-trust-policy.md#read-this-first-if-v401-shows-every-built-in-entry-as-unverified).
+- **A binary you already have keeps the policy it was built with.** The
+  trust policy is compiled in, so a later change to the source does not
+  reach a copy already on your disk or in your cluster. Either set the
+  documented override or move to a version that carries the fix; which
+  versions do is answered by
+  [the releases page](https://github.com/MoranWeissman/sharko/releases).
+
 ## Multi-architecture images
 
 The release pipeline builds the image as a multi-arch manifest list, so `docker pull` (and `kubectl` / `containerd`) can automatically pick the right per-arch image for the node:

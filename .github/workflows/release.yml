@@ -585,6 +585,7 @@ jobs:
           fi
           go run ./cmd/catalog-sign --verify \
             --out _dist/catalog \
+            --release-commit "${{ github.event.workflow_run.head_sha }}" \
             --release-base-url "https://github.com/MoranWeissman/sharko/releases/download/${{ github.event.workflow_run.head_branch }}"
 
       - name: Use signed catalog for build
@@ -644,8 +645,29 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # COMMIT is the release commit, and it is load-bearing rather
+          # than informational. The Dockerfile already declared
+          # `ARG COMMIT=dev` and passed it to `-X main.commit`, but this
+          # step never supplied a value, so every published image's
+          # binary carried the literal string `dev` — confirmed by reading
+          # the ldflags back out of the published v4.0.1 image.
+          #
+          # `sharko serve` now requires that stamp to accept its own
+          # embedded catalogue: the signing certificate must claim the
+          # commit the binary was released from, and a build with no
+          # release commit has nothing to compare the certificate against,
+          # so it refuses rather than skips. Without this line the image
+          # would refuse its own catalogue while the goreleaser CLI
+          # archives — which get the full commit from goreleaser's
+          # {{.Commit}} — accepted theirs.
+          #
+          # head_sha is the commit the triggering CI run was for, which for
+          # a tag push is the tag's commit. It is the same value passed to
+          # `catalog-sign --verify --release-commit` above, so the gate and
+          # the runtime compare against the same thing.
           build-args: |
             CACHE_BUST=${{ github.event.workflow_run.head_sha }}
+            COMMIT=${{ github.event.workflow_run.head_sha }}
             VERSION=${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
           # ignore-error=true: on run 30956764008 (2026-08-04) the image
@@ -1043,6 +1065,7 @@ jobs:
           fi
           go run ./cmd/catalog-sign --verify \
             --out _dist/catalog \
+            --release-commit "${{ github.event.workflow_run.head_sha }}" \
             --release-base-url "https://github.com/MoranWeissman/sharko/releases/download/${{ github.event.workflow_run.head_branch }}"
 
       - name: Use signed catalog for build

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
@@ -372,6 +373,14 @@ func (v *Verifier) verifyEntity(
 		return false, "", nil
 	}
 
+	// Release-commit binding. Applies to Sharko's own embedded catalogue
+	// only — RequireReleaseCommit is false for every third-party feed, so
+	// this is a no-op on that path. See assertReleaseCommit.
+	if reason, ok := assertReleaseCommit(cert, trustPolicy.ReleaseCommit, trustPolicy.RequireReleaseCommit); !ok {
+		v.logFailure(reason)
+		return false, "", nil
+	}
+
 	// Step 9: success. Log the subject (which IS in the cert and is not
 	// URL-related, so logging it is fine — it's the operator's whole
 	// point in configuring the trust policy).
@@ -522,6 +531,122 @@ func assertWorkflowRef(cert *x509.Certificate, policy string) (reason string, ok
 		return fmt.Sprintf(
 			"cert-claim assertion failed: workflow_ref %q does not match policy %q",
 			claim, policy), false
+	}
+	return "", true
+}
+
+// Fulcio field names, written down so the failure messages and the tests
+// name the same field the certificate does rather than a paraphrase.
+const (
+	fieldSourceRepositoryDigest = "sourceRepositoryDigest (OID 1.3.6.1.4.1.57264.1.13)"
+	fieldGithubWorkflowSHA      = "githubWorkflowSHA (OID 1.3.6.1.4.1.57264.1.3)"
+)
+
+// certSourceCommit pulls the certificate's authenticated claim about
+// WHICH SOURCE COMMIT the signing build was based on, and says which
+// field it came from.
+//
+// Which field carries it, confirmed by decoding the certificates inside
+// all 45 published v4.0.1 bundles rather than read off an OID table:
+// four fields carry the same full 40-character commit
+// (`sourceRepositoryDigest` .1.13, `githubWorkflowSHA` .1.3,
+// `buildSignerDigest` .1.10 and `buildConfigDigest` .1.19), and all 45
+// certificates carry a byte-identical extension set. Two of those four
+// describe the build INSTRUCTIONS rather than the source — .1.10 and
+// .1.19 are the version of the workflow file that signed — so they are
+// deliberately not used here even though today they happen to hold the
+// same value.
+//
+// sourceRepositoryDigest is preferred: sigstore-go documents it as
+// "immutable reference to a specific version of the source code that the
+// build was based upon", and it is the field Fulcio's current extension
+// family uses. githubWorkflowSHA carries the same meaning and is marked
+// Deprecated in sigstore-go, so it is a fallback for a certificate minted
+// before the newer field existed — not a widening. Both live inside the
+// signed certificate, so neither can be set by anything outside Fulcio.
+//
+// A certificate with neither field returns ("", "") and the caller
+// refuses. It never returns a value it had to guess at.
+func certSourceCommit(cert *x509.Certificate) (claim string, field string) {
+	ext, err := certificate.ParseExtensions(cert.Extensions)
+	if err != nil {
+		return "", ""
+	}
+	if s := strings.TrimSpace(ext.SourceRepositoryDigest); s != "" {
+		return s, fieldSourceRepositoryDigest
+	}
+	if s := strings.TrimSpace(ext.GithubWorkflowSHA); s != "" {
+		return s, fieldGithubWorkflowSHA
+	}
+	return "", ""
+}
+
+// assertReleaseCommit enforces that the certificate was minted by a build
+// of the exact commit this Sharko binary was released from.
+//
+// What it is for. Sharko's release workflow runs on `workflow_run`, and
+// for that trigger Fulcio's workflow_ref claim is structurally always the
+// ref the workflow file lives on, so no assertion on workflow_ref can
+// distinguish a release build from any other run of the same workflow
+// file. The source-commit claim can: it names the commit that was built.
+// Comparing it against the commit THIS BINARY was built from accepts the
+// genuine catalogue signed for this release and refuses a signature made
+// from any other commit, including a genuine, fully valid signature made
+// from a later commit on `main`.
+//
+// Contract, in the order the branches are taken:
+//
+//   - require == false → ("", true). Not Sharko's own catalogue. Every
+//     third-party feed takes this branch, and so does any caller that
+//     builds a sources.TrustPolicy directly (unit tests, fixtures), which
+//     keeps the field additive.
+//   - require == true and expected == "" → REFUSED. This build carries no
+//     release-commit stamp, so there is nothing to compare the claim
+//     against. Refusing is the point: skipping here would be exactly the
+//     silent bypass this check exists to prevent, and a signature nobody
+//     could bind to a release must not be presented as verified. The
+//     message says which build shape causes it so the reader is not left
+//     guessing.
+//   - the certificate carries no source-commit claim → REFUSED, naming
+//     both fields that were looked for.
+//   - claim and expected differ → REFUSED, naming both values so the
+//     reader can see at a glance that this is a different commit and not
+//     a broken signature.
+//   - equal → ("", true).
+//
+// Comparison is full-length and case-insensitive: both sides must be
+// exactly 40 hex characters. No prefix matching. expected is already
+// validated and lowercased by EmbeddedCatalogTrustPolicy; the length
+// check is repeated here so a caller that wires a raw policy cannot turn
+// a truncated value into a prefix match.
+func assertReleaseCommit(cert *x509.Certificate, expected string, require bool) (reason string, ok bool) {
+	if !require {
+		return "", true
+	}
+	if expected == "" {
+		return "release-commit binding failed: this build carries no release commit, " +
+			"so no signature can be bound to a release. A release binary is stamped with " +
+			"the commit it was built from; a development build, or an image built without " +
+			"the COMMIT build argument, is not. Sharko refuses to mark its own catalogue " +
+			"verified rather than skip the check", false
+	}
+	if !IsFullCommitSHA(expected) {
+		return fmt.Sprintf(
+			"release-commit binding failed: expected release commit %q is not a full "+
+				"40-character commit hash, so it cannot be compared", expected), false
+	}
+	claim, field := certSourceCommit(cert)
+	if claim == "" {
+		return fmt.Sprintf(
+			"release-commit binding failed: certificate carries no source-commit claim "+
+				"in %s or %s, so it cannot be bound to release commit %s",
+			fieldSourceRepositoryDigest, fieldGithubWorkflowSHA, expected), false
+	}
+	if !strings.EqualFold(claim, expected) {
+		return fmt.Sprintf(
+			"release-commit binding failed: certificate %s claims source commit %s "+
+				"but this build was released from commit %s",
+			field, claim, expected), false
 	}
 	return "", true
 }
