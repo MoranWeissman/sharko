@@ -32,6 +32,70 @@ misconfigured fleet-wide.
 
 ---
 
+## Read this first if `v4.0.1` shows every built-in entry as Unverified
+
+`v4.0.1` refuses the signatures on its own built-in catalogue, and the
+cause is the default trust policy it ships with rather than anything
+wrong with the signatures.
+
+**It is not evidence of tampering.** That distinction matters, because a
+refused signature is exactly what tampering would also look like. All 45
+bundles published with `v4.0.1` were re-checked and all 45 are genuine:
+the signature matches, the payload digest matches, the Fulcio
+certificate chain validates, the Rekor transparency-log entry is present
+and valid, and the signing identity is Sharko's own release workflow.
+One check refused them, and it refused all 45 in exactly the same way.
+
+The two settings `v4.0.1` ships with cannot both be satisfied by any
+certificate:
+
+| Setting | `v4.0.1` default | What a Sharko release certificate actually carries |
+|---|---|---|
+| `SHARKO_CATALOG_TRUSTED_IDENTITIES` (the Sharko pattern) | ends `@refs/heads/main` | `…/release.yml@refs/heads/main` — matches |
+| `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` | `^refs/tags/v.*$` | `refs/heads/main` — does not match |
+
+Sharko's release workflow is triggered by `workflow_run`. For that
+trigger the certificate's `workflow_ref` claim records the ref the
+workflow **file** sits on, not the tag being built, so it is always
+`refs/heads/main`. A policy asking for a tag ref there can never be
+satisfied.
+
+**The workaround on `v4.0.1`, and it works today:**
+
+```bash
+SHARKO_CATALOG_TRUSTED_WORKFLOW_REF=^refs/heads/main$
+```
+
+```yaml
+# Via Helm
+env:
+  - name: SHARKO_CATALOG_TRUSTED_WORKFLOW_REF
+    value: "^refs/heads/main$"
+```
+
+That is the documented override, it changes nothing about the signature,
+digest, chain, transparency-log or identity checks, and the built-in
+entries verify with it set.
+
+**A binary you already have keeps refusing, whatever the source says
+later.** The policy is compiled into the binary, so nothing about a
+later source change reaches a copy already on your disk or in your
+cluster. There are two ways forward and only two: set the override
+above, or move to a version that carries the fix. Which versions carry
+it is answered by
+[the releases page](https://github.com/MoranWeissman/sharko/releases).
+
+**What the fix does, so you know what to expect after moving.** For
+Sharko's **own built-in** catalogue the ref check is replaced by a
+stricter one: the certificate must name the exact commit the running
+binary was built from. See
+[Release-commit binding](#release-commit-binding-built-in-catalogue-only).
+Catalogues you fetch from `SHARKO_CATALOG_URLS` or from
+`configuration/marketplace-sources.yaml` are not affected by that
+change — everything on this page about them still applies as written.
+
+---
+
 ## Symptoms
 
 What an operator sees when this fires:
@@ -554,6 +618,150 @@ keeps loading it (no hard fail) so the catalog stays available.
 The regex is compiled at startup. A malformed pattern is a fatal startup
 error with the env var name and the offending pattern in the message —
 same posture as `SHARKO_CATALOG_TRUSTED_IDENTITIES`.
+
+### Which ref each catalogue is held to
+
+The default above, `^refs/tags/v.*$`, is what a **third-party** catalogue
+is held to, and it has not changed. Sharko's own built-in catalogue is
+held to `^refs/heads/main$` instead, because that is the ref its own
+release certificates actually carry — see
+[Read this first](#read-this-first-if-v401-shows-every-built-in-entry-as-unverified)
+for why, and the section below for the check that replaced the tag
+requirement.
+
+If you set `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` yourself, your value
+wins for both, exactly as before. Sharko does not quietly substitute
+anything over a setting you made on purpose.
+
+### What the two refs each buy, on the built-in path
+
+The two values are not a stricter and a looser version of the same
+check, and reading them that way overstates what the tag-shaped one was
+doing:
+
+- `^refs/tags/v.*$` cannot be satisfied by any certificate Sharko's own
+  release workflow produces, so on the built-in path it refuses every
+  entry. A check that refuses everything does not establish that a
+  signature came from a tag; it produces an Unverified badge and nothing
+  else. That is the whole of the
+  [`v4.0.1` symptom](#read-this-first-if-v401-shows-every-built-in-entry-as-unverified).
+- `^refs/heads/main$` can be satisfied, and it is the same ref the
+  built-in identity pattern already pins, so by itself it adds little
+  beyond the identity check.
+
+What carries the weight on the built-in path is a different control:
+[release-commit binding](#release-commit-binding-built-in-catalogue-only),
+which requires the certificate to name the exact commit the running
+binary was built from. That is a cryptographic statement about which
+release a signature belongs to, and the tag-shaped pattern was not one
+under a `workflow_run` trigger — for that trigger the `workflow_ref`
+claim records the ref the workflow file sits on, whatever is being
+built.
+
+So on the built-in path an unsatisfiable assertion is replaced by a real
+one. It is worth being plain about the starting point: what came before
+was a check nothing could pass, not a tag requirement that held.
+
+Third-party behaviour is unchanged. The tag-ref default still governs
+catalogues Sharko did not build, and it is satisfiable there, because a
+publisher whose own workflow is triggered by a tag push gets a tag ref
+in the claim.
+
+## Release-commit binding (built-in catalogue only)
+
+Sharko's built-in catalogue is signed by Sharko's own release workflow,
+from the same commit the binary was built from. That makes a much
+tighter check possible than "some trusted identity signed something":
+**the certificate must name the exact commit this binary was released
+from.**
+
+### What it compares, and why both sides are needed
+
+| Side | Where it comes from |
+|---|---|
+| the claim | the certificate's `sourceRepositoryDigest` field (OID `1.3.6.1.4.1.57264.1.13`), falling back to the older `githubWorkflowSHA` (OID `1.3.6.1.4.1.57264.1.3`). Both sit inside the signed certificate, so only Fulcio can set them. |
+| the expectation | the commit stamped into the binary at build time by the release pipeline (`-X main.commit`). Fixed at link time, so nothing the certificate says can move it. |
+
+Two things it is deliberately **not**:
+
+- it is **not** the certificate compared with itself. If both sides came
+  off the certificate the check would always pass and prove nothing.
+- it is **not** the current tip of `main`. A release commit is normally an
+  ancestor of `main` by the time anybody runs the binary, so using the
+  tip would refuse the genuine catalogue of every release except the
+  newest commit in the repository.
+
+### What it accepts and refuses
+
+- the certificate names this build's release commit → the entry verifies.
+- the certificate names a **different** commit → refused, and the log
+  names both commits. This covers the case the check exists for: a
+  genuine, fully valid signature made from another commit — an earlier
+  release's catalogue, or one signed later on `main` — is still not
+  *this* release's catalogue.
+- the certificate carries **no** commit claim → refused, naming both
+  fields that were looked for.
+- **this build carries no release commit** → refused. A development build
+  (`go build` with no link flags, or `make build`, which stamps an
+  abbreviated hash) has no release commit, and neither does a container
+  image built without the `COMMIT` build argument. Sharko refuses rather
+  than skipping: there is no version of this check that quietly passes
+  because there was nothing to compare against.
+
+The comparison is on full 40-character hashes and is case-insensitive.
+An abbreviated hash never satisfies it — two commits can share a prefix,
+and both sides of this comparison hold full hashes anyway.
+
+### What a developer sees
+
+Nothing changes for an ordinary development build. The `catalog/addons.yaml`
+in the repository carries no signatures at all, so there is nothing for
+the verifier to check and nothing to refuse. A development build that
+does load a signed catalogue gets its entries marked unverified with this
+line at startup, which says plainly what is missing:
+
+```
+level=WARN msg="this build carries no release commit, so its own embedded
+    catalog entries cannot be bound to a release and will surface as
+    unverified; a release binary is stamped with the commit it was built from"
+    build_commit=dev
+```
+
+A release binary logs the other side of it at INFO, naming the commit it
+will require:
+
+```
+level=INFO msg="embedded catalog signatures are bound to this build's release commit"
+    release_commit=<40-character hash>
+```
+
+### Third-party catalogues are not affected
+
+The binding applies to the built-in catalogue and to nothing else. A
+third-party publisher signs their catalogue from their own repository at
+their own commit, which has no relationship to Sharko's release commit
+and never will — so requiring a match there would refuse every
+third-party signature there has ever been. The separation is in the
+code's shape rather than in a rule somebody has to remember: the two
+catalogues are handed two separate policies, and the one carrying the
+binding can only be produced by the constructor the built-in catalogue's
+loader uses.
+
+There is no environment variable that switches the binding off. A build
+either carries a release commit or it does not.
+
+### Failure mode
+
+```
+level=WARN msg="catalog signature verification failed"
+    source=redacted
+    reason="release-commit binding failed: certificate sourceRepositoryDigest
+        (OID 1.3.6.1.4.1.57264.1.13) claims source commit <a> but this build
+        was released from commit <b>"
+```
+
+The entry surfaces as Unverified in the UI and on the API; the loader
+keeps loading it, so the catalog stays available.
 
 ## Cert SAN format
 

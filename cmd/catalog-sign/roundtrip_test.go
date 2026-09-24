@@ -40,6 +40,15 @@
 //  6. Asserts verified=true. A divergence between writer and reader byte
 //     format would fail this assertion loud — the exact regression the
 //     v1.23 rc-tag chain kept surfacing.
+//  7. Drives the release-commit binding over that same real certificate:
+//     a different commit must be refused by the binding, a build with no
+//     release commit must be refused rather than skipped, and the
+//     certificate's source-commit claim must equal GITHUB_SHA. See
+//     assertReleaseCommitBinding for exactly what each of those proves.
+//     This is the only place the binding meets a genuine Fulcio
+//     certificate outside a release, because the workflow the binding
+//     ships in triggers on workflow_run and no pull-request check
+//     reaches it.
 //
 // Failure modes (all loud):
 //   - cosign binary missing → SkipNow with a clear message (so a local
@@ -65,6 +74,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -122,6 +132,18 @@ const (
 	// byte-format and trust-pipeline correctness, NOT that the policy
 	// shipped to production matches every possible CI trigger.
 	defaultWorkflowRefRegex = `^refs/(heads/.*|pull/.*|tags/.*)$`
+
+	// githubSHAEnvVar is the commit GitHub Actions says the run was
+	// triggered by. Every GitHub-hosted job has it set; a laptop run does
+	// not, which is the one case the agreement check below steps around.
+	githubSHAEnvVar = "GITHUB_SHA"
+
+	// wrongCommitControl is a syntactically valid full commit hash that is
+	// not a commit in any repository. It is the control for the
+	// release-commit binding: handing it to the binding must produce a
+	// refusal, which is what proves the binding is doing work rather than
+	// waving everything through.
+	wrongCommitControl = "0123456789abcdef0123456789abcdef01234567"
 )
 
 // TestRoundtrip_RealCosignAndVerifier is the only test in this file. It
@@ -311,6 +333,175 @@ Verifier log:
 		t.Fatalf("verified=true but issuer is empty — verifier contract violation\nverifier log:\n%s", logBuf.String())
 	}
 	t.Logf("roundtrip PASS: entry=%s issuer=%s", entry.Name, issuer)
+
+	// Step 5: the release-commit binding, against the certificate that was
+	// just minted. Everything above this line is the byte-format roundtrip;
+	// everything below it is the binding.
+	assertReleaseCommitBinding(t, ctx, v, canonical,
+		srv.URL+"/"+entry.Name+".bundle", policy, &logBuf)
+}
+
+// assertReleaseCommitBinding drives the release-commit binding through the
+// production Verifier against the real Fulcio certificate the signing step
+// above just obtained.
+//
+// # Why this belongs here and nowhere else
+//
+// The binding is what `sharko serve` applies to its own embedded catalogue,
+// and the release workflow's verify gate applies the same code before the
+// catalogue is embedded. Neither of those paths runs on a pull request:
+// release.yml triggers on `workflow_run`, so no PR check reaches it, and the
+// first execution inside GitHub Actions would otherwise be the first real
+// release. This job already mints a genuine keyless Fulcio certificate on
+// every pull request and push, so it is the only place the binding can meet a
+// real certificate before a release depends on it. A local run cannot: a valid
+// Sigstore bundle cannot be minted without an OIDC token, and the test fixtures
+// that stand in for one cannot carry Fulcio's commit extensions.
+//
+// # Which claim carries the commit, and where it comes from
+//
+// Fulcio's GitHub Actions issuer fills four extensions from three OIDC token
+// claims: `sourceRepositoryDigest` (OID 1.3.6.1.4.1.57264.1.13) and the older
+// `githubWorkflowSHA` (.1.3) both come from the token's `sha` claim — the
+// commit the run was triggered by; `buildSignerDigest` (.1.10) comes from
+// `job_workflow_sha` and `buildConfigDigest` (.1.19) from `workflow_sha`, and
+// both of those describe the workflow FILE rather than the source. The
+// production extractor reads .1.13 and falls back to .1.3, so what it reads is
+// the `sha` claim either way. GitHub sets `GITHUB_SHA` from the same commit, on
+// both of this workflow's triggers — on a pull request that is the ephemeral
+// merge commit of `refs/pull/<n>/merge`, which is also what `actions/checkout`
+// leaves at HEAD, and on a push it is the pushed commit.
+//
+// # What each assertion proves, and what it does not
+//
+//   - "a different commit is refused" is the load-bearing one. It hands the
+//     binding a valid-shaped hash that is not the certificate's claim and
+//     requires a refusal whose reason names the binding. That proves three
+//     things at once: the production extractor pulled a claim out of a real
+//     Fulcio certificate (a refusal for a MISSING claim says so in different
+//     words, and is failed here), the comparison rejects a mismatch, and the
+//     whole thing is reached through the same VerifyEntry the loader calls.
+//   - "no release commit available is refused" pins the missing-stamp branch
+//     on a genuine signature rather than on a fixture. An unstamped build must
+//     refuse, never skip.
+//   - "the claim equals GITHUB_SHA" is the agreement check, and it is the one
+//     assertion that compares the certificate against something outside it.
+//     It is NOT a comparison of a value with itself: the expected side is read
+//     out of the runner's environment and the claimed side out of a signed
+//     certificate extension. If it ever fails, that is information about what
+//     Fulcio stamps on this trigger and not a signing bug — the failure message
+//     says so, and the verifier log it prints names both values.
+//
+// None of this proves anything about the `workflow_run` trigger the real
+// release uses. A release certificate is minted from a different event, and the
+// only evidence about that trigger is the 45 published v4.0.1 certificates,
+// which were decoded by hand.
+//
+// It adds no network use: the bundle is served by the same in-process httptest
+// server the roundtrip already stood up, and the trust root is the one already
+// fetched. So a network hiccup cannot surface here as a binding failure.
+func assertReleaseCommitBinding(
+	t *testing.T,
+	ctx context.Context,
+	v *signing.Verifier,
+	canonical []byte,
+	bundleURL string,
+	base sources.TrustPolicy,
+	logBuf *bytes.Buffer,
+) {
+	t.Helper()
+
+	// bound copies the policy the roundtrip already verified under and turns
+	// the binding on, so identity and workflow_ref are known to pass and the
+	// only thing under test is the commit comparison.
+	bound := func(commit string) sources.TrustPolicy {
+		p := base
+		p.RequireReleaseCommit = true
+		p.ReleaseCommit = commit
+		return p
+	}
+	verify := func(t *testing.T, label string, p sources.TrustPolicy) (bool, string) {
+		t.Helper()
+		logBuf.Reset()
+		verified, _, err := v.VerifyEntry(ctx, canonical, bundleURL, p)
+		if err != nil {
+			t.Fatalf("%s: verifier returned an infrastructure error, so this case measured "+
+				"nothing about the binding: %v\nverifier log:\n%s", label, err, logBuf.String())
+		}
+		return verified, logBuf.String()
+	}
+
+	t.Run("a different commit is refused", func(t *testing.T) {
+		verified, log := verify(t, "wrong-commit control", bound(wrongCommitControl))
+		if verified {
+			t.Fatalf("the binding accepted a certificate whose source-commit claim cannot be "+
+				"%s, so it is not comparing anything. Verifier log:\n%s", wrongCommitControl, log)
+		}
+		// Refused for the RIGHT reason. A refusal because the certificate had
+		// no claim at all would also be a refusal, and would mean the
+		// extractor read nothing out of a real Fulcio certificate — which is
+		// most of what this test exists to check.
+		for _, want := range []string{"release-commit binding failed", "claims source commit"} {
+			if !strings.Contains(log, want) {
+				t.Fatalf("the wrong-commit run was refused, but not by the binding, so it proves "+
+					"nothing: the reason does not contain %q.\nVerifier log:\n%s", want, log)
+			}
+		}
+		// The reason line names the claim the production extractor read out of
+		// the certificate, so this is where the measured value is recorded for
+		// whoever reads the workflow log later.
+		t.Logf("the production extractor read this claim out of the real Fulcio certificate: %s",
+			strings.TrimSpace(log))
+	})
+
+	t.Run("no release commit available is refused", func(t *testing.T) {
+		verified, log := verify(t, "unstamped control", bound(""))
+		if verified {
+			t.Fatalf("a build with no release commit accepted its own signed catalogue. That is "+
+				"the silent bypass the binding exists to prevent.\nVerifier log:\n%s", log)
+		}
+		if !strings.Contains(log, "this build carries no release commit") {
+			t.Fatalf("the unstamped run was refused for an unrelated reason, so the missing-stamp "+
+				"branch is unproven.\nVerifier log:\n%s", log)
+		}
+	})
+
+	t.Run("the claim equals GITHUB_SHA", func(t *testing.T) {
+		sha := strings.TrimSpace(os.Getenv(githubSHAEnvVar))
+		if sha == "" || !signing.IsFullCommitSHA(sha) {
+			// Not inside a GitHub Actions job — a laptop run with
+			// SHARKO_ROUNDTRIP_ALLOW_INTERACTIVE, for instance. This is a
+			// statement about the environment, not about the product, so it
+			// skips rather than passing quietly or failing.
+			t.Skipf("%s is %q, which is not a full 40-character commit hash, so there is nothing "+
+				"outside the certificate to compare its claim against", githubSHAEnvVar, sha)
+		}
+		if strings.EqualFold(sha, wrongCommitControl) {
+			t.Fatalf("%s equals the wrong-commit control %s, so the control above proved nothing",
+				githubSHAEnvVar, wrongCommitControl)
+		}
+		verified, log := verify(t, "GITHUB_SHA agreement", bound(sha))
+		if !verified {
+			t.Fatalf(`THE CERTIFICATE'S SOURCE-COMMIT CLAIM IS NOT %s=%s.
+
+Read the verifier log below: it names the commit the certificate claims and the
+commit that was expected. If the two are simply different commits, this is a
+fact about what Fulcio stamps for the %q trigger, NOT a signing failure and NOT
+evidence of tampering — Fulcio fills sourceRepositoryDigest (OID
+1.3.6.1.4.1.57264.1.13) from the OIDC token's "sha" claim, and this assertion
+is the check that the two agree. Fix the assertion to match what was measured,
+and say in this comment what the two values were.
+
+If instead the log says the certificate carries NO source-commit claim, that is
+a real regression in the extraction path: sigstore-go stopped exposing the
+extension, or Fulcio stopped stamping it.
+
+Verifier log:
+%s`, githubSHAEnvVar, sha, os.Getenv("GITHUB_EVENT_NAME"), log)
+		}
+		t.Logf("release-commit binding PASS: the certificate's source-commit claim equals "+
+			"%s=%s on the %q trigger", githubSHAEnvVar, sha, os.Getenv("GITHUB_EVENT_NAME"))
+	})
 }
 
 // mustCWD returns the current working directory for diagnostic messages.

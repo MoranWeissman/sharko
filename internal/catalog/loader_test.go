@@ -380,6 +380,29 @@ addons:
 			want: "repo must be http(s) or oci URL",
 		},
 		{
+			// The ftp case above proves the scheme rule fires on a scheme
+			// Sharko cannot speak at all. This one proves it fires on a
+			// scheme a library already inside the binary CAN speak:
+			// x/crypto/ssh is linked in through internal/gitprovider ->
+			// code.gitea.io/sdk/gitea. A catalog entry's repo address is
+			// read from a committed file, so nobody types it at the moment
+			// it is used and nobody is watching when it is.
+			name: "ssh repo scheme, which is a transport the binary can actually speak",
+			yaml: `
+addons:
+  - name: foo
+    description: x
+    chart: x
+    repo: ssh://git.example.com/org/charts
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+`,
+			want: "repo must be http(s) or oci URL",
+		},
+		{
 			name: "security_score out of range",
 			yaml: `
 addons:

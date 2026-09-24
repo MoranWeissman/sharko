@@ -540,19 +540,56 @@ jobs:
           name: signed-catalog
           path: _dist/catalog/
 
-      - name: Use signed catalog for build
-        # Guard: a silently-empty signed catalog would still cp without
-        # error, baking an empty //go:embed into the released image. The
-        # explicit -s check fails the job loud at swap time so a bad
-        # cosign-job artifact never ships in a release. The download
-        # step's `if-no-files-found: error` covers the missing-file case;
-        # this guard catches the truncated/empty-file case.
+      # Needed by the verify step below. The image build itself compiles Go
+      # inside the Dockerfile, so this job had no toolchain before.
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # A nonempty test is not a signature check.
+      #
+      # This step used to be part of "Use signed catalog for build", where
+      # the only thing standing between a bad signed catalogue and the
+      # released image was `[ ! -s ... ]`. A file that exists and is
+      # non-empty but carries a bad, truncated, mismatched or substituted
+      # signature passed, and was then copied over catalog/addons.yaml so
+      # `//go:embed` baked it into the image and the binaries.
+      #
+      # `catalog-sign --verify` runs the SAME verifier the Sharko binary
+      # runs at startup (internal/catalog/signing.Verifier), over the SAME
+      # canonical entry bytes the signer signed, under the SAME trust
+      # policy production uses (signing.LoadTrustPolicyFromEnv), with the
+      # SAME Sigstore trust root fetched over the network. No new
+      # signature logic and no extra cosign shell-out — this is the
+      # runtime check, moved earlier. So if the pipeline's own bundles
+      # would not verify at runtime, the job stops here, before the cp.
+      #
+      # The trust policy is deliberately NOT overridden. Setting
+      # SHARKO_CATALOG_TRUSTED_IDENTITIES or
+      # SHARKO_CATALOG_TRUSTED_WORKFLOW_REF here, or setting
+      # SHARKO_SKIP_TUF_NETWORK, would put the hole straight back.
+      #
+      # Fail-closed. A missing bundle, an empty bundle, an entry with no
+      # signature URL, a signature URL that breaks the release-asset
+      # convention, an unreachable trust root, or a signature that does
+      # not verify — each exits non-zero and names the entry.
+      - name: Verify signed catalog before embedding
         run: |
+          # Cheap precondition first so a failed artifact download gets a
+          # one-line answer rather than a compile-then-fail. It is a
+          # precondition, NOT the check — the check is the line below it.
           if [ ! -s _dist/catalog/addons.yaml.signed ]; then
             echo "::error::signed catalog is empty or missing"
             exit 1
           fi
-          cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
+          go run ./cmd/catalog-sign --verify \
+            --out _dist/catalog \
+            --release-commit "${{ github.event.workflow_run.head_sha }}" \
+            --release-base-url "https://github.com/MoranWeissman/sharko/releases/download/${{ github.event.workflow_run.head_branch }}"
+
+      - name: Use signed catalog for build
+        run: cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
 
       - name: Extract version from tag
         id: version
@@ -568,16 +605,52 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
+      # Two tag lists, pushed at two different times, and the split is the
+      # whole point.
+      #
+      # `meta` holds only the tags that belong to ONE version and never move:
+      # 4.0.2 and v4.0.2. Those go out with the build, because the image has
+      # to be in the registry before syft can scan it by digest and before
+      # cosign can attest it — so publishing them early is not a choice, it is
+      # what the evidence steps below are built on.
+      #
+      # `meta_moving` holds the three tags that MOVE from one release to the
+      # next — latest, 4.0 and 4 — and they are applied at the END of this job,
+      # after the image SBOM evidence has passed. See "Apply the moving tags"
+      # for what that buys and what it does not.
+      #
+      # flavor: latest=false is LOAD-BEARING on the immutable list, and not
+      # obviously so. metadata-action defaults to latest=auto, and for a
+      # non-prerelease semver version that means the action adds `latest` on
+      # its own — the `type=raw,value=latest` line this list used to carry was
+      # never what produced it. Deleting that line alone would have left
+      # `latest` in this list and changed nothing at all. Only latest=false
+      # actually holds it back.
+      - name: Extract Docker metadata (immutable tags only)
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ steps.version.outputs.TAG }}
+            type=semver,pattern=v{{version}},value=${{ steps.version.outputs.TAG }}
+
+      # The moving tags, computed here so the semver parsing stays in the
+      # action rather than becoming shell, and applied later. latest=false
+      # again, with `latest` listed explicitly instead: this list must be
+      # exactly the three moving tags whatever the action's defaults do.
+      - name: Extract the moving Docker tags
+        id: meta_moving
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.TAG }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.TAG }}
-            type=semver,pattern=v{{version}},value=${{ steps.version.outputs.TAG }}
             type=raw,value=latest
 
       - name: Set up Docker Buildx
@@ -608,8 +681,29 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # COMMIT is the release commit, and it is load-bearing rather
+          # than informational. The Dockerfile already declared
+          # `ARG COMMIT=dev` and passed it to `-X main.commit`, but this
+          # step never supplied a value, so every published image's
+          # binary carried the literal string `dev` — confirmed by reading
+          # the ldflags back out of the published v4.0.1 image.
+          #
+          # `sharko serve` now requires that stamp to accept its own
+          # embedded catalogue: the signing certificate must claim the
+          # commit the binary was released from, and a build with no
+          # release commit has nothing to compare the certificate against,
+          # so it refuses rather than skips. Without this line the image
+          # would refuse its own catalogue while the goreleaser CLI
+          # archives — which get the full commit from goreleaser's
+          # {{.Commit}} — accepted theirs.
+          #
+          # head_sha is the commit the triggering CI run was for, which for
+          # a tag push is the tag's commit. It is the same value passed to
+          # `catalog-sign --verify --release-commit` above, so the gate and
+          # the runtime compare against the same thing.
           build-args: |
             CACHE_BUST=${{ github.event.workflow_run.head_sha }}
+            COMMIT=${{ github.event.workflow_run.head_sha }}
             VERSION=${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
           # ignore-error=true: on run 30956764008 (2026-08-04) the image
@@ -643,9 +737,262 @@ jobs:
           # Sign by digest so each tag pointing at the same digest shares
           # one signature in Rekor. Iterate the tags only to provide
           # operator-friendly verify commands in the run log.
+          #
+          # $TAGS is the IMMUTABLE list, because the moving tags do not exist
+          # yet at this point in the job. They need no signature of their own:
+          # "Apply the moving tags" below points each of them at this same
+          # index digest and proves the digest is unchanged, and a cosign
+          # signature lives against the digest rather than against a tag name.
+          # So `cosign verify ghcr.io/moranweissman/sharko:latest` resolves
+          # latest to this digest and finds this signature.
           for tag in $TAGS; do
             echo "Signing $tag@${DIGEST}"
             cosign sign --yes "${tag}@${DIGEST}"
+          done
+
+      # The release published archive SBOMs (.goreleaser.yaml `sboms:`)
+      # but never an SBOM for the container image. That gap is why the
+      # image's Alpine OS packages were invisible to every dependency
+      # review: an archive SBOM lists Go modules only, so nothing in the
+      # release evidence ever said which apk packages shipped. These
+      # steps close it with one SBOM per architecture.
+      #
+      # Same tool and same format as the archive SBOMs (syft,
+      # cyclonedx-json) so a consumer reads one format for everything.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate per-architecture image SBOMs
+        id: image_sboms
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p _dist/image-sboms
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+
+          # `push: true` with two platforms publishes an OCI image index,
+          # so ${DIGEST} addresses the index and not any one architecture.
+          # An SBOM has to describe a single architecture, so resolve the
+          # per-arch manifest digest out of the index.
+          #
+          # The platform filter is not cosmetic: buildx also writes
+          # provenance/attestation manifests into the same index, and those
+          # carry platform "unknown/unknown". Picking one of those up fails
+          # loudly rather than quietly, which is worth knowing: measured with
+          # syft 1.52.0, scanning an attestation manifest exits 1 with
+          # "unsupported layer media type(s): layer 0:
+          # application/vnd.in-toto+json". So the filter saves the run from
+          # stopping on a confusing error; it is not the thing standing
+          # between a wrong SBOM and publication.
+          docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" > _dist/image-index.json
+
+          for arch in amd64 arm64; do
+            arch_digest=$(jq -r --arg a "$arch" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest' \
+              _dist/image-index.json)
+
+            # This stops the run here, naming the architecture, when the
+            # index has no manifest for it — rather than letting an empty
+            # digest turn into a scan of whatever else the reference then
+            # resolves to.
+            #
+            # What it does NOT protect against, because that was measured
+            # rather than assumed: handing syft the INDEX digest does not
+            # produce an empty SBOM. With syft 1.52.0 it exits 0 and writes a
+            # complete-looking document — 361 components, 16 apk packages,
+            # 135 Go modules — which passes the completeness check below. What
+            # it really does is silently pick one platform and record the
+            # INDEX digest as metadata.component.version. The check that
+            # catches that one is the digest-binding check further down: the
+            # recorded index digest matches neither architecture's expected
+            # digest, so it exits 1. Both checks are load-bearing and neither
+            # covers for the other.
+            if [ -z "$arch_digest" ] || [ "$arch_digest" = "null" ]; then
+              echo "::error::no linux/${arch} manifest found in ${IMAGE}@${DIGEST}"
+              exit 1
+            fi
+
+            out="_dist/image-sboms/sharko-image-linux-${arch}.cdx.json"
+            echo "linux/${arch} -> ${arch_digest}"
+
+            # Scan by digest, not by tag. Given a digest reference syft
+            # records it as metadata.component.version, which is what ties
+            # the document to the image it describes. Given a tag it
+            # records the tag instead and the digest appears nowhere.
+            syft scan "registry:${IMAGE}@${arch_digest}" \
+              -o "cyclonedx-json=${out}"
+
+            # A one-category SBOM is the failure that created this gap in
+            # the first place: OS packages present and Go modules missing,
+            # or the reverse, both look like a valid document and exit 0.
+            # Require both before publishing anything.
+            #
+            # `if ! jq -e` covers an unreadable file too, not just a false
+            # filter result: on an empty file jq exits 4, which is non-zero,
+            # so the branch is taken. Do not narrow this to a test for
+            # exit code 1.
+            if ! jq -e '
+                  ((.components | map(select(.purl != null and (.purl | startswith("pkg:apk/")))) | length) > 0)
+              and ((.components | map(select(.purl != null and (.purl | startswith("pkg:golang/")))) | length) > 0)
+            ' "$out" > /dev/null; then
+              echo "::error::${out} is missing apk packages or Go modules"
+              exit 1
+            fi
+
+            # Also require the digest really landed in the document, so a
+            # future syft change cannot quietly untie the SBOM from its image.
+            if ! jq -e --arg d "$arch_digest" '.metadata.component.version == $d' "$out" > /dev/null; then
+              echo "::error::${out} does not record digest ${arch_digest}"
+              exit 1
+            fi
+
+            apk_count=$(jq '[.components[] | select(.purl != null and (.purl | startswith("pkg:apk/")))] | length' "$out")
+            go_count=$(jq '[.components[] | select(.purl != null and (.purl | startswith("pkg:golang/")))] | length' "$out")
+            echo "  ${out}: ${apk_count} apk packages, ${go_count} Go modules, digest ${arch_digest}"
+
+            # Bind the SBOM to the per-arch digest in the transparency log,
+            # the same keyless OIDC identity the image signing step above
+            # uses. This is what lets a consumer confirm the SBOM belongs to
+            # the image rather than trusting a filename.
+            COSIGN_YES=true cosign attest \
+              --predicate "$out" \
+              --type cyclonedx \
+              "${IMAGE}@${arch_digest}"
+          done
+
+      - name: Upload image SBOMs as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-sboms
+          path: _dist/image-sboms/
+          if-no-files-found: error
+          retention-days: 7
+
+      # WHAT IS ALREADY PUBLIC BY THE TIME THIS STEP RUNS, and why the moving
+      # tags wait here while the immutable ones did not.
+      #
+      # Read this before writing anything anywhere that says a failed release
+      # run leaves nothing behind. For the image, that is not true.
+      #
+      # There are two completely different failure cases in this workflow and
+      # they must not be described in one sentence:
+      #
+      #   1. An evidence job fails or is skipped BEFORE anything publishes.
+      #      `release-evidence-gate` fans in the three cluster e2e jobs, the
+      #      perf gate and the strict docs build, `sign-catalog-entries` needs
+      #      it, this job needs that, and helm-package, helm-package-engine and
+      #      goreleaser all need this job. So it sits genuinely upstream of
+      #      every publish step, and its `if: always()` is there on purpose so
+      #      a SKIPPED evidence job counts as a failure too. In that case
+      #      nothing is published: no image, no tag of any kind, no chart, no
+      #      release page. "A failure prevents publication" is TRUE there.
+      #
+      #   2. A step inside THIS job fails after "Build and push image". By then
+      #      the immutable tags — 4.0.2 and v4.0.2 — are already in the public
+      #      registry, and so is the index digest they point at. Publishing
+      #      them early is not a choice: syft scans the image by digest out of
+      #      the registry and cosign attests a registry digest, so the image
+      #      has to be public before any of the evidence below it can run at
+      #      all. "A failure prevents publication" is FALSE there. What a
+      #      failure here does prevent is the rest: helm-package,
+      #      helm-package-engine and goreleaser all need this job, so a failure
+      #      leaves published container images with no GitHub release page, no
+      #      CLI archives and no published Helm chart.
+      #
+      # What holding the moving tags buys, stated without overselling it: a
+      # consumer who pulls `latest`, `4.0` or `4` never lands on a build whose
+      # image evidence failed, because those tags only ever move after this
+      # step. It does NOT make a failed run invisible — somebody who asked for
+      # 4.0.2 or v4.0.2 by name during the run already has it.
+      #
+      # RECOVERY, and the honest version of it. Retagging is forbidden in this
+      # project and published artifacts are preserved, so there is no move that
+      # repairs a half-published version in place. The recovery is to publish
+      # the next patch version. The operator-facing write-up of this — what is
+      # public, what is missing, what somebody who pulled in between is holding,
+      # and the order to do things in — is
+      # docs/site/operator/supply-chain.md, "If a release run stops part way
+      # through".
+      #
+      # HOW the tags are applied. `docker buildx imagetools create` writes new
+      # tags pointing at an index that is already in the registry; it does not
+      # rebuild and it does not re-push layers. Measured against a throwaway
+      # local registry with a two-platform index built the same way this job
+      # builds one (two real manifests plus two unknown/unknown attestation
+      # manifests): all three tags came back carrying the byte-identical index
+      # digest and all four manifests. The two checks below are not decoration
+      # — the same measurement showed that asking imagetools to retag a SINGLE
+      # architecture's manifest produces a fresh single-platform index rather
+      # than an error, which is exactly the silent regression that looks fine
+      # until somebody pulls on arm64.
+      - name: Apply the moving tags (latest, 4.0, 4)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          MOVING_TAGS: ${{ steps.meta_moving.outputs.tags }}
+        run: |
+          set -euo pipefail
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+
+          # Read the newline-separated list into an array rather than relying
+          # on word splitting, so a tag is never silently split or globbed.
+          tags=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            tags+=("$tag")
+          done <<< "$MOVING_TAGS"
+
+          # An empty list would apply no moving tags and exit 0, so the release
+          # would publish with `latest` left pointing at the PREVIOUS version
+          # and nothing would say so. Fail instead.
+          if [ "${#tags[@]}" -eq 0 ]; then
+            echo "::error::no moving tags were produced, so latest would be left pointing at the previous release"
+            exit 1
+          fi
+          if ! printf '%s\n' "${tags[@]}" | grep -qx "${IMAGE}:latest"; then
+            echo "::error::the moving tag list does not contain ${IMAGE}:latest"
+            printf '  got: %s\n' "${tags[@]}"
+            exit 1
+          fi
+
+          create_args=()
+          for tag in "${tags[@]}"; do
+            create_args+=(--tag "$tag")
+          done
+          echo "pointing ${#tags[@]} moving tag(s) at ${IMAGE}@${DIGEST}"
+          docker buildx imagetools create "${create_args[@]}" "${IMAGE}@${DIGEST}"
+
+          # Prove what was just done, rather than trusting the tool's exit
+          # code. Both checks matter and they catch different things.
+          for tag in "${tags[@]}"; do
+            raw=$(mktemp)
+            docker buildx imagetools inspect --raw "$tag" > "$raw"
+
+            # A digest IS the sha256 of the manifest bytes, so hashing what the
+            # registry returns for the tag gives the digest the tag resolves
+            # to, with no template support needed. Equality proves the index
+            # was copied rather than rebuilt — which also means the cosign
+            # signature made against this digest covers the tag.
+            got="sha256:$(sha256sum "$raw" | cut -d' ' -f1)"
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::${tag} resolves to ${got}, not the built index ${DIGEST}. The index was rebuilt rather than copied, so the image signature made against ${DIGEST} does not cover this tag."
+              exit 1
+            fi
+
+            # And the property an operator actually depends on, asserted
+            # directly instead of inferred: both architectures are still in
+            # the index behind the tag.
+            for arch in amd64 arm64; do
+              if ! jq -e --arg a "$arch" \
+                  '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $a)] | length > 0' \
+                  "$raw" > /dev/null; then
+                echo "::error::${tag} does not list linux/${arch}. A multi-architecture index was flattened to one architecture."
+                exit 1
+              fi
+            done
+
+            echo "  OK ${tag} -> ${got}, linux/amd64 and linux/arm64 both present"
+            rm -f "$raw"
           done
 
   helm-package:
@@ -889,22 +1236,34 @@ jobs:
           name: signed-catalog
           path: _dist/catalog/
 
-      - name: Use signed catalog for build
-        # Same guard as the build-and-push job above — fail loud if the
-        # signed catalog artifact is empty/truncated so the goreleaser
-        # CLI archives never ship an empty //go:embed catalog. See the
-        # build-and-push step's comment for the full rationale.
-        run: |
-          if [ ! -s _dist/catalog/addons.yaml.signed ]; then
-            echo "::error::signed catalog is empty or missing"
-            exit 1
-          fi
-          cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
-
+      # Moved above the embed swap: the verify step below needs a Go
+      # toolchain, and it has to run BEFORE the catalogue is copied into
+      # place.
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # Same real check as the build-and-push job above, for the same
+      # reason: this is the second place a signed catalogue gets embedded
+      # via //go:embed, here into the goreleaser CLI archives. A nonempty
+      # test was all that stood in front of it. See the build-and-push
+      # step's comment for the full rationale, including why the trust
+      # policy is deliberately not overridden.
+      - name: Verify signed catalog before embedding
+        run: |
+          # Precondition, not the check — see the build-and-push step.
+          if [ ! -s _dist/catalog/addons.yaml.signed ]; then
+            echo "::error::signed catalog is empty or missing"
+            exit 1
+          fi
+          go run ./cmd/catalog-sign --verify \
+            --out _dist/catalog \
+            --release-commit "${{ github.event.workflow_run.head_sha }}" \
+            --release-base-url "https://github.com/MoranWeissman/sharko/releases/download/${{ github.event.workflow_run.head_branch }}"
+
+      - name: Use signed catalog for build
+        run: cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -963,3 +1322,31 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # COSIGN_YES suppresses the interactive prompt in non-TTY mode.
           COSIGN_YES: "true"
+
+      # Put the per-architecture image SBOMs on the release page next to
+      # the archive SBOMs GoReleaser just uploaded, so someone auditing a
+      # release finds the image contents in the same place as the binary
+      # contents. These have to run after GoReleaser because GoReleaser is
+      # what creates the release the assets attach to.
+      - name: Download image SBOMs
+        uses: actions/download-artifact@v8
+        with:
+          name: image-sboms
+          path: _dist/image-sboms/
+
+      - name: Attach image SBOMs to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # Guard the empty-glob case: `gh release upload` with no files
+          # exits non-zero anyway, but naming the problem beats a bare
+          # usage error in the log.
+          count=$(find _dist/image-sboms -name '*.cdx.json' -type f | wc -l | tr -d ' ')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no image SBOMs found to attach"
+            exit 1
+          fi
+          echo "attaching ${count} image SBOMs to ${TAG}"
+          gh release upload "$TAG" _dist/image-sboms/*.cdx.json --clobber

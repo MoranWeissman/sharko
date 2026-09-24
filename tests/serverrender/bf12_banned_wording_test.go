@@ -212,6 +212,93 @@ var bannedWordings = []string{
 	// line" in CONTRIBUTING.md walked straight past the sweep while the
 	// v4.0.0 spelling in the same place was caught. Closing it.
 	strings.Join([]string{"sharko", "v4.0.1", "is", "the", "technical-preview", "release", "line"}, " "),
+	// V402-PATCHPREP, 2026-09-24. The two entries above carry a note saying
+	// this list cannot stop a v4.0.2 opening and "a reviewer has to". That is
+	// the one kind of guard this repository has already been bitten by: a
+	// check that enumerates known-bad strings, is never extended, and goes on
+	// reporting success while protecting nothing. The renamed CI job that left
+	// branch protection pointing at a dead context blocked every pull request
+	// for 24 days and nobody saw it, because it failed in the direction nobody
+	// watches. So the two v4.0.2 shapes are banned BEFORE either is written,
+	// rather than after one ships and has to be cleaned up.
+	//
+	// These are the only two patch-pinned current-state openings the v4 line
+	// has ever used, so banning the same pair one patch along is the whole of
+	// the rule this list can express. Same narrowness as above, for the same
+	// reason: NOT the stem "sharko v4.0.2 is", which would also forbid an
+	// honest future sentence like "Sharko v4.0.2 is the first published
+	// version to carry the image SBOM".
+	//
+	// The honest limitation does not go away, it just moves along by one: a
+	// v4.0.3 opening would still walk past this list. The rule underneath is
+	// "a current-state sentence names no patch version at all", and a list of
+	// literal phrases cannot say that. What this entry buys is that the next
+	// patch is covered in advance rather than in hindsight.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly (strip
+	// each line, drop leading `#/*->`, trim `` `*.,:;!?()[]{}"' `` off each
+	// word's edges, lowercase, join with single spaces) over all 2783 tracked
+	// files of every type: ZERO hits for both phrases. That includes the
+	// v4.0.2 entry in docs/site/release-notes.md, which says "Sharko v4 is"
+	// and names the patch version only in its heading. The same run found the
+	// v4.0.0 and v4.0.1 phrases exactly where they are expected — inside this
+	// file and nowhere else — which is what proves the reproduction matches.
+	strings.Join([]string{"sharko", "v4.0.2", "is", "a", "technical", "preview"}, " "),
+	strings.Join([]string{"sharko", "v4.0.2", "is", "the", "technical-preview", "release", "line"}, " "),
+	// PUBLICATION-CONTINGENT, 2026-09-24. Eight sentences in
+	// docs/site/release-notes.md and docs/site/operator/supply-chain.md were
+	// true on the day they were written and go false the moment a release
+	// publishes. Nothing made them go red: release-notes.md is fully exempt
+	// from internal/api/docs_wording_sweep_test.go, this sweep banned only the
+	// banner shapes, mkdocs --strict has no opinion about whether a sentence is
+	// still true, and the release checklist had no step for rewriting them. One
+	// of them even said out loud that it "becomes an ordinary release entry"
+	// once a v4.0.2 exists — an instruction to a future human, with no guard
+	// behind it. That is the same shape as the wrong explanation that survived
+	// four review rounds here because its only test asserted the string was not
+	// empty.
+	//
+	// The rule these eight break: a documentation sentence must be true before
+	// AND after the next release publishes. Two ways to write one that is:
+	//
+	//   - bound the claim to a set that cannot grow — "no tag published before
+	//     2026-09-24 has an image SBOM" stays true forever, while "this has not
+	//     run for any published release yet" expires on the first run;
+	//   - for anything that does change, link
+	//     https://github.com/MoranWeissman/sharko/releases and let the reader
+	//     look, instead of asserting presence or absence on the page.
+	//
+	// Seven of the eight are version-free, so they cover the next patch as well
+	// as this one. Two things this list still cannot do:
+	//
+	//   - "no v4.0.2 artifact of any kind" is banned WITH the version in it,
+	//     not as the bare stem "artifact of any kind". The bare stem also
+	//     appears in the v4.0.0 entry, where it is a permanent fact: that tag
+	//     was cut, its release run failed, and nothing will ever be published
+	//     under it. A ban that forces a historical record to lie is worse than
+	//     no ban, which is the same reason the v4.0.x banner entries above
+	//     stayed narrow.
+	//   - the same limitation as everywhere else in this list: these are
+	//     literal phrases, so they cannot express "no sentence may depend on
+	//     what is published today". A newly invented expiring sentence still
+	//     needs a reviewer. What this entry buys is that the seven shapes that
+	//     actually shipped cannot come back.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly over all
+	// 2757 tracked files of every type: the only hits for any of the eight were
+	// the two files the same change rewrites — docs/site/release-notes.md lines
+	// 19, 20, 24, 50 and 89, and docs/site/operator/supply-chain.md lines 13,
+	// 39 and 40. Nothing else in the repository carries them, including the
+	// historical entries lower down release-notes.md and the records under
+	// docs/design.
+	strings.Join([]string{"prepared", "on", "a", "branch", "and", "under", "review"}, " "),
+	strings.Join([]string{"becomes", "an", "ordinary", "release", "entry"}, " "),
+	strings.Join([]string{"no", "v4.0.2", "artifact", "of", "any", "kind"}, " "),
+	strings.Join([]string{"rebuilding", "the", "container", "image", "clears"}, " "),
+	strings.Join([]string{"never", "run", "for", "any", "release"}, " "),
+	strings.Join([]string{"not", "run", "for", "any", "published", "release"}, " "),
+	strings.Join([]string{"not", "yet", "produced", "for", "any", "published", "release"}, " "),
+	strings.Join([]string{"have", "never", "executed"}, " "),
 	// INSTALL-PATHS, 2026-08-29. Every documented way to install the CLI was
 	// broken, and one of them was dangerous rather than merely useless:
 	//

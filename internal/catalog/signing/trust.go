@@ -65,6 +65,128 @@ const EnvTrustedWorkflowRef = "SHARKO_CATALOG_TRUSTED_WORKFLOW_REF"
 // EnvTrustedWorkflowRef.
 const DefaultTrustedWorkflowRef = `^refs/tags/v.*$`
 
+// EmbeddedCatalogWorkflowRef is the workflow_ref claim assertion applied
+// to Sharko's OWN embedded catalogue, and to nothing else.
+//
+// Why it differs from DefaultTrustedWorkflowRef. That default says
+// `^refs/tags/v.*$`, and for a `workflow_run`-triggered workflow no
+// certificate can ever satisfy it. Fulcio stamps workflow_ref from the
+// ref the workflow FILE lives on, which for this trigger is always
+// `refs/heads/main`, never the tag being built. Measured on the
+// certificates inside all 45 published v4.0.1 bundles: every one carries
+// workflow_ref `refs/heads/main`. The two shipped defaults are therefore
+// mutually unsatisfiable for Sharko's own signatures, and the shipped
+// runtime marks every entry of its own catalogue unverified as a result.
+// TestShippedDefaults_AreMutuallySatisfiable pins that this can never
+// come back.
+//
+// DefaultTrustedWorkflowRef is deliberately NOT changed. It governs
+// third-party catalogues, whose publishers do sign from tags, and
+// widening or moving it would change documented behaviour for every
+// operator. The narrow fix is to apply the ref Sharko's own workflow
+// actually mints, to Sharko's own catalogue only.
+//
+// This assertion is now the weaker of the two claim checks on the
+// embedded path: it repeats what DefaultTrustedIdentities' Sharko
+// pattern already pins (that pattern ends `@refs/heads/main`). The real
+// control is the release-commit binding — see
+// EmbeddedCatalogTrustPolicy. The tag-shaped assertion is not dropped so
+// much as replaced by a stricter one landing in the same change: instead
+// of "came from some tag" the certificate must now claim the exact
+// commit this build was released from.
+const EmbeddedCatalogWorkflowRef = `^refs/heads/main$`
+
+// commitSHALen is the length of a full git SHA-1 commit hash in hex.
+// Sharko compares full hashes only — never a prefix. A prefix comparison
+// is a weaker check (two different commits can share a prefix, and a
+// short hash is not a stable identifier as a repository grows), and the
+// values Sharko has on both sides are full, so there is nothing to gain
+// by loosening it.
+const commitSHALen = 40
+
+// IsFullCommitSHA reports whether s is exactly 40 hexadecimal characters
+// — the shape of a full git commit hash. Case-insensitive on input;
+// callers lowercase before storing.
+//
+// Everything that is NOT a full commit hash is treated the same way: the
+// literal `dev` that cmd/sharko/root.go declares and the Dockerfile
+// defaults to, the short hash the local `make build` target stamps, and
+// the empty string. None of them identifies a release, so none of them
+// can stand in for one.
+func IsFullCommitSHA(s string) bool {
+	if len(s) != commitSHALen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// EmbeddedCatalogTrustPolicy returns the trust policy for Sharko's OWN
+// embedded catalogue: the base policy, plus the release-commit binding,
+// plus the workflow_ref claim Sharko's own release workflow actually
+// mints.
+//
+// This function is the structural boundary the whole design rests on.
+// RequireReleaseCommit can only be turned on here, so a catalogue that
+// does not come through this constructor cannot be subjected to the
+// release-commit requirement. cmd/sharko/serve.go hands the result to
+// the embedded-catalogue loader and hands the UNMODIFIED base policy to
+// the third-party fetcher; TestThirdPartyPolicy_NeverCarriesTheCommitRequirement
+// and the wiring test in cmd/sharko pin both halves.
+//
+// buildCommit is the binary's own build-stamped release commit — the
+// value the release pipeline writes with `-X main.commit`. Why that
+// value, and why it is independent of the certificate:
+//
+//   - It is fixed at LINK time by the release job from the tag being
+//     released. Nothing the certificate says can change it, so comparing
+//     the certificate's claim against it is a real comparison and not the
+//     certificate being compared with itself.
+//   - It is NOT the current tip of `main`. A release commit is normally
+//     an ancestor of `main` by the time anyone runs the binary — as of
+//     this writing v4.0.1's commit sits 57 commits behind `main` — and
+//     using the tip would refuse the genuine catalogue of every release
+//     that is not the newest commit in the repository.
+//   - It travels with the artifact. A binary carries the commit it was
+//     built from wherever it is copied, with no configuration and no
+//     network.
+//
+// When buildCommit is not a full commit hash — a `go build` with no
+// ldflags, `make build`'s short hash, or a container image whose COMMIT
+// build argument was not supplied — ReleaseCommit is left empty while
+// RequireReleaseCommit stays TRUE. That combination is a refusal with a
+// named reason, not a skip: see assertReleaseCommit.
+//
+// The operator's own SHARKO_CATALOG_TRUSTED_WORKFLOW_REF setting still
+// wins. If they set it, it is honoured here too — an operator who has
+// deliberately configured a workflow_ref policy does not get it silently
+// replaced.
+func EmbeddedCatalogTrustPolicy(base sources.TrustPolicy, buildCommit string) sources.TrustPolicy {
+	p := base
+	// Copy the slice so a later edit to one policy cannot reach the other.
+	p.Identities = append([]string(nil), base.Identities...)
+
+	if strings.TrimSpace(os.Getenv(EnvTrustedWorkflowRef)) == "" {
+		p.WorkflowRef = EmbeddedCatalogWorkflowRef
+	}
+
+	p.RequireReleaseCommit = true
+	p.ReleaseCommit = ""
+	if IsFullCommitSHA(buildCommit) {
+		p.ReleaseCommit = strings.ToLower(buildCommit)
+	}
+	return p
+}
+
 // DefaultsToken is the literal placeholder operators include in the env
 // var to expand to DefaultTrustedIdentities at the matching position.
 // Case-sensitive: `<defaults>` matches; `<DEFAULTS>` does not.

@@ -14,6 +14,136 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v4.0.2 — a security patch: x/crypto, gRPC and a refreshed Alpine base
+
+**Status:** a security patch in the v4 code line. Which versions have been
+released, which one is the latest, and what each one published are all listed on
+[the releases page](https://github.com/MoranWeissman/sharko/releases) — read it
+there rather than here, because a sentence on this page can only describe the day
+somebody wrote it. Install only published `v4.0.1`-or-later artifacts. This entry
+is here so the security work below is on the record; it says nothing about what
+is available to download.
+
+**Sharko v4 is a technical preview. Install only published `v4.0.1`-or-later
+artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
+in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
+
+### Security
+
+- **`golang.org/x/crypto` moves from v0.55.0 to v0.56.0.** That takes the
+  upstream fix for `CVE-2026-78662` (`GO-2026-6354`) and `CVE-2026-56855`
+  (`GO-2026-6355`), two denial-of-service defects in SSH channel handling in
+  `golang.org/x/crypto/ssh`. Sharko does pull that package into the build, through
+  `internal/gitprovider` and the Gitea SDK. Whether anything in `v4.0.1` can
+  actually reach the affected code is **unresolved**: no call path to the affected
+  functions was found, and none was ruled out either. So this is not a fix for a
+  defect shown to be exploitable, and it is not a change made after showing the
+  old version was harmless — the upstream fix is available, so it is taken.
+  v0.56.0 and not v0.57.0 on purpose: across every advisory published for that
+  module, the highest version that first carries a fix is 0.56.0, so v0.57.0
+  would clear nothing more while raising four other modules for no security gain.
+- **`golang.org/x/crypto/openpgp` still has no fix, and is still reported.**
+  `GO-2026-5932` says those packages are unmaintained. It names no fixed version
+  in any release of `x/crypto`, so no bump clears it. The `openpgp` packages are
+  not in Sharko's shipping package graph. It is listed here rather than dropped
+  quietly, because a scan of these artifacts will keep showing it.
+- **A container image built locally from this work carried 26 fewer Alpine OS
+  findings than the published `v4.0.1` image.** That number comes from one
+  measurement and nowhere else: a local `docker buildx --load --pull` build at
+  commit `871dba44`, with `version.txt` still reading `4.0.1`, scanned on the
+  machine that built it. In that image `libcrypto3` and `libssl3` came out at
+  `3.3.7-r1` rather than `3.3.7-r0`, which covers `CVE-2026-45447` (High) among
+  the 26. The `Dockerfile` did not change: at the time of that build `alpine:3.21`
+  resolved to 3.21.8, and that base layer already carries `r1`. `alpine:3.21` is a
+  floating tag, so which patch release it resolves to on any later day has to be
+  read off the build rather than assumed from this page. The published `v4.0.1`
+  image and that local build were scanned with the same tool and the same
+  vulnerability database version, so those 26 findings went away because the
+  packages moved, not because the scanner's data moved. Being a local build, it
+  is not evidence about any image the release pipeline produces: the pipeline
+  builds its own image from its own inputs, and what that image contains can only
+  be read off that image.
+- **Four OS findings remain and no version fixes them.** `CVE-2026-85091` in
+  `zlib` (High), and `CVE-2025-60876` in `busybox`, `busybox-binsh` and
+  `ssl_client` (Medium). Alpine publishes no fixed package for any of them, so
+  neither a rebuild nor a base bump clears them. They stay open, and they are
+  named here rather than left out.
+- **gRPC is at v1.83.2, which covers `CVE-2026-84304`, `CVE-2026-84445` and
+  `CVE-2026-84303`.** That landed on `main` after `v4.0.1` was published, not in
+  this round. For the published `v4.0.1` artifacts the assessment's finding is:
+  **no reachable vulnerable path identified in the assessed `v4.0.1`
+  artifacts** — which is a statement about what was looked for and not found,
+  not a claim that those artifacts were proven unaffected.
+- **`prometheus/prometheus` moves from v0.300.1 to v0.313.3, which clears four
+  advisories in the dependency graph only.** That library is a test-only import
+  and has never been part of any shipped Sharko binary, so this is not a fix for
+  a vulnerability that shipped to anybody.
+
+### Bug fixes
+
+- **`v4.0.1` refuses the signatures on its own catalogue, and the cause is its
+  default trust policy rather than anything wrong with the signatures.** A
+  `v4.0.1` install shows all 45 embedded catalogue entries as unverified and the
+  Marketplace **Verified** badge never lights up. The two settings it ships with
+  cannot both be satisfied by any certificate at all: the trusted-identity
+  pattern requires a signer whose workflow ref is `refs/heads/main`, while the
+  `workflow_ref` claim check requires `refs/tags/v…`. Sharko's release workflow
+  is triggered by `workflow_run`, and for that trigger the certificate records
+  the ref the workflow file itself sits on, which is always `refs/heads/main` —
+  so the second check can never pass.
+
+    **This is not evidence of tampering, and it is worth being plain about
+    that**, because "signature refused" is exactly what tampering would also
+    look like. Every published `v4.0.1` bundle was re-checked and all 45 are
+    genuine: the signature matches, the payload digest matches, the Fulcio
+    certificate chain validates, the Rekor transparency-log entry is present and
+    valid, and the signing identity is Sharko's own release workflow. Only the
+    ref check refused them, and it refused all 45 identically.
+
+    The fix replaces that check, for Sharko's own catalogue only, with a
+    stricter one: the certificate must name the exact commit the running binary
+    was built from. That accepts the catalogue signed for this release and
+    refuses a signature made from any other commit, including a perfectly valid
+    signature made later on `main`. Catalogues fetched from
+    `SHARKO_CATALOG_URLS` or from `configuration/marketplace-sources.yaml` are
+    unaffected — their publishers sign from their own repositories at their own
+    commits, and the rule applied to them has not changed. See
+    [Catalog trust policy](operator/catalog-trust-policy.md).
+
+    **A `v4.0.1` binary already on disk keeps its own copy of the old policy and
+    keeps refusing.** Nothing about changing the source reaches a binary that has
+    already been downloaded — the policy is compiled into it. An operator running
+    `v4.0.1` has two choices: move to a version that carries the fix, or set
+    `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF=^refs/heads/main$`, which is the
+    documented override and is what makes the shipped `v4.0.1` accept its own
+    catalogue. Which versions carry the fix is answered by
+    [the releases page](https://github.com/MoranWeissman/sharko/releases).
+
+### Dependency updates that are not security fixes
+
+Named here because they are easy to read as security work, and they are not: no
+advisory applies to any of them.
+
+- `google.golang.org/protobuf` v1.36.11 → v1.36.12, carried along by the gRPC bump.
+- `prometheus/client_model` v0.6.2 → v0.6.3.
+- `prometheus/common` v0.67.5 → v0.69.0.
+
+### What's new
+
+- **The release workflow builds an SBOM for each container image architecture,
+  attests it to that architecture's digest with cosign, and uploads it to the
+  release page.** Those steps were added to `.github/workflows/release.yml` on
+  2026-09-24. Before them the release published SBOMs for the CLI archives only,
+  and a CLI archive SBOM lists Go modules and no Alpine packages at all — which
+  is why the 26 OS findings in the published `v4.0.1` image were invisible to
+  every dependency review. **No release published before 2026-09-24 carries an
+  image SBOM, `v4.0.1` included.** Whether a particular release carries one is
+  answered by [the releases page](https://github.com/MoranWeissman/sharko/releases)
+  and by the registry, not by this page. The verify command is in
+  [Supply chain](operator/supply-chain.md).
+
+---
+
 ## v4.0.1 — a chart version pinned without the leading "v" still resolves
 
 **Status:** the version of the v4 technical-preview line that carries the fix
