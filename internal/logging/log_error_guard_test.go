@@ -92,7 +92,15 @@ import (
 // word Sharko publishes in place of a catalog source address. That file
 // logs nothing either — it returns the fixed word, and nothing else, for
 // every address.
-const wantSweptGoFiles = 430
+//
+// 431 since S2 added cmd/catalog-sign/verify.go, the release pipeline's
+// check that the bundles it just produced actually verify before the signed
+// catalogue is embedded. It writes its own report to an io.Writer the caller
+// hands it, and it makes no slog call of its own: the one handler it builds
+// (reasonSink) forwards records the verifier already emitted and reads the
+// verifier's own `reason` attribute so a failure line can name why. It
+// therefore originates no log message and carries no error into one.
+const wantSweptGoFiles = 431
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
