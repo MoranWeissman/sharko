@@ -245,6 +245,60 @@ var bannedWordings = []string{
 	// file and nowhere else — which is what proves the reproduction matches.
 	strings.Join([]string{"sharko", "v4.0.2", "is", "a", "technical", "preview"}, " "),
 	strings.Join([]string{"sharko", "v4.0.2", "is", "the", "technical-preview", "release", "line"}, " "),
+	// PUBLICATION-CONTINGENT, 2026-09-24. Eight sentences in
+	// docs/site/release-notes.md and docs/site/operator/supply-chain.md were
+	// true on the day they were written and go false the moment a release
+	// publishes. Nothing made them go red: release-notes.md is fully exempt
+	// from internal/api/docs_wording_sweep_test.go, this sweep banned only the
+	// banner shapes, mkdocs --strict has no opinion about whether a sentence is
+	// still true, and the release checklist had no step for rewriting them. One
+	// of them even said out loud that it "becomes an ordinary release entry"
+	// once a v4.0.2 exists — an instruction to a future human, with no guard
+	// behind it. That is the same shape as the wrong explanation that survived
+	// four review rounds here because its only test asserted the string was not
+	// empty.
+	//
+	// The rule these eight break: a documentation sentence must be true before
+	// AND after the next release publishes. Two ways to write one that is:
+	//
+	//   - bound the claim to a set that cannot grow — "no tag published before
+	//     2026-09-24 has an image SBOM" stays true forever, while "this has not
+	//     run for any published release yet" expires on the first run;
+	//   - for anything that does change, link
+	//     https://github.com/MoranWeissman/sharko/releases and let the reader
+	//     look, instead of asserting presence or absence on the page.
+	//
+	// Seven of the eight are version-free, so they cover the next patch as well
+	// as this one. Two things this list still cannot do:
+	//
+	//   - "no v4.0.2 artifact of any kind" is banned WITH the version in it,
+	//     not as the bare stem "artifact of any kind". The bare stem also
+	//     appears in the v4.0.0 entry, where it is a permanent fact: that tag
+	//     was cut, its release run failed, and nothing will ever be published
+	//     under it. A ban that forces a historical record to lie is worse than
+	//     no ban, which is the same reason the v4.0.x banner entries above
+	//     stayed narrow.
+	//   - the same limitation as everywhere else in this list: these are
+	//     literal phrases, so they cannot express "no sentence may depend on
+	//     what is published today". A newly invented expiring sentence still
+	//     needs a reviewer. What this entry buys is that the seven shapes that
+	//     actually shipped cannot come back.
+	//
+	// Checked before adding, by reproducing flattenForWording exactly over all
+	// 2757 tracked files of every type: the only hits for any of the eight were
+	// the two files the same change rewrites — docs/site/release-notes.md lines
+	// 19, 20, 24, 50 and 89, and docs/site/operator/supply-chain.md lines 13,
+	// 39 and 40. Nothing else in the repository carries them, including the
+	// historical entries lower down release-notes.md and the records under
+	// docs/design.
+	strings.Join([]string{"prepared", "on", "a", "branch", "and", "under", "review"}, " "),
+	strings.Join([]string{"becomes", "an", "ordinary", "release", "entry"}, " "),
+	strings.Join([]string{"no", "v4.0.2", "artifact", "of", "any", "kind"}, " "),
+	strings.Join([]string{"rebuilding", "the", "container", "image", "clears"}, " "),
+	strings.Join([]string{"never", "run", "for", "any", "release"}, " "),
+	strings.Join([]string{"not", "run", "for", "any", "published", "release"}, " "),
+	strings.Join([]string{"not", "yet", "produced", "for", "any", "published", "release"}, " "),
+	strings.Join([]string{"have", "never", "executed"}, " "),
 	// INSTALL-PATHS, 2026-08-29. Every documented way to install the CLI was
 	// broken, and one of them was dangerous rather than merely useless:
 	//

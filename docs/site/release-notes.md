@@ -14,15 +14,15 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
-## v4.0.2 — prepared, not published
+## v4.0.2 — a security patch: x/crypto, gRPC and a refreshed Alpine base
 
-**Status:** prepared on a branch and under review. There is no `v4.0.2` tag, no
-`v4.0.2` release page and no `v4.0.2` artifact of any kind, and this entry does
-not say there will be one. `v4.0.1` is still the latest published release, and
-everything listed below is in the v4 code line. Install only published
-`v4.0.1`-or-later artifacts. The entry is here so the security work is on the
-record while it is being reviewed; it becomes an ordinary release entry only if
-and when a `v4.0.2` is published.
+**Status:** a security patch in the v4 code line. Which versions have been
+released, which one is the latest, and what each one published are all listed on
+[the releases page](https://github.com/MoranWeissman/sharko/releases) — read it
+there rather than here, because a sentence on this page can only describe the day
+somebody wrote it. Install only published `v4.0.1`-or-later artifacts. This entry
+is here so the security work below is on the record; it says nothing about what
+is available to download.
 
 **Sharko v4 is a technical preview. Install only published `v4.0.1`-or-later
 artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
@@ -47,13 +47,22 @@ in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
   in any release of `x/crypto`, so no bump clears it. The `openpgp` packages are
   not in Sharko's shipping package graph. It is listed here rather than dropped
   quietly, because a scan of these artifacts will keep showing it.
-- **Rebuilding the container image clears 26 Alpine OS findings.** `libcrypto3`
-  and `libssl3` move from `3.3.7-r0` to `3.3.7-r1`, which covers
-  `CVE-2026-45447` (High) among the 26. The `Dockerfile` did not change:
-  `alpine:3.21` now resolves to 3.21.8, and that base layer already carries
-  `r1`. The published `v4.0.1` image and the rebuild were scanned with the same
-  tool and the same vulnerability database version, so those 26 findings went
-  away because the packages moved, not because the scanner's data moved.
+- **A container image built locally from this work carried 26 fewer Alpine OS
+  findings than the published `v4.0.1` image.** That number comes from one
+  measurement and nowhere else: a local `docker buildx --load --pull` build at
+  commit `871dba44`, with `version.txt` still reading `4.0.1`, scanned on the
+  machine that built it. In that image `libcrypto3` and `libssl3` came out at
+  `3.3.7-r1` rather than `3.3.7-r0`, which covers `CVE-2026-45447` (High) among
+  the 26. The `Dockerfile` did not change: at the time of that build `alpine:3.21`
+  resolved to 3.21.8, and that base layer already carries `r1`. `alpine:3.21` is a
+  floating tag, so which patch release it resolves to on any later day has to be
+  read off the build rather than assumed from this page. The published `v4.0.1`
+  image and that local build were scanned with the same tool and the same
+  vulnerability database version, so those 26 findings went away because the
+  packages moved, not because the scanner's data moved. Being a local build, it
+  is not evidence about any image the release pipeline produces: the pipeline
+  builds its own image from its own inputs, and what that image contains can only
+  be read off that image.
 - **Four OS findings remain and no version fixes them.** `CVE-2026-85091` in
   `zlib` (High), and `CVE-2025-60876` in `busybox`, `busybox-binsh` and
   `ssl_client` (Medium). Alpine publishes no fixed package for any of them, so
@@ -81,15 +90,16 @@ advisory applies to any of them.
 
 ### What's new
 
-- **The release workflow now builds an SBOM for each container image
-  architecture, attests it to that architecture's digest with cosign, and
-  uploads it to the release page.** Until now the release published SBOMs for
-  the CLI archives only, and a CLI archive SBOM lists Go modules and no Alpine
-  packages at all — which is why the 26 OS findings in the published `v4.0.1`
-  image were invisible to every dependency review. These steps have never run
-  for any release. They are readable today in
-  `.github/workflows/release.yml`, and they first execute whenever a release
-  next runs. The verify command is in
+- **The release workflow builds an SBOM for each container image architecture,
+  attests it to that architecture's digest with cosign, and uploads it to the
+  release page.** Those steps were added to `.github/workflows/release.yml` on
+  2026-09-24. Before them the release published SBOMs for the CLI archives only,
+  and a CLI archive SBOM lists Go modules and no Alpine packages at all — which
+  is why the 26 OS findings in the published `v4.0.1` image were invisible to
+  every dependency review. **No release published before 2026-09-24 carries an
+  image SBOM, `v4.0.1` included.** Whether a particular release carries one is
+  answered by [the releases page](https://github.com/MoranWeissman/sharko/releases)
+  and by the registry, not by this page. The verify command is in
   [Supply chain](operator/supply-chain.md).
 
 ---
