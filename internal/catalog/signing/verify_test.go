@@ -653,6 +653,84 @@ func TestVerify_OutcomeMatrix(t *testing.T) {
 	}
 }
 
+// TestVerifyEntity_NoTrustRootFailsClosed pins the shape cmd/sharko/serve.go
+// actually builds when the Sigstore trust root cannot be fetched.
+//
+// serve.go calls signing.LoadProductionTrustedRoot at startup. When that call
+// fails — an air-gapped install, or the Sigstore CDN being unreachable — it
+// logs "sigstore trust root unavailable; signed entries will surface as
+// unverified" and then constructs the verifier with NO WithTrustedMaterial
+// option at all. Every other test in this file passes WithTrustedMaterial, so
+// the verifier serve.go builds on that path was the one nothing here exercised.
+//
+// Two things have to be true for that log line to be honest, and this pins both:
+//
+//   - the verifier must refuse rather than accept. NewVerifier defaults `trust`
+//     to an empty staticTrust, which its own comment says is "unconfigured by
+//     default — fail closed". If that default ever became a permissive one, a
+//     signed entry would verify against nothing and come back Verified=true,
+//     which is worse than no verification at all because the UI would show a
+//     "Verified by" pill for it.
+//   - the refusal must arrive as an ERROR, not as (false, "", nil). The loader
+//     tells those two apart: an error is an infrastructure problem it turns into
+//     Verified=false without failing the load, which is what lets the server
+//     still start air-gapped. (false, "", nil) means "this signature is bad",
+//     which is a different statement about a different thing.
+//
+// The entity signed here is genuinely valid — minted by VirtualSigstore, under
+// a trust policy that matches its identity — so the ONLY reason it can fail is
+// the missing trust root. A test that fed in something broken would pass
+// whether or not the trust root was checked.
+func TestVerifyEntity_NoTrustRootFailsClosed(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	payload := []byte("the canonical bytes that were signed")
+	entity, err := vs.Sign(testIdentity, testIssuer, payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	// Sanity check, so a failure below cannot be blamed on the fixture: the
+	// same entity, same payload, same policy, WITH a trust root, verifies.
+	ok, issuer, err := newTestVerifier(t, vs).verifyEntity(
+		context.Background(), entity, payload, trustTestIdentity(),
+		"https://example.invalid/control.bundle",
+	)
+	if err != nil || !ok || issuer != testIdentity {
+		t.Fatalf("NOT EXERCISED | the control run did not verify (ok=%v issuer=%q err=%v), "+
+			"so the run below would fail for the wrong reason", ok, issuer, err)
+	}
+
+	// The real case: exactly what serve.go builds when the trust root is gone.
+	rec := &recordedLogger{}
+	v := NewVerifier(nil, WithLogger(slog.New(rec)))
+
+	ok, issuer, err = v.verifyEntity(
+		context.Background(), entity, payload, trustTestIdentity(),
+		"https://example.invalid/no-trust-root.bundle",
+	)
+	if ok {
+		t.Errorf("verified = true with no trust root configured. A signature checked against no "+
+			"trust root is not a checked signature, and the catalog UI would show a "+
+			"%q pill for it.", "Verified by")
+	}
+	if issuer != "" {
+		t.Errorf("issuer = %q, want empty — nothing was verified, so there is no signer to name", issuer)
+	}
+	if err == nil {
+		t.Fatal("err = nil, want an error. The loader reads a nil error as a verdict on the " +
+			"signature itself; only an error tells it this was an infrastructure problem it " +
+			"should turn into Verified=false without failing the load, which is what lets an " +
+			"air-gapped install still start.")
+	}
+	if !strings.Contains(err.Error(), "trust root") {
+		t.Errorf("err = %v, want it to name the trust root. An operator reading this has to be "+
+			"able to tell a missing trust root from a bad signature.", err)
+	}
+}
+
 // --- Coverage-floor backfill (V123-2.6) -------------------------------------
 //
 // Three small targeted tests added to push package coverage above the

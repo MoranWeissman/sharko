@@ -112,6 +112,37 @@ func TestLoadCatalogSourcesFromEnv_RejectsFileScheme(t *testing.T) {
 	}
 }
 
+// TestLoadCatalogSourcesFromEnv_RejectsGitTransportSchemes pins the Git
+// transport family at the SHARKO_CATALOG_URLS door.
+//
+// The two scheme tests above cover http:// and file://. Neither covers ssh://
+// or git://, and this is the door an operator drives with an environment
+// variable, so it is the cheapest one to get wrong. x/crypto/ssh is linked into
+// the shipped binary through internal/gitprovider -> code.gitea.io/sdk/gitea,
+// so the scheme rule here is load-bearing rather than tidy-minded.
+//
+// A catalog source address is also written into a YAML file and committed, so a
+// scheme that slipped through would not just be dialled once, it would be
+// stored.
+func TestLoadCatalogSourcesFromEnv_RejectsGitTransportSchemes(t *testing.T) {
+	for _, raw := range []string{
+		"ssh://git.example.com/org/catalog.yaml",
+		"git://git.example.com/org/catalog.yaml",
+		"git+ssh://git.example.com/org/catalog.yaml",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			setEnvs(t, map[string]string{EnvCatalogURLs: raw})
+			_, err := LoadCatalogSourcesFromEnv()
+			if err == nil {
+				t.Fatalf("expected error for %q, got nil", raw)
+			}
+			if !strings.Contains(err.Error(), "HTTPS-only") {
+				t.Errorf("%q was refused, but not by the HTTPS-only rule: %v", raw, err)
+			}
+		})
+	}
+}
+
 func TestLoadCatalogSourcesFromEnv_RejectsMalformed(t *testing.T) {
 	cases := []string{
 		"not-a-url",

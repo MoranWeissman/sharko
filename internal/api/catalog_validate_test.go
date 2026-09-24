@@ -44,6 +44,43 @@ func TestValidateRepoURL_RejectsInvalid(t *testing.T) {
 	}
 }
 
+// TestValidateRepoURL_RejectsGitTransportSchemes pins the Git transport family
+// at the /catalog/validate door.
+//
+// The reject list above uses ftp and file. Those cover the "obvious garbage"
+// half of what this function is for. They do NOT cover ssh:// and git://,
+// which is the family that matters most here, because validateRepoURL's own
+// scheme check is the only thing standing between an operator-supplied address
+// and the server dialling it — and golang.org/x/crypto/ssh is linked into this
+// binary by way of internal/gitprovider -> code.gitea.io/sdk/gitea.
+//
+// This test also pins that the refusal comes from the SCHEME rule rather than
+// from credsafe further down the same function. credsafe is structural: it asks
+// whether an address has a place for a credential to sit, never what its scheme
+// is, so it lets ssh://host/org/repo through as credential-free. Verified by
+// probe against the real function. That is correct for credsafe and it is
+// exactly why the scheme check has to be tested on its own — delete it and
+// credsafe would not notice.
+func TestValidateRepoURL_RejectsGitTransportSchemes(t *testing.T) {
+	for _, in := range []string{
+		"ssh://git.example.test/org/repo",
+		"ssh://git.example.test/org/repo.git",
+		"git://git.example.test/org/repo.git",
+		"git+ssh://git.example.test/org/repo",
+	} {
+		err := validateRepoURL(in)
+		if err == nil {
+			t.Errorf("validateRepoURL(%q) = nil, want error", in)
+			continue
+		}
+		if !strings.Contains(err.Error(), "must use http or https") {
+			t.Errorf("validateRepoURL(%q) was refused, but not by the scheme rule: %v. "+
+				"credsafe lets an ssh:// address through as credential-free, so if this stops "+
+				"passing the scheme rule is what went missing.", in, err)
+		}
+	}
+}
+
 func TestClassifyValidateError_AllBranches(t *testing.T) {
 	cases := []struct {
 		name   string
