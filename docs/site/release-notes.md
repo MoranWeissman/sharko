@@ -14,6 +14,86 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v4.0.2 — prepared, not published
+
+**Status:** prepared on a branch and under review. There is no `v4.0.2` tag, no
+`v4.0.2` release page and no `v4.0.2` artifact of any kind, and this entry does
+not say there will be one. `v4.0.1` is still the latest published release, and
+everything listed below is in the v4 code line. Install only published
+`v4.0.1`-or-later artifacts. The entry is here so the security work is on the
+record while it is being reviewed; it becomes an ordinary release entry only if
+and when a `v4.0.2` is published.
+
+**Sharko v4 is a technical preview. Install only published `v4.0.1`-or-later
+artifacts. `v3.0.0` and earlier remain retired and unsupported. Do not use Sharko
+in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
+
+### Security
+
+- **`golang.org/x/crypto` moves from v0.55.0 to v0.56.0.** That takes the
+  upstream fix for `CVE-2026-78662` (`GO-2026-6354`) and `CVE-2026-56855`
+  (`GO-2026-6355`), two denial-of-service defects in SSH channel handling in
+  `golang.org/x/crypto/ssh`. Sharko does pull that package into the build, through
+  `internal/gitprovider` and the Gitea SDK. Whether anything in `v4.0.1` can
+  actually reach the affected code is **unresolved**: no call path to the affected
+  functions was found, and none was ruled out either. So this is not a fix for a
+  defect shown to be exploitable, and it is not a change made after showing the
+  old version was harmless — the upstream fix is available, so it is taken.
+  v0.56.0 and not v0.57.0 on purpose: across every advisory published for that
+  module, the highest version that first carries a fix is 0.56.0, so v0.57.0
+  would clear nothing more while raising four other modules for no security gain.
+- **`golang.org/x/crypto/openpgp` still has no fix, and is still reported.**
+  `GO-2026-5932` says those packages are unmaintained. It names no fixed version
+  in any release of `x/crypto`, so no bump clears it. The `openpgp` packages are
+  not in Sharko's shipping package graph. It is listed here rather than dropped
+  quietly, because a scan of these artifacts will keep showing it.
+- **Rebuilding the container image clears 26 Alpine OS findings.** `libcrypto3`
+  and `libssl3` move from `3.3.7-r0` to `3.3.7-r1`, which covers
+  `CVE-2026-45447` (High) among the 26. The `Dockerfile` did not change:
+  `alpine:3.21` now resolves to 3.21.8, and that base layer already carries
+  `r1`. The published `v4.0.1` image and the rebuild were scanned with the same
+  tool and the same vulnerability database version, so those 26 findings went
+  away because the packages moved, not because the scanner's data moved.
+- **Four OS findings remain and no version fixes them.** `CVE-2026-85091` in
+  `zlib` (High), and `CVE-2025-60876` in `busybox`, `busybox-binsh` and
+  `ssl_client` (Medium). Alpine publishes no fixed package for any of them, so
+  neither a rebuild nor a base bump clears them. They stay open, and they are
+  named here rather than left out.
+- **gRPC is at v1.83.2, which covers `CVE-2026-84304`, `CVE-2026-84445` and
+  `CVE-2026-84303`.** That landed on `main` after `v4.0.1` was published, not in
+  this round. For the published `v4.0.1` artifacts the assessment's finding is:
+  **no reachable vulnerable path identified in the assessed `v4.0.1`
+  artifacts** — which is a statement about what was looked for and not found,
+  not a claim that those artifacts were proven unaffected.
+- **`prometheus/prometheus` moves from v0.300.1 to v0.313.3, which clears four
+  advisories in the dependency graph only.** That library is a test-only import
+  and has never been part of any shipped Sharko binary, so this is not a fix for
+  a vulnerability that shipped to anybody.
+
+### Dependency updates that are not security fixes
+
+Named here because they are easy to read as security work, and they are not: no
+advisory applies to any of them.
+
+- `google.golang.org/protobuf` v1.36.11 → v1.36.12, carried along by the gRPC bump.
+- `prometheus/client_model` v0.6.2 → v0.6.3.
+- `prometheus/common` v0.67.5 → v0.69.0.
+
+### What's new
+
+- **The release workflow now builds an SBOM for each container image
+  architecture, attests it to that architecture's digest with cosign, and
+  uploads it to the release page.** Until now the release published SBOMs for
+  the CLI archives only, and a CLI archive SBOM lists Go modules and no Alpine
+  packages at all — which is why the 26 OS findings in the published `v4.0.1`
+  image were invisible to every dependency review. These steps have never run
+  for any release. They are readable today in
+  `.github/workflows/release.yml`, and they first execute whenever a release
+  next runs. The verify command is in
+  [Supply chain](operator/supply-chain.md).
+
+---
+
 ## v4.0.1 — a chart version pinned without the leading "v" still resolves
 
 **Status:** the version of the v4 technical-preview line that carries the fix
