@@ -66,11 +66,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Pin cosign to the same v2.4.1 that release.yml uses. The
-      # --new-bundle-format flag (load-bearing for sigstore-go's bundle
-      # parser) is stable in 2.4.x; pinning the patch version means a
-      # surprise upstream change can't silently break the writer-side
-      # contract this test guards.
+      # Pin cosign to the same v2.6.5 that release.yml uses — all six of its
+      # cosign-installer steps read v2.6.5, and so does
+      # engine-chart-publish.yml. This test is only worth anything if it runs
+      # the cosign the release runs, so the two values have to stay equal; if
+      # you bump one, bump the other and this comment with it.
+      #
+      # The --new-bundle-format flag is load-bearing for sigstore-go's bundle
+      # parser. Pinning the patch version means a surprise upstream change
+      # cannot silently break the writer-side contract this test guards.
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:

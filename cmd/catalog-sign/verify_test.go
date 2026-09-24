@@ -22,6 +22,9 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/signing"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 )
@@ -484,4 +487,203 @@ func mustShippedPolicy(t *testing.T) sources.TrustPolicy {
 		t.Fatalf("LoadTrustPolicyFromEnv: %v", err)
 	}
 	return p
+}
+
+// --- S9: the entry name cannot steer a read out of --out ---------------------
+
+// escapedBundleBody is the content planted OUTSIDE the output directory. It
+// is deliberately a distinct string so a test can prove the gate never
+// handed these bytes to the verifier, rather than only proving that
+// something went wrong.
+const escapedBundleBody = "bundle-bytes-from-outside-the-output-directory"
+
+// rewriteEntryName rewrites one entry in addons.yaml.signed so its name and
+// its signature.bundle URL both carry `newName`, and returns the file name
+// the gate would build from it.
+//
+// It goes through the same unmarshal/marshal round trip the signing tool
+// uses rather than doing string surgery, so the rewrite cannot silently
+// apply to nothing — which is how a planted break ends up "passing" against
+// an unmodified file.
+func rewriteEntryName(t *testing.T, dir, oldName, newName string) {
+	t.Helper()
+	p := filepath.Join(dir, signedCatalogFile)
+	data, err := os.ReadFile(p) //nolint:gosec // test temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Addons []catalog.CatalogEntry `yaml:"addons"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for i := range raw.Addons {
+		if raw.Addons[i].Name != oldName {
+			continue
+		}
+		found++
+		raw.Addons[i].Name = newName
+		raw.Addons[i].Signature = &catalog.Signature{
+			Bundle: fakeReleaseBase + "/" + newName + ".bundle",
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one entry named %q to rewrite, found %d", oldName, found)
+	}
+	out, err := yaml.Marshal(&raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Prove the rewrite actually landed. Without this the whole test could
+	// pass against a file that was never changed.
+	back, err := os.ReadFile(p) //nolint:gosec // test temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(back), "name: "+newName) {
+		t.Fatalf("the rewrite did not land: %s does not carry name %q", p, newName)
+	}
+}
+
+// TestVerify_RefusesAnEntryNameThatLeavesTheOutputDirectory — an entry name
+// carrying a path element must not be able to point the bundle read at a
+// file outside --out.
+//
+// Why this is a real hole and not scanner noise. At verify time the entry
+// name comes out of addons.yaml.signed, and that file is exactly the thing
+// this command exists to prove; it has not been verified yet when the name
+// is read. Nothing upstream constrains the name to a file name either — the
+// catalogue loader only requires it to be non-empty (validateEntry in
+// internal/catalog/loader.go) and the committed JSON Schema puts no pattern
+// on the list-shaped entries.
+//
+// The test plants a readable, non-empty file one directory ABOVE --out and
+// points a rewritten entry at it. That matters: with the protection removed,
+// the read succeeds, the stand-in verifier accepts it and the gate returns
+// no error at all — so this test cannot pass for the boring reason that
+// something was missing. And it asserts the SPECIFIC refusal plus the fact
+// that the outside bytes never reached the verifier, because "an error
+// happened" would also be true of a bundle that simply was not there.
+func TestVerify_RefusesAnEntryNameThatLeavesTheOutputDirectory(t *testing.T) {
+	dir := buildSignedDir(t)
+
+	// One level up from --out, inside the test's own temp tree.
+	outside := filepath.Join(filepath.Dir(dir), "escaped.bundle")
+	if err := os.WriteFile(outside, []byte(escapedBundleBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const escapingName = "../escaped"
+	rewriteEntryName(t, dir, "argocd", escapingName)
+
+	// Sanity: the planted file really is reachable by the path the old code
+	// would have built, so a refusal below is the protection working and not
+	// a missing file.
+	if _, err := os.ReadFile(filepath.Join(dir, escapingName+".bundle")); err != nil { //nolint:gosec // test temp dir
+		t.Fatalf("the planted file is not reachable, so this test would prove nothing: %v", err)
+	}
+
+	fv := &fakeVerifier{verified: true, issuer: testIdentity}
+	var out bytes.Buffer
+	err := runVerify(context.Background(), verifyOpts(dir), &out, depsFor(fv), nil)
+	if err == nil {
+		t.Fatalf("the gate accepted an entry name that reads outside --out. output:\n%s", out.String())
+	}
+
+	combined := out.String() + "\n" + err.Error()
+	// The specific refusal, not just any error.
+	if !strings.Contains(combined, "is not a plain file name") {
+		t.Fatalf("the refusal does not say the entry name is malformed, so this test "+
+			"would also pass for an unrelated failure. got:\n%s", combined)
+	}
+	if !strings.Contains(combined, escapingName) {
+		t.Fatalf("the refusal does not name the offending entry %q. got:\n%s", escapingName, combined)
+	}
+
+	// And the bytes from outside the directory were never verified.
+	for i, b := range fv.bundles {
+		if string(b) == escapedBundleBody {
+			t.Fatalf("call %d: the gate read and verified a file from outside --out", i)
+		}
+	}
+}
+
+// TestBundleFileName covers the shapes the plain-file-name check has to
+// refuse, and the ordinary names it must keep accepting. Table-driven so a
+// future addon name with a dot or an underscore in it is visibly still fine
+// — the check is about path structure, not about a character allowlist.
+func TestBundleFileName(t *testing.T) {
+	ok := []string{"argocd", "cert-manager", "kube-prometheus-stack", "a", "a.b_c-1"}
+	for _, name := range ok {
+		got, err := bundleFileName(name)
+		if err != nil {
+			t.Errorf("bundleFileName(%q) refused an ordinary entry name: %v", name, err)
+			continue
+		}
+		if got != name+".bundle" {
+			t.Errorf("bundleFileName(%q) = %q, want %q", name, got, name+".bundle")
+		}
+	}
+
+	bad := []string{
+		"",
+		"   ",
+		".",
+		"..",
+		"../escaped",
+		"../../etc/passwd",
+		"sub/argocd",
+		"/etc/passwd",
+		`..\escaped`,
+		"argocd/",
+		"argocd\x00",
+	}
+	for _, name := range bad {
+		if got, err := bundleFileName(name); err == nil {
+			t.Errorf("bundleFileName(%q) returned %q with no error", name, got)
+		}
+	}
+}
+
+// TestVerify_ReadsOnlyInsideTheOutputDirectory — a symlink planted INSIDE
+// --out must not be a way out either.
+//
+// The name check above cannot catch this one: the entry name stays a plain
+// file name and it is the file system, not the string, that points
+// elsewhere. This is the case os.Root closes, and it is why the fix is two
+// layers rather than only a validated name.
+func TestVerify_ReadsOnlyInsideTheOutputDirectory(t *testing.T) {
+	dir := buildSignedDir(t)
+
+	outside := filepath.Join(filepath.Dir(dir), "symlink-target.bundle")
+	if err := os.WriteFile(outside, []byte(escapedBundleBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "argocd.bundle")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("this platform will not create the symlink this test needs: %v", err)
+	}
+	// Sanity: an ordinary read really does follow the link out.
+	body, err := os.ReadFile(link) //nolint:gosec // test temp dir
+	if err != nil || string(body) != escapedBundleBody {
+		t.Fatalf("the planted symlink does not resolve, so this test would prove nothing (err=%v)", err)
+	}
+
+	fv := &fakeVerifier{verified: true, issuer: testIdentity}
+	var out bytes.Buffer
+	if err := runVerify(context.Background(), verifyOpts(dir), &out, depsFor(fv), nil); err == nil {
+		t.Fatalf("the gate followed a symlink out of --out. output:\n%s", out.String())
+	}
+	for i, b := range fv.bundles {
+		if string(b) == escapedBundleBody {
+			t.Fatalf("call %d: the gate read and verified a file from outside --out", i)
+		}
+	}
 }

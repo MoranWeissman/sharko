@@ -778,8 +778,13 @@ jobs:
           #
           # The platform filter is not cosmetic: buildx also writes
           # provenance/attestation manifests into the same index, and those
-          # carry platform "unknown/unknown". Taking .manifests[].digest
-          # unfiltered would produce SBOMs of attestation blobs.
+          # carry platform "unknown/unknown". Picking one of those up fails
+          # loudly rather than quietly, which is worth knowing: measured with
+          # syft 1.52.0, scanning an attestation manifest exits 1 with
+          # "unsupported layer media type(s): layer 0:
+          # application/vnd.in-toto+json". So the filter saves the run from
+          # stopping on a confusing error; it is not the thing standing
+          # between a wrong SBOM and publication.
           docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" > _dist/image-index.json
 
           for arch in amd64 arm64; do
@@ -787,8 +792,22 @@ jobs:
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest' \
               _dist/image-index.json)
 
-            # An empty digest would make syft scan the index instead, and
-            # that silently yields an SBOM with no packages at all.
+            # This stops the run here, naming the architecture, when the
+            # index has no manifest for it — rather than letting an empty
+            # digest turn into a scan of whatever else the reference then
+            # resolves to.
+            #
+            # What it does NOT protect against, because that was measured
+            # rather than assumed: handing syft the INDEX digest does not
+            # produce an empty SBOM. With syft 1.52.0 it exits 0 and writes a
+            # complete-looking document — 361 components, 16 apk packages,
+            # 135 Go modules — which passes the completeness check below. What
+            # it really does is silently pick one platform and record the
+            # INDEX digest as metadata.component.version. The check that
+            # catches that one is the digest-binding check further down: the
+            # recorded index digest matches neither architecture's expected
+            # digest, so it exits 1. Both checks are load-bearing and neither
+            # covers for the other.
             if [ -z "$arch_digest" ] || [ "$arch_digest" = "null" ]; then
               echo "::error::no linux/${arch} manifest found in ${IMAGE}@${DIGEST}"
               exit 1
@@ -808,6 +827,11 @@ jobs:
             # the first place: OS packages present and Go modules missing,
             # or the reverse, both look like a valid document and exit 0.
             # Require both before publishing anything.
+            #
+            # `if ! jq -e` covers an unreadable file too, not just a false
+            # filter result: on an empty file jq exits 4, which is non-zero,
+            # so the branch is taken. Do not narrow this to a test for
+            # exit code 1.
             if ! jq -e '
                   ((.components | map(select(.purl != null and (.purl | startswith("pkg:apk/")))) | length) > 0)
               and ((.components | map(select(.purl != null and (.purl | startswith("pkg:golang/")))) | length) > 0)

@@ -33,11 +33,20 @@
 // record of what is being released.
 //
 // Fail-closed everywhere. A missing bundle, an unreadable bundle, an entry
-// with no signature URL, a URL that does not match the release-asset
-// convention, an unreachable trust root, a missing or malformed
-// --release-commit, a certificate claiming a different commit, or a
-// signature that does not verify — each of those is a failure, and the
-// command exits non-zero naming every entry that failed and why.
+// name that is not a plain file name, an entry with no signature URL, a URL
+// that does not match the release-asset convention, an unreachable trust
+// root, a missing or malformed --release-commit, a certificate claiming a
+// different commit, or a signature that does not verify — each of those is a
+// failure, and the command exits non-zero naming every entry that failed and
+// why.
+//
+// Reads stay inside --out, structurally. Everything this command reads is
+// read through an os.Root opened on --out, so no name and no symlink can
+// make a read leave that directory: the kernel refuses it rather than the
+// code promising not to ask. That matters because the entry names come out
+// of addons.yaml.signed, and that file is precisely the thing that has not
+// been verified yet — proving it is the whole job. See bundleFileName for
+// the name half of the same defence.
 package main
 
 import (
@@ -61,6 +70,44 @@ import (
 // signedCatalogFile is the name catalog-sign writes and the release
 // workflow embeds. Named once so the writer and the checker cannot drift.
 const signedCatalogFile = "addons.yaml.signed"
+
+// bundleFileName returns the file name an entry's Sigstore bundle must have
+// inside --out, or an error if the entry's name is not a plain file name.
+//
+// Why the name is checked rather than quietly cleaned up. At verify time the
+// entry name is read out of addons.yaml.signed, which is the file this whole
+// command exists to prove — it has not been verified yet when the name is
+// used. Nothing upstream narrows the name to a file name either: the
+// catalogue loader only requires it to be non-empty (validateEntry in
+// internal/catalog/loader.go), and the committed JSON Schema puts no pattern
+// on the list-shaped entries. So a name carrying a path separator or a `..`
+// element would point the read at a file somewhere else entirely. A name
+// like that is malformed data, and a release log that says so by name is
+// more use to whoever has to fix it than one that silently resolves the name
+// to a different file and then reports a signature mismatch.
+//
+// This is deliberately a check on path structure, not a character allowlist:
+// a future addon whose name contains a dot or an underscore is still fine,
+// because none of that can move a read out of a directory.
+func bundleFileName(name string) (string, error) {
+	const suffix = ".bundle"
+	if strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("entry name is empty, so there is no bundle file to read")
+	}
+	// filepath.Base catches separators, trailing slashes and absolute paths
+	// on this platform; the explicit tests cover the cases Base does not,
+	// including a Windows-style separator on a Unix host and an embedded NUL.
+	if name != filepath.Base(name) ||
+		name == "." || name == ".." ||
+		filepath.IsAbs(name) ||
+		strings.ContainsAny(name, `/\`) ||
+		strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf(
+			"entry name %q is not a plain file name, so <out>/<name>%s would not stay "+
+				"inside the --out directory", name, suffix)
+	}
+	return name + suffix, nil
+}
 
 // bundleVerifier is the verification surface runVerify needs. The
 // production implementation is *signing.Verifier; tests substitute a fake
@@ -165,8 +212,18 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 		return fmt.Errorf("verify: incomplete dependencies")
 	}
 
+	// Scope every read in this command to --out. os.Root refuses any name
+	// that would resolve outside the directory it was opened on, symlinks
+	// included, so the traversal question is closed by the kernel instead of
+	// by a comment promising the paths are fine.
+	root, err := os.OpenRoot(opts.OutDir)
+	if err != nil {
+		return fmt.Errorf("open --out directory %s: %w", opts.OutDir, err)
+	}
+	defer func() { _ = root.Close() }()
+
 	signedPath := filepath.Join(opts.OutDir, signedCatalogFile)
-	yamlBytes, err := os.ReadFile(signedPath) //nolint:gosec // path comes from the release workflow's own --out flag
+	yamlBytes, err := root.ReadFile(signedCatalogFile)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", signedPath, err)
 	}
@@ -236,6 +293,14 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 		e := raw.Addons[i]
 		name := e.Name
 
+		// The name decides which file gets read and which release asset the
+		// shipped binary will fetch, so it is checked before either is built.
+		bundleName, err := bundleFileName(name)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+
 		if e.Signature == nil || strings.TrimSpace(e.Signature.Bundle) == "" {
 			failures = append(failures, fmt.Sprintf(
 				"%s: entry carries no signature.bundle URL in the signed catalogue", name))
@@ -245,9 +310,9 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 		// that breaks it means the embedded binary would fetch something
 		// that is not there, so verification at runtime would fail on a
 		// catalogue that passed here.
-		wantURL := name + ".bundle"
+		wantURL := bundleName
 		if opts.ReleaseBaseURL != "" {
-			wantURL = strings.TrimSuffix(opts.ReleaseBaseURL, "/") + "/" + name + ".bundle"
+			wantURL = strings.TrimSuffix(opts.ReleaseBaseURL, "/") + "/" + bundleName
 			if e.Signature.Bundle != wantURL {
 				failures = append(failures, fmt.Sprintf(
 					"%s: signature.bundle is %q, want %q", name, e.Signature.Bundle, wantURL))
@@ -259,8 +324,8 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 			continue
 		}
 
-		bundlePath := filepath.Join(opts.OutDir, name+".bundle")
-		bundleBytes, err := os.ReadFile(bundlePath) //nolint:gosec // path is <out>/<entry name>.bundle
+		bundlePath := filepath.Join(opts.OutDir, bundleName)
+		bundleBytes, err := root.ReadFile(bundleName)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: read bundle: %v", name, err))
 			continue
