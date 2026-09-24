@@ -176,6 +176,37 @@ func (v *Verifier) VerifyEntry(
 	return v.verifyBundleBytes(ctx, canonicalEntryBytes, bundleBytes, trustPolicy, bundleURL)
 }
 
+// VerifyBundleBytes verifies a bundle the caller already holds in memory
+// against a payload the caller already computed. Same verification core,
+// same trust policy handling and the same return contract as Verify and
+// VerifyEntry — the only difference is that nothing is fetched over HTTP.
+//
+// This exists for the release pipeline. The release workflow generates
+// bundles into a directory on the runner and must prove they verify
+// BEFORE the signed catalogue is embedded into the release binaries and
+// the container image. At that moment the bundles are local files and the
+// release assets they will eventually be served from do not exist yet, so
+// neither Verify nor VerifyEntry can be used. Handing the bytes straight
+// to the same core is what makes the release-time check identical to the
+// check `sharko serve` runs at startup: if the pipeline's own bundles
+// would not verify at runtime, the pipeline stops.
+//
+// Callers pass the canonical entry bytes from signing.CanonicalEntryBytes
+// (or catalog.CatalogEntry.CanonicalBytes) as payload — the same message
+// the signer signed.
+func (v *Verifier) VerifyBundleBytes(
+	ctx context.Context,
+	payload []byte,
+	bundleBytes []byte,
+	trustPolicy sources.TrustPolicy,
+) (verified bool, issuer string, err error) {
+	// The sourceURL argument exists only to describe where the bundle came
+	// from; verifyEntity never puts it in a log line (logFailure refuses to
+	// take an address at all — see its doc comment). A fixed label keeps
+	// that property obvious at this call site.
+	return v.verifyBundleBytes(ctx, payload, bundleBytes, trustPolicy, "local-bundle")
+}
+
 // VerifyEntryFunc returns a closure that conforms to
 // catalog.VerifyEntryFunc — closing over the verifier itself and the
 // trust policy so the loader doesn't have to know about either. This

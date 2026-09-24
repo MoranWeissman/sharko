@@ -1198,3 +1198,56 @@ func TestVerifyEntity_WorkflowRefWildcardAccepts(t *testing.T) {
 		t.Errorf("expected issuer %q, got %q", testIdentity, issuer)
 	}
 }
+
+// TestVerifyBundleBytes_DelegatesToTheSameCore pins the exported wrapper
+// the release pipeline uses (cmd/catalog-sign --verify) to the same
+// verification core the runtime uses. Same inputs must give the same
+// answer, or the release-time check and the startup check could disagree —
+// which is exactly the drift this wrapper exists to prevent.
+//
+// What this test can reach without OIDC: the parse and fail-closed
+// branches. A valid Sigstore bundle cannot be minted here (Fulcio needs a
+// GitHub Actions OIDC token, and there is no committed bundle fixture), so
+// the cryptographic path is covered by the roundtrip job in CI instead.
+func TestVerifyBundleBytes_DelegatesToTheSameCore(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	v := newTestVerifier(t, vs)
+
+	cases := []struct {
+		name   string
+		bundle []byte
+		policy sources.TrustPolicy
+	}{
+		{"not json at all", []byte("not-a-sigstore-bundle"), trustTestIdentity()},
+		{"empty bytes", nil, trustTestIdentity()},
+		{"json but no media type", []byte(`{}`), trustTestIdentity()},
+		{"media type but no content", []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}`), trustTestIdentity()},
+		{"empty trust policy", []byte("not-a-sigstore-bundle"), sources.TrustPolicy{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotOK, gotIssuer, gotErr := v.VerifyBundleBytes(
+				context.Background(), []byte("payload"), tc.bundle, tc.policy)
+			wantOK, wantIssuer, wantErr := v.verifyBundleBytes(
+				context.Background(), []byte("payload"), tc.bundle, tc.policy, "local-bundle")
+
+			if gotOK != wantOK || gotIssuer != wantIssuer {
+				t.Errorf("exported wrapper disagreed with the core: got (%v,%q) want (%v,%q)",
+					gotOK, gotIssuer, wantOK, wantIssuer)
+			}
+			if (gotErr == nil) != (wantErr == nil) {
+				t.Errorf("error presence differs: got %v want %v", gotErr, wantErr)
+			}
+			// Every case here must be a refusal, never a pass.
+			if gotOK {
+				t.Error("VerifyBundleBytes returned verified=true on input that cannot verify")
+			}
+			if gotIssuer != "" {
+				t.Errorf("VerifyBundleBytes returned issuer %q on a refusal", gotIssuer)
+			}
+		})
+	}
+}

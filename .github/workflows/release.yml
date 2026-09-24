@@ -540,19 +540,55 @@ jobs:
           name: signed-catalog
           path: _dist/catalog/
 
-      - name: Use signed catalog for build
-        # Guard: a silently-empty signed catalog would still cp without
-        # error, baking an empty //go:embed into the released image. The
-        # explicit -s check fails the job loud at swap time so a bad
-        # cosign-job artifact never ships in a release. The download
-        # step's `if-no-files-found: error` covers the missing-file case;
-        # this guard catches the truncated/empty-file case.
+      # Needed by the verify step below. The image build itself compiles Go
+      # inside the Dockerfile, so this job had no toolchain before.
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # A nonempty test is not a signature check.
+      #
+      # This step used to be part of "Use signed catalog for build", where
+      # the only thing standing between a bad signed catalogue and the
+      # released image was `[ ! -s ... ]`. A file that exists and is
+      # non-empty but carries a bad, truncated, mismatched or substituted
+      # signature passed, and was then copied over catalog/addons.yaml so
+      # `//go:embed` baked it into the image and the binaries.
+      #
+      # `catalog-sign --verify` runs the SAME verifier the Sharko binary
+      # runs at startup (internal/catalog/signing.Verifier), over the SAME
+      # canonical entry bytes the signer signed, under the SAME trust
+      # policy production uses (signing.LoadTrustPolicyFromEnv), with the
+      # SAME Sigstore trust root fetched over the network. No new
+      # signature logic and no extra cosign shell-out — this is the
+      # runtime check, moved earlier. So if the pipeline's own bundles
+      # would not verify at runtime, the job stops here, before the cp.
+      #
+      # The trust policy is deliberately NOT overridden. Setting
+      # SHARKO_CATALOG_TRUSTED_IDENTITIES or
+      # SHARKO_CATALOG_TRUSTED_WORKFLOW_REF here, or setting
+      # SHARKO_SKIP_TUF_NETWORK, would put the hole straight back.
+      #
+      # Fail-closed. A missing bundle, an empty bundle, an entry with no
+      # signature URL, a signature URL that breaks the release-asset
+      # convention, an unreachable trust root, or a signature that does
+      # not verify — each exits non-zero and names the entry.
+      - name: Verify signed catalog before embedding
         run: |
+          # Cheap precondition first so a failed artifact download gets a
+          # one-line answer rather than a compile-then-fail. It is a
+          # precondition, NOT the check — the check is the line below it.
           if [ ! -s _dist/catalog/addons.yaml.signed ]; then
             echo "::error::signed catalog is empty or missing"
             exit 1
           fi
-          cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
+          go run ./cmd/catalog-sign --verify \
+            --out _dist/catalog \
+            --release-base-url "https://github.com/MoranWeissman/sharko/releases/download/${{ github.event.workflow_run.head_branch }}"
+
+      - name: Use signed catalog for build
+        run: cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
 
       - name: Extract version from tag
         id: version
@@ -984,22 +1020,33 @@ jobs:
           name: signed-catalog
           path: _dist/catalog/
 
-      - name: Use signed catalog for build
-        # Same guard as the build-and-push job above — fail loud if the
-        # signed catalog artifact is empty/truncated so the goreleaser
-        # CLI archives never ship an empty //go:embed catalog. See the
-        # build-and-push step's comment for the full rationale.
-        run: |
-          if [ ! -s _dist/catalog/addons.yaml.signed ]; then
-            echo "::error::signed catalog is empty or missing"
-            exit 1
-          fi
-          cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
-
+      # Moved above the embed swap: the verify step below needs a Go
+      # toolchain, and it has to run BEFORE the catalogue is copied into
+      # place.
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      # Same real check as the build-and-push job above, for the same
+      # reason: this is the second place a signed catalogue gets embedded
+      # via //go:embed, here into the goreleaser CLI archives. A nonempty
+      # test was all that stood in front of it. See the build-and-push
+      # step's comment for the full rationale, including why the trust
+      # policy is deliberately not overridden.
+      - name: Verify signed catalog before embedding
+        run: |
+          # Precondition, not the check — see the build-and-push step.
+          if [ ! -s _dist/catalog/addons.yaml.signed ]; then
+            echo "::error::signed catalog is empty or missing"
+            exit 1
+          fi
+          go run ./cmd/catalog-sign --verify \
+            --out _dist/catalog \
+            --release-base-url "https://github.com/MoranWeissman/sharko/releases/download/${{ github.event.workflow_run.head_branch }}"
+
+      - name: Use signed catalog for build
+        run: cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
