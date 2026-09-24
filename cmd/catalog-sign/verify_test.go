@@ -245,7 +245,7 @@ func TestVerify_FailsClosed(t *testing.T) {
 			name: "a signature URL does not match the release base",
 			mutate: func(t *testing.T, dir string) {
 				p := filepath.Join(dir, signedCatalogFile)
-				b, err := os.ReadFile(p) //nolint:gosec // test temp dir
+				b, err := os.ReadFile(p) // p is inside the t.TempDir() buildSignedDir made
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -300,7 +300,7 @@ func TestVerify_FailsClosed(t *testing.T) {
 func stripSignatureStanza(t *testing.T, dir, bundleSuffix string) {
 	t.Helper()
 	p := filepath.Join(dir, signedCatalogFile)
-	b, err := os.ReadFile(p) //nolint:gosec // test temp dir
+	b, err := os.ReadFile(p) // p is inside the t.TempDir() buildSignedDir made
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +508,7 @@ const escapedBundleBody = "bundle-bytes-from-outside-the-output-directory"
 func rewriteEntryName(t *testing.T, dir, oldName, newName string) {
 	t.Helper()
 	p := filepath.Join(dir, signedCatalogFile)
-	data, err := os.ReadFile(p) //nolint:gosec // test temp dir
+	data, err := os.ReadFile(p) // p is inside the t.TempDir() buildSignedDir made
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func rewriteEntryName(t *testing.T, dir, oldName, newName string) {
 	}
 	// Prove the rewrite actually landed. Without this the whole test could
 	// pass against a file that was never changed.
-	back, err := os.ReadFile(p) //nolint:gosec // test temp dir
+	back, err := os.ReadFile(p) // p is inside the t.TempDir() buildSignedDir made
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func TestVerify_RefusesAnEntryNameThatLeavesTheOutputDirectory(t *testing.T) {
 	// Sanity: the planted file really is reachable by the path the old code
 	// would have built, so a refusal below is the protection working and not
 	// a missing file.
-	if _, err := os.ReadFile(filepath.Join(dir, escapingName+".bundle")); err != nil { //nolint:gosec // test temp dir
+	if _, err := os.ReadFile(filepath.Join(dir, escapingName+".bundle")); err != nil { // the escaping path this test planted, under its own temp tree
 		t.Fatalf("the planted file is not reachable, so this test would prove nothing: %v", err)
 	}
 
@@ -671,7 +671,7 @@ func TestVerify_ReadsOnlyInsideTheOutputDirectory(t *testing.T) {
 		t.Skipf("this platform will not create the symlink this test needs: %v", err)
 	}
 	// Sanity: an ordinary read really does follow the link out.
-	body, err := os.ReadFile(link) //nolint:gosec // test temp dir
+	body, err := os.ReadFile(link) // deliberately follows the planted symlink out of the temp tree — that is the point of the line
 	if err != nil || string(body) != escapedBundleBody {
 		t.Fatalf("the planted symlink does not resolve, so this test would prove nothing (err=%v)", err)
 	}

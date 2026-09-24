@@ -44,7 +44,7 @@ import (
 func readReleaseWorkflow(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(repoRoot(t), ".github", "workflows", "release.yml")
-	body, err := os.ReadFile(path) //nolint:gosec // fixed path inside the repository
+	body, err := os.ReadFile(path) // a fixed path inside the repository
 	if err != nil {
 		t.Fatalf("cannot read %s: %v", path, err)
 	}
@@ -120,7 +120,7 @@ func TestReleaseWorkflow_ImageBuildPassesTheCommit(t *testing.T) {
 // reads would make the workflow line above decorative.
 func TestDockerfile_StampsTheCommitArgIntoTheBinary(t *testing.T) {
 	path := filepath.Join(repoRoot(t), "Dockerfile")
-	body, err := os.ReadFile(path) //nolint:gosec // fixed path inside the repository
+	body, err := os.ReadFile(path) // a fixed path inside the repository
 	if err != nil {
 		t.Fatalf("cannot read %s: %v", path, err)
 	}
@@ -147,7 +147,7 @@ func TestDockerfile_StampsTheCommitArgIntoTheBinary(t *testing.T) {
 // short form is the one already written down elsewhere in this repository.
 func TestGoReleaser_StampsTheFullCommit(t *testing.T) {
 	path := filepath.Join(repoRoot(t), ".goreleaser.yaml")
-	body, err := os.ReadFile(path) //nolint:gosec // fixed path inside the repository
+	body, err := os.ReadFile(path) // a fixed path inside the repository
 	if err != nil {
 		t.Fatalf("cannot read %s: %v", path, err)
 	}

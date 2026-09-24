@@ -633,6 +633,40 @@ If you set `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` yourself, your value
 wins for both, exactly as before. Sharko does not quietly substitute
 anything over a setting you made on purpose.
 
+### What the two refs each buy, on the built-in path
+
+The two values are not a stricter and a looser version of the same
+check, and reading them that way overstates what the tag-shaped one was
+doing:
+
+- `^refs/tags/v.*$` cannot be satisfied by any certificate Sharko's own
+  release workflow produces, so on the built-in path it refuses every
+  entry. A check that refuses everything does not establish that a
+  signature came from a tag; it produces an Unverified badge and nothing
+  else. That is the whole of the
+  [`v4.0.1` symptom](#read-this-first-if-v401-shows-every-built-in-entry-as-unverified).
+- `^refs/heads/main$` can be satisfied, and it is the same ref the
+  built-in identity pattern already pins, so by itself it adds little
+  beyond the identity check.
+
+What carries the weight on the built-in path is a different control:
+[release-commit binding](#release-commit-binding-built-in-catalogue-only),
+which requires the certificate to name the exact commit the running
+binary was built from. That is a cryptographic statement about which
+release a signature belongs to, and the tag-shaped pattern was not one
+under a `workflow_run` trigger — for that trigger the `workflow_ref`
+claim records the ref the workflow file sits on, whatever is being
+built.
+
+So on the built-in path an unsatisfiable assertion is replaced by a real
+one. It is worth being plain about the starting point: what came before
+was a check nothing could pass, not a tag requirement that held.
+
+Third-party behaviour is unchanged. The tag-ref default still governs
+catalogues Sharko did not build, and it is satisfiable there, because a
+publisher whose own workflow is triggered by a tag push gets a tag ref
+in the claim.
+
 ## Release-commit binding (built-in catalogue only)
 
 Sharko's built-in catalogue is signed by Sharko's own release workflow,

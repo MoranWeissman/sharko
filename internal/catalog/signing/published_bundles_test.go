@@ -32,7 +32,14 @@
 //	SHARKO_AUDIT_CATALOG=/tmp/addons.yaml \
 //	SHARKO_AUDIT_BUNDLE_DIR=/tmp/bundles \
 //	go test -tags=publishedbundles -count=1 -v -timeout=20m \
-//	  -run TestAudit_PublishedBundles ./internal/catalog/signing/
+//	  -run '^TestAudit_PublishedBundles$' ./internal/catalog/signing/
+//
+// The anchors matter. `-run` takes a regular expression and matches it
+// unanchored, so the bare name also selects
+// TestAudit_PublishedBundlesBoundToTheReleaseCommit in
+// published_bundles_commit_test.go, which then stops immediately because its
+// four SHARKO_AUDIT_* variables are unset — a second, unrelated failure for
+// somebody who typed exactly what this comment told them to type.
 package signing
 
 import (
@@ -168,7 +175,7 @@ func TestAudit_PublishedBundles(t *testing.T) {
 	// never a pass and is never what the production runtime uses.
 	diagPolicy := sources.TrustPolicy{Identities: policy.Identities, WorkflowRef: ""}
 
-	yamlBytes, err := os.ReadFile(catalogPath) //nolint:gosec // operator-supplied audit input
+	yamlBytes, err := os.ReadFile(catalogPath) // the path an operator sets to run this harness by hand
 	if err != nil {
 		t.Fatalf("read catalog %s: %v", catalogPath, err)
 	}
@@ -230,7 +237,7 @@ func TestAudit_PublishedBundles(t *testing.T) {
 		sum := sha256.Sum256(payload)
 		r.PayloadSHA256 = hex.EncodeToString(sum[:])
 
-		bundleBytes, rerr := os.ReadFile(filepath.Join(bundleDir, r.BundleFile)) //nolint:gosec // operator-supplied audit input
+		bundleBytes, rerr := os.ReadFile(filepath.Join(bundleDir, r.BundleFile)) // under the directory an operator sets to run this harness
 		if rerr != nil {
 			r.BundleReadErr = rerr.Error()
 			results = append(results, r)

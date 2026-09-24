@@ -46,7 +46,7 @@ func TestBuildFixture_FromPublishedBundles(t *testing.T) {
 	replaced := 0
 	for _, e := range entries {
 		src := filepath.Join(bundleDir, e.Name+".bundle")
-		real, err := os.ReadFile(src) //nolint:gosec // audit fixture input
+		real, err := os.ReadFile(src) // bundleDir is the path an operator sets to run this harness by hand
 		if err != nil {
 			t.Fatalf("read published bundle %s: %v", src, err)
 		}

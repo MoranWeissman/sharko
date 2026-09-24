@@ -33,7 +33,12 @@
 //	SHARKO_AUDIT_RELEASE_COMMIT=faf109fbbccac14fbd17fd5fa8ffb7066b2a5406 \
 //	SHARKO_AUDIT_WRONG_COMMIT=b4879d135f6e611726ec542a1192b25a7ab03a4c \
 //	go test -tags=publishedbundles -count=1 -v -timeout=20m \
-//	  -run TestAudit_PublishedBundlesBoundToTheReleaseCommit ./internal/catalog/signing/
+//	  -run '^TestAudit_PublishedBundlesBoundToTheReleaseCommit$' ./internal/catalog/signing/
+//
+// The anchors are there for the same reason they are on the sibling harness:
+// `-run` matches its pattern unanchored, so an unanchored name can select more
+// tests than the one being asked for, and a pattern that selects NOTHING exits
+// 0 and reads as a pass.
 package signing
 
 import (
@@ -81,6 +86,12 @@ type commitAuditRow struct {
 	ClaimIssuer    string
 	ClaimTrigger   string
 	CertParseError string
+
+	// CertSurveyed records that surveyCert actually ran for this row. Without
+	// it a zero parse-error count means two different things — every
+	// certificate parsed, or no certificate was ever looked at — and those
+	// read identically in a report.
+	CertSurveyed bool
 }
 
 func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
@@ -138,7 +149,7 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 	rec := &reasonRecorder{}
 	v := NewVerifier(nil, WithTrustedMaterial(trustRoot), WithLogger(slog.New(rec)))
 
-	yamlBytes, err := os.ReadFile(catalogPath) //nolint:gosec // operator-supplied audit input
+	yamlBytes, err := os.ReadFile(catalogPath) // the path an operator sets to run this harness by hand
 	if err != nil {
 		t.Fatalf("read catalog %s: %v", catalogPath, err)
 	}
@@ -170,7 +181,7 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 			rows = append(rows, row)
 			continue
 		}
-		bundleBytes, rerr := os.ReadFile(filepath.Join(bundleDir, e.Name+".bundle")) //nolint:gosec // operator-supplied audit input
+		bundleBytes, rerr := os.ReadFile(filepath.Join(bundleDir, e.Name+".bundle")) // under the directory an operator sets to run this harness
 		if rerr != nil {
 			row.ErrRight = "read bundle: " + rerr.Error()
 			rows = append(rows, row)
@@ -181,6 +192,7 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 		// certificate holds rather than inferring it from the verdict.
 		row.ClaimDigest, row.ClaimSHA, row.ClaimRef, row.ClaimSAN,
 			row.ClaimIssuer, row.ClaimTrigger, row.CertParseError = surveyCert(bundleBytes)
+		row.CertSurveyed = true
 
 		_ = rec.takeAll()
 		row.OKRight, row.IssuerRight, row.ErrRight = verifyOnce(t, v, payload, bundleBytes, right, rec, &row.ReasonRight)
@@ -223,6 +235,27 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 		wrongCommit, passWrong)
 	t.Logf("WITH NO RELEASE COMMIT AVAILABLE:     %d accepted (must be 0)", passUnstamped)
 
+	// Certificate-parse outcome, counted and printed rather than inferred from
+	// the claim columns being populated. Zero parse errors is the whole reason
+	// the claim table below can be trusted, so it gets its own number.
+	surveyed, parseErrors := 0, 0
+	var parseErrorLines []string
+	for _, r := range rows {
+		if r.CertSurveyed {
+			surveyed++
+		}
+		if r.CertParseError != "" {
+			parseErrors++
+			parseErrorLines = append(parseErrorLines, r.Entry+": "+r.CertParseError)
+		}
+	}
+	t.Logf("")
+	t.Logf("CERTIFICATE PARSE: %d of %d bundles had their certificate read, %d parse error(s)",
+		surveyed, len(rows), parseErrors)
+	for _, line := range parseErrorLines {
+		t.Logf("  parse error — %s", line)
+	}
+
 	t.Logf("")
 	t.Logf("CERTIFICATE CLAIMS, read out of the certificates themselves:")
 	distinct := map[string]int{}
@@ -257,6 +290,19 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 	}
 
 	// --- assertions ---------------------------------------------------------
+	// The parse-error count is asserted, not left to be inferred from all six
+	// claim columns being non-empty. A count that is captured and never checked
+	// is the shape of a gate that reports success while measuring nothing.
+	if parseErrors > 0 {
+		t.Errorf("%d of %d certificates did not parse, so the claim table above is incomplete "+
+			"and every verdict that rests on a claim is unsupported for those bundles:\n  %s",
+			parseErrors, len(rows), strings.Join(parseErrorLines, "\n  "))
+	}
+	if surveyed != len(rows) {
+		t.Errorf("%d of %d certificates were read, so a parse-error count of %d does not mean "+
+			"the certificates are sound — it partly means they were never looked at",
+			surveyed, len(rows), parseErrors)
+	}
 	if failRight > 0 {
 		t.Errorf("%d of %d published bundles do not verify under the shipped embedded "+
 			"policy at the release commit — see the per-bundle lines above",

@@ -184,7 +184,11 @@ var settings = []Setting{
 	{Name: "SHARKO_CATALOG_FRESHNESS_ENABLED", Kind: Production, Summary: "Whether the catalog freshness checker runs.", Default: "true", ReaderFile: readerServe},
 	{Name: "SHARKO_CATALOG_FRESHNESS_INTERVAL", Kind: Production, Summary: "How often catalog freshness is checked.", Default: "24h", ReaderFile: readerServe},
 	{Name: "SHARKO_CATALOG_TRUSTED_IDENTITIES", Kind: Production, Summary: "Signer identities the catalog trust policy accepts.", ReaderFile: readerTrust},
-	{Name: "SHARKO_CATALOG_TRUSTED_WORKFLOW_REF", Kind: Production, Summary: "Workflow reference the catalog trust policy requires on a signature.", ReaderFile: readerTrust},
+	// The two catalogues are held to different refs when this is unset, which is
+	// why the summary says so: a third-party catalogue keeps the tag-ref default
+	// it always had, and Sharko's own built-in catalogue is held to the ref its
+	// own release certificates carry. A value set here wins for both.
+	{Name: "SHARKO_CATALOG_TRUSTED_WORKFLOW_REF", Kind: Production, Summary: "Workflow reference the catalog trust policy requires on a signature — left unset, third-party catalogs are held to a tag ref and Sharko's own built-in catalog to its main-branch ref, while a value set here applies to both.", ReaderFile: readerTrust},
 	{Name: "SHARKO_SIGSTORE_TUF_CACHE", Kind: Production, Summary: "Directory the Sigstore TUF root is cached in.", Default: "/tmp/sigstore-tuf", ReaderFile: "internal/catalog/signing/tufroot.go"},
 
 	// ---------------------------------------------------------------
