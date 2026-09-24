@@ -648,6 +648,101 @@ jobs:
             cosign sign --yes "${tag}@${DIGEST}"
           done
 
+      # The release published archive SBOMs (.goreleaser.yaml `sboms:`)
+      # but never an SBOM for the container image. That gap is why the
+      # image's Alpine OS packages were invisible to every dependency
+      # review: an archive SBOM lists Go modules only, so nothing in the
+      # release evidence ever said which apk packages shipped. These
+      # steps close it with one SBOM per architecture.
+      #
+      # Same tool and same format as the archive SBOMs (syft,
+      # cyclonedx-json) so a consumer reads one format for everything.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate per-architecture image SBOMs
+        id: image_sboms
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p _dist/image-sboms
+          IMAGE="${REGISTRY}/${IMAGE_NAME}"
+
+          # `push: true` with two platforms publishes an OCI image index,
+          # so ${DIGEST} addresses the index and not any one architecture.
+          # An SBOM has to describe a single architecture, so resolve the
+          # per-arch manifest digest out of the index.
+          #
+          # The platform filter is not cosmetic: buildx also writes
+          # provenance/attestation manifests into the same index, and those
+          # carry platform "unknown/unknown". Taking .manifests[].digest
+          # unfiltered would produce SBOMs of attestation blobs.
+          docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" > _dist/image-index.json
+
+          for arch in amd64 arm64; do
+            arch_digest=$(jq -r --arg a "$arch" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $a) | .digest' \
+              _dist/image-index.json)
+
+            # An empty digest would make syft scan the index instead, and
+            # that silently yields an SBOM with no packages at all.
+            if [ -z "$arch_digest" ] || [ "$arch_digest" = "null" ]; then
+              echo "::error::no linux/${arch} manifest found in ${IMAGE}@${DIGEST}"
+              exit 1
+            fi
+
+            out="_dist/image-sboms/sharko-image-linux-${arch}.cdx.json"
+            echo "linux/${arch} -> ${arch_digest}"
+
+            # Scan by digest, not by tag. Given a digest reference syft
+            # records it as metadata.component.version, which is what ties
+            # the document to the image it describes. Given a tag it
+            # records the tag instead and the digest appears nowhere.
+            syft scan "registry:${IMAGE}@${arch_digest}" \
+              -o "cyclonedx-json=${out}"
+
+            # A one-category SBOM is the failure that created this gap in
+            # the first place: OS packages present and Go modules missing,
+            # or the reverse, both look like a valid document and exit 0.
+            # Require both before publishing anything.
+            if ! jq -e '
+                  ((.components | map(select(.purl != null and (.purl | startswith("pkg:apk/")))) | length) > 0)
+              and ((.components | map(select(.purl != null and (.purl | startswith("pkg:golang/")))) | length) > 0)
+            ' "$out" > /dev/null; then
+              echo "::error::${out} is missing apk packages or Go modules"
+              exit 1
+            fi
+
+            # Also require the digest really landed in the document, so a
+            # future syft change cannot quietly untie the SBOM from its image.
+            if ! jq -e --arg d "$arch_digest" '.metadata.component.version == $d' "$out" > /dev/null; then
+              echo "::error::${out} does not record digest ${arch_digest}"
+              exit 1
+            fi
+
+            apk_count=$(jq '[.components[] | select(.purl != null and (.purl | startswith("pkg:apk/")))] | length' "$out")
+            go_count=$(jq '[.components[] | select(.purl != null and (.purl | startswith("pkg:golang/")))] | length' "$out")
+            echo "  ${out}: ${apk_count} apk packages, ${go_count} Go modules, digest ${arch_digest}"
+
+            # Bind the SBOM to the per-arch digest in the transparency log,
+            # the same keyless OIDC identity the image signing step above
+            # uses. This is what lets a consumer confirm the SBOM belongs to
+            # the image rather than trusting a filename.
+            COSIGN_YES=true cosign attest \
+              --predicate "$out" \
+              --type cyclonedx \
+              "${IMAGE}@${arch_digest}"
+          done
+
+      - name: Upload image SBOMs as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-sboms
+          path: _dist/image-sboms/
+          if-no-files-found: error
+          retention-days: 7
+
   helm-package:
     name: Package & Push Helm Chart
     runs-on: ubuntu-latest
@@ -963,3 +1058,31 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # COSIGN_YES suppresses the interactive prompt in non-TTY mode.
           COSIGN_YES: "true"
+
+      # Put the per-architecture image SBOMs on the release page next to
+      # the archive SBOMs GoReleaser just uploaded, so someone auditing a
+      # release finds the image contents in the same place as the binary
+      # contents. These have to run after GoReleaser because GoReleaser is
+      # what creates the release the assets attach to.
+      - name: Download image SBOMs
+        uses: actions/download-artifact@v8
+        with:
+          name: image-sboms
+          path: _dist/image-sboms/
+
+      - name: Attach image SBOMs to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # Guard the empty-glob case: `gh release upload` with no files
+          # exits non-zero anyway, but naming the problem beats a bare
+          # usage error in the log.
+          count=$(find _dist/image-sboms -name '*.cdx.json' -type f | wc -l | tr -d ' ')
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no image SBOMs found to attach"
+            exit 1
+          fi
+          echo "attaching ${count} image SBOMs to ${TAG}"
+          gh release upload "$TAG" _dist/image-sboms/*.cdx.json --clobber
