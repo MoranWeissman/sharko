@@ -597,7 +597,7 @@ jobs:
 
       - name: Build and push image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # Multi-arch: amd64 for traditional cloud nodes, arm64 for
