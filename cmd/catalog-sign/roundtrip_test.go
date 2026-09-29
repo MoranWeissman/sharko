@@ -81,6 +81,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -466,9 +467,11 @@ func assertExactSignerOnRealCert(
 		if ext.Issuer == "" {
 			want = "signer check failed: certificate carries no OIDC issuer"
 		}
-		if !strings.Contains(log, want) {
+		// Match the slog-escaped form: the text handler escapes inner quotes as \".
+		escapedWant := "reason=" + strconv.Quote(want)
+		if !strings.Contains(log, escapedWant) {
 			t.Fatalf("refused, but not by the issuer check: the log does not contain %q.\n"+
-				"Verifier log:\n%s", want, log)
+				"Verifier log:\n%s", escapedWant, log)
 		}
 	})
 
@@ -492,9 +495,11 @@ func assertExactSignerOnRealCert(
 		}
 		want := `signer check failed: certificate identity "` + san +
 			`" is not the required identity "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main"`
-		if !strings.Contains(log, want) {
+		// Match the slog-escaped form: the text handler escapes inner quotes as \".
+		escapedWant := "reason=" + strconv.Quote(want)
+		if !strings.Contains(log, escapedWant) {
 			t.Fatalf("refused, but not by the identity check: the log does not contain %q.\n"+
-				"Verifier log:\n%s", want, log)
+				"Verifier log:\n%s", escapedWant, log)
 		}
 	})
 }
