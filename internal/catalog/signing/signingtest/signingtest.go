@@ -8,7 +8,7 @@
 // the current issuer extension, the workflow_ref claim and the
 // source-commit claim. This package mints a leaf certificate with exactly
 // the claims a test asks for, signs the payload with it, records it in the
-// virtual transparency log, and returns bundle bytes that go through the
+// in-process transparency log, and returns bundle bytes that go through the
 // same public VerifyBundleBytes path the release gate and `sharko serve`
 // use. Nothing in the verifier is bypassed or stubbed.
 //
@@ -19,9 +19,21 @@
 //
 // This package is imported by tests only. It deliberately does not import
 // internal/catalog/signing, so the signing package's own tests can use it.
+//
+// It also deliberately does not import sigstore-go's testing/ca. That
+// package pulls in golang.org/x/crypto/openpgp, which has a known,
+// unfixed advisory. Because this is not a _test.go file, `govulncheck
+// ./...` analyses it, and with openpgp in the program it also blamed
+// shipped code. So the root CA, the Fulcio intermediate, the
+// transparency-log key and the signed entry timestamp are all built here
+// with the standard library, in the same shapes testing/ca uses. Only
+// sigstore-go's pkg/root and pkg/tlog are imported, which shipped code
+// already uses.
 package signingtest
 
 import (
+	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -39,7 +51,6 @@ import (
 	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
-	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 	"github.com/sigstore/sigstore-go/pkg/tlog"
 )
 
@@ -85,32 +96,48 @@ type Claims struct {
 	SourceCommit string
 }
 
-// Sigstore is an in-process Sigstore: a Fulcio root and intermediate, a
-// transparency log and a timestamp authority, all with fresh keys.
+// Sigstore is an in-process Sigstore: a Fulcio root and intermediate and
+// a transparency log, all with fresh keys.
 type Sigstore struct {
-	vs              *ca.VirtualSigstore
 	fulcio          *root.FulcioCertificateAuthority
 	intermediate    *x509.Certificate
 	intermediateKey *ecdsa.PrivateKey
+	rekorKey        *ecdsa.PrivateKey
+	rekorLogs       map[string]*root.TransparencyLog
 	logIndex        int64
 }
 
 // New builds a fresh in-process Sigstore.
 func New() (*Sigstore, error) {
-	vs, err := ca.NewVirtualSigstore()
-	if err != nil {
-		return nil, fmt.Errorf("virtual sigstore: %w", err)
-	}
-	rootCert, rootKey, err := ca.GenerateRootCa()
+	rootCert, rootKey, err := generateRootCA()
 	if err != nil {
 		return nil, fmt.Errorf("fulcio root: %w", err)
 	}
-	interCert, interKey, err := ca.GenerateFulcioIntermediate(rootCert, rootKey)
+	interCert, interKey, err := generateFulcioIntermediate(rootCert, rootKey)
 	if err != nil {
 		return nil, fmt.Errorf("fulcio intermediate: %w", err)
 	}
+	rekorKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("transparency log key: %w", err)
+	}
+	logID, err := logIDOf(rekorKey.Public())
+	if err != nil {
+		return nil, err
+	}
 	return &Sigstore{
-		vs: vs,
+		rekorKey: rekorKey,
+		rekorLogs: map[string]*root.TransparencyLog{
+			logID: {
+				BaseURL:             "https://rekor.localhost",
+				ID:                  []byte(logID),
+				ValidityPeriodStart: time.Now().Add(-time.Hour),
+				ValidityPeriodEnd:   time.Now().Add(time.Hour),
+				HashFunc:            crypto.SHA256,
+				PublicKey:           rekorKey.Public(),
+				SignatureHashFunc:   crypto.SHA256,
+			},
+		},
 		fulcio: &root.FulcioCertificateAuthority{
 			Root:                rootCert,
 			Intermediates:       []*x509.Certificate{interCert},
@@ -126,20 +153,131 @@ func New() (*Sigstore, error) {
 
 // TrustedMaterial returns the trust root that bundles from this Sigstore
 // verify against. Pass it to signing.WithTrustedMaterial.
+//
+// It holds this Sigstore's Fulcio CA and transparency log and nothing
+// else: no timestamp authority and no certificate-transparency log. The
+// bundles made here carry no RFC 3161 timestamp and no SCT, and the
+// verifier Sharko uses asks for neither (it asks for one transparency-log
+// entry and one observer timestamp, which the log entry's integrated time
+// gives).
 func (s *Sigstore) TrustedMaterial() root.TrustedMaterial {
-	return trustedMaterial{VirtualSigstore: s.vs, fulcio: s.fulcio}
+	return &trustedMaterial{fulcio: s.fulcio, rekorLogs: s.rekorLogs}
 }
 
-// trustedMaterial is the virtual Sigstore's transparency log and
-// timestamp authority, with this package's own Fulcio CA in place of the
-// virtual one (whose intermediate key is not reachable from outside).
+// trustedMaterial is the smallest root.TrustedMaterial that fits. The
+// embedded BaseTrustedMaterial answers "none" for everything not
+// overridden here.
 type trustedMaterial struct {
-	*ca.VirtualSigstore
-	fulcio *root.FulcioCertificateAuthority
+	root.BaseTrustedMaterial
+	fulcio    *root.FulcioCertificateAuthority
+	rekorLogs map[string]*root.TransparencyLog
 }
 
-func (t trustedMaterial) FulcioCertificateAuthorities() []root.CertificateAuthority {
+func (t *trustedMaterial) FulcioCertificateAuthorities() []root.CertificateAuthority {
 	return []root.CertificateAuthority{t.fulcio}
+}
+
+func (t *trustedMaterial) RekorLogs() map[string]*root.TransparencyLog {
+	return t.rekorLogs
+}
+
+// logIDOf is the transparency-log ID of a key: the hex SHA-256 of its
+// PKIX encoding. Same as testing/ca's getLogID.
+func logIDOf(pub crypto.PublicKey) (string, error) {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(der)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+// signSET makes the signed entry timestamp for a transparency-log entry:
+// an ECDSA P-256 / SHA-256 signature over the RFC 8785 canonical JSON of
+// the tlog.RekorPayload. tlog.VerifySET checks exactly this.
+//
+// The payload has four keys whose values are two strings (base64 and
+// hex, so no characters that need escaping) and two integers. For that
+// shape, encoding/json with sorted map keys and HTML escaping off gives
+// the same bytes as RFC 8785, so no canonicalisation library is needed.
+// If that ever stopped being true, VerifySET would refuse every bundle
+// and all the S11 tests would fail, not pass.
+func (s *Sigstore) signSET(p tlog.RekorPayload) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(map[string]any{
+		"body":           p.Body,
+		"integratedTime": p.IntegratedTime,
+		"logIndex":       p.LogIndex,
+		"logID":          p.LogID,
+	}); err != nil {
+		return nil, err
+	}
+	canonical := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	digest := sha256.Sum256(canonical)
+	return ecdsa.SignASN1(rand.Reader, s.rekorKey, digest[:])
+}
+
+// generateRootCA makes a self-signed P-256 root, the same shape as
+// testing/ca.GenerateRootCa.
+func generateRootCA() (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   "sigstore",
+			Organization: []string{"sigstore.dev"},
+		},
+		NotBefore:             time.Now().Add(-5 * time.Hour),
+		NotAfter:              time.Now().Add(5 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	cert, err := createCertificate(tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cert, key, nil
+}
+
+// generateFulcioIntermediate makes a code-signing intermediate under
+// parent, the same shape as testing/ca.GenerateFulcioIntermediate.
+func generateFulcioIntermediate(parent *x509.Certificate, parentKey *ecdsa.PrivateKey) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   "sigstore-intermediate",
+			Organization: []string{"sigstore.dev"},
+		},
+		NotBefore:             time.Now().Add(-2 * time.Minute),
+		NotAfter:              time.Now().Add(2 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	cert, err := createCertificate(tmpl, parent, &key.PublicKey, parentKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cert, key, nil
+}
+
+func createCertificate(tmpl, parent *x509.Certificate, pub crypto.PublicKey, parentKey crypto.Signer) (*x509.Certificate, error) {
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, pub, parentKey)
+	if err != nil {
+		return nil, err
+	}
+	return x509.ParseCertificate(der)
 }
 
 // Certificate mints a leaf certificate with the given claims, chained to
@@ -202,7 +340,7 @@ func (s *Sigstore) Certificate(c Claims) (*x509.Certificate, *ecdsa.PrivateKey, 
 }
 
 // SignBundle signs payload with a fresh certificate carrying claims,
-// records it in the virtual transparency log, and returns the serialized
+// records it in the in-process transparency log, and returns the serialized
 // Sigstore bundle (media type version 0.1, which carries an inclusion
 // promise rather than an inclusion proof).
 func (s *Sigstore) SignBundle(payload []byte, c Claims) ([]byte, error) {
@@ -241,7 +379,7 @@ func (s *Sigstore) SignBundle(payload []byte, c Claims) ([]byte, error) {
 		return nil, err
 	}
 
-	logIDHex, err := s.vs.RekorLogID()
+	logIDHex, err := logIDOf(s.rekorKey.Public())
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +388,7 @@ func (s *Sigstore) SignBundle(payload []byte, c Claims) ([]byte, error) {
 		return nil, err
 	}
 	integrated := time.Now().Unix()
-	set, err := s.vs.RekorSignPayload(tlog.RekorPayload{
+	set, err := s.signSET(tlog.RekorPayload{
 		Body:           base64.StdEncoding.EncodeToString(body),
 		IntegratedTime: integrated,
 		LogIndex:       s.logIndex,
