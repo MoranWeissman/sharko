@@ -274,7 +274,9 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 	// copied over catalog/addons.yaml and baked into the release binaries
 	// and the container image by //go:embed, so the only policy worth
 	// checking it against is the one `sharko serve` will apply to it once
-	// it is embedded — release-commit binding included.
+	// it is embedded — release-commit binding and the exact issuer and
+	// signer pins included. The pins come from that one constructor; they
+	// are not repeated here.
 	policy := signing.EmbeddedCatalogTrustPolicy(base, opts.ReleaseCommit)
 	fmt.Fprintf(w, "catalog-sign verify: %d entries in %s\n", len(raw.Addons), signedPath)
 	for i, id := range policy.Identities {
@@ -282,6 +284,8 @@ func runVerify(ctx context.Context, opts options, w io.Writer, deps verifyDeps, 
 	}
 	fmt.Fprintf(w, "catalog-sign verify: workflow_ref policy = %s\n", policy.WorkflowRef)
 	fmt.Fprintf(w, "catalog-sign verify: required release commit = %s\n", policy.ReleaseCommit)
+	fmt.Fprintf(w, "catalog-sign verify: required issuer = %s\n", policy.RequiredIssuer)
+	fmt.Fprintf(w, "catalog-sign verify: required identity = %s\n", policy.RequiredIdentity)
 
 	verifier, err := deps.NewVerifier(ctx)
 	if err != nil {

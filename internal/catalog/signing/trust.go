@@ -86,15 +86,43 @@ const DefaultTrustedWorkflowRef = `^refs/tags/v.*$`
 // operator. The narrow fix is to apply the ref Sharko's own workflow
 // actually mints, to Sharko's own catalogue only.
 //
-// This assertion is now the weaker of the two claim checks on the
-// embedded path: it repeats what DefaultTrustedIdentities' Sharko
-// pattern already pins (that pattern ends `@refs/heads/main`). The real
-// control is the release-commit binding — see
-// EmbeddedCatalogTrustPolicy. The tag-shaped assertion is not dropped so
-// much as replaced by a stricter one landing in the same change: instead
-// of "came from some tag" the certificate must now claim the exact
-// commit this build was released from.
+// This assertion is the weakest of the checks on the embedded path: it
+// repeats what EmbeddedCatalogIdentity already pins (that identity ends
+// `@refs/heads/main`). The checks that do the real work on the embedded
+// path are the exact issuer, the exact identity and the release-commit
+// binding — see EmbeddedCatalogTrustPolicy. The tag-shaped assertion is
+// not dropped so much as replaced by a stricter one: instead of "came
+// from some tag" the certificate must claim the exact commit this build
+// was released from.
 const EmbeddedCatalogWorkflowRef = `^refs/heads/main$`
+
+// EmbeddedCatalogIssuer is the exact OIDC issuer a certificate must carry
+// before Sharko accepts it for its OWN embedded catalogue: GitHub
+// Actions' token issuer. Measured on the certificates inside all 45
+// published v4.0.1 bundles: every one carries exactly this value.
+//
+// Why it is pinned. The trusted-identity list is a list of SAN patterns,
+// and a SAN is only a URI string. Without the issuer pin, any OIDC
+// issuer that Fulcio accepts and that can put a matching URI in a
+// certificate would satisfy the SAN check. Pinning the issuer means the
+// SAN must have been vouched for by GitHub Actions itself.
+const EmbeddedCatalogIssuer = "https://token.actions.githubusercontent.com"
+
+// EmbeddedCatalogIdentity is the exact certificate SAN Sharko's own
+// release workflow signs with, and the only signer Sharko accepts for its
+// OWN embedded catalogue. Compared by plain string equality, not as a
+// pattern.
+//
+// Why it is pinned on top of the identity patterns. The shipped identity
+// list also trusts `^https://github\.com/cncf/.*/\.github/workflows/.*$`
+// for third-party catalogues. Without this pin, any CNCF workflow could
+// sign an entry of Sharko's own catalogue and it would pass the pattern
+// check. With it, only Sharko's release workflow on `main` can.
+//
+// This value must stay equal to the Sharko entry in
+// DefaultTrustedIdentities; TestEmbeddedCatalogIdentity_MatchesTheShippedPattern
+// pins that.
+const EmbeddedCatalogIdentity = "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main"
 
 // commitSHALen is the length of a full git SHA-1 commit hash in hex.
 // Sharko compares full hashes only — never a prefix. A prefix comparison
@@ -131,14 +159,25 @@ func IsFullCommitSHA(s string) bool {
 }
 
 // EmbeddedCatalogTrustPolicy returns the trust policy for Sharko's OWN
-// embedded catalogue: the base policy, plus the release-commit binding,
-// plus the workflow_ref claim Sharko's own release workflow actually
-// mints.
+// embedded catalogue. It starts from the base policy and adds:
+//
+//   - the exact issuer pin (EmbeddedCatalogIssuer),
+//   - the exact identity pin (EmbeddedCatalogIdentity),
+//   - the release-commit binding,
+//   - the workflow_ref claim Sharko's own release workflow actually mints.
+//
+// The base policy's Identities list is kept and still applies. The SAN
+// must equal EmbeddedCatalogIdentity AND match one of those patterns. So
+// an operator's SHARKO_CATALOG_TRUSTED_IDENTITIES can only narrow what
+// the embedded catalogue trusts: `^$` makes it trust nothing, and a list
+// that leaves out Sharko's release identity makes it refuse. No operator
+// setting can make a different signer acceptable here, and the CNCF
+// default pattern does not count for the embedded catalogue.
 //
 // This function is the structural boundary the whole design rests on.
-// RequireReleaseCommit can only be turned on here, so a catalogue that
-// does not come through this constructor cannot be subjected to the
-// release-commit requirement. cmd/sharko/serve.go hands the result to
+// RequireReleaseCommit, RequiredIssuer and RequiredIdentity can only be
+// set here, so a catalogue that does not come through this constructor
+// is not subject to them. cmd/sharko/serve.go hands the result to
 // the embedded-catalogue loader and hands the UNMODIFIED base policy to
 // the third-party fetcher; TestThirdPartyPolicy_NeverCarriesTheCommitRequirement
 // and the wiring test in cmd/sharko pin both halves.
@@ -179,6 +218,9 @@ func EmbeddedCatalogTrustPolicy(base sources.TrustPolicy, buildCommit string) so
 		p.WorkflowRef = EmbeddedCatalogWorkflowRef
 	}
 
+	p.RequiredIssuer = EmbeddedCatalogIssuer
+	p.RequiredIdentity = EmbeddedCatalogIdentity
+
 	p.RequireReleaseCommit = true
 	p.ReleaseCommit = ""
 	if IsFullCommitSHA(buildCommit) {
@@ -202,6 +244,11 @@ const DefaultsToken = "<defaults>"
 //     Without this default, fresh installs would see the embedded
 //     catalog as Unverified once the release pipeline starts signing
 //     entries.
+//
+// For Sharko's own embedded catalogue, matching one of these patterns is
+// necessary but not enough: EmbeddedCatalogTrustPolicy also requires the
+// exact issuer and the exact release identity, so the CNCF pattern never
+// counts there.
 //
 // Important — why the Sharko default ends in `@refs/heads/main` rather
 // than the triggering tag's ref: Sigstore Fulcio mints certs whose SAN

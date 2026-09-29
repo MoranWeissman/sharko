@@ -561,6 +561,17 @@ func TestThirdPartyPolicy_NeverCarriesTheCommitRequirement(t *testing.T) {
 				t.Errorf("ReleaseCommit = %q, want empty on the third-party policy",
 					p.ReleaseCommit)
 			}
+			// S11: the exact issuer and exact identity pins belong to the
+			// embedded catalogue only. On the third-party policy they would
+			// refuse every publisher that is not Sharko.
+			if p.RequiredIssuer != "" {
+				t.Errorf("RequiredIssuer = %q, want empty on the third-party policy",
+					p.RequiredIssuer)
+			}
+			if p.RequiredIdentity != "" {
+				t.Errorf("RequiredIdentity = %q, want empty on the third-party policy",
+					p.RequiredIdentity)
+			}
 		})
 	}
 }

@@ -15,6 +15,13 @@
 //  1. the correct release commit  — must ACCEPT
 //  2. a different commit          — must REFUSE, on the commit binding
 //  3. no commit at all            — must REFUSE, on the missing stamp
+//  4. an operator list of `^$`    — must REFUSE, on the identity patterns
+//
+// S11 adds the exact issuer and exact signer pins to the embedded policy.
+// Run 1 is what proves the genuine certificates still pass them, and the
+// report prints the OIDC issuer read out of every certificate. Run 4 proves
+// an operator setting still narrows the embedded catalogue on real
+// certificates.
 //
 // Case 2 is the wrong-commit break test done with real cryptography: these are
 // genuine signatures, with a real Fulcio chain and a real Rekor inclusion
@@ -78,6 +85,11 @@ type commitAuditRow struct {
 	ReasonUnstamped string
 	ErrUnstamped    string
 
+	// Under an operator identity list of `^$` (trust nothing).
+	OKTrustNothing     bool
+	ReasonTrustNothing string
+	ErrTrustNothing    string
+
 	// What the certificate itself claims, read out rather than assumed.
 	ClaimDigest    string
 	ClaimSHA       string
@@ -126,6 +138,11 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 	right := EmbeddedCatalogTrustPolicy(base, releaseCommit)
 	wrong := EmbeddedCatalogTrustPolicy(base, wrongCommit)
 	unstamped := EmbeddedCatalogTrustPolicy(base, "dev")
+	// What LoadTrustPolicyFromEnv returns for SHARKO_CATALOG_TRUSTED_IDENTITIES=^$,
+	// built directly because this harness refuses to run with that env set.
+	trustNothingBase := base
+	trustNothingBase.Identities = []string{"^$"}
+	trustNothing := EmbeddedCatalogTrustPolicy(trustNothingBase, releaseCommit)
 
 	t.Logf("SHIPPED EMBEDDED POLICY (from LoadTrustPolicyFromEnv + EmbeddedCatalogTrustPolicy)")
 	for i, id := range right.Identities {
@@ -134,6 +151,8 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 	t.Logf("  workflow_ref = %s", right.WorkflowRef)
 	t.Logf("  release commit required = %v", right.RequireReleaseCommit)
 	t.Logf("  release commit expected = %s", right.ReleaseCommit)
+	t.Logf("  required issuer   = %s", right.RequiredIssuer)
+	t.Logf("  required identity = %s", right.RequiredIdentity)
 	t.Logf("WRONG-COMMIT CONTROL   = %s", wrong.ReleaseCommit)
 	t.Logf("UNSTAMPED CONTROL      = required=%v expected=%q",
 		unstamped.RequireReleaseCommit, unstamped.ReleaseCommit)
@@ -198,16 +217,17 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 		row.OKRight, row.IssuerRight, row.ErrRight = verifyOnce(t, v, payload, bundleBytes, right, rec, &row.ReasonRight)
 		row.OKWrong, _, row.ErrWrong = verifyOnce(t, v, payload, bundleBytes, wrong, rec, &row.ReasonWrong)
 		row.OKUnstamped, _, row.ErrUnstamped = verifyOnce(t, v, payload, bundleBytes, unstamped, rec, &row.ReasonUnstamped)
+		row.OKTrustNothing, _, row.ErrTrustNothing = verifyOnce(t, v, payload, bundleBytes, trustNothing, rec, &row.ReasonTrustNothing)
 
 		rows = append(rows, row)
 	}
 
 	// --- report -------------------------------------------------------------
 	passRight, failRight := 0, 0
-	passWrong, passUnstamped := 0, 0
+	passWrong, passUnstamped, passTrustNothing := 0, 0, 0
 	t.Logf("")
 	t.Logf("PER-BUNDLE RESULTS (%d attempted)", len(rows))
-	t.Logf("%-28s %-6s %-6s %-6s %s", "bundle", "right", "wrong", "nostmp", "detail")
+	t.Logf("%-28s %-6s %-6s %-6s %-6s %s", "bundle", "right", "wrong", "nostmp", "^$", "detail")
 	for _, r := range rows {
 		if r.OKRight {
 			passRight++
@@ -220,12 +240,16 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 		if r.OKUnstamped {
 			passUnstamped++
 		}
-		detail := "identity=" + r.IssuerRight
+		if r.OKTrustNothing {
+			passTrustNothing++
+		}
+		detail := "identity=" + r.IssuerRight + " issuer=" + r.ClaimIssuer
 		if !r.OKRight {
 			detail = "REFUSED: " + firstNonEmpty(r.ReasonRight, r.ErrRight, "no reason recorded")
 		}
-		t.Logf("%-28s %-6s %-6s %-6s %s",
-			r.Entry+".bundle", verdict(r.OKRight), verdict(r.OKWrong), verdict(r.OKUnstamped), detail)
+		t.Logf("%-28s %-6s %-6s %-6s %-6s %s",
+			r.Entry+".bundle", verdict(r.OKRight), verdict(r.OKWrong), verdict(r.OKUnstamped),
+			verdict(r.OKTrustNothing), detail)
 	}
 
 	t.Logf("")
@@ -234,6 +258,7 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 	t.Logf("UNDER A DIFFERENT COMMIT        (%s): %d accepted (must be 0)",
 		wrongCommit, passWrong)
 	t.Logf("WITH NO RELEASE COMMIT AVAILABLE:     %d accepted (must be 0)", passUnstamped)
+	t.Logf("WITH AN OPERATOR LIST OF ^$:          %d accepted (must be 0)", passTrustNothing)
 
 	// Certificate-parse outcome, counted and printed rather than inferred from
 	// the claim columns being populated. Zero parse errors is the whole reason
@@ -288,6 +313,14 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 	for _, k := range distinctReasons(rows, func(r commitAuditRow) string { return r.ReasonUnstamped }) {
 		t.Logf("  %s", k)
 	}
+	t.Logf("DISTINCT REFUSAL REASONS, trust-nothing (^$) run:")
+	for _, k := range distinctReasons(rows, func(r commitAuditRow) string { return r.ReasonTrustNothing }) {
+		t.Logf("  %s", k)
+	}
+	t.Logf("DISTINCT OIDC ISSUERS read from the certificates:")
+	for _, k := range distinctReasons(rows, func(r commitAuditRow) string { return r.ClaimIssuer }) {
+		t.Logf("  %s", k)
+	}
 
 	// --- assertions ---------------------------------------------------------
 	// The parse-error count is asserted, not left to be inferred from all six
@@ -316,6 +349,15 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 		t.Errorf("%d bundles were accepted with no release commit available — that is the "+
 			"silent bypass the binding exists to prevent", passUnstamped)
 	}
+	if passTrustNothing > 0 {
+		t.Errorf("%d bundles were accepted under an operator list of ^$ — operator settings "+
+			"no longer narrow the embedded catalogue", passTrustNothing)
+	}
+	if right.RequiredIssuer != "https://token.actions.githubusercontent.com" ||
+		right.RequiredIdentity != "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main" {
+		t.Errorf("the embedded policy does not carry the S11 pins: issuer %q identity %q",
+			right.RequiredIssuer, right.RequiredIdentity)
+	}
 	// Every wrong-commit refusal must come from the BINDING, not from something
 	// unrelated. A refusal for the wrong reason is a bad break, not a pass.
 	for _, r := range rows {
@@ -327,6 +369,17 @@ func TestAudit_PublishedBundlesBoundToTheReleaseCommit(t *testing.T) {
 		if !strings.Contains(r.ReasonUnstamped, "this build carries no release commit") {
 			t.Errorf("%s: the no-release-commit run was refused for an unrelated reason: %q",
 				r.Entry, r.ReasonUnstamped)
+		}
+		if r.ReasonTrustNothing != "signature verified but identity not in trust policy: "+
+			"https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main" {
+			t.Errorf("%s: the ^$ run was refused for an unrelated reason: %q", r.Entry, r.ReasonTrustNothing)
+		}
+		// What the certificate itself says, read out rather than assumed.
+		if r.ClaimIssuer != "https://token.actions.githubusercontent.com" {
+			t.Errorf("%s: certificate OIDC issuer is %q, not GitHub Actions'", r.Entry, r.ClaimIssuer)
+		}
+		if r.ClaimSAN != "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main" {
+			t.Errorf("%s: certificate identity is %q, not Sharko's release workflow", r.Entry, r.ClaimSAN)
 		}
 	}
 }

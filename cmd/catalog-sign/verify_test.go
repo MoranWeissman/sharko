@@ -7,8 +7,10 @@
 // way of going wrong is fail-closed rather than fail-open.
 //
 // The cryptography itself is exercised elsewhere: by the roundtrip job in
-// CI (real cosign, real Fulcio, real Rekor) and by the by-hand break tests
-// run against the published v4.0.1 bundles.
+// CI (real cosign, real Fulcio, real Rekor), by the by-hand break tests
+// run against the published v4.0.1 bundles, and by verify_signer_test.go,
+// which runs this gate with the real verifier over bundles minted from an
+// in-process trust root.
 package main
 
 import (
@@ -461,6 +463,15 @@ func TestVerify_UsesTheEmbeddedPolicy(t *testing.T) {
 		if strings.Join(got.Identities, "|") != strings.Join(want.Identities, "|") {
 			t.Errorf("call %d: identities differ from the shipped policy: got %v want %v",
 				i, got.Identities, want.Identities)
+		}
+		// S11: the exact issuer and signer pins reach the gate through
+		// EmbeddedCatalogTrustPolicy. Literals, so a change to the
+		// constants shows up here.
+		if got.RequiredIssuer != "https://token.actions.githubusercontent.com" {
+			t.Errorf("call %d: RequiredIssuer = %q, want GitHub Actions' issuer", i, got.RequiredIssuer)
+		}
+		if got.RequiredIdentity != testIdentity {
+			t.Errorf("call %d: RequiredIdentity = %q, want %q", i, got.RequiredIdentity, testIdentity)
 		}
 	}
 }

@@ -130,8 +130,19 @@ func TestCatalogTrustPolicies_ThirdPartyIsUnbound(t *testing.T) {
 				t.Errorf("ThirdParty.WorkflowRef = %q, want the documented default %q",
 					p.ThirdParty.WorkflowRef, signing.DefaultTrustedWorkflowRef)
 			}
-			// Both policies share the same identity list — the release-commit
-			// binding narrows WHICH BUILD, never WHO.
+			// S11: the exact issuer and signer pins are embedded-only. On the
+			// third-party policy they would refuse every publisher but Sharko.
+			if p.ThirdParty.RequiredIssuer != "" || p.ThirdParty.RequiredIdentity != "" {
+				t.Errorf("the third-party policy carries the embedded signer pins: issuer %q identity %q",
+					p.ThirdParty.RequiredIssuer, p.ThirdParty.RequiredIdentity)
+			}
+			if p.Embedded.RequiredIssuer == "" || p.Embedded.RequiredIdentity == "" {
+				t.Errorf("the embedded policy lacks the signer pins: issuer %q identity %q",
+					p.Embedded.RequiredIssuer, p.Embedded.RequiredIdentity)
+			}
+			// Both policies share the same identity PATTERN list. The
+			// embedded policy narrows it further with its exact signer pin
+			// and the release-commit binding; it never widens it.
 			if strings.Join(p.ThirdParty.Identities, ",") != strings.Join(p.Embedded.Identities, ",") {
 				t.Errorf("the two policies disagree about trusted identities:\n  third-party = %v\n  embedded    = %v",
 					p.ThirdParty.Identities, p.Embedded.Identities)

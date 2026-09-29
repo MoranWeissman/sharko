@@ -49,6 +49,13 @@
 //     certificate outside a release, because the workflow the binding
 //     ships in triggers on workflow_run and no pull-request check
 //     reaches it.
+//  8. Drives the embedded catalogue's exact issuer and exact signer pins
+//     (S11) over the same real certificate: the issuer read out of it must
+//     be GitHub Actions' issuer, the issuer pin alone must accept it, a
+//     different required issuer must refuse it, and the full embedded
+//     policy must refuse it for its identity, because this job's SAN is
+//     catalog-sign-roundtrip.yml, not release.yml. See
+//     assertExactSignerOnRealCert.
 //
 // Failure modes (all loud):
 //   - cosign binary missing → SkipNow with a clear message (so a local
@@ -78,6 +85,9 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/signing"
@@ -339,6 +349,154 @@ Verifier log:
 	// everything below it is the binding.
 	assertReleaseCommitBinding(t, ctx, v, canonical,
 		srv.URL+"/"+entry.Name+".bundle", policy, &logBuf)
+
+	// Step 6: the embedded catalogue's exact issuer and signer pins, against
+	// the same real certificate.
+	assertExactSignerOnRealCert(t, ctx, v, canonical, bundleBytes,
+		srv.URL+"/"+entry.Name+".bundle", policy, &logBuf)
+}
+
+// githubActionsIssuer is written out rather than taken from
+// signing.EmbeddedCatalogIssuer, so a change to that constant fails here.
+const githubActionsIssuer = "https://token.actions.githubusercontent.com"
+
+// assertExactSignerOnRealCert drives the S11 pins through the production
+// Verifier against the real Fulcio certificate this job just obtained.
+//
+// It is the only place the pins meet a genuine Fulcio certificate on a pull
+// request: the unit tests use certificates minted in-process, and the 45
+// published v4.0.1 certificates are only read by a by-hand harness.
+//
+//   - "the issuer is GitHub Actions'" reads the issuer out of the real
+//     certificate the same way the verifier does (certificate.ParseExtensions)
+//     and checks it. This is what tells us the verifier is reading the right
+//     extension on a real certificate.
+//   - "the issuer pin alone accepts it" and "a different issuer is refused"
+//     are the positive and negative controls for the issuer check on a real
+//     certificate. Without the positive one, the refusal below could be
+//     coming from the issuer check reading nothing.
+//   - "the embedded policy refuses this job's own certificate" builds the
+//     policy with signing.EmbeddedCatalogTrustPolicy, keeping this job's
+//     permissive identity pattern so the pattern check passes, and requires
+//     a refusal for the identity reason: this job's SAN names
+//     catalog-sign-roundtrip.yml, and only release.yml is accepted for
+//     Sharko's own catalogue.
+//
+// These need a GitHub Actions OIDC token, so they only run in CI. On a
+// laptop run the certificate comes from a different issuer, and the issuer
+// subtests skip with the reason rather than pass.
+func assertExactSignerOnRealCert(
+	t *testing.T,
+	ctx context.Context,
+	v *signing.Verifier,
+	canonical []byte,
+	bundleBytes []byte,
+	bundleURL string,
+	base sources.TrustPolicy,
+	logBuf *bytes.Buffer,
+) {
+	t.Helper()
+
+	b := &bundle.Bundle{}
+	if err := b.UnmarshalJSON(bundleBytes); err != nil {
+		t.Fatalf("parse the produced bundle: %v", err)
+	}
+	vc, err := b.VerificationContent()
+	if err != nil {
+		t.Fatalf("bundle verification content: %v", err)
+	}
+	cert := vc.Certificate()
+	if cert == nil {
+		t.Fatal("the produced bundle carries no certificate")
+	}
+	ext, err := certificate.ParseExtensions(cert.Extensions)
+	if err != nil {
+		t.Fatalf("parse certificate extensions: %v", err)
+	}
+	summary, err := certificate.SummarizeCertificate(cert)
+	if err != nil {
+		t.Fatalf("summarize certificate: %v", err)
+	}
+	san := summary.SubjectAlternativeName
+	t.Logf("the real Fulcio certificate: issuer=%q san=%q", ext.Issuer, san)
+
+	inGitHubActions := os.Getenv("GITHUB_ACTIONS") == "true"
+	verify := func(t *testing.T, p sources.TrustPolicy) (bool, string) {
+		t.Helper()
+		logBuf.Reset()
+		ok, _, err := v.VerifyEntry(ctx, canonical, bundleURL, p)
+		if err != nil {
+			t.Fatalf("verifier returned an infrastructure error, so this case measured "+
+				"nothing: %v\nverifier log:\n%s", err, logBuf.String())
+		}
+		return ok, logBuf.String()
+	}
+
+	t.Run("the issuer is GitHub Actions'", func(t *testing.T) {
+		if !inGitHubActions {
+			t.Skipf("not in GitHub Actions, so the certificate's issuer is %q and there is "+
+				"no GitHub Actions issuer to check", ext.Issuer)
+		}
+		if ext.Issuer != githubActionsIssuer {
+			t.Fatalf("the real certificate's issuer is %q, want %q", ext.Issuer, githubActionsIssuer)
+		}
+	})
+
+	t.Run("the issuer pin alone accepts it", func(t *testing.T) {
+		if !inGitHubActions {
+			t.Skip("not in GitHub Actions; the issuer pin would refuse a non-GitHub certificate")
+		}
+		p := base
+		p.RequiredIssuer = githubActionsIssuer
+		if ok, log := verify(t, p); !ok {
+			t.Fatalf("the issuer pin refused a genuine GitHub Actions certificate.\nVerifier log:\n%s", log)
+		}
+	})
+
+	t.Run("a different required issuer is refused", func(t *testing.T) {
+		p := base
+		p.RequiredIssuer = "https://accounts.example.com"
+		ok, log := verify(t, p)
+		if ok {
+			t.Fatalf("the issuer pin accepted a certificate from %q while %q was required.\n"+
+				"Verifier log:\n%s", ext.Issuer, p.RequiredIssuer, log)
+		}
+		want := `signer check failed: certificate OIDC issuer "` + ext.Issuer +
+			`" is not the required issuer "https://accounts.example.com"`
+		if ext.Issuer == "" {
+			want = "signer check failed: certificate carries no OIDC issuer"
+		}
+		if !strings.Contains(log, want) {
+			t.Fatalf("refused, but not by the issuer check: the log does not contain %q.\n"+
+				"Verifier log:\n%s", want, log)
+		}
+	})
+
+	t.Run("the embedded policy refuses this job's own certificate", func(t *testing.T) {
+		if !inGitHubActions {
+			t.Skip("not in GitHub Actions; the issuer check would refuse first, so the " +
+				"identity check would not be the one measured")
+		}
+		if san == signing.EmbeddedCatalogIdentity {
+			t.Fatalf("this job's SAN is Sharko's release identity %q, so this case proves nothing", san)
+		}
+		commit := strings.TrimSpace(os.Getenv(githubSHAEnvVar))
+		if !signing.IsFullCommitSHA(commit) {
+			commit = wrongCommitControl
+		}
+		p := signing.EmbeddedCatalogTrustPolicy(base, commit)
+		ok, log := verify(t, p)
+		if ok {
+			t.Fatalf("the embedded policy accepted a certificate whose SAN %q is not Sharko's "+
+				"release workflow.\nVerifier log:\n%s", san, log)
+		}
+		want := `signer check failed: certificate identity "` + san +
+			`" is not the required identity "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main"`
+		if !strings.Contains(log, want) {
+			t.Fatalf("refused, but not by the identity check: the log does not contain %q.\n"+
+				"Verifier log:\n%s", want, log)
+		}
+	})
 }
 
 // assertReleaseCommitBinding drives the release-commit binding through the

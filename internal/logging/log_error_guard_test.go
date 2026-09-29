@@ -110,7 +110,14 @@ import (
 // say whether this build carries a release commit live there, and neither of
 // them hands slog an error value or an opaque payload — one carries a commit
 // hash, the other the raw stamp, both plain strings.
-const wantSweptGoFiles = 432
+//
+// 433 since S11 added internal/catalog/signing/signingtest/signingtest.go,
+// which mints real, verifiable Sigstore bundles with chosen certificate
+// claims for the tests of the embedded catalogue's exact signer check. Only
+// tests import it. It makes no slog call and no log call of any kind: every
+// failure goes back to the caller as a returned error. It does not search
+// for credential characters either.
+const wantSweptGoFiles = 433
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by

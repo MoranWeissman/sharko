@@ -14,11 +14,14 @@ import (
 //   - The EMBEDDED catalogue is signed by Sharko's own release workflow,
 //     from the same commit this binary was built from. It can therefore be
 //     held to a much stricter rule than "a trusted identity signed
-//     something": the certificate must claim the exact commit this build
-//     was released from. That is what stops a genuine, fully valid
-//     signature made from a different commit — an older release's
-//     catalogue, or one signed from a later commit on `main` — being
-//     accepted as this release's catalogue.
+//     something": the certificate must come from GitHub Actions' OIDC
+//     issuer exactly, must name Sharko's release workflow exactly as its
+//     signer, and must claim the exact commit this build was released
+//     from. The commit part stops a genuine, fully valid signature made
+//     from a different commit — an older release's catalogue, or one
+//     signed from a later commit on `main` — being accepted as this
+//     release's catalogue. The issuer and signer parts stop any other
+//     trusted identity, such as a CNCF workflow, signing it.
 //
 //   - A THIRD-PARTY catalogue named in SHARKO_CATALOG_URLS or in
 //     configuration/marketplace-sources.yaml is signed by its own
@@ -31,7 +34,8 @@ import (
 // remember. buildCatalogTrustPolicies returns TWO values and the caller
 // must choose; the embedded one is the only one that goes through
 // signing.EmbeddedCatalogTrustPolicy, which is the only place in the
-// codebase that can set RequireReleaseCommit. A future edit that wired the
+// codebase that sets RequireReleaseCommit, RequiredIssuer and
+// RequiredIdentity. A future edit that wired the
 // embedded policy into the fetcher would have to pass the wrong one of two
 // clearly named return values, and TestCatalogTrustPolicies_ThirdPartyIsUnbound
 // plus TestServeWiring_KeepsTheTwoPoliciesApart fail if it does.
@@ -40,7 +44,7 @@ import (
 // cannot pick up the wrong one by taking whatever is in scope.
 type catalogTrustPolicies struct {
 	// Embedded gates Sharko's own //go:embed catalogue. Carries the
-	// release-commit binding.
+	// release-commit binding and the exact issuer and signer pins.
 	Embedded sources.TrustPolicy
 	// ThirdParty gates every catalogue fetched from a configured URL. It
 	// is the shipped policy with nothing added — identical to what

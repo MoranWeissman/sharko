@@ -267,7 +267,11 @@ func (v *Verifier) verifyBundleBytes(
 //  7. Extract OIDC subject from the verified cert.
 //  8. Match subject against compiled TrustPolicy regexes. No match →
 //     (false, "", nil) (untrusted identity).
-//  9. Match → (true, subject, nil). Log success at INFO with the
+//  9. When the policy pins them (Sharko's own embedded catalogue only),
+//     require the exact OIDC issuer and the exact SAN — see
+//     assertExactSigner. Then the workflow_ref claim and the
+//     release-commit binding.
+//  10. All passed → (true, subject, nil). Log success at INFO with the
 //     subject and the safe form of the source address.
 func (v *Verifier) verifyEntity(
 	ctx context.Context,
@@ -357,6 +361,16 @@ func (v *Verifier) verifyEntity(
 	if !matchAnyPattern(subject, patterns) {
 		v.logFailure(
 			"signature verified but identity not in trust policy: " + subject)
+		return false, "", nil
+	}
+
+	// Exact issuer and exact identity. Applies to Sharko's own embedded
+	// catalogue only — RequiredIssuer and RequiredIdentity are empty for
+	// every third-party feed, so this is a no-op on that path. It runs
+	// AFTER the pattern match above, never instead of it, so an operator's
+	// identity list still narrows the embedded catalogue.
+	if reason, ok := assertExactSigner(cert, subject, trustPolicy.RequiredIssuer, trustPolicy.RequiredIdentity); !ok {
+		v.logFailure(reason)
 		return false, "", nil
 	}
 
@@ -531,6 +545,52 @@ func assertWorkflowRef(cert *x509.Certificate, policy string) (reason string, ok
 		return fmt.Sprintf(
 			"cert-claim assertion failed: workflow_ref %q does not match policy %q",
 			claim, policy), false
+	}
+	return "", true
+}
+
+// assertExactSigner enforces the exact issuer and exact identity pins that
+// only Sharko's own embedded catalogue carries (see
+// EmbeddedCatalogTrustPolicy).
+//
+// Contract, in the order the branches are taken:
+//
+//   - requiredIssuer != "" and the certificate carries no issuer at all
+//     → REFUSED, with a reason that says the issuer is missing. A missing
+//     issuer is never treated as a pass.
+//   - requiredIssuer != "" and the issuer differs → REFUSED, naming both
+//     values.
+//   - requiredIdentity != "" and the SAN differs → REFUSED, naming both
+//     values. Plain equality: no pattern, no prefix, no case folding.
+//   - otherwise ("", true). Both fields empty (every third-party policy)
+//     means nothing is checked here.
+//
+// The issuer is read with certificate.ParseExtensions, which reads both
+// the current Fulcio issuer extension (OID 1.3.6.1.4.1.57264.1.8) and the
+// older one (1.3.6.1.4.1.57264.1.1).
+func assertExactSigner(cert *x509.Certificate, subject, requiredIssuer, requiredIdentity string) (reason string, ok bool) {
+	if requiredIssuer != "" {
+		ext, err := certificate.ParseExtensions(cert.Extensions)
+		if err != nil {
+			return fmt.Sprintf(
+				"signer check failed: parse cert extensions to read the OIDC issuer: %v", err), false
+		}
+		if ext.Issuer == "" {
+			return fmt.Sprintf(
+				"signer check failed: certificate carries no OIDC issuer "+
+					"(OID 1.3.6.1.4.1.57264.1.8 or 1.3.6.1.4.1.57264.1.1), but %q is required",
+				requiredIssuer), false
+		}
+		if ext.Issuer != requiredIssuer {
+			return fmt.Sprintf(
+				"signer check failed: certificate OIDC issuer %q is not the required issuer %q",
+				ext.Issuer, requiredIssuer), false
+		}
+	}
+	if requiredIdentity != "" && subject != requiredIdentity {
+		return fmt.Sprintf(
+			"signer check failed: certificate identity %q is not the required identity %q",
+			subject, requiredIdentity), false
 	}
 	return "", true
 }

@@ -14,10 +14,11 @@ package sources
 import "context"
 
 // TrustPolicy is the subset of verification config the fetcher forwards
-// to its SidecarVerifier. Today it carries only the OIDC identity
-// allowlist — future policy knobs (issuer pins, log inclusion proof
-// requirements, offline bundle paths) can be added without touching the
-// fetcher.
+// to its SidecarVerifier. It carries the OIDC identity allowlist, the
+// optional workflow_ref claim check, and three fields that only Sharko's
+// own embedded catalogue sets (the release-commit binding, and the exact
+// issuer and exact identity pins). New fields can be added without
+// touching the fetcher.
 //
 // Identities are the regex list configured via
 // SHARKO_CATALOG_TRUSTED_IDENTITIES (design §3.4). The verifier is the
@@ -85,6 +86,29 @@ type TrustPolicy struct {
 	//
 	// Ignored entirely when RequireReleaseCommit is false.
 	ReleaseCommit string
+
+	// RequiredIssuer, when not empty, is the exact OIDC issuer the
+	// certificate must carry (Fulcio extension OID 1.3.6.1.4.1.57264.1.8,
+	// or the older 1.3.6.1.4.1.57264.1.1). The comparison is plain string
+	// equality, not a regex. A certificate with no issuer at all is a
+	// refusal with a named reason, never a skip.
+	//
+	// It is set ONLY by signing.EmbeddedCatalogTrustPolicy, for Sharko's
+	// own embedded catalogue. Every third-party catalogue leaves it empty,
+	// and empty means the check is not applied, so third-party behaviour is
+	// unchanged.
+	RequiredIssuer string
+
+	// RequiredIdentity, when not empty, is the exact certificate SAN the
+	// signer must have. Plain string equality, not a regex. It is checked
+	// IN ADDITION to Identities, never instead of it: the SAN must equal
+	// this value AND match at least one Identities pattern. So an operator
+	// setting can only narrow what is trusted, never widen it.
+	//
+	// Like RequiredIssuer, it is set ONLY by
+	// signing.EmbeddedCatalogTrustPolicy and is empty for every
+	// third-party catalogue.
+	RequiredIdentity string
 }
 
 // SidecarVerifier is the narrow contract that Subsystem A calls into

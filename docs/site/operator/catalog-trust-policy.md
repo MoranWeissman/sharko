@@ -162,6 +162,10 @@ The `reason` field is the discriminator:
 - `cert-claim assertion failed: workflow_ref ... does not match policy ...`
   → the SAN check passed but the workflow_ref claim does
   not match. Skip to Mitigation step 2.
+- `signer check failed: ...` → only seen on Sharko's own built-in
+  catalogue. The entry was not signed by Sharko's release workflow
+  through GitHub Actions. No setting fixes this, on purpose. See
+  [Exact signer](#exact-signer-built-in-catalogue-only).
 - `signature bundle invalid` / `cert chain validation failed` /
   `rekor inclusion proof missing` → the signature itself is broken,
   not the policy. The bundle bytes are corrupt or stale. Skip to
@@ -490,6 +494,10 @@ this conservative default list:
 | `^https://github\.com/cncf/.*/\.github/workflows/.*$` | Any signed workflow under the CNCF org. Sharko's positioning targets CNCF-curated addons, so trusting CNCF workflows out of the box matches the project's curation stance. |
 | `^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/heads/main$` | Sharko's own release workflow. The release pipeline signs the embedded catalog, this default keeps fresh installs showing "Verified" pills on the embedded entries without operator intervention. The SAN anchors to `refs/heads/main` because Fulcio mints `job_workflow_ref` (the workflow file's ref at job start), not the triggering tag — release.yml runs as a `workflow_run`-triggered job whose `job_workflow_ref` is always `refs/heads/main`. Tag-context is enforced cryptographically by `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` (see below). |
 
+The CNCF pattern is for third-party catalogues only. It does not count
+for Sharko's own built-in catalogue, which accepts one signer and nothing
+else — see [Exact signer](#exact-signer-built-in-catalogue-only).
+
 Operators with no internal catalogs can ship the defaults as-is. Operators
 with internal catalogs typically want **defaults + their own org regex**
 — see the next section.
@@ -666,6 +674,66 @@ Third-party behaviour is unchanged. The tag-ref default still governs
 catalogues Sharko did not build, and it is satisfiable there, because a
 publisher whose own workflow is triggered by a tag push gets a tag ref
 in the claim.
+
+## Exact signer (built-in catalogue only)
+
+Sharko's own built-in catalogue is signed by one workflow only: Sharko's
+release workflow, running in GitHub Actions. So for that catalogue, a
+pattern match is not enough. Sharko checks all of these, and every one
+has to pass:
+
+1. **The issuer is exactly GitHub Actions.** The certificate's OIDC
+   issuer must be exactly `https://token.actions.githubusercontent.com`.
+   Sharko reads it from the current issuer field (OID
+   `1.3.6.1.4.1.57264.1.8`) or the older one (OID
+   `1.3.6.1.4.1.57264.1.1`). A certificate with no issuer at all is
+   refused, with its own reason.
+2. **The signer is exactly Sharko's release workflow.** The certificate
+   SAN must be exactly
+   `https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main`.
+   This is a plain text match, not a pattern.
+3. **The signer also matches your `SHARKO_CATALOG_TRUSTED_IDENTITIES`
+   list.** Your list can only make this stricter. If you set `^$`, or a
+   list that leaves out Sharko's release workflow, the built-in entries
+   show as Unverified. Adding a wider pattern does not let any other
+   signer in.
+4. **The workflow_ref check**, as described
+   [above](#which-ref-each-catalogue-is-held-to). If you set
+   `SHARKO_CATALOG_TRUSTED_WORKFLOW_REF` yourself, your value still wins.
+5. **The release commit**, as described
+   [below](#release-commit-binding-built-in-catalogue-only).
+
+Why this matters: the default identity list also trusts every CNCF
+workflow, so that third-party CNCF catalogues verify out of the box.
+Without the exact signer check, a valid signature from any CNCF
+workflow, made at the right commit, would also have counted for
+Sharko's own catalogue. Now it does not.
+
+There is no setting that turns this check off or widens it.
+
+### Third-party catalogues skip this check
+
+Third-party catalogues work the same as before. They are checked only
+against your identity list and your workflow_ref setting. There is no
+issuer check and no exact signer check for them, so a CNCF signer (or any
+signer your list trusts) still verifies there.
+
+### Failure mode
+
+```
+level=WARN msg="catalog signature verification failed"
+    source=redacted
+    reason="signer check failed: certificate identity \"<SAN>\" is not the
+        required identity \"https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main\""
+```
+
+The other reasons you can see from this check are:
+
+- `signer check failed: certificate OIDC issuer "<issuer>" is not the required issuer "https://token.actions.githubusercontent.com"`
+- `signer check failed: certificate carries no OIDC issuer (OID 1.3.6.1.4.1.57264.1.8 or 1.3.6.1.4.1.57264.1.1), but "https://token.actions.githubusercontent.com" is required`
+
+In each case the entry shows as Unverified, and the catalogue keeps
+loading.
 
 ## Release-commit binding (built-in catalogue only)
 
