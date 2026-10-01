@@ -39,7 +39,21 @@ RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build \
 
 # Stage 3: Final image
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates && \
+# OpenSSL floor: libcrypto3 and libssl3 must be 3.3.7-r2 or later, which
+# fixes CVE-2026-75804 and CVE-2026-84782 (High). The alpine:3.21 base
+# layer can still carry an older build, so apk is asked for the floor
+# explicitly, and the loop below fails the build if what got installed is
+# older. `--no-cache` only skips apk's index cache — Docker still reuses a
+# cached RUN layer whose text is unchanged. Having the floor in the command
+# text is what makes every older cached layer unusable. `min` is the one
+# place to change the floor.
+RUN min=3.3.7-r2 && \
+    apk add --no-cache ca-certificates "libcrypto3>=$min" "libssl3>=$min" && \
+    for p in libcrypto3 libssl3; do \
+      v=$(awk -v p="$p" '/^P:/{n=substr($0,3)} /^V:/{if (n==p) print substr($0,3)}' /lib/apk/db/installed); \
+      echo "$p installed: ${v:-none} (floor $min)"; \
+      [ -n "$v" ] && [ "$(apk version -t "$v" "$min")" != "<" ] || { echo "$p is below $min" >&2; exit 1; }; \
+    done && \
     mkdir -p /home/sharko/.sharko && \
     chown -R 1001:1001 /home/sharko && \
     chmod 700 /home/sharko/.sharko
