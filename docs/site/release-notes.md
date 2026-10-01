@@ -53,8 +53,8 @@ in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
   commit `871dba44`, with `version.txt` still reading `4.0.1`, scanned on the
   machine that built it. In that image `libcrypto3` and `libssl3` came out at
   `3.3.7-r1` rather than `3.3.7-r0`, which covers `CVE-2026-45447` (High) among
-  the 26. The `Dockerfile` did not change: at the time of that build `alpine:3.21`
-  resolved to 3.21.8, and that base layer already carries `r1`. `alpine:3.21` is a
+  the 26. The `Dockerfile` did not change for that build: at the time of that
+  build `alpine:3.21` resolved to 3.21.8, and that base layer already carries `r1`. `alpine:3.21` is a
   floating tag, so which patch release it resolves to on any later day has to be
   read off the build rather than assumed from this page. The published `v4.0.1`
   image and that local build were scanned with the same tool and the same
@@ -63,6 +63,10 @@ in production.** See the [v3.0.0 entry](#v300-first-public-release) below.
   is not evidence about any image the release pipeline produces: the pipeline
   builds its own image from its own inputs, and what that image contains can only
   be read off that image.
+- **The image now requires `libcrypto3` and `libssl3` at `3.3.7-r2` or later.**
+  That version covers `CVE-2026-75804` and `CVE-2026-84782` (High). The
+  `Dockerfile` asks Alpine 3.21's own repositories for that version, and the image
+  build fails rather than install anything older.
 - **Four OS findings remain and no version fixes them.** `CVE-2026-85091` in
   `zlib` (High), and `CVE-2025-60876` in `busybox`, `busybox-binsh` and
   `ssl_client` (Medium). Alpine publishes no fixed package for any of them, so
