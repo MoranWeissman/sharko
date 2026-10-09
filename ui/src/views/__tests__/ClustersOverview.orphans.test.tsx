@@ -1,0 +1,303 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { ClustersOverview } from '@/views/ClustersOverview';
+import { AuthProvider } from '@/hooks/useAuth';
+
+// V125-1-7 / BUG-058 — orphan cluster Secret surface + cleanup.
+// V125-1-7.1 — button copy rename: "Delete cluster Secret" → "Discard cancelled registration".
+// S2 (maintainer's 50-cluster walk, day 7) — the section title, body, and
+// confirm dialog now EXPLAIN why discarding is safe instead of just
+// asserting it ("safe to delete" is gone).
+//
+// Pinned behaviours:
+//
+//   1. The "Leftovers from cancelled registrations" section renders one
+//      row per orphan with name, server URL, last seen, and a destructive
+//      "Discard cancelled registration" button (updated V125-1-7.1).
+//   2. Section is absent when orphan_registrations is empty/undefined.
+//   3. Click Discard → ConfirmationModal opens with title "Discard this
+//      leftover secret?" (S2) → confirm with "Discard" button →
+//      deleteOrphanCluster called with cluster name → on success refetch
+//      fires.
+//   4. Orphan cluster names are filtered OUT of the Managed and
+//      Discovered sections — defence-in-depth alongside the BE filter.
+//   5. Success banner reads "Cancelled registration for ... discarded." (V125-1-7.1).
+
+const mockGetClusters = vi.fn();
+const mockGetAddonCatalog = vi.fn();
+const mockDeleteOrphanCluster = vi.fn();
+
+vi.mock('@/services/api', () => ({
+  api: {
+    getClusters: (...args: unknown[]) => mockGetClusters(...args),
+    getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
+    // BUG-041: ClustersOverview reads cluster_test_available on mount.
+    health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
+    // V2-cleanup-89.6 kill switch — not under test here, keep the default.
+    getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
+  },
+  registerCluster: vi.fn(),
+  testClusterConnection: vi.fn(),
+  unadoptCluster: vi.fn(),
+  deleteOrphanCluster: (...args: unknown[]) => mockDeleteOrphanCluster(...args),
+}));
+
+function renderView() {
+  // Auth session lives in localStorage — see ui/src/lib/authStorage.ts.
+  localStorage.setItem('sharko-auth-token', 'test-token');
+  localStorage.setItem('sharko-auth-user', 'tester');
+  localStorage.setItem('sharko-auth-role', 'admin');
+  return render(
+    <MemoryRouter>
+      <AuthProvider>
+        <ClustersOverview />
+      </AuthProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+    localStorage.clear();
+    mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
+  });
+
+  it('renders the Leftovers from cancelled registrations section per orphan with delete button (BUG-058)', async () => {
+    mockGetClusters.mockResolvedValue({
+      clusters: [],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [
+        {
+          cluster_name: 'kind-orphan',
+          server_url: 'https://kind-orphan.local:6443',
+          last_seen_at: '2026-05-10T12:00:00Z',
+        },
+      ],
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Leftovers from cancelled registrations/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText('kind-orphan')).toBeInTheDocument();
+    expect(screen.getByText('https://kind-orphan.local:6443')).toBeInTheDocument();
+    expect(screen.getByText('2026-05-10T12:00:00Z')).toBeInTheDocument();
+
+    // S2: the section body explains the safety claim instead of asserting
+    // it — the old "safe to delete" one-liner is gone.
+    expect(screen.getByText(/is not in Git, and has no open PR/i)).toBeInTheDocument();
+    expect(screen.queryByText(/safe to delete/i)).not.toBeInTheDocument();
+
+    // S4 (walk day 7, missing-truth finding b): the body now opens with
+    // the first beat — WHY a secret exists in ArgoCD before the PR merges
+    // — that the day-7 (S2) body skipped and confused the maintainer.
+    expect(screen.getByText(/Registering a cluster creates its connection secret in ArgoCD right away/i)).toBeInTheDocument();
+
+    // V125-1-7.1: button label renamed to user mental model.
+    const deleteBtn = screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i });
+    expect(deleteBtn).toBeInTheDocument();
+    expect(deleteBtn).toHaveTextContent('Discard cancelled registration');
+  });
+
+  it('does not render the Orphan section when the array is empty or undefined', async () => {
+    mockGetClusters.mockResolvedValue({
+      clusters: [],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      // orphan_registrations omitted entirely — older server response shape.
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Leftovers from cancelled registrations/i)).not.toBeInTheDocument();
+  });
+
+  it('filters orphan cluster names out of the Discovered section (defence-in-depth)', async () => {
+    // `kind-orphan` appears as both a not_in_git cluster AND in
+    // orphan_registrations. The FE filter must keep it OUT of the
+    // Discovered section — orphans only legitimately belong in the
+    // Leftovers from cancelled registrations row above. Even if the BE forgets
+    // to strip it, this FE filter is the second line of defence.
+    mockGetClusters.mockResolvedValue({
+      clusters: [
+        {
+          name: 'kind-orphan',
+          labels: {},
+          managed: false,
+          connection_status: 'not_in_git',
+          server_version: 'v1.30.0',
+        },
+        {
+          // Unrelated discovered cluster that MUST still render.
+          name: 'real-discovered',
+          labels: {},
+          managed: false,
+          connection_status: 'not_in_git',
+          server_version: 'v1.29.0',
+        },
+      ],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 2 },
+      pending_registrations: [],
+      orphan_registrations: [
+        {
+          cluster_name: 'kind-orphan',
+          server_url: 'https://kind-orphan.local:6443',
+          last_seen_at: '2026-05-10T12:00:00Z',
+        },
+      ],
+    });
+
+    renderView();
+
+    // V2-cleanup-92.1 (F2): banner removed — the Discovered hint no longer
+    // exists on the Clusters page. kind-orphan still renders once, in the
+    // orphan section table (V2-cleanup-24), and no longer appears as a
+    // discovered cluster anywhere.
+    await waitFor(() => {
+      expect(screen.getByText('kind-orphan')).toBeInTheDocument();
+    });
+
+    // kind-orphan renders ONCE — in the orphan section table only.
+    const allKindOrphan = screen.getAllByText('kind-orphan');
+    expect(allKindOrphan.length).toBe(1);
+    const tableForOrphan = allKindOrphan[0].closest('table');
+    expect(tableForOrphan).toBeTruthy();
+    const headers = Array.from(tableForOrphan!.querySelectorAll('th')).map(th => th.textContent ?? '');
+    expect(headers.some(h => h.match(/Server URL/i))).toBe(true);
+    expect(headers.some(h => h.match(/Last Seen/i))).toBe(true);
+
+    // 'real-discovered' — the unrelated, legitimately-discovered cluster —
+    // is counted but not named on the page (the hint carries no per-cluster
+    // names any more); it must not appear anywhere else either.
+    expect(screen.queryByText('real-discovered')).not.toBeInTheDocument();
+  });
+
+  it('Delete button click → confirm flow → API call fires with cluster name + refetches', async () => {
+    let getClustersCallCount = 0;
+    mockGetClusters.mockImplementation(() => {
+      getClustersCallCount += 1;
+      // First call returns the orphan; subsequent calls (after delete)
+      // return the post-delete state — empty.
+      if (getClustersCallCount === 1) {
+        return Promise.resolve({
+          clusters: [],
+          health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+          pending_registrations: [],
+          orphan_registrations: [
+            {
+              cluster_name: 'kind-orphan',
+              server_url: 'https://kind-orphan.local:6443',
+              last_seen_at: '2026-05-10T12:00:00Z',
+            },
+          ],
+        });
+      }
+      return Promise.resolve({
+        clusters: [],
+        health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+        pending_registrations: [],
+        orphan_registrations: [],
+      });
+    });
+    mockDeleteOrphanCluster.mockResolvedValue(undefined);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('kind-orphan')).toBeInTheDocument();
+    });
+
+    // V125-1-7.1: Click the renamed "Discard cancelled registration" button.
+    fireEvent.click(screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i }));
+
+    // Wait for the dialog. S2: the confirm dialog now asks the honest
+    // question directly ("u sure?" gets answered) instead of the terse,
+    // unexplained V2-cleanup-89.9 title.
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog')).getByText(/^Discard this leftover secret\?$/i)).toBeInTheDocument();
+    });
+
+    // S2: modal body explains what actually gets removed and that the
+    // cluster itself is untouched — no bare "safe" assertion.
+    expect(screen.getByText(/nothing is using this secret/i)).toBeInTheDocument();
+    expect(screen.getByText(/cluster itself is not touched/i)).toBeInTheDocument();
+
+    // V125-1-7.1: Confirm button is now labelled "Discard" (not "Delete cluster Secret").
+    const confirmBtns = screen.getAllByRole('button', { name: /^Discard$/i });
+    // The dialog's confirm button is the one without aria-label override.
+    const confirmBtn = confirmBtns.find(b => !b.getAttribute('aria-label'));
+    expect(confirmBtn).toBeTruthy();
+    fireEvent.click(confirmBtn!);
+
+    await waitFor(() => {
+      expect(mockDeleteOrphanCluster).toHaveBeenCalledTimes(1);
+    });
+    expect(mockDeleteOrphanCluster).toHaveBeenCalledWith('kind-orphan');
+
+    // Refetch fires after success → getClusters call count > 1.
+    await waitFor(() => {
+      expect(getClustersCallCount).toBeGreaterThan(1);
+    });
+
+    // V125-1-7.1: success banner uses updated copy (no "cluster Secret" terminology).
+    await waitFor(() => {
+      expect(screen.getByText(/Cancelled registration for "kind-orphan" discarded/i)).toBeInTheDocument();
+    });
+  });
+
+  it('modal title is "Discard this leftover secret?" (S2)', async () => {
+    // Pinned regression test for the S2 honest-framing modal title.
+    mockGetClusters.mockResolvedValue({
+      clusters: [],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [
+        { cluster_name: 'kind-orphan', server_url: 'https://kind-orphan.local:6443', last_seen_at: '2026-05-10T12:00:00Z' },
+      ],
+    });
+    mockDeleteOrphanCluster.mockResolvedValue(undefined);
+
+    renderView();
+    await waitFor(() => expect(screen.getByText('kind-orphan')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i }));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog')).getByText(/^Discard this leftover secret\?$/i)).toBeInTheDocument();
+    });
+    // Action button must say "Discard", not "Delete" or "Delete cluster Secret".
+    const discardBtn = screen.getAllByRole('button').find(b => b.textContent?.trim() === 'Discard');
+    expect(discardBtn).toBeTruthy();
+  });
+
+  it('aria-label on delete button uses new copy (V125-1-7.1)', async () => {
+    // aria-label must match new copy for screen-reader accessibility.
+    mockGetClusters.mockResolvedValue({
+      clusters: [],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [
+        { cluster_name: 'kind-orphan', server_url: 'https://kind-orphan.local:6443', last_seen_at: '2026-05-10T12:00:00Z' },
+      ],
+    });
+
+    renderView();
+    await waitFor(() => expect(screen.getByText('kind-orphan')).toBeInTheDocument());
+
+    const btn = screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i });
+    expect(btn.getAttribute('aria-label')).toBe('Discard cancelled registration for kind-orphan');
+
+    // Old aria-label must NOT exist.
+    const oldBtn = screen.queryByRole('button', { name: /Delete cluster Secret for kind-orphan/i });
+    expect(oldBtn).toBeNull();
+  });
+});

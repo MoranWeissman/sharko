@@ -1,0 +1,598 @@
+package gitprovider
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+	"time"
+)
+
+// ---------- Read operations ----------
+
+// TestConnection verifies that the configured repository is accessible.
+func (a *AzureDevOpsProvider) TestConnection(_ context.Context) error {
+	apiURL := a.baseURL + "?api-version=7.1"
+	resp, body, err := a.doGet(apiURL)
+	if err != nil {
+		return fmt.Errorf("test connection: %w", err)
+	}
+	// v4.0.4: only exactly 200 counts. Azure DevOps answers a wrong or
+	// expired PAT with 203 and an HTML sign-in page, which a "any 2xx"
+	// check took for success.
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("test connection: unexpected status %d", resp.StatusCode)
+	}
+	// And the body must be the repository object, not a page that merely
+	// came back with 200.
+	var repo struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &repo); err != nil || repo.ID == "" {
+		return fmt.Errorf("test connection: the reply was not an Azure DevOps repository")
+	}
+	slog.Info("azure devops connection ok", "org", a.organisation, "project", a.project, "repo", a.repository)
+	return nil
+}
+
+// GetFileContent retrieves the raw content of a single file at the given ref.
+//
+// When the path does not exist Azure DevOps returns 404; the error is wrapped
+// with gitprovider.ErrFileNotFound so callers can use errors.Is to detect the
+// missing-file case (review finding H2).
+func (a *AzureDevOpsProvider) GetFileContent(_ context.Context, filePath, ref string) ([]byte, error) {
+	// Use includeContent=true to get raw file content
+	apiURL := fmt.Sprintf("%s/items?path=%s&versionDescriptor.version=%s&includeContent=true&api-version=7.1",
+		a.baseURL, url.QueryEscape(filePath), url.QueryEscape(ref))
+
+	resp, body, err := a.doGet(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("get file content: %w", err)
+	}
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("get file content: path %q at ref %q: %w", filePath, ref, ErrFileNotFound)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)
+	}
+
+	// Azure DevOps returns JSON with a "content" field when using includeContent=true
+	var item struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &item); err == nil && item.Content != "" {
+		slog.Info("azure devops file fetched", "path", filePath, "ref", ref, "size", len(item.Content))
+		return []byte(item.Content), nil
+	}
+
+	// The first 200 characters of the raw response used to be logged here as
+	// a "debug" line, at Info level, on EVERY file read that did not come
+	// back in the JSON shape above (B9). That is the contents of a file in
+	// the operator's GitOps repository going into the log — a values file, a
+	// managed-clusters file, or an Azure DevOps error payload that quotes the
+	// repository address with its access token inside it. Nothing had to fail
+	// for it to run.
+	//
+	// The shape of the answer is what that line was really trying to report,
+	// and the size says that without saying any of the content.
+	slog.Info("azure devops file response was not the expected JSON shape",
+		"path", filePath, "ref", ref, "size", len(body))
+
+	return body, nil
+}
+
+// ListDirectory returns the names of entries in a directory at the given ref.
+//
+// When the directory does not exist at all Azure DevOps returns 404, the
+// same as GetFileContent does for a missing file. That is wrapped with
+// gitprovider.ErrFileNotFound so callers can use errors.Is to tell "nothing
+// here" apart from a genuine listing failure (task #147 acceptance-walk
+// finding).
+func (a *AzureDevOpsProvider) ListDirectory(_ context.Context, dirPath, ref string) ([]string, error) {
+	apiURL := fmt.Sprintf("%s/items?scopePath=%s&recursionLevel=OneLevel&versionDescriptor.version=%s&api-version=7.1",
+		a.baseURL, url.QueryEscape(dirPath), url.QueryEscape(ref))
+
+	resp, body, err := a.doGet(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("list directory: %w", err)
+	}
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("list directory: path %q at ref %q: %w", dirPath, ref, ErrFileNotFound)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("list directory: unexpected status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Value []struct {
+			Path     string `json:"path"`
+			IsFolder bool   `json:"isFolder"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("list directory: decode response: %w", err)
+	}
+
+	names := make([]string, 0, len(result.Value))
+	for _, item := range result.Value {
+		// The first entry is the directory itself; skip it.
+		if item.Path == dirPath || item.Path == dirPath+"/" {
+			continue
+		}
+		names = append(names, path.Base(item.Path))
+	}
+	return names, nil
+}
+
+// ListPullRequests returns pull requests filtered by state ("open", "closed", or "all").
+func (a *AzureDevOpsProvider) ListPullRequests(_ context.Context, state string) ([]PullRequest, error) {
+	// Map generic state to Azure DevOps status values.
+	adoStatus := "all"
+	switch strings.ToLower(state) {
+	case "open":
+		adoStatus = "active"
+	case "closed":
+		adoStatus = "completed"
+	case "all":
+		adoStatus = "all"
+	}
+
+	apiURL := fmt.Sprintf("%s/pullrequests?searchCriteria.status=%s&api-version=7.1",
+		a.baseURL, adoStatus)
+
+	resp, body, err := a.doGet(apiURL)
+	if err != nil {
+		return nil, fmt.Errorf("list pull requests: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("list pull requests: unexpected status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Value []struct {
+			PullRequestID int    `json:"pullRequestId"`
+			Title         string `json:"title"`
+			Description   string `json:"description"`
+			Status        string `json:"status"`
+			CreatedBy     struct {
+				DisplayName string `json:"displayName"`
+			} `json:"createdBy"`
+			SourceRefName string `json:"sourceRefName"`
+			TargetRefName string `json:"targetRefName"`
+			CreationDate  string `json:"creationDate"`
+			ClosedDate    string `json:"closedDate"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("list pull requests: decode response: %w", err)
+	}
+
+	prs := make([]PullRequest, 0, len(result.Value))
+	for _, p := range result.Value {
+		pr := PullRequest{
+			ID:           p.PullRequestID,
+			Title:        p.Title,
+			Description:  p.Description,
+			Author:       p.CreatedBy.DisplayName,
+			SourceBranch: strings.TrimPrefix(p.SourceRefName, "refs/heads/"),
+			TargetBranch: strings.TrimPrefix(p.TargetRefName, "refs/heads/"),
+			URL: fmt.Sprintf("https://dev.azure.com/%s/%s/_git/%s/pullrequest/%d",
+				a.organisation, a.project, a.repository, p.PullRequestID),
+			CreatedAt: p.CreationDate,
+			ClosedAt:  p.ClosedDate,
+		}
+
+		switch p.Status {
+		case "active":
+			pr.Status = "open"
+		case "completed":
+			pr.Status = "merged"
+		case "abandoned":
+			pr.Status = "closed"
+		default:
+			pr.Status = p.Status
+		}
+
+		prs = append(prs, pr)
+	}
+
+	slog.Info("azure devops pull requests listed", "state", state, "count", len(prs))
+	return prs, nil
+}
+
+// ---------- Write operations ----------
+
+// getRefSHA resolves a branch name to its current object ID.
+func (a *AzureDevOpsProvider) getRefSHA(branchName string) (string, error) {
+	apiURL := fmt.Sprintf("%s/refs?filter=heads/%s&api-version=7.1",
+		a.baseURL, url.QueryEscape(branchName))
+
+	resp, body, err := a.doGet(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("get ref SHA: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get ref SHA: unexpected status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Value []struct {
+			ObjectID string `json:"objectId"`
+			Name     string `json:"name"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("get ref SHA: decode: %w", err)
+	}
+	if len(result.Value) == 0 {
+		return "", fmt.Errorf("get ref SHA: branch %q not found", branchName)
+	}
+	return result.Value[0].ObjectID, nil
+}
+
+// GetBranchHeadSHA returns the commit SHA the named branch currently points
+// at (P2-C1's BranchRevisioner capability) — a thin, context-taking wrapper
+// over the existing getRefSHA helper CreateBranch already uses to resolve a
+// branch to its head commit. No new Azure DevOps API surface.
+func (a *AzureDevOpsProvider) GetBranchHeadSHA(_ context.Context, branch string) (string, error) {
+	sha, err := a.getRefSHA(branch)
+	if err != nil {
+		return "", fmt.Errorf("get branch head sha: %w", err)
+	}
+	return sha, nil
+}
+
+// fileExists checks whether a file exists at the given path and ref.
+func (a *AzureDevOpsProvider) fileExists(filePath, ref string) bool {
+	apiURL := fmt.Sprintf("%s/items?path=%s&versionDescriptor.version=%s&api-version=7.1",
+		a.baseURL, url.QueryEscape(filePath), url.QueryEscape(ref))
+	resp, _, err := a.doGet(apiURL)
+	if err != nil {
+		return false
+	}
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// CreateBranch creates a new branch from the given source ref.
+//
+// NOTE: this implementation does NOT yet handle empty Azure DevOps
+// repositories (repos with zero commits). For an empty ADO repo,
+// `getRefSHA` returns "branch %q not found" because the refs endpoint
+// responds 200 with an empty `value` array — there is no source SHA to
+// branch from and no analog to GitHub's Contents API for seeding an
+// initial commit. Implementing the bootstrap path would require a
+// separate code path that uses the `/pushes` endpoint with
+// `oldObjectId: 0000…` to create the initial commit + branch atomically.
+// Empty-ADO-repo surfaces today as a clear "branch not found" error
+// rather than a silent failure.
+func (a *AzureDevOpsProvider) CreateBranch(_ context.Context, branchName, fromRef string) error {
+	sourceSHA, err := a.getRefSHA(fromRef)
+	if err != nil {
+		return fmt.Errorf("create branch: %w", err)
+	}
+
+	payload, _ := json.Marshal([]map[string]string{
+		{
+			"name":        "refs/heads/" + branchName,
+			"oldObjectId": "0000000000000000000000000000000000000000",
+			"newObjectId": sourceSHA,
+		},
+	})
+
+	apiURL := a.baseURL + "/refs?api-version=7.1"
+	resp, _, err := a.doPost(apiURL, payload)
+	if err != nil {
+		return fmt.Errorf("create branch: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("create branch: unexpected status %d", resp.StatusCode)
+	}
+
+	slog.Info("azure devops branch created", "branch", branchName, "from", fromRef)
+	return nil
+}
+
+// CreateOrUpdateFile creates a new file or updates an existing one on the given branch.
+func (a *AzureDevOpsProvider) CreateOrUpdateFile(ctx context.Context, filePath string, content []byte, branch, commitMessage string) error {
+	currentSHA, err := a.getRefSHA(branch)
+	if err != nil {
+		return fmt.Errorf("create or update file: %w", err)
+	}
+
+	changeType := "add"
+	if a.fileExists(filePath, branch) {
+		changeType = "edit"
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(content)
+
+	// Append Co-authored-by trailer when an attribution context is set.
+	// Azure DevOps does not render the trailer the same way GitHub does, but
+	// it is harmless and gives parity for log scrapers.
+	message := FromContext(ctx).ApplyToMessage(commitMessage)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"refUpdates": []map[string]string{
+			{
+				"name":        "refs/heads/" + branch,
+				"oldObjectId": currentSHA,
+			},
+		},
+		"commits": []map[string]interface{}{
+			{
+				"comment": message,
+				"changes": []map[string]interface{}{
+					{
+						"changeType": changeType,
+						"item":       map[string]string{"path": "/" + strings.TrimPrefix(filePath, "/")},
+						"newContent": map[string]string{
+							"content":     encoded,
+							"contentType": "base64encoded",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	apiURL := a.baseURL + "/pushes?api-version=7.1"
+	resp, _, err := a.doPost(apiURL, payload)
+	if err != nil {
+		return fmt.Errorf("create or update file: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("create or update file: unexpected status %d", resp.StatusCode)
+	}
+
+	slog.Info("azure devops file written", "path", filePath, "branch", branch, "changeType", changeType)
+	return nil
+}
+
+// BatchCreateFiles writes multiple files using sequential CreateOrUpdateFile
+// calls.  Azure DevOps does not expose a single-request multi-file commit API,
+// so this is a best-effort sequential fallback.
+func (a *AzureDevOpsProvider) BatchCreateFiles(ctx context.Context, files map[string][]byte, branch, commitMessage string) error {
+	for path, content := range files {
+		if err := a.CreateOrUpdateFile(ctx, path, content, branch, commitMessage); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeleteFile removes a file from the given branch.
+func (a *AzureDevOpsProvider) DeleteFile(ctx context.Context, filePath, branch, commitMessage string) error {
+	currentSHA, err := a.getRefSHA(branch)
+	if err != nil {
+		return fmt.Errorf("delete file: %w", err)
+	}
+
+	message := FromContext(ctx).ApplyToMessage(commitMessage)
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"refUpdates": []map[string]string{
+			{
+				"name":        "refs/heads/" + branch,
+				"oldObjectId": currentSHA,
+			},
+		},
+		"commits": []map[string]interface{}{
+			{
+				"comment": message,
+				"changes": []map[string]interface{}{
+					{
+						"changeType": "delete",
+						"item":       map[string]string{"path": "/" + strings.TrimPrefix(filePath, "/")},
+					},
+				},
+			},
+		},
+	})
+
+	apiURL := a.baseURL + "/pushes?api-version=7.1"
+	resp, _, err := a.doPost(apiURL, payload)
+	if err != nil {
+		return fmt.Errorf("delete file: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("delete file: unexpected status %d", resp.StatusCode)
+	}
+
+	slog.Info("azure devops file deleted", "path", filePath, "branch", branch)
+	return nil
+}
+
+// CreatePullRequest opens a new pull request.
+func (a *AzureDevOpsProvider) CreatePullRequest(_ context.Context, title, body, head, base string) (*PullRequest, error) {
+	payload, _ := json.Marshal(map[string]string{
+		"sourceRefName": "refs/heads/" + head,
+		"targetRefName": "refs/heads/" + base,
+		"title":         title,
+		"description":   body,
+	})
+
+	apiURL := a.baseURL + "/pullrequests?api-version=7.1"
+	resp, respBody, err := a.doPost(apiURL, payload)
+	if err != nil {
+		return nil, fmt.Errorf("create pull request: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("create pull request: unexpected status %d", resp.StatusCode)
+	}
+
+	var adoPR struct {
+		PullRequestID int    `json:"pullRequestId"`
+		Title         string `json:"title"`
+		Description   string `json:"description"`
+		Status        string `json:"status"`
+		CreatedBy     struct {
+			DisplayName string `json:"displayName"`
+		} `json:"createdBy"`
+		SourceRefName string `json:"sourceRefName"`
+		TargetRefName string `json:"targetRefName"`
+		CreationDate  string `json:"creationDate"`
+	}
+	if err := json.Unmarshal(respBody, &adoPR); err != nil {
+		return nil, fmt.Errorf("create pull request: decode response: %w", err)
+	}
+
+	pr := &PullRequest{
+		ID:           adoPR.PullRequestID,
+		Title:        adoPR.Title,
+		Description:  adoPR.Description,
+		Author:       adoPR.CreatedBy.DisplayName,
+		Status:       "open",
+		SourceBranch: strings.TrimPrefix(adoPR.SourceRefName, "refs/heads/"),
+		TargetBranch: strings.TrimPrefix(adoPR.TargetRefName, "refs/heads/"),
+		URL: fmt.Sprintf("https://dev.azure.com/%s/%s/_git/%s/pullrequest/%d",
+			a.organisation, a.project, a.repository, adoPR.PullRequestID),
+		CreatedAt: adoPR.CreationDate,
+	}
+
+	slog.Info("azure devops pull request created", "id", pr.ID, "url", pr.URL)
+	return pr, nil
+}
+
+// MergePullRequest approves and completes (merges) a pull request in Azure DevOps.
+// Azure DevOps requires approval before completion, then a PATCH with status=completed.
+// Retries up to 3 times on 405/409 "base branch modified" or merge conflict responses.
+func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int) error {
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+
+	prURL := fmt.Sprintf("%s/pullrequests/%d?api-version=7.1", a.baseURL, prNumber)
+
+	// Step 1: GET PR to retrieve lastMergeSourceCommit and reviewers info
+	_, getBody, err := a.doGet(prURL)
+	if err != nil {
+		return fmt.Errorf("getting pull request #%d: %w", prNumber, err)
+	}
+
+	var prData struct {
+		LastMergeSourceCommit struct {
+			CommitID string `json:"commitId"`
+		} `json:"lastMergeSourceCommit"`
+		CreatedBy struct {
+			ID string `json:"id"`
+		} `json:"createdBy"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(getBody, &prData); err != nil {
+		return fmt.Errorf("parsing pull request #%d: %w", prNumber, err)
+	}
+
+	// Already merged
+	if prData.Status == "completed" {
+		slog.Info("azure devops pull request already completed", "number", prNumber)
+		return nil
+	}
+
+	// Step 2: Auto-approve the PR (vote: 10 = approved)
+	if prData.CreatedBy.ID != "" {
+		voteURL := fmt.Sprintf("%s/pullrequests/%d/reviewers/%s?api-version=7.1", a.baseURL, prNumber, prData.CreatedBy.ID)
+		voteBody, _ := json.Marshal(map[string]interface{}{
+			"vote": 10, // 10 = approved
+		})
+		_, _, voteErr := a.doPatch(voteURL, voteBody) // best-effort, some policies may block self-approve
+		if voteErr != nil {
+			slog.Warn("azure devops: auto-approve failed (may need manual approval)", "pr", prNumber, "error", voteErr)
+		} else {
+			slog.Info("azure devops pull request auto-approved", "number", prNumber)
+		}
+	}
+
+	// Step 3: PATCH to complete (merge) the PR with retry on base-branch-modified errors.
+	// The bypass is needed because automated migrations may not satisfy all
+	// branch policies (required reviewers, build validation, etc.)
+	patchBody, _ := json.Marshal(map[string]interface{}{
+		"status": "completed",
+		"lastMergeSourceCommit": map[string]string{
+			"commitId": prData.LastMergeSourceCommit.CommitID,
+		},
+		"completionOptions": map[string]interface{}{
+			"deleteSourceBranch": true,
+			"mergeStrategy":      "squash",
+			"bypassPolicy":       true,
+			"bypassReason":       "Automated by Sharko",
+		},
+	})
+
+	var lastMergeErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryDelay)
+			slog.Info("[git] retrying PR merge after base branch modified", "pr", prNumber, "attempt", attempt+1)
+		}
+
+		resp, respBody, patchErr := a.doPatch(prURL, patchBody)
+		if patchErr != nil {
+			return fmt.Errorf("merge pull request #%d: %w", prNumber, patchErr)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			slog.Info("azure devops pull request merged", "number", prNumber)
+			return nil
+		}
+
+		lastMergeErr = fmt.Errorf("merge pull request #%d failed (status %d): %s", prNumber, resp.StatusCode, string(respBody))
+
+		// Only retry on 405 or 409 with base-branch-conflict indicators.
+		bodyStr := strings.ToLower(string(respBody))
+		isRetryable := (resp.StatusCode == 405 || resp.StatusCode == 409) &&
+			(strings.Contains(bodyStr, "base") || strings.Contains(bodyStr, "conflict") || strings.Contains(bodyStr, "modified"))
+		if !isRetryable {
+			return lastMergeErr
+		}
+		slog.Warn("[git] PR merge got base branch conflict, will retry", "pr", prNumber, "attempt", attempt+1, "status", resp.StatusCode)
+	}
+
+	return fmt.Errorf("merge pull request #%d failed after %d attempts: %w", prNumber, maxRetries, lastMergeErr)
+}
+
+// GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
+//
+// A definitive HTTP 404 means the pull request no longer exists (it was
+// deleted, or the repository was recreated). In that case the error is wrapped
+// with gitprovider.ErrPullRequestNotFound so callers can use errors.Is to
+// distinguish a gone PR from a transient/auth failure. Only a 404 maps to the
+// sentinel — every other non-2xx (401, 403, 429, 5xx) stays generic so the
+// caller keeps retrying.
+func (a *AzureDevOpsProvider) GetPullRequestStatus(ctx context.Context, prNumber int) (string, error) {
+	prURL := fmt.Sprintf("%s/pullrequests/%d?api-version=7.1", a.baseURL, prNumber)
+	resp, body, err := a.doGet(prURL)
+	if err != nil {
+		return "", fmt.Errorf("get pull request #%d: %w", prNumber, err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("get pull request #%d: %w", prNumber, ErrPullRequestNotFound)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get pull request #%d failed (status %d): %s", prNumber, resp.StatusCode, string(body))
+	}
+
+	var prData struct {
+		Status string `json:"status"` // "active", "completed", "abandoned"
+	}
+	if err := json.Unmarshal(body, &prData); err != nil {
+		return "", fmt.Errorf("parse pull request #%d: %w", prNumber, err)
+	}
+
+	switch prData.Status {
+	case "completed":
+		return "merged", nil
+	case "abandoned":
+		return "closed", nil
+	default:
+		return "open", nil
+	}
+}
+
+// DeleteBranch removes a branch in Azure DevOps.
+func (a *AzureDevOpsProvider) DeleteBranch(ctx context.Context, branchName string) error {
+	// Azure DevOps deletes branches via refs endpoint with all-zero newObjectId
+	return fmt.Errorf("azure devops: DeleteBranch not yet implemented")
+}

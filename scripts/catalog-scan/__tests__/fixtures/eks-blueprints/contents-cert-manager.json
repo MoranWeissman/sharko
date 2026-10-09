@@ -1,0 +1,9 @@
+[
+  {
+    "name": "index.ts",
+    "path": "lib/addons/cert-manager/index.ts",
+    "type": "file",
+    "download_url": "${BASE_URL}/raw/cert-manager.ts",
+    "html_url": "${BASE_URL}/blob/main/lib/addons/cert-manager/index.ts"
+  }
+]

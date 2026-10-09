@@ -1,0 +1,15 @@
+apiVersion: v2
+name: sharko
+description: Addon management for Kubernetes clusters, built on ArgoCD
+type: application
+version: 4.0.5
+appVersion: "4.0.5"
+keywords:
+  - argocd
+  - kubernetes
+  - addons
+  - helm
+  - observability
+home: https://github.com/MoranWeissman/sharko
+maintainers:
+  - name: MoranWeissman

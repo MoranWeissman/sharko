@@ -1,0 +1,52 @@
+# Editing Deployment Options
+
+The Addon Detail page has a dedicated **Deployment Options** tab for editing the settings that control HOW an addon is deployed (not what's inside its `values.yaml`). Under the hood these are the addon's ArgoCD Application options — the tab was previously named "ArgoCD App Options".
+
+## What's in Deployment Options vs. Values
+
+| Lives in Deployment Options tab | Lives in Values tab |
+|---------------------------------|---------------------|
+| Self-heal on/off | Helm `values.yaml` contents |
+| Sync options (e.g. `ServerSideApply=true`) | Per-cluster value overrides |
+| Ignore differences | — |
+| Additional sources | — |
+
+A small header on each tab cross-links to the other — so if you open Deployment Options looking for Helm values you'll see a *"Helm values? See the Values tab →"* hint, and vice-versa.
+
+## Editing
+
+1. Open the addon detail page (Addons → click any addon).
+2. Click the **Deployment Options** tab in the left rail.
+3. Click **Edit** in the Deployment Options card header.
+4. Change the fields you want:
+   - **Self-Heal** — toggle. When on, ArgoCD reverts manual cluster-side changes to match Git.
+   - **Sync Options** — comma-separated ArgoCD sync options (`CreateNamespace=true, ServerSideApply=true`, etc.).
+   - **Ignore Differences** — YAML list of fields ArgoCD should ignore during diff. For addon resources that rewrite their own fields (an autoscaler changing replica counts, a webhook injecting a certificate). It is never the fix when two tools fight over a cluster-connection Secret — for that, see [the ownership-conflict warning](../operator/self-managed-connections.md#when-another-argocd-application-also-renders-this-secret). Example:
+     ```yaml
+     - group: apps
+       kind: Deployment
+       jsonPointers:
+         - /spec/replicas
+     ```
+   - **Additional Sources** — YAML list of extra chart or path sources for multi-source applications.
+5. Click **Save (opens PR)**. Sharko opens a PR against `addons-catalog.yaml` with just the fields you changed (merge semantics — blank fields are left alone).
+
+As with every Tier 2 mutation, if you haven't configured a personal GitHub PAT, the editor shows a yellow **attribution nudge** before you save, and the resulting commit is authored by the Sharko service account with you listed as a `Co-authored-by:` trailer. Set up a PAT in **Settings → My Account** to have your own name on these commits.
+
+## Why separate from Values
+
+Deployment options and Helm values live in different files in Git (`addons-catalog.yaml` vs. `addons-global-values/<addon>.yaml`) and affect different layers of the deploy pipeline:
+
+- **Deployment Options** change the ArgoCD Application generated for the addon — sync options, ignoreDifferences.
+- **Values** changes the inputs to the Helm chart the ArgoCD Application renders.
+
+Splitting them keeps each tab's diff focused and makes PR reviews easier — Deployment Options PRs touch the catalog file; values PRs touch the values file.
+
+## Read-only fields (for now)
+
+A few addon fields aren't editable from the Deployment Options tab yet — they live in the catalog file but are driven by other flows:
+
+- **Version** — edited via the **Upgrade** tab (which runs an upgrade analysis first).
+- **Namespace** — set at addon-add time.
+
+If you need to change one of the read-only fields, edit `addons-catalog.yaml` in GitHub or your Git client. Surfacing these in the UI is on the roadmap.

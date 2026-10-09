@@ -1,0 +1,275 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { MarketplaceTab } from '@/components/MarketplaceTab'
+import type { CatalogEntry } from '@/services/models'
+
+// Three fixtures spanning every filter axis we care about.
+const fixtures: CatalogEntry[] = [
+  {
+    name: 'cert-manager',
+    description: 'TLS lifecycle manager.',
+    chart: 'cert-manager',
+    repo: 'https://charts.jetstack.io',
+    default_namespace: 'cert-manager',
+    maintainers: ['jetstack'],
+    license: 'Apache-2.0',
+    category: 'security',
+    curated_by: ['cncf-graduated', 'aws-eks-blueprints'],
+    security_score: 8.2,
+    security_tier: 'Strong',
+    security_score_updated: '2026-04-15',
+    github_stars: 12500,
+  },
+  {
+    name: 'grafana',
+    description: 'Visualisation dashboards.',
+    chart: 'grafana',
+    repo: 'https://grafana.github.io/helm-charts',
+    default_namespace: 'monitoring',
+    maintainers: ['grafana'],
+    license: 'AGPL-3.0',
+    category: 'observability',
+    curated_by: ['cncf-incubating'],
+    security_score: 'unknown',
+    security_tier: '',
+  },
+  {
+    name: 'argo-cd',
+    description: 'GitOps continuous delivery.',
+    chart: 'argo-cd',
+    repo: 'https://argoproj.github.io/argo-helm',
+    default_namespace: 'argocd',
+    maintainers: ['argoproj'],
+    license: 'Apache-2.0',
+    category: 'gitops',
+    curated_by: ['cncf-graduated'],
+    security_score: 6.0,
+    security_tier: 'Moderate',
+    github_stars: 17000,
+  },
+]
+
+const listMock = vi.fn().mockResolvedValue({ addons: fixtures, total: fixtures.length })
+const listVersionsMock = vi.fn()
+// v1.21 QA Bundle 2 — the in-page detail view fetches the entry, the
+// readme, the user's catalog (duplicate guard) and /me (PAT presence).
+const getCatalogMock = vi.fn().mockResolvedValue({ addons: [] })
+const getMeMock = vi.fn().mockResolvedValue({ username: 'tester', role: 'admin', has_github_token: true })
+const getEntryMock = vi.fn()
+const getReadmeMock = vi.fn().mockResolvedValue({ readme: '', source: 'artifacthub' })
+const addAddonMock = vi.fn()
+// v4 walk-findings W2, item 5: the pending-add-PR check (AddonCatalog,
+// MarketplaceBrowseTab, MarketplaceAddonDetail) uses this standalone
+// export. Named (not inline) so per-test overrides can drive the
+// Marketplace tab's "pending — add-PR open" chip test below.
+const mockFetchTrackedPRs = vi.fn().mockResolvedValue({ prs: [] })
+
+vi.mock('@/services/api', () => ({
+  fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
+  api: {
+    listCuratedCatalog: () => listMock(),
+    listCuratedCatalogVersions: (...args: unknown[]) => listVersionsMock(...args),
+    getCuratedCatalogEntry: (...args: unknown[]) => getEntryMock(...args),
+    getCuratedCatalogReadme: (...args: unknown[]) => getReadmeMock(...args),
+    getAddonCatalog: () => getCatalogMock(),
+    getMe: () => getMeMock(),
+    // v4 walk-findings W2, item 4: the optional "also enable on a cluster"
+    // selector fetches managed clusters on mount.
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
+  },
+  addAddon: (...args: unknown[]) => addAddonMock(...args),
+  isAddonAlreadyExistsError: (e: unknown) =>
+    typeof e === 'object' && e !== null && (e as { code?: string }).code === 'addon_already_exists',
+}))
+
+function renderTab(initialEntries: string[] = ['/']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <MarketplaceTab />
+    </MemoryRouter>,
+  )
+}
+
+describe('MarketplaceTab', () => {
+  beforeEach(() => {
+    listMock.mockClear()
+    listVersionsMock.mockReset()
+    getCatalogMock.mockClear()
+    getMeMock.mockClear()
+    getEntryMock.mockReset()
+    getReadmeMock.mockClear()
+    addAddonMock.mockReset()
+    mockFetchTrackedPRs.mockReset().mockResolvedValue({ prs: [] })
+  })
+
+  it('renders all curated entries on first load', async () => {
+    renderTab()
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /Open grafana/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /Open argo-cd/i }),
+      ).toBeInTheDocument()
+    })
+    // Filter sidebar should expose the OpenSSF tier radio group.
+    expect(
+      screen.getByRole('group', { name: /OpenSSF Scorecard/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('filters by category multi-select', async () => {
+    renderTab()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument(),
+    )
+
+    fireEvent.click(screen.getByLabelText(/^security$/i))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Open grafana/i }),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Open argo-cd/i }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it('filters by curated_by with AND semantics', async () => {
+    renderTab()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument(),
+    )
+
+    // Scope to the filter sidebar so we don't collide with curated_by chips
+    // rendered on each card's aria-label.
+    const filtersAside = screen.getByRole('complementary', {
+      name: /Marketplace filters/i,
+    })
+    fireEvent.click(within(filtersAside).getByLabelText(/cncf-graduated/i))
+    fireEvent.click(within(filtersAside).getByLabelText(/aws-eks-blueprints/i))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument()
+      // argo-cd carries cncf-graduated but NOT aws-eks-blueprints, so AND drops it.
+      expect(
+        screen.queryByRole('button', { name: /Open argo-cd/i }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it('filters by OpenSSF tier (Strong)', async () => {
+    renderTab()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument(),
+    )
+
+    fireEvent.click(screen.getByLabelText(/Strong \(/i))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Open argo-cd/i }),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Open grafana/i }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it('reads filters from the URL query string', async () => {
+    renderTab(['/?mp_cat=security'])
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /Open grafana/i }),
+      ).not.toBeInTheDocument()
+    })
+  })
+
+  it('opens the in-page Detail view when a card is activated', async () => {
+    getEntryMock.mockResolvedValue(fixtures[0])
+    listVersionsMock.mockResolvedValue({
+      addon: 'cert-manager',
+      chart: 'cert-manager',
+      repo: 'https://charts.jetstack.io',
+      versions: [
+        { version: '1.20.0', prerelease: false },
+        { version: '1.19.0', prerelease: false },
+      ],
+      latest_stable: '1.20.0',
+      cached_at: '2026-04-17T00:00:00Z',
+    })
+    renderTab()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Open cert-manager/i }),
+      ).toBeInTheDocument(),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Open cert-manager/i }))
+    // The detail view replaces the tablist; assert on the Add-panel heading.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Add cert-manager to your catalog/i }),
+      ).toBeInTheDocument(),
+    )
+    // Name field pre-filled — wait for the seeding useEffect to flush.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Display name/i)).toHaveValue('cert-manager'),
+    )
+    expect(screen.getByLabelText(/Namespace/i)).toHaveValue('cert-manager')
+    // Curated entry endpoint was hit.
+    await waitFor(() => expect(getEntryMock).toHaveBeenCalledWith('cert-manager'))
+  })
+
+  // Walk finding: after adding an addon from the Marketplace, the user is
+  // standing right there on the Browse grid — the matching card should
+  // mark itself "pending" using the same tracked-PRs data the Catalog tab's
+  // ghost cards use, not a big separate section. (MarketplaceBrowseTab
+  // already wires this — this test is the missing coverage for it.)
+  it('marks the matching Browse card as pending when an add-PR is open for it', async () => {
+    mockFetchTrackedPRs.mockResolvedValue({
+      prs: [
+        {
+          pr_id: 21,
+          pr_url: 'https://gh/pr/21',
+          pr_branch: 'sharko/catalog-add-grafana',
+          pr_title: 'sharko: add grafana to catalog',
+          addon: 'grafana',
+          operation: 'catalog-add',
+          user: 'tester',
+          source: 'ui',
+          created_at: new Date().toISOString(),
+          last_status: 'open',
+          last_polled_at: new Date().toISOString(),
+        },
+      ],
+    })
+    renderTab()
+
+    const grafanaCard = await screen.findByRole('button', { name: /Open grafana/i })
+    expect(within(grafanaCard).getByText('Pending')).toBeInTheDocument()
+
+    // Other cards with no open add-PR stay unaffected.
+    const certManagerCard = screen.getByRole('button', { name: /Open cert-manager/i })
+    expect(within(certManagerCard).queryByText('Pending')).not.toBeInTheDocument()
+  })
+})

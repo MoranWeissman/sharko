@@ -1,0 +1,1223 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+)
+
+// fakeGitProvider implements gitprovider.GitProvider for testing.
+type fakeGitProvider struct {
+	files map[string][]byte
+}
+
+func (f *fakeGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	return f.files[path], nil
+}
+
+// ListDirectory returns the basenames of entries directly under dir,
+// derived from the keys of f.files (immediate children only — no nested
+// path segments). Real enough for the v4 GetVersionMatrix tests
+// (cluster-addons/*.yaml listing) without needing a full fake filesystem.
+func (f *fakeGitProvider) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var names []string
+	for p := range f.files {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		if rest == "" || strings.Contains(rest, "/") {
+			continue
+		}
+		names = append(names, rest)
+	}
+	return names, nil
+}
+
+func (f *fakeGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *fakeGitProvider) TestConnection(_ context.Context) error {
+	return nil
+}
+
+func (f *fakeGitProvider) CreateBranch(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (f *fakeGitProvider) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
+	return nil
+}
+
+func (f *fakeGitProvider) BatchCreateFiles(_ context.Context, _ map[string][]byte, _, _ string) error {
+	return nil
+}
+
+func (f *fakeGitProvider) DeleteFile(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+func (f *fakeGitProvider) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *fakeGitProvider) MergePullRequest(_ context.Context, _ int) error {
+	return nil
+}
+
+func (f *fakeGitProvider) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
+	return "open", nil
+}
+
+func (f *fakeGitProvider) DeleteBranch(_ context.Context, _ string) error {
+	return nil
+}
+
+func TestGetVersionMatrix(t *testing.T) {
+	clusterAddonsYAML := []byte(`
+clusters:
+  - name: cluster-a
+    labels:
+      ingress-nginx: enabled
+      cert-manager: enabled
+      cert-manager-version: "1.15.0"
+      external-dns: disabled
+  - name: cluster-b
+    labels:
+      ingress-nginx: enabled
+      cert-manager: enabled
+`)
+
+	addonsCatalogYAML := []byte(`
+applicationsets:
+  - name: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: "1.14.0"
+    namespace: cert-manager
+  - name: ingress-nginx
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    version: "4.10.0"
+    namespace: ingress-nginx
+  - name: external-dns
+    repoURL: https://kubernetes-sigs.github.io/external-dns
+    chart: external-dns
+    version: "1.14.0"
+    namespace: external-dns
+`)
+
+	// Fake ArgoCD server returning applications
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-cluster-a", "namespace": "argocd"},
+				"spec": map[string]interface{}{
+					"project":     "default",
+					"source":      map[string]interface{}{"repoURL": "https://charts.jetstack.io", "targetRevision": "1.15.0", "chart": "cert-manager"},
+					"destination": map[string]interface{}{"server": "https://cluster-a", "namespace": "cert-manager"},
+				},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "ingress-nginx-cluster-a", "namespace": "argocd"},
+				"spec": map[string]interface{}{
+					"project":     "default",
+					"source":      map[string]interface{}{"repoURL": "https://kubernetes.github.io/ingress-nginx", "targetRevision": "4.10.0", "chart": "ingress-nginx"},
+					"destination": map[string]interface{}{"server": "https://cluster-a", "namespace": "ingress-nginx"},
+				},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Degraded"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-cluster-b", "namespace": "argocd"},
+				"spec": map[string]interface{}{
+					"project":     "default",
+					"source":      map[string]interface{}{"repoURL": "https://charts.jetstack.io", "targetRevision": "1.14.0", "chart": "cert-manager"},
+					"destination": map[string]interface{}{"server": "https://cluster-b", "namespace": "cert-manager"},
+				},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": clusterAddonsYAML,
+			"configuration/addons-catalog.yaml":   addonsCatalogYAML,
+		},
+	}
+
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned error: %v", err)
+	}
+
+	// Verify clusters are sorted
+	if len(resp.Clusters) != 2 {
+		t.Fatalf("expected 2 clusters, got %d", len(resp.Clusters))
+	}
+	if resp.Clusters[0] != "cluster-a" || resp.Clusters[1] != "cluster-b" {
+		t.Errorf("expected clusters [cluster-a, cluster-b], got %v", resp.Clusters)
+	}
+
+	// Verify addons are sorted by name
+	if len(resp.Addons) != 3 {
+		t.Fatalf("expected 3 addons, got %d", len(resp.Addons))
+	}
+	if resp.Addons[0].AddonName != "cert-manager" {
+		t.Errorf("expected first addon to be cert-manager, got %s", resp.Addons[0].AddonName)
+	}
+	if resp.Addons[1].AddonName != "external-dns" {
+		t.Errorf("expected second addon to be external-dns, got %s", resp.Addons[1].AddonName)
+	}
+	if resp.Addons[2].AddonName != "ingress-nginx" {
+		t.Errorf("expected third addon to be ingress-nginx, got %s", resp.Addons[2].AddonName)
+	}
+
+	// Check cert-manager on cluster-a: version override 1.15.0, drift = true, health = Healthy
+	cmA := resp.Addons[0].Cells["cluster-a"]
+	if cmA.Version != "1.15.0" {
+		t.Errorf("cert-manager cluster-a version: expected 1.15.0, got %s", cmA.Version)
+	}
+	if !cmA.DriftFromCatalog {
+		t.Error("cert-manager cluster-a should have drift_from_catalog=true")
+	}
+	if cmA.Health != "Healthy" {
+		t.Errorf("cert-manager cluster-a health: expected Healthy, got %s", cmA.Health)
+	}
+
+	// Check cert-manager on cluster-b: no override, no drift, health = Healthy
+	cmB := resp.Addons[0].Cells["cluster-b"]
+	if cmB.Version != "1.14.0" {
+		t.Errorf("cert-manager cluster-b version: expected 1.14.0, got %s", cmB.Version)
+	}
+	if cmB.DriftFromCatalog {
+		t.Error("cert-manager cluster-b should have drift_from_catalog=false")
+	}
+	if cmB.Health != "Healthy" {
+		t.Errorf("cert-manager cluster-b health: expected Healthy, got %s", cmB.Health)
+	}
+
+	// Check external-dns on cluster-a: disabled
+	edA := resp.Addons[1].Cells["cluster-a"]
+	if edA.Health != "not_enabled" {
+		t.Errorf("external-dns cluster-a health: expected not_enabled, got %s", edA.Health)
+	}
+
+	// Check external-dns on cluster-b: no label, should not exist
+	if _, exists := resp.Addons[1].Cells["cluster-b"]; exists {
+		t.Error("external-dns should not have an entry for cluster-b (no label)")
+	}
+
+	// Check ingress-nginx on cluster-a: health = Degraded
+	inA := resp.Addons[2].Cells["cluster-a"]
+	if inA.Health != "Degraded" {
+		t.Errorf("ingress-nginx cluster-a health: expected Degraded, got %s", inA.Health)
+	}
+
+	// Check ingress-nginx on cluster-b: enabled but no ArgoCD app -> missing
+	inB := resp.Addons[2].Cells["cluster-b"]
+	if inB.Health != "missing" {
+		t.Errorf("ingress-nginx cluster-b health: expected missing, got %s", inB.Health)
+	}
+}
+
+// TestGetVersionMatrix_MissingFileReturnsEmpty is the V124-23 / BUG-048
+// regression test. When managed-clusters.yaml (or addons-catalog.yaml) is
+// missing — the natural state of a freshly-installed Sharko whose gitops
+// repo has not been bootstrapped yet — GetVersionMatrix MUST degrade to an
+// empty matrix rather than propagate a 500-class error. This locks down
+// the parity fix that brings the addons handler onto the same isGitFileNotFound
+// contract as ClusterService.ListClusters (V124-2.2).
+//
+// Backs the test with the shared fakeGP (cluster_test.go) because it returns
+// a wrapped gitprovider.ErrFileNotFound on missing keys, exactly the shape
+// the production providers honour after V124-2.12.
+func TestGetVersionMatrix_MissingFileReturnsEmpty(t *testing.T) {
+	// Stub ArgoCD with an empty applications list — there are no apps to
+	// enrich since there are no clusters.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewAddonService("")
+	gp := &fakeGP{} // empty maps — every lookup returns ErrFileNotFound
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned err on missing-file path: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response on missing-file path")
+	}
+	if len(resp.Clusters) != 0 {
+		t.Errorf("expected 0 clusters from missing-file path, got %d: %+v", len(resp.Clusters), resp.Clusters)
+	}
+	if len(resp.Addons) != 0 {
+		t.Errorf("expected 0 addons from missing-file path, got %d: %+v", len(resp.Addons), resp.Addons)
+	}
+}
+
+// TestGetVersionMatrix_RealErrorPropagates locks down the other half of
+// the V124-23 contract: a non-file-not-found error from the git provider
+// MUST propagate (5xx) rather than silently degrade to an empty matrix.
+// The pre-fix strings.Contains(err.Error(), "404") matcher would have
+// silently masked any of these error shapes — same H2 anti-pattern that
+// V124-2.12 fixed for /clusters.
+func TestGetVersionMatrix_RealErrorPropagates(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"github auth-or-perm error", errors.New("GitHub repository not found — check the URL and credentials")},
+		{"wrong branch", errors.New("branch 'main' not found")},
+		{"rate limit with 404 in body", errors.New("rate limited; body: {\"status\":404,\"reason\":\"abuse\"}")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewAddonService("")
+			gp := &fakeGP{
+				err: map[string]error{
+					"configuration/managed-clusters.yaml": tc.err,
+				},
+			}
+			// nil ac is fine because the call MUST fail before reaching
+			// the ArgoCD step. If a regression re-introduces the substring
+			// matcher, GetVersionMatrix would proceed past the err check
+			// and eventually nil-deref on ac.ListApplications.
+			if _, err := svc.GetVersionMatrix(context.Background(), gp, nil); err == nil {
+				t.Fatalf("expected error to propagate from %q, got nil", tc.err)
+			} else if !strings.Contains(err.Error(), "managed-clusters.yaml") {
+				t.Errorf("expected error to mention managed-clusters.yaml, got %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestGetVersionMatrix_EmptyResponseHasNoLeakedError is the over-the-wire
+// shape contract for BUG-048: the missing-file path must not surface raw
+// filesystem error strings to the caller. Combined with the handler's
+// writeJSON wrapper this guarantees a clean 200 + `{clusters:[],addons:[]}`
+// payload — no `"reading managed-clusters.yaml: ... file not found"` leak.
+//
+// We assert this at the service-shape level rather than serializing through
+// the handler, because the handler test suite already covers writeJSON's
+// behaviour and the service contract is what's load-bearing here.
+func TestGetVersionMatrix_EmptyResponseHasNoLeakedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewAddonService("")
+	gp := &fakeGP{
+		err: map[string]error{
+			"configuration/managed-clusters.yaml": fmt.Errorf(
+				"fakeGP: configuration/managed-clusters.yaml: %w",
+				gitprovider.ErrFileNotFound,
+			),
+			"configuration/addons-catalog.yaml": fmt.Errorf(
+				"fakeGP: configuration/addons-catalog.yaml: %w",
+				gitprovider.ErrFileNotFound,
+			),
+		},
+	}
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("expected nil err on missing-file path, got %v", err)
+	}
+	// Confirm the response body would serialise cleanly — no nil maps that
+	// would render as JSON nulls and confuse the UI.
+	if resp.Clusters == nil {
+		t.Error("expected resp.Clusters to be non-nil empty slice (got nil)")
+	}
+	if resp.Addons == nil {
+		t.Error("expected resp.Addons to be non-nil empty slice (got nil)")
+	}
+	body, mErr := json.Marshal(resp)
+	if mErr != nil {
+		t.Fatalf("response did not serialise: %v", mErr)
+	}
+	if strings.Contains(string(body), "managed-clusters.yaml") {
+		t.Errorf("response body leaked filesystem path: %s", string(body))
+	}
+	if strings.Contains(string(body), "file not found") {
+		t.Errorf("response body leaked error string: %s", string(body))
+	}
+}
+
+// TestGetCatalog_DeployedAndTargetClusterCounts is the V126-3.1 (DESIGN-02)
+// contract test: every AddonCatalogItem in the catalog response must carry
+// the deployed_cluster_count (N = clusters where the ArgoCD Application is
+// BOTH Synced AND Healthy) and total_target_cluster_count (M = clusters
+// where the addon is labelled enabled). The UI's tile-level badge picks one
+// of four copies based on the (N, M) pair, so we fixture four addons that
+// exercise all four states:
+//
+//	M=0, N=0  → "Not deployed anywhere"
+//	M>0, N=0  → "Not deployed yet"
+//	0<N<M     → "Running on N/M clusters"
+//	N==M, M>0 → "Running on N clusters"
+//
+// Synced + Healthy is the gating predicate, not Healthy alone — an addon
+// that is Healthy but OutOfSync is counted toward HealthyApplications (for
+// the legacy stat cards) but NOT toward DeployedClusterCount. This lock
+// down test guards both that gating logic and the field plumbing.
+func TestGetCatalog_DeployedAndTargetClusterCounts(t *testing.T) {
+	clustersYAML := []byte(`
+clusters:
+  - name: cluster-a
+    labels:
+      addon-running-everywhere: enabled
+      addon-partially-running: enabled
+      addon-target-only: enabled
+  - name: cluster-b
+    labels:
+      addon-running-everywhere: enabled
+      addon-partially-running: enabled
+      addon-target-only: enabled
+  - name: cluster-c
+    labels:
+      addon-running-everywhere: enabled
+      addon-not-anywhere: disabled
+`)
+
+	catalogYAML := []byte(`
+applicationsets:
+  - name: addon-running-everywhere
+    repoURL: https://example.com/charts
+    chart: chart-everywhere
+    version: "1.0.0"
+    namespace: ns-everywhere
+  - name: addon-partially-running
+    repoURL: https://example.com/charts
+    chart: chart-partial
+    version: "1.0.0"
+    namespace: ns-partial
+  - name: addon-target-only
+    repoURL: https://example.com/charts
+    chart: chart-target
+    version: "1.0.0"
+    namespace: ns-target
+  - name: addon-not-anywhere
+    repoURL: https://example.com/charts
+    chart: chart-nowhere
+    version: "1.0.0"
+    namespace: ns-nowhere
+`)
+
+	// ArgoCD fixture: each application carries explicit sync + health.
+	// - addon-running-everywhere/{a,b,c} → all Synced + Healthy → N=3, M=3
+	// - addon-partially-running/a → Synced + Healthy (counts toward N)
+	//   addon-partially-running/b → Synced + Healthy BUT we mark it
+	//                              OutOfSync to prove the predicate is the
+	//                              AND of sync + health, not health alone
+	//   → N=1, M=2
+	// - addon-target-only/{a,b} → NO ArgoCD apps → N=0, M=2
+	// - addon-not-anywhere → no cluster enables it (cluster-c sets disabled)
+	//                       → N=0, M=0
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "addon-running-everywhere-cluster-a", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "addon-running-everywhere-cluster-b", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "addon-running-everywhere-cluster-c", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "addon-partially-running-cluster-a", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				// Healthy but OutOfSync — proves the AND predicate is enforced.
+				"metadata": map[string]interface{}{"name": "addon-partially-running-cluster-b", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "OutOfSync"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": clustersYAML,
+			"configuration/addons-catalog.yaml":   catalogYAML,
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned err: %v", err)
+	}
+
+	byName := make(map[string]int)
+	for i, a := range resp.Addons {
+		byName[a.AddonName] = i
+	}
+
+	cases := []struct {
+		name           string
+		wantDeployed   int // N
+		wantTarget     int // M
+		stateNarrative string
+	}{
+		{"addon-running-everywhere", 3, 3, "N==M (Running on N clusters)"},
+		{"addon-partially-running", 1, 2, "0<N<M (Running on N/M clusters)"},
+		{"addon-target-only", 0, 2, "N=0, M>0 (Not deployed yet)"},
+		{"addon-not-anywhere", 0, 0, "M=0 (Not deployed anywhere)"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, ok := byName[tc.name]
+			if !ok {
+				t.Fatalf("expected addon %q in response, got %+v", tc.name, byName)
+			}
+			got := resp.Addons[idx]
+			if got.DeployedClusterCount != tc.wantDeployed {
+				t.Errorf("[%s] DeployedClusterCount: want %d, got %d (state: %s)",
+					tc.name, tc.wantDeployed, got.DeployedClusterCount, tc.stateNarrative)
+			}
+			if got.TotalTargetClusterCount != tc.wantTarget {
+				t.Errorf("[%s] TotalTargetClusterCount: want %d, got %d (state: %s)",
+					tc.name, tc.wantTarget, got.TotalTargetClusterCount, tc.stateNarrative)
+			}
+		})
+	}
+}
+
+// TestGetCatalog_DeployingAppNotCountedAsMissingOrDegraded is a S3
+// verification (maintainer's 50-cluster walk): an addon-family health
+// counter must never mislabel an app that's mid-rollout as broken.
+// classifyAddonApp returns "deploying" for an Application whose op phase is
+// Running (or whose health is Progressing) with no error signal yet — that
+// status has no case in the healthyCount/degradedCount switch in
+// GetCatalog, and since the Application DOES exist in appMap the `else`
+// branch that increments missingCount never runs either. This test pins
+// that: a cluster mid-rollout must read as neither healthy, degraded, nor
+// missing — not the dashboard's honest 518/660 turned into a false
+// "broken" by a rollout in progress.
+func TestGetCatalog_DeployingAppNotCountedAsMissingOrDegraded(t *testing.T) {
+	clustersYAML := []byte(`
+clusters:
+  - name: cluster-a
+    labels:
+      rolling-addon: enabled
+  - name: cluster-b
+    labels:
+      rolling-addon: enabled
+`)
+
+	catalogYAML := []byte(`
+applicationsets:
+  - name: rolling-addon
+    repoURL: https://example.com/charts
+    chart: chart-rolling
+    version: "1.0.0"
+    namespace: ns-rolling
+`)
+
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				// cluster-a: mid-rollout — op phase Running, no failure
+				// signal. classifyAddonApp → "deploying".
+				"metadata": map[string]interface{}{"name": "rolling-addon-cluster-a", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":           map[string]interface{}{"status": "OutOfSync"},
+					"health":         map[string]interface{}{"status": "Progressing"},
+					"operationState": map[string]interface{}{"phase": "Running"},
+				},
+			},
+			{
+				// cluster-b: a normal healthy app, so this test also
+				// proves "deploying" doesn't silently inflate healthyCount.
+				"metadata": map[string]interface{}{"name": "rolling-addon-cluster-b", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": clustersYAML,
+			"configuration/addons-catalog.yaml":   catalogYAML,
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned err: %v", err)
+	}
+
+	var got *models.AddonCatalogItem
+	for i := range resp.Addons {
+		if resp.Addons[i].AddonName == "rolling-addon" {
+			got = &resp.Addons[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected addon %q in response, got %+v", "rolling-addon", resp.Addons)
+	}
+
+	// EnabledClusters counts both clusters (the addon is enabled on both) —
+	// but only cluster-b's healthy app should land in HealthyApplications.
+	// cluster-a's mid-rollout app must not count as healthy, degraded, OR
+	// missing.
+	if got.EnabledClusters != 2 {
+		t.Errorf("EnabledClusters = %d, want 2", got.EnabledClusters)
+	}
+	if got.HealthyApplications != 1 {
+		t.Errorf("HealthyApplications = %d, want 1 (only cluster-b)", got.HealthyApplications)
+	}
+	if got.DegradedApplications != 0 {
+		t.Errorf("DegradedApplications = %d, want 0 — a mid-rollout app is not degraded", got.DegradedApplications)
+	}
+	if got.MissingApplications != 0 {
+		t.Errorf("MissingApplications = %d, want 0 — a mid-rollout app has a real Application, it isn't missing", got.MissingApplications)
+	}
+}
+
+// TestGetVersionMatrix_V4Repo is the v4 Wave 1 Story 4.2 counterpart to
+// TestGetVersionMatrix: the presence of the engine pin
+// (orchestrator.EnginePinPath) routes GetVersionMatrix through
+// getVersionMatrixV4, which reads cluster-addons/*.yaml (ClusterAddons) and
+// the delta-merged catalog (catalog/addons.yaml overlaid on the curated
+// set) instead of the v3 managed-clusters.yaml / addons-catalog.yaml
+// files — even though both v3 files are ALSO present in this fixture, to
+// prove the v4 branch is the one that actually ran.
+func TestGetVersionMatrix_V4Repo(t *testing.T) {
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true, Version: "1.12.0"}, // per-cluster pin
+			"external-dns": {Enabled: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	stagingUS, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "staging-us",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true}, // follows catalog default
+		},
+	})
+	if err != nil {
+		t.Fatalf("building staging-us assignment: %v", err)
+	}
+
+	// No curated catalog is wired for this test (svc.SetCuratedCatalog is
+	// never called — see NewAddonService below), so per catalog.MergeDelta
+	// every addon here merges as OriginInternal: repoURL/chart/version
+	// must all be set in the delta itself (design doc §2.3's "note on
+	// required"). This test exercises GetVersionMatrix's v4 wiring, not
+	// MergeDelta's curated-vs-delta precedence — that is covered by
+	// internal/catalog's own delta_merge_test.go.
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+			"external-dns": {
+				RepoURL: "https://kubernetes-sigs.github.io/external-dns",
+				Chart:   "external-dns",
+				Version: "1.14.0",
+			},
+			"billing-api": { // internal addon — no shipped entry
+				RepoURL: "oci://registry.example.com/charts",
+				Chart:   "billing-api",
+				Version: "2.4.0",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-prod-eu", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-staging-us", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "OutOfSync"},
+					"health": map[string]interface{}{"status": "Progressing"},
+				},
+			},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"cluster-addons/prod-eu.yaml":    prodEU,
+			"cluster-addons/staging-us.yaml": stagingUS,
+			config.AddonCatalogPath:          delta,
+			// v3 files are ALSO present, to prove they are ignored once the
+			// engine pin routes this to the v4 branch.
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
+			"configuration/addons-catalog.yaml":   []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned error: %v", err)
+	}
+
+	if len(resp.Clusters) != 2 || resp.Clusters[0] != "prod-eu" || resp.Clusters[1] != "staging-us" {
+		t.Fatalf("expected clusters [prod-eu staging-us] (v4 cluster-addons/*.yaml), got %v — v3 managed-clusters.yaml must be ignored", resp.Clusters)
+	}
+
+	byName := make(map[string]models.VersionMatrixRow)
+	for _, r := range resp.Addons {
+		byName[r.AddonName] = r
+	}
+	if _, ok := byName["v3-only-addon"]; ok {
+		t.Error("v3 addons-catalog.yaml entry leaked into the v4 matrix — the delta-merged catalog must be used instead")
+	}
+
+	certManager, ok := byName["cert-manager"]
+	if !ok {
+		t.Fatal("expected cert-manager row (curated + delta override)")
+	}
+	if certManager.CatalogVersion != "1.14.5" {
+		t.Errorf("cert-manager CatalogVersion = %q, want %q (from catalog/addons.yaml delta)", certManager.CatalogVersion, "1.14.5")
+	}
+	prodCell, ok := certManager.Cells["prod-eu"]
+	if !ok {
+		t.Fatal("expected a prod-eu cell for cert-manager")
+	}
+	if prodCell.Version != "1.12.0" {
+		t.Errorf("prod-eu cert-manager version = %q, want %q (per-cluster pin from cluster-addons/prod-eu.yaml)", prodCell.Version, "1.12.0")
+	}
+	if !prodCell.DriftFromCatalog {
+		t.Error("expected DriftFromCatalog=true when the per-cluster pin (1.12.0) differs from the catalog version (1.14.5)")
+	}
+	if prodCell.Health != "Healthy" {
+		t.Errorf("prod-eu cert-manager health = %q, want %q (matched by cert-manager-prod-eu ArgoCD Application)", prodCell.Health, "Healthy")
+	}
+
+	stagingCell, ok := certManager.Cells["staging-us"]
+	if !ok {
+		t.Fatal("expected a staging-us cell for cert-manager")
+	}
+	if stagingCell.Version != "1.14.5" {
+		t.Errorf("staging-us cert-manager version = %q, want %q (no per-cluster pin — follows the catalog default)", stagingCell.Version, "1.14.5")
+	}
+	if stagingCell.DriftFromCatalog {
+		t.Error("expected DriftFromCatalog=false when the cluster follows the catalog default exactly")
+	}
+
+	billingAPI, ok := byName["billing-api"]
+	if !ok {
+		t.Fatal("expected billing-api row (internal addon, origin=internal, from catalog/addons.yaml alone)")
+	}
+	if billingAPI.CatalogVersion != "2.4.0" || billingAPI.Chart != "billing-api" {
+		t.Errorf("billing-api row = %+v, want CatalogVersion=2.4.0 Chart=billing-api", billingAPI)
+	}
+	if _, hasCell := billingAPI.Cells["prod-eu"]; hasCell {
+		t.Error("billing-api should have no cells — no cluster assignment references it")
+	}
+
+	externalDNS, ok := byName["external-dns"]
+	if !ok {
+		t.Fatal("expected external-dns row (curated, disabled on prod-eu)")
+	}
+	if cell, ok := externalDNS.Cells["prod-eu"]; !ok {
+		t.Error("expected a prod-eu cell for external-dns (present in the assignment, even though disabled)")
+	} else if cell.Health != "not_enabled" {
+		t.Errorf("prod-eu external-dns health = %q, want %q", cell.Health, "not_enabled")
+	}
+}
+
+// refRecordingGitProvider wraps fakeGitProvider and records every git ref
+// (branch) it was asked to read from, so tests can prove a caller used the
+// configured base branch instead of a hardcoded "main" (Wave 2 ride-along
+// w2-q6 item 1: v4 read paths must honor BaseBranch).
+type refRecordingGitProvider struct {
+	fakeGitProvider
+	refs map[string]bool
+}
+
+func newRefRecordingGitProvider(files map[string][]byte) *refRecordingGitProvider {
+	return &refRecordingGitProvider{
+		fakeGitProvider: fakeGitProvider{files: files},
+		refs:            make(map[string]bool),
+	}
+}
+
+func (f *refRecordingGitProvider) GetFileContent(ctx context.Context, path, ref string) ([]byte, error) {
+	f.refs[ref] = true
+	return f.fakeGitProvider.GetFileContent(ctx, path, ref)
+}
+
+func (f *refRecordingGitProvider) ListDirectory(ctx context.Context, dir, ref string) ([]string, error) {
+	f.refs[ref] = true
+	return f.fakeGitProvider.ListDirectory(ctx, dir, ref)
+}
+
+// TestGetVersionMatrix_V4Repo_HonorsBaseBranch proves the v4 branch of
+// GetVersionMatrix (the engine-pin probe, the cluster-addons/*.yaml listing, and
+// the catalog/addons.yaml delta read) reads from the connection's
+// configured GitOps base branch — wired via SetBaseBranchFn — rather than a
+// hardcoded "main". A connection with base_branch: "release" is a real
+// Sharko configuration (see models.Connection.GitOps.BaseBranch); if any of
+// these reads regress to a literal "main", this test fails even though a
+// same-content-on-every-branch fake would otherwise mask the bug.
+func TestGetVersionMatrix_V4Repo_HonorsBaseBranch(t *testing.T) {
+	const configuredBranch = "release"
+
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"items": []map[string]interface{}{}})
+	}))
+	defer ts.Close()
+
+	gp := newRefRecordingGitProvider(map[string][]byte{
+		orchestrator.EnginePinPath:    []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		"cluster-addons/prod-eu.yaml": prodEU,
+		config.AddonCatalogPath:       delta,
+	})
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+	svc.SetBaseBranchFn(func() string { return configuredBranch })
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned error: %v", err)
+	}
+	if len(resp.Clusters) != 1 || resp.Clusters[0] != "prod-eu" {
+		t.Fatalf("expected clusters [prod-eu], got %v — v4 branch did not run as expected", resp.Clusters)
+	}
+
+	if gp.refs["main"] {
+		t.Errorf("GetVersionMatrix read from hardcoded %q even though the connection's base branch is configured as %q — refs seen: %v", "main", configuredBranch, gp.refs)
+	}
+	if !gp.refs[configuredBranch] {
+		t.Errorf("expected GetVersionMatrix to read from the configured base branch %q, refs seen: %v", configuredBranch, gp.refs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 review fix: GetCatalog (the Marketplace/browse surface behind
+// GET /addons/catalog) needs the same v4 branch GetVersionMatrix already
+// has. Before this fix, a v4 repo has no configuration/addons-catalog.yaml
+// (the v3→v4 migration deletes it and a fresh v4 repo never had one), and
+// the missing-file fallback checked strings.Contains(err.Error(), "404")
+// — which never matches the wrapped gitprovider.ErrFileNotFound providers
+// actually return — so the v3 branch's real (non-404-shaped) error
+// propagated as a 500 and the UI showed "Failed to load addon catalog".
+// ---------------------------------------------------------------------------
+
+// TestGetCatalog_V4Repo is the getCatalogV4 counterpart to
+// TestGetVersionMatrix_V4Repo: the engine pin routes GetCatalog through
+// getCatalogV4, which reads cluster-addons/*.yaml (ClusterAddons) and the
+// delta-merged catalog instead of the v3 managed-clusters.yaml /
+// addons-catalog.yaml files — even though both v3 files are ALSO present
+// in this fixture, to prove the v4 branch is the one that actually ran.
+func TestGetCatalog_V4Repo(t *testing.T) {
+	prodEU, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "prod-eu",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true, Version: "1.12.0"}, // per-cluster pin
+			"external-dns": {Enabled: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building prod-eu assignment: %v", err)
+	}
+	stagingUS, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "staging-us",
+		Addons: map[string]models.ClusterAddonsAddon{
+			"cert-manager": {Enabled: true}, // follows catalog default
+		},
+	})
+	if err != nil {
+		t.Fatalf("building staging-us assignment: %v", err)
+	}
+
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+			"external-dns": {
+				RepoURL: "https://kubernetes-sigs.github.io/external-dns",
+				Chart:   "external-dns",
+				Version: "1.14.0",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-prod-eu", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "cert-manager-staging-us", "namespace": "argocd"},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "OutOfSync"},
+					"health": map[string]interface{}{"status": "Progressing"},
+				},
+			},
+		},
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:       []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			"cluster-addons/prod-eu.yaml":    prodEU,
+			"cluster-addons/staging-us.yaml": stagingUS,
+			config.AddonCatalogPath:          delta,
+			// v3 files are ALSO present, to prove they are ignored once the
+			// engine pin routes this to the v4 branch.
+			"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: v3-only-cluster\n    labels: {}\n"),
+			"configuration/addons-catalog.yaml":   []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned error: %v", err)
+	}
+	if resp.TotalClusters != 2 {
+		t.Errorf("TotalClusters = %d, want 2 (v4 cluster-addons/*.yaml)", resp.TotalClusters)
+	}
+
+	byName := make(map[string]models.AddonCatalogItem)
+	for _, item := range resp.Addons {
+		byName[item.AddonName] = item
+	}
+	if _, ok := byName["v3-only-addon"]; ok {
+		t.Error("v3 addons-catalog.yaml entry leaked into the v4 catalog — the delta-merged catalog must be used instead")
+	}
+
+	certManager, ok := byName["cert-manager"]
+	if !ok {
+		t.Fatal("expected cert-manager item (curated + delta override)")
+	}
+	if certManager.Version != "1.14.5" {
+		t.Errorf("cert-manager Version = %q, want %q (from catalog/addons.yaml delta)", certManager.Version, "1.14.5")
+	}
+	// Enabled on both prod-eu and staging-us.
+	if certManager.EnabledClusters != 2 {
+		t.Errorf("cert-manager EnabledClusters = %d, want 2", certManager.EnabledClusters)
+	}
+	if certManager.TotalTargetClusterCount != 2 {
+		t.Errorf("cert-manager TotalTargetClusterCount = %d, want 2", certManager.TotalTargetClusterCount)
+	}
+	// Only prod-eu is Synced+Healthy.
+	if certManager.DeployedClusterCount != 1 {
+		t.Errorf("cert-manager DeployedClusterCount = %d, want 1 (only prod-eu is Synced+Healthy)", certManager.DeployedClusterCount)
+	}
+
+	var prodDep, stagingDep *models.AddonDeploymentInfo
+	for i := range certManager.Applications {
+		switch certManager.Applications[i].ClusterName {
+		case "prod-eu":
+			prodDep = &certManager.Applications[i]
+		case "staging-us":
+			stagingDep = &certManager.Applications[i]
+		}
+	}
+	if prodDep == nil || prodDep.ConfiguredVersion != "1.12.0" {
+		t.Errorf("prod-eu cert-manager deployment = %+v, want ConfiguredVersion=1.12.0 (per-cluster pin from cluster-addons/prod-eu.yaml)", prodDep)
+	}
+	if stagingDep == nil || stagingDep.ConfiguredVersion != "1.14.5" {
+		t.Errorf("staging-us cert-manager deployment = %+v, want ConfiguredVersion=1.14.5 (no per-cluster pin — follows catalog default)", stagingDep)
+	}
+
+	externalDNS, ok := byName["external-dns"]
+	if !ok {
+		t.Fatal("expected external-dns item (curated, disabled on prod-eu)")
+	}
+	if externalDNS.EnabledClusters != 0 {
+		t.Errorf("external-dns EnabledClusters = %d, want 0 (disabled on its only assignment)", externalDNS.EnabledClusters)
+	}
+}
+
+// TestGetCatalog_MissingFileReturnsEmpty is the v3-repo counterpart to
+// TestGetVersionMatrix_MissingFileReturnsEmpty for GetCatalog: a v3 repo
+// with neither managed-clusters.yaml nor addons-catalog.yaml present (a
+// freshly-installed gitops repo, or the review's reported symptom of a v4
+// repo where the v3 files simply don't exist) MUST degrade to an empty
+// catalog rather than a 500. Backed by fakeGP, which returns a wrapped
+// gitprovider.ErrFileNotFound on every unlisted path — the isGitFileNotFound
+// contract every real provider honours.
+func TestGetCatalog_MissingFileReturnsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewAddonService("")
+	gp := &fakeGP{} // empty maps — every lookup returns ErrFileNotFound
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned err on missing-file path: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response on missing-file path")
+	}
+	if len(resp.Addons) != 0 {
+		t.Errorf("expected 0 addons from missing-file path, got %d: %+v", len(resp.Addons), resp.Addons)
+	}
+	if resp.TotalClusters != 0 {
+		t.Errorf("expected 0 clusters from missing-file path, got %d", resp.TotalClusters)
+	}
+}
+
+// TestListAddons_V4Repo proves ListAddons' v4 branch flattens the
+// delta-merged catalog into the same []models.AddonCatalogEntry shape the
+// v3 parser path returns — the shape notifications.ServiceProvider and
+// handleListAddons both depend on (Name/Chart/RepoURL/Version).
+func TestListAddons_V4Repo(t *testing.T) {
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"cert-manager": {
+				RepoURL: "https://charts.jetstack.io",
+				Chart:   "cert-manager",
+				Version: "1.14.5",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("building catalog delta: %v", err)
+	}
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			orchestrator.EnginePinPath:          []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+			config.AddonCatalogPath:             delta,
+			"configuration/addons-catalog.yaml": []byte("applicationsets:\n  - name: v3-only-addon\n"),
+		},
+	}
+	svc := NewAddonService("")
+
+	entries, err := svc.ListAddons(context.Background(), gp)
+	if err != nil {
+		t.Fatalf("ListAddons returned error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "cert-manager" {
+		t.Fatalf("expected [cert-manager], got %+v — v3 addons-catalog.yaml must be ignored on a v4 repo", entries)
+	}
+	if entries[0].RepoURL != "https://charts.jetstack.io" || entries[0].Chart != "cert-manager" || entries[0].Version != "1.14.5" {
+		t.Errorf("cert-manager entry = %+v, want RepoURL/Chart/Version from the delta", entries[0])
+	}
+}
+
+// TestGetAddonDetail_ApplicationSetName pins the ApplicationSet name
+// GetAddonDetail asks ArgoCD for: bare on a v3 repo (the bootstrap
+// template's own ApplicationSet name), `sharko-<addon>` on a v4 repo (the
+// engine chart's naming — charts/sharko-engine/templates/appset.yaml). A
+// fake ArgoCD server records the exact path it was asked for, so the
+// assertion is on the real request, not on a guess about what the client
+// does internally.
+func TestGetAddonDetail_ApplicationSetName(t *testing.T) {
+	tests := []struct {
+		name           string
+		v4Repo         bool
+		wantAppSetName string
+	}{
+		{name: "v3 repo queries the bare addon name", v4Repo: false, wantAppSetName: "metrics-server"},
+		{name: "v4 repo queries the sharko-prefixed engine name", v4Repo: true, wantAppSetName: "sharko-metrics-server"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var requestedAppSetPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/api/v1/applicationsets/") {
+					requestedAppSetPath = r.URL.Path
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"items": []}`))
+			}))
+			defer ts.Close()
+
+			files := map[string][]byte{
+				"configuration/managed-clusters.yaml": []byte("clusters: []\n"),
+			}
+			if tc.v4Repo {
+				delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+					Addons: map[string]config.AddonCatalogEntry{
+						"metrics-server": {
+							RepoURL: "https://kubernetes-sigs.github.io/metrics-server",
+							Chart:   "metrics-server",
+							Version: "3.12.0",
+						},
+					},
+				})
+				if err != nil {
+					t.Fatalf("building catalog delta: %v", err)
+				}
+				files[orchestrator.EnginePinPath] = []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n")
+				files[config.AddonCatalogPath] = delta
+			} else {
+				files["configuration/addons-catalog.yaml"] = []byte(`
+applicationsets:
+  - name: metrics-server
+    repoURL: https://kubernetes-sigs.github.io/metrics-server
+    chart: metrics-server
+    version: "3.12.0"
+    namespace: kube-system
+`)
+			}
+
+			gp := &fakeGitProvider{files: files}
+			ac := argocd.NewClient(ts.URL, "fake-token", false)
+			svc := NewAddonService("")
+
+			resp, err := svc.GetAddonDetail(context.Background(), "metrics-server", gp, ac)
+			if err != nil {
+				t.Fatalf("GetAddonDetail returned error: %v", err)
+			}
+			if resp == nil {
+				t.Fatal("expected a non-nil detail response for metrics-server")
+			}
+
+			wantPath := "/api/v1/applicationsets/" + tc.wantAppSetName
+			if requestedAppSetPath != wantPath {
+				t.Errorf("ArgoCD was asked for appset path %q, want %q", requestedAppSetPath, wantPath)
+			}
+		})
+	}
+}

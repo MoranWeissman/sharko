@@ -1,0 +1,6 @@
+# Regression fixture for V2-cleanup-17 — mirrors a post-init bootstrap-config.yaml
+# (top-level repoURL / targetRevision, exactly as the root Application supplies them).
+repoURL: 'https://example.com/org/sharko-config.git'
+targetRevision: main
+hostCluster:
+  name: host-cluster

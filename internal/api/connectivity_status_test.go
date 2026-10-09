@@ -1,0 +1,599 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/observations"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+)
+
+// fakeAppSetGetter fakes connectivityAppSetGetter for
+// TestDetectConnectivityCheckDrift — exists controls whether
+// GetApplicationSet succeeds (the legacy AppSet is really there), notFound
+// controls whether it fails with the exact "not found" phrasing
+// *argocd.Client.doGet produces for a 404, and any other case returns an
+// opaque error to exercise the "can't confirm, say nothing" branch.
+type fakeAppSetGetter struct {
+	exists   bool
+	otherErr error
+}
+
+func (f *fakeAppSetGetter) GetApplicationSet(ctx context.Context, name string) (*argocd.ApplicationSetStatus, error) {
+	if f.exists {
+		return &argocd.ApplicationSetStatus{Name: name}, nil
+	}
+	if f.otherErr != nil {
+		return nil, f.otherErr
+	}
+	return nil, errors.New("ArgoCD endpoint not found (/api/v1/applicationsets/" + name + ") — check the server URL")
+}
+
+func TestComputeConnectivityVerdict(t *testing.T) {
+	t.Parallel()
+
+	const cluster = "my-cluster"
+	checkApp := "connectivity-check-" + cluster
+
+	// A fixed "now" used for time-sensitive tests.
+	fixedNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	recentCreatedAt := fixedNow.Add(-30 * time.Second).UTC().Format(time.RFC3339)
+	oldCreatedAt := fixedNow.Add(-11 * time.Minute).UTC().Format(time.RFC3339)
+
+	tests := []struct {
+		name             string
+		connectionStatus string
+		apps             []models.ArgocdApplication
+		now              time.Time // zero → use time.Now() via thin wrapper
+		wantStatus       string
+		wantDetail       bool // true = Detail must be non-empty
+	}{
+		// --- Priority 1: ArgoCD ConnectionStatus ---
+		{
+			name:             "verified_argocd: ArgoCD connection successful",
+			connectionStatus: "Successful",
+			apps:             nil,
+			wantStatus:       "verified_argocd",
+		},
+		{
+			name:             "verified_argocd wins over check app",
+			connectionStatus: "Successful",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			wantStatus: "verified_argocd",
+		},
+
+		// --- Priority 2: Synced+Healthy ---
+		{
+			name:             "verified_check: check app Synced+Healthy",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			wantStatus: "verified_check",
+		},
+
+		// --- Priority 3: honest failure signals ---
+		{
+			name:             "check_failed: Degraded health",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "Synced", HealthStatus: "Degraded",
+					OperationMessage: "ConfigMap creation failed: namespace not found"},
+			},
+			wantStatus: "check_failed",
+			wantDetail: true,
+		},
+		{
+			name:             "check_failed: OperationPhase Failed",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Missing",
+					OperationPhase: "Failed", OperationMessage: "sync operation failed"},
+			},
+			wantStatus: "check_failed",
+			wantDetail: true,
+		},
+		{
+			name:             "check_failed: OperationPhase Error",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Unknown",
+					OperationPhase: "Error", OperationMessage: "hook error"},
+			},
+			wantStatus: "check_failed",
+			wantDetail: true,
+		},
+		{
+			name:             "check_failed: condition type SyncError",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "Synced", HealthStatus: "Unknown",
+					Conditions: []models.AppCondition{{Type: "SyncError", Message: "repo unreachable"}}},
+			},
+			wantStatus: "check_failed",
+			wantDetail: true,
+		},
+		{
+			name:             "check_failed: condition type ComparisonError",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Unknown",
+					Conditions: []models.AppCondition{{Type: "ComparisonError", Message: "manifest error"}}},
+			},
+			wantStatus: "check_failed",
+			wantDetail: true,
+		},
+
+		// --- Priority 4: pending (transient / not-yet-started states) ---
+		{
+			name:             "check_pending: fresh OutOfSync",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Healthy",
+					CreatedAt: recentCreatedAt},
+			},
+			wantStatus: "check_pending",
+			wantDetail: true,
+		},
+		{
+			name:             "check_pending: Missing health",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Missing",
+					CreatedAt: recentCreatedAt},
+			},
+			wantStatus: "check_pending",
+			wantDetail: true,
+		},
+		{
+			name:             "check_pending: Progressing",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "Synced", HealthStatus: "Progressing",
+					CreatedAt: recentCreatedAt},
+			},
+			wantStatus: "check_pending",
+			wantDetail: true,
+		},
+		{
+			name:             "check_pending: Unknown health",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "Unknown", HealthStatus: "Unknown",
+					CreatedAt: recentCreatedAt},
+			},
+			wantStatus: "check_pending",
+			wantDetail: true,
+		},
+		{
+			name:             "check_pending: non-error condition is not a failure",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Unknown",
+					CreatedAt:  recentCreatedAt,
+					Conditions: []models.AppCondition{{Type: "SharedResourceWarning", Message: "resource conflict"}}},
+			},
+			wantStatus: "check_pending",
+			wantDetail: true,
+		},
+		{
+			name:             "check_pending: empty CreatedAt stays pending (never fail on missing metadata)",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Missing"},
+			},
+			wantStatus: "check_pending",
+			wantDetail: true,
+		},
+
+		// --- Pending escalation ---
+		{
+			name:             "check_failed: pending escalated after 10 minutes",
+			connectionStatus: "Unknown",
+			now:              fixedNow,
+			apps: []models.ArgocdApplication{
+				{Name: checkApp, SyncStatus: "OutOfSync", HealthStatus: "Missing",
+					CreatedAt: oldCreatedAt},
+			},
+			wantStatus: "check_failed",
+			wantDetail: true,
+		},
+
+		// --- No check app ---
+		{
+			name:             "nothing known: no check app, ArgoCD Unknown",
+			connectionStatus: "Unknown",
+			apps:             nil,
+			wantStatus:       "",
+		},
+		{
+			name:             "check app for different cluster not matched",
+			connectionStatus: "Unknown",
+			apps: []models.ArgocdApplication{
+				{Name: "connectivity-check-other-cluster", SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			wantStatus: "",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got connectivityVerdict
+			if tc.now.IsZero() {
+				got = computeConnectivityVerdict(cluster, tc.connectionStatus, tc.apps)
+			} else {
+				got = computeConnectivityVerdictAt(cluster, tc.connectionStatus, tc.apps, tc.now)
+			}
+			if got.Status != tc.wantStatus {
+				t.Errorf("Status = %q, want %q", got.Status, tc.wantStatus)
+			}
+			if tc.wantDetail && got.Detail == "" {
+				t.Errorf("Detail must be non-empty for status %q, got empty string", tc.wantStatus)
+			}
+		})
+	}
+}
+
+// TestClusterHasHealthyAddon covers the V2-cleanup-85.4 addon-matching
+// helper: destination server URL match, destination name match, name-suffix
+// fallback, and the exclusion of Sharko system apps (bootstrap +
+// connectivity-check) from counting as "an addon".
+func TestClusterHasHealthyAddon(t *testing.T) {
+	t.Parallel()
+
+	const cluster = "prod-eu"
+	const serverURL = "https://prod-eu.example.com"
+
+	tests := []struct {
+		name string
+		apps []models.ArgocdApplication
+		want bool
+	}{
+		{
+			name: "matched by destination server, Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-prod-eu", DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: true,
+		},
+		{
+			name: "matched by destination name, Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "karpenter", DestinationName: cluster, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: true,
+		},
+		{
+			name: "matched by name suffix, Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "keda-" + cluster, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: true,
+		},
+		{
+			name: "matched but OutOfSync — not healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-prod-eu", DestinationServer: serverURL, SyncStatus: "OutOfSync", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "matched but Degraded — not healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-prod-eu", DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Degraded"},
+			},
+			want: false,
+		},
+		{
+			name: "connectivity-check app is not an addon, even if Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: "connectivity-check-" + cluster, DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "bootstrap root app is not an addon, even if Synced+Healthy",
+			apps: []models.ArgocdApplication{
+				{Name: orchestrator.BootstrapRootAppName, DestinationServer: serverURL, SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "app for a different cluster is not matched",
+			apps: []models.ArgocdApplication{
+				{Name: "datadog-other-cluster", DestinationServer: "https://other.example.com", SyncStatus: "Synced", HealthStatus: "Healthy"},
+			},
+			want: false,
+		},
+		{
+			name: "no apps at all",
+			apps: nil,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := clusterHasHealthyAddon(cluster, serverURL, tc.apps)
+			if got != tc.want {
+				t.Errorf("clusterHasHealthyAddon() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestComputeDerivedHealth covers the V2-cleanup-85.4 auto-derivation order:
+// addon health first, then check-app verdict, then ArgoCD's own connection —
+// with NO dependency on any manual "Test connection" result.
+func TestComputeDerivedHealth(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		hasHealthyAddon  bool
+		verdict          connectivityVerdict
+		connectionStatus string
+		want             string
+	}{
+		{
+			name:            "step 1: healthy addon wins outright, even with no other signal",
+			hasHealthyAddon: true,
+			verdict:         connectivityVerdict{},
+			want:            derivedHealthHealthy,
+		},
+		{
+			name:            "step 1: healthy addon wins even when ArgoCD connection looks bad",
+			hasHealthyAddon: true,
+			verdict:         connectivityVerdict{Status: "check_failed"},
+			want:            derivedHealthHealthy,
+		},
+		{
+			name:            "step 2: check app healthy, no addon yet",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "verified_check"},
+			want:            derivedHealthReachable,
+		},
+		{
+			name:             "step 3: ArgoCD connection verdict Successful (api-test mode — no check app ever exists)",
+			hasHealthyAddon:  false,
+			verdict:          connectivityVerdict{}, // no check app in ArgoCD at all
+			connectionStatus: "Successful",
+			want:             derivedHealthReachable,
+		},
+		{
+			name:            "step 3: verified_argocd verdict also counts",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "verified_argocd"},
+			want:            derivedHealthReachable,
+		},
+		{
+			name:            "step 4: nothing known",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{},
+			want:            derivedHealthUnknown,
+		},
+		{
+			name:            "step 4: check_pending is not reachable",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "check_pending"},
+			want:            derivedHealthUnknown,
+		},
+		{
+			name:            "step 4: check_failed is not reachable",
+			hasHealthyAddon: false,
+			verdict:         connectivityVerdict{Status: "check_failed"},
+			want:            derivedHealthUnknown,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := computeDerivedHealth(tc.hasHealthyAddon, tc.verdict, tc.connectionStatus)
+			if got != tc.want {
+				t.Errorf("computeDerivedHealth() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectConnectivityCheckDrift covers W4a (V3 RW1.8): detecting when a
+// cluster is stuck at "check_pending" due to ApplicationSet label-selector
+// drift (sharko.io → sharko.dev rename) — AND (v4-walkfix W1 item 2) that
+// the two real causes behind "labeled, no check app, no real addon" are
+// told apart by asking ArgoCD, not guessed.
+func TestDetectConnectivityCheckDrift(t *testing.T) {
+	t.Parallel()
+
+	const clusterName = "test-cluster"
+	checkAppName := "connectivity-check-" + clusterName
+
+	tests := []struct {
+		name           string
+		secretLabels   map[string]string
+		apps           []models.ArgocdApplication
+		ac             connectivityAppSetGetter // nil = not reached / no client
+		wantReasonHas  string                   // substring the reason must contain (ignored if empty)
+		wantReasonLack string                   // substring the reason must NOT contain (ignored if empty)
+		wantDrift      bool                     // true = a non-empty reason is returned
+	}{
+		{
+			name:         "no connectivity-check label → not applicable",
+			secretLabels: map[string]string{},
+			apps:         []models.ArgocdApplication{},
+			wantDrift:    false,
+		},
+		{
+			name: "has canonical label, check app exists → no drift",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: checkAppName},
+			},
+			wantDrift: false,
+		},
+		{
+			name: "has legacy label, check app exists → no drift",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheckLegacy: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: checkAppName},
+			},
+			wantDrift: false,
+		},
+		{
+			name: "has label, check app missing, real addon deployed → no drift (check app correctly yielded)",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: "velero-" + clusterName}, // real addon
+			},
+			wantDrift: false,
+		},
+		{
+			name: "system apps (bootstrap, other check apps) don't count as real addons, legacy appset exists → stale selector",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps: []models.ArgocdApplication{
+				{Name: "sharko-bootstrap"},
+				{Name: "connectivity-check-other-cluster"},
+			},
+			ac:            &fakeAppSetGetter{exists: true},
+			wantDrift:     true,
+			wantReasonHas: "selector",
+		},
+		{
+			name: "canonical label, no check app, no addons, legacy appset EXISTS → stale selector (the only real drift case)",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:          []models.ArgocdApplication{},
+			ac:            &fakeAppSetGetter{exists: true},
+			wantDrift:     true,
+			wantReasonHas: "selector",
+		},
+		{
+			name: "legacy label, no check app, no addons, legacy appset EXISTS → stale selector",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheckLegacy: models.LabelEnabled,
+			},
+			apps:          []models.ArgocdApplication{},
+			ac:            &fakeAppSetGetter{exists: true},
+			wantDrift:     true,
+			wantReasonHas: "selector",
+		},
+		{
+			name: "canonical label, no check app, no addons, legacy appset ABSENT (404) → engine chart missing the feature, not a stale-selector claim",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:           []models.ArgocdApplication{},
+			ac:             &fakeAppSetGetter{exists: false},
+			wantDrift:      true,
+			wantReasonHas:  "engine chart",
+			wantReasonLack: "selector",
+		},
+		{
+			name: "canonical label, no check app, no addons, ArgoCD call errors ambiguously → no claim either way",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:      []models.ArgocdApplication{},
+			ac:        &fakeAppSetGetter{otherErr: errors.New("dial tcp: connection refused")},
+			wantDrift: false,
+		},
+		{
+			name: "canonical label, no check app, no addons, no client wired (nil) → no claim either way",
+			secretLabels: map[string]string{
+				models.LabelConnectivityCheck: models.LabelEnabled,
+			},
+			apps:      []models.ArgocdApplication{},
+			ac:        nil,
+			wantDrift: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reason := detectConnectivityCheckDrift(context.Background(), tc.ac, clusterName, tc.secretLabels, tc.apps)
+			gotDrift := reason != ""
+
+			if gotDrift != tc.wantDrift {
+				t.Errorf("detectConnectivityCheckDrift() drift=%v (reason=%q), want drift=%v",
+					gotDrift, reason, tc.wantDrift)
+			}
+
+			if tc.wantReasonHas != "" && !strings.Contains(strings.ToLower(reason), tc.wantReasonHas) {
+				t.Errorf("expected drift reason to contain %q, got %q", tc.wantReasonHas, reason)
+			}
+			if tc.wantReasonLack != "" && strings.Contains(strings.ToLower(reason), tc.wantReasonLack) {
+				t.Errorf("expected drift reason NOT to contain %q, got %q", tc.wantReasonLack, reason)
+			}
+		})
+	}
+}
+
+// TestApplyObsFields_HasHealthyAddonReachesOperational pins the walk day 4
+// / S4 "known quirk" fix: applyObsFields used to hardcode
+// observations.ComputeStatus(obs, false), which made StatusOperational
+// unreachable through this path no matter how healthy the cluster's addons
+// actually were. Every clusters.go call site already computes
+// hasHealthyAddon (for DerivedHealthStatus) right before calling
+// applyObsFields — this test pins that the same verdict now actually
+// reaches ComputeStatus.
+func TestApplyObsFields_HasHealthyAddonReachesOperational(t *testing.T) {
+	t.Parallel()
+
+	obs := &observations.Observation{
+		LastTestStage:   "stage1",
+		LastTestOutcome: "success",
+	}
+
+	t.Run("hasHealthyAddon=true reaches Operational", func(t *testing.T) {
+		c := &models.Cluster{Name: "prod-eu"}
+		applyObsFields(c, obs, true)
+		if c.SharkoStatus != string(observations.StatusOperational) {
+			t.Errorf("sharko_status = %q, want %q", c.SharkoStatus, observations.StatusOperational)
+		}
+	})
+
+	t.Run("hasHealthyAddon=false falls back to the test-stage ladder", func(t *testing.T) {
+		c := &models.Cluster{Name: "prod-eu"}
+		applyObsFields(c, obs, false)
+		if c.SharkoStatus != string(observations.StatusConnected) {
+			t.Errorf("sharko_status = %q, want %q", c.SharkoStatus, observations.StatusConnected)
+		}
+	})
+
+	t.Run("nil obs is a no-op regardless of hasHealthyAddon", func(t *testing.T) {
+		c := &models.Cluster{Name: "prod-eu"}
+		applyObsFields(c, nil, true)
+		if c.SharkoStatus != "" {
+			t.Errorf("sharko_status = %q, want empty (nil obs must be a no-op)", c.SharkoStatus)
+		}
+	})
+}

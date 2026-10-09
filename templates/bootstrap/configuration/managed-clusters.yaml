@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
+apiVersion: sharko.dev/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  # Cluster Addons Registry — managed by Sharko
+  # See docs: https://moranweissman.github.io/sharko/user-guide/clusters/
+  #
+  # Must be an array (even when empty) — JSON Schema rejects null.
+  clusters: []
+  # Example with all available fields (uncomment + remove the `[]` above):
+  # clusters:
+  #   - name: prod-eu
+  #     secretPath: k8s-prod-eu-eks   # explicit path to secret in provider
+  #     region: eu-central-1
+  #     labels:
+  #       <addon-name>: enabled       # one line per enabled addon

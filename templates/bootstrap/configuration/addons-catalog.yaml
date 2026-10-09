@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
+# Addon Catalog — managed by Sharko
+# See docs: https://moranweissman.github.io/sharko/user-guide/addons/
+
+apiVersion: sharko.dev/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets: []
+  # Bootstrap ships empty. Install addons from the Marketplace
+  # (UI) or via `sharko add-addon` (CLI). Examples below show the
+  # available fields.
+
+  # Example with all available fields:
+  # - name: kyverno                        # (required) addon identifier
+  #   repoURL: https://kyverno.github.io/  # (required) Helm repo URL
+  #   chart: kyverno                       # (required) chart name in the repo
+  #   version: "3.3.4"                     # (required) chart version
+  #   namespace: kyverno                   # target namespace (default: addon name)
+  #   selfHeal: true                       # auto-revert manual changes
+  #   syncOptions:                         # ArgoCD sync options
+  #     - ServerSideApply=true
+  #   ignoreDifferences:                   # fields ArgoCD should ignore during diff
+  #     - group: kyverno.io
+  #       kind: ClusterPolicy
+  #       jsonPointers:
+  #         - /spec/rules

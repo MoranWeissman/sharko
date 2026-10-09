@@ -1,0 +1,39 @@
+[
+  {
+    "name": "karpenter",
+    "path": "lib/addons/karpenter",
+    "type": "dir",
+    "url": "${BASE_URL}/contents/lib/addons/karpenter"
+  },
+  {
+    "name": "cert-manager",
+    "path": "lib/addons/cert-manager",
+    "type": "dir",
+    "url": "${BASE_URL}/contents/lib/addons/cert-manager"
+  },
+  {
+    "name": "external-dns",
+    "path": "lib/addons/external-dns",
+    "type": "dir",
+    "url": "${BASE_URL}/contents/lib/addons/external-dns"
+  },
+  {
+    "name": "fancy-new-addon",
+    "path": "lib/addons/fancy-new-addon",
+    "type": "dir",
+    "url": "${BASE_URL}/contents/lib/addons/fancy-new-addon"
+  },
+  {
+    "name": "broken-addon",
+    "path": "lib/addons/broken-addon",
+    "type": "dir",
+    "url": "${BASE_URL}/contents/lib/addons/broken-addon"
+  },
+  {
+    "name": "index.ts",
+    "path": "lib/addons/index.ts",
+    "type": "file",
+    "url": "${BASE_URL}/contents/lib/addons/index.ts",
+    "download_url": "${BASE_URL}/raw/lib/addons/index.ts"
+  }
+]

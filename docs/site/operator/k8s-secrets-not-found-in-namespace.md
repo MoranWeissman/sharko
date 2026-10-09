@@ -1,0 +1,477 @@
+# K8s Secrets Provider — Secret Not Found in Namespace
+
+**Severity:** P1
+
+> **Verified:** Authored 2026-06-01 against Sharko as shipped; the RBAC
+> section was corrected 2026-08-08 against
+> `charts/sharko/templates/rbac.yaml` after the least-privilege rework.
+> The error message `"secret for cluster %q not found in namespace %q.
+> Set --secret-path to specify the exact secret name"` is verified
+> verbatim, and the Error log at the same point carries `step="fetch"`
+> and an `error` value naming the namespace. Sharko tries the cluster
+> name as the Secret name first, and if that misses it searches for
+> similar names so it can suggest one.
+> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+
+A single cluster's K8s-Secrets-provider credential fetch failed
+because no Secret with the cluster's name (and a `kubeconfig` data
+key) exists in the configured Sharko-secrets namespace. The provider
+tried the exact name first, then searched for similarly-named
+Secrets to surface as suggestions; if there were similar names, the
+error includes them.
+
+The failure is per-cluster. Other clusters whose Secrets are properly
+named and contain the `kubeconfig` key continue to reconcile
+normally. The fix is one of: (a) create the missing Secret at the
+expected name, (b) rename an existing similarly-named Secret to
+match, or (c) override the cluster's `secret_path` (per K8s-Secrets
+provider semantics, this maps to a different Secret name).
+
+Operators commonly hit this in two scenarios. First: registering a
+cluster before the kubeconfig Secret exists (the registration step
+doesn't pre-flight the secret). Second: deploying Sharko into an
+existing K8s-Secrets layout where Secrets follow a different naming
+convention (e.g. `cluster-prod-eu-kubeconfig` instead of `prod-eu`).
+This runbook walks operators through both lanes.
+
+This is the K8s-Secrets sibling of the AWS-SM not-found runbook (see
+[`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md)). The
+RBAC story is different (namespace-scoped K8s RBAC instead of
+account-wide IAM), but the operator-visible UX is similar.
+
+---
+
+## Symptoms
+
+What an operator sees when this fires:
+
+- **API: `POST /api/v1/clusters/{name}/test`** (or any
+  cluster-credential-needing operation) returns 502 / 500 with this
+  exact error:
+
+  Without suggestions:
+  ```
+  HTTP/1.1 502 Bad Gateway
+  {"error":"secret for cluster \"prod-eu\" not found in namespace \"sharko-secrets\". Set --secret-path to specify the exact secret name"}
+  ```
+
+  With suggestions (when `searchSimilarK8s` finds substring matches):
+  ```
+  HTTP/1.1 502 Bad Gateway
+  {"error":"secret for cluster \"prod-eu\" not found in namespace \"sharko-secrets\". Similar secrets: cluster-prod-eu-kubeconfig, prod-eu-staging. Set --secret-path to specify the exact secret name"}
+  ```
+
+- **Sharko logs the failure at error level:**
+
+  ```
+  {"time":"...","level":"ERROR","msg":"[provider] GetCredentials failed (k8s)","request_id":"req-...","cluster":"prod-eu","step":"fetch","error":"secret not found in namespace sharko-secrets"}
+  ```
+
+  And if suggestions were found:
+
+  ```
+  {"time":"...","level":"INFO","msg":"[provider] found similar secrets","query":"prod-eu","found":2}
+  ```
+
+- **The cluster row** in the dashboard shows **Test failed** with the
+  not-found error in the tooltip. Other clusters show **Healthy** —
+  this is per-cluster.
+
+- **No specific Prometheus alert fires** for a single missing Secret.
+  Fleet-wide misconfiguration (every cluster's Secret naming is
+  wrong) fans up into
+  [`SharkoClusterRegistrationFastBurn`](budget-burn-runbook.md#sharkoclusterregistrationfastburn).
+
+- **If the error says "no 'kubeconfig' key"** — a different shape —
+  the Secret exists at the expected name but
+  doesn't have the required data key. That's a Secret-shape problem,
+  not a not-found — see Mitigation step 3.
+
+If the symptom is "every cluster fails" with this error, the issue
+is likely a Helm misconfiguration (wrong `connection.provider.namespace`
+or `connection.addonSecretProvider.namespace` value) or RBAC (the
+Sharko SA can't list Secrets in the configured namespace — check that
+namespace is in `rbac.k8sSecretsProviderNamespaces`). Single-cluster
+failure stays in this runbook.
+
+If the error includes "is forbidden: User ... cannot list secrets,"
+this is RBAC not not-found — see Mitigation step 4 / escalate to
+[`secrets-provider-unreachable.md`](secrets-provider-unreachable.md).
+
+---
+
+## Diagnosis
+
+Four checks. Step 1 confirms it's per-cluster. Step 2 captures the
+configured namespace. Step 3 inspects the actual Secrets in that
+namespace. Step 4 verifies the cluster name and the convention.
+
+### 1. Confirm the failure is per-cluster
+
+```sh
+curl -sS http://sharko/api/v1/fleet/status \
+  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
+  | jq '.clusters[] | select(.test_error | test("not found in namespace"; "i")) | {name, test_status, test_error}'
+```
+
+One cluster failing = per-cluster mitigation. Many clusters failing
+in the same namespace = Helm config issue (Mitigation step 5).
+
+### 2. Read off the configured Sharko-secrets namespace
+
+```sh
+# From Helm values — the field name depends on which provider is
+# affected: connection.provider.namespace (cluster-credentials) or
+# connection.addonSecretProvider.namespace (addon secrets). There is
+# no "secrets.namespace" value — that name doesn't exist in this chart.
+helm get values sharko -n <sharko-ns> | grep -A3 -E 'provider:|addonSecretProvider:'
+```
+
+`GET /api/v1/providers` and `GET /api/v1/config` report the provider
+`type`/`region`/`prefix` but not the configured namespace — Helm values
+(or the connection saved in the Settings UI, if it was set there instead
+of via Helm) is the only place to read it today.
+
+The default is the literal string `sharko` — **not** the release
+namespace Sharko itself is
+installed into, unless that also happens to be named `sharko`. If the
+namespace field was left empty, that literal default is the one the
+provider looks in; if a Helm value set it explicitly, that's the one.
+
+### 3. List actual Secrets in the configured namespace
+
+The K8s-Secrets provider looks for Secrets matching the cluster name
+(exact match) that have a `kubeconfig` data key. List candidates:
+
+```sh
+CLUSTER=<failing-cluster-name>
+NS=${SHARKO_SECRETS_NS:-sharko}
+
+# All Secrets in the namespace:
+kubectl -n "$NS" get secrets \
+  -l app.kubernetes.io/managed-by=sharko \
+  -o json \
+  | jq '.items[] | {name: .metadata.name, hasKubeconfig: (.data.kubeconfig != null)}'
+
+# Specifically the cluster's expected Secret:
+kubectl -n "$NS" get secret "$CLUSTER" -o json 2>&1 \
+  | head -20
+```
+
+Three outcomes:
+
+- **Secret exists at expected name AND has `kubeconfig` key** — the
+  test was racing the create (Mitigation step 1).
+- **Secret exists at expected name BUT NO `kubeconfig` key** — the
+  Secret's data structure is wrong (Mitigation step 3).
+- **No Secret at expected name; similar names exist** — naming
+  convention mismatch (Mitigation step 2 or 5).
+
+### 4. Confirm RBAC permits Sharko to read this namespace
+
+If the Secret might exist but Sharko can't see it:
+
+```sh
+SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+  -o jsonpath='{.items[0].spec.serviceAccountName}')
+
+# Can Sharko list Secrets in the target namespace?
+kubectl auth can-i list secrets -n "$NS" \
+  --as=system:serviceaccount:<sharko-ns>:"$SA"
+
+# Can Sharko get a specific Secret?
+kubectl auth can-i get secret "$CLUSTER" -n "$NS" \
+  --as=system:serviceaccount:<sharko-ns>:"$SA"
+```
+
+Both should return `yes`. If `no`, RBAC is the gap (Mitigation step
+4); a Sharko Helm reinstall typically restores the namespaced Role +
+RoleBinding — as long as the target namespace is listed in
+`rbac.k8sSecretsProviderNamespaces` (see Mitigation step 4).
+
+---
+
+## Mitigation (try in order)
+
+1. **If Diagnosis step 3 shows the Secret IS at the expected name
+   and has the `kubeconfig` key — the test was racing the create.**
+   Sharko has no negative-cache; re-run the operation:
+
+   ```sh
+   curl -sS -X POST "http://sharko/api/v1/clusters/$CLUSTER/test" \
+     -H "Authorization: Bearer ${SHARKO_TOKEN}"
+   ```
+
+   Success indicator: 200 with `{"reachable": true, "version":
+   "v1.x.y"}`.
+
+2. **If the Secret exists at a different name (Diagnosis step 3
+   suggestion list), use `secret_path` to override.** This is a
+   per-cluster fix that doesn't disturb other clusters:
+
+   ```sh
+   CLUSTER=<failing-cluster-name>
+   ACTUAL_NAME=<from-similar-secrets-suggestion>
+   curl -sS -X PATCH "http://sharko/api/v1/clusters/$CLUSTER" \
+     -H "Authorization: Bearer ${SHARKO_TOKEN}" \
+     -H "Content-Type: application/json" \
+     -d "{\"secret_path\":\"$ACTUAL_NAME\"}"
+   ```
+
+   For the K8s-Secrets provider, `secret_path` is just the Secret
+   name (not a slash-path; that's only for the AWS-SM provider).
+   The provider's `fetchK8sSecret` looks for an exact match on this
+   field.
+
+   Success indicator: re-run cluster test, see 200.
+
+3. **If the Secret exists at expected name but lacks the
+   `kubeconfig` key, add it.** The K8s-Secrets provider requires
+   the data key to be exactly `kubeconfig`:
+
+   ```sh
+   # Extract current kubeconfig from your local context:
+   KUBECONFIG_B64=$(kubectl --context "$CLUSTER" config view --raw \
+     --minify --flatten | base64 -w0)
+
+   kubectl -n "$NS" patch secret "$CLUSTER" \
+     --type='json' \
+     -p="[{\"op\":\"add\",\"path\":\"/data/kubeconfig\",\"value\":\"$KUBECONFIG_B64\"}]"
+   ```
+
+   Add the ownership label too — that is what marks the Secret as
+   Sharko's:
+
+   ```sh
+   kubectl -n "$NS" label secret "$CLUSTER" \
+     "app.kubernetes.io/managed-by=sharko" --overwrite
+   ```
+
+   Re-run the cluster test.
+
+4. **If RBAC is the gap (Diagnosis step 4 returns "no"), re-apply
+   the Helm chart to restore the namespaced Role + RoleBinding.**
+   Since v4, Sharko's chart does **not** ship a cluster-wide grant for
+   Secrets — it ships a namespaced `Role`
+   named `<release>-secrets-provider` (`get/list`, no `watch`, no
+   write) in the release namespace plus any namespace listed under
+   `rbac.k8sSecretsProviderNamespaces`. If the target namespace
+   ($NS) is missing from that list, or the Role/RoleBinding pair was
+   removed (cleanup, audit), restoring is the cleanest fix:
+
+   ```sh
+   helm upgrade --reuse-values \
+     --set "rbac.k8sSecretsProviderNamespaces[0]=$NS" \
+     sharko sharko/sharko -n <sharko-ns>
+   ```
+
+   For a manual repair (when re-applying is not desirable) — note
+   this is a namespaced `Role`, not a `ClusterRole`:
+
+   ```sh
+   kubectl create role sharko-secrets-reader \
+     -n "$NS" \
+     --verb=get,list \
+     --resource=secrets
+
+   kubectl create rolebinding sharko-secrets-reader \
+     -n "$NS" \
+     --role=sharko-secrets-reader \
+     --serviceaccount=<sharko-ns>:"$SA"
+   ```
+
+   Verify with `kubectl auth can-i` (Diagnosis step 4) returns `yes`.
+
+5. **If multiple clusters fail because the configured namespace is
+   wrong (or the convention mismatch is fleet-wide), update the
+   Helm value to match the existing layout — and add that namespace
+   to `rbac.k8sSecretsProviderNamespaces` in the same change, or the
+   provider will find the Secret but the RoleBinding won't reach it.**
+   This is the fleet-wide fix when an operator deploys Sharko into an
+   existing K8s-Secrets layout:
+
+   ```sh
+   helm upgrade --reuse-values \
+     --set "connection.provider.namespace=existing-kubeconfigs" \
+     --set "rbac.k8sSecretsProviderNamespaces[0]=existing-kubeconfigs" \
+     sharko sharko/sharko -n <sharko-ns>
+   ```
+
+   (Use `connection.addonSecretProvider.namespace` instead if the
+   affected provider is the addon-secret one, not the
+   cluster-credential one — they're configured, and can be RBAC'd,
+   independently.)
+
+   The deployment rolls out; the new namespace is in effect on the
+   next `GetCredentials` per cluster. Re-test all affected clusters.
+
+   If the convention difference is the Secret naming (e.g.
+   `cluster-prod-eu-kubeconfig` instead of `prod-eu`), no Helm fix
+   exists — the Sharko convention is "Secret name = cluster name."
+   Either rename the Secrets to match (use `kubectl get secret -o
+   yaml | sed | kubectl apply -f -`) or override each cluster's
+   `secret_path` (Mitigation step 2).
+
+---
+
+## Root-cause patterns
+
+### Cluster registered before the Secret was created
+
+The most common cause in greenfield deployments. An operator runs
+`sharko add-cluster prod-eu` before creating the
+`sharko-secrets/prod-eu` Secret. The registration succeeds (it
+doesn't pre-flight the secret); the first test fails. After the
+Secret is created, the failure self-heals on the next test.
+
+Diagnostic signature: Diagnosis step 3 shows the Secret now exists
+at the expected name; the Secret's creation timestamp postdates
+the failure-start time.
+
+Fix is Mitigation step 1 — re-run.
+
+### Convention mismatch — Sharko expects bare cluster name
+
+A platform team adopted Sharko into a namespace where existing
+Secrets follow a different convention
+(`cluster-<name>-kubeconfig`, `<name>-kc`, etc.). The Sharko convention
+is `Secret name = cluster name` exactly; there's no prefix/suffix
+config knob for K8s-Secrets.
+
+Diagnostic signature: Diagnosis step 3's suggestion list shows
+similarly-named Secrets at a different convention; every cluster
+fails the same way.
+
+Fix is Mitigation step 2 (per-cluster override) or rename Secrets
+to match Sharko's convention.
+
+### Secret exists but `kubeconfig` data key is missing
+
+The Secret was created with a different data key (e.g. `kc`,
+`config`, `kubeconfig.yaml`). The provider's
+`secret.Data["kubeconfig"]` lookup returns the absent-key error
+(distinct from the not-found shape).
+
+Diagnostic signature: Diagnosis step 3's specific-secret lookup
+returns the Secret, but the error message says "has no 'kubeconfig'
+key" instead of "not found in namespace".
+
+Fix is Mitigation step 3 — patch the Secret's data with a properly
+keyed entry.
+
+### RBAC was tightened by a security review
+
+The Sharko SA had `list/get secrets` in the target namespace;
+a security audit narrowed it. Every `GetCredentials` call fails not
+with "not found" but with a 403 from the kube-apiserver. The
+provider wraps the 403 as a fetch error, which surfaces here
+with a slightly different shape.
+
+Diagnostic signature: Diagnosis step 4 returns `no`; the error
+string contains `"is forbidden"` rather than `"not found"`.
+
+Fix is Mitigation step 4 — restore RBAC.
+
+### Wrong namespace in Helm values
+
+A platform team deployed Sharko expecting Secrets in
+`my-team/secrets` but left `connection.provider.namespace` (or
+`connection.addonSecretProvider.namespace`) empty, which resolves to
+the literal default `sharko` — not the release namespace, and not
+`my-team/secrets`. Every cluster fails because the lookup is
+happening in an empty (or wrong) namespace.
+
+Diagnostic signature: Diagnosis step 2 shows the resolved
+namespace doesn't match what the operator expected; the actual
+Secrets live in a different namespace.
+
+Fix is Mitigation step 5 — set `connection.provider.namespace` /
+`connection.addonSecretProvider.namespace` to the correct value, and
+add that same namespace to `rbac.k8sSecretsProviderNamespaces` so the
+Sharko ServiceAccount actually has permission to read it. RBAC is
+scoped per namespace, so changing the provider's target namespace
+without also granting RBAC there produces a 403, not a "not found".
+
+---
+
+## Prevention
+
+- **Monitoring — per-cluster credential-fetch failure counter.** Sharko
+  does not export this metric today. The alert below is a design sketch
+  for a future release, not something you can deploy now. Same sketch as
+  the AWS-SM not-found runbook:
+  `sharko_provider_get_credentials_errors_total{cluster, provider,
+  reason}` with reasons including `not_found`, `missing_data_key` and
+  `rbac_denied`, letting operators alert on patterns. Today, the only
+  signal is the per-cluster `test_status` in `/api/v1/fleet/status`.
+
+- **Gating — `sharko add-cluster` should pre-flight the secret.**
+  Before committing the registration, call `provider.GetCredentials`
+  to confirm the Secret exists with the right shape. Catches
+  greenfield-race and convention-mismatch at registration time.
+
+- **Documentation — naming convention in the install guide.**
+  The install guide should explicitly call out the K8s-Secrets
+  provider's convention: **Secret name = cluster name; data key =
+  `kubeconfig`**. Many operators trip on the data-key requirement
+  (they assume any key works) or the bare-name expectation (they
+  assume a prefix is supported).
+
+- **Documentation — sample Secret YAML.** Ship a copy-paste
+  Secret YAML in the install guide so operators can create the
+  expected shape without trial-and-error:
+
+  ```yaml
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: <cluster-name>
+    namespace: <sharko-secrets-namespace>
+    labels:
+      app.kubernetes.io/managed-by: sharko
+  type: Opaque
+  data:
+    kubeconfig: <base64-encoded-kubeconfig>
+  ```
+
+- **Scheduled work — quarterly Secret-shape audit.** A periodic job
+  that calls `GetCredentials` for every managed cluster and reports
+  any shape failure catches drift before the first user-visible
+  failure (orphaned cluster references, Secrets accidentally
+  modified, RBAC drift).
+
+---
+
+## Related runbooks
+
+- [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) — the
+  sibling provider's not-found failure mode; identical operator UX,
+  different backend.
+- [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
+  — P0 escalation: every K8s-Secret read fails (RBAC tightened
+  fleet-wide, namespace unreachable).
+- [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md)
+  — adjacent failure: Secret found, fetch succeeded, but parse
+  failed.
+- [`cluster-reconciler.md`](cluster-reconciler.md) — reconciler context
+  for `app.kubernetes.io/managed-by` label ownership.
+- [`budget-burn-runbook.md#sharkoclusterregistrationfastburn`](budget-burn-runbook.md#sharkoclusterregistrationfastburn)
+  — fleet-wide registration alert.
+- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
+- [`../developer-guide/logging.md`](../developer-guide/logging.md#correlation-ids)
+  — `request_id` correlation pattern.
+
+## Escalation
+
+If Mitigation steps 1-4 don't restore the cluster's credential fetch
+AND the cluster is critical, email the maintainer:
+`moran.weissman@gmail.com`. Include:
+
+- This runbook URL
+- The cluster name and the configured namespace
+- The output of Diagnosis steps 3 + 4 (Secret listing + RBAC check)
+- Whether the issue is single-cluster or fleet-wide
+- The Sharko version
+
+The maintainer is a single human, not a 24×7 rotation. Most
+not-found failures are operator-correctable; escalation is rare.

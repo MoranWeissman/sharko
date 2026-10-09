@@ -1,0 +1,262 @@
+package gitprovider
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/google/go-github/v68/github"
+	"golang.org/x/oauth2"
+)
+
+// isEmptyRepo returns true when err signals that the GitHub repository
+// exists but has no commits/branches yet. GitHub returns 409 Conflict with
+// the message "Git Repository is empty." for git-data API calls (refs,
+// trees, commits) on freshly-created repos that have never received a push
+// or initial commit.
+//
+// The bootstrap flow (CreateBranch in github_write.go) needs this
+// detector because a repo created via `gh repo create` (no --add-readme)
+// returns 409 on GetRef instead of 404, and the wizard's Initialize
+// step must handle both paths.
+//
+// Detection strategy: GitHub does not expose a stable machine-readable
+// "code" for this scenario, so we combine (1) the type-asserted
+// *github.ErrorResponse, (2) the HTTP 409 status code and (3) a
+// case-insensitive substring match on the documented English message. The
+// substring guard prevents false positives from other 409 responses (e.g.,
+// merge conflicts) which carry distinct messages.
+func isEmptyRepo(err error) bool {
+	var ghErr *github.ErrorResponse
+	if !errors.As(err, &ghErr) {
+		return false
+	}
+	if ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusConflict {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ghErr.Message), "empty")
+}
+
+// GitHubProvider implements GitProvider using the GitHub API.
+type GitHubProvider struct {
+	client *github.Client
+	owner  string
+	repo   string
+}
+
+// NewGitHubProvider creates a new GitHub-backed GitProvider.
+func NewGitHubProvider(owner, repo, token string) *GitHubProvider {
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tc := oauth2.NewClient(context.Background(), ts)
+
+	return &GitHubProvider{
+		client: github.NewClient(tc),
+		owner:  owner,
+		repo:   repo,
+	}
+}
+
+// GetFileContent retrieves the raw content of a single file at the given ref.
+//
+// When the file does not exist at the given ref, GitHub returns 404 either as
+// a *github.ErrorResponse (the err return) or as a non-2xx response status.
+// In both cases the returned error is wrapped with gitprovider.ErrFileNotFound
+// so callers can use errors.Is(err, gitprovider.ErrFileNotFound) — substring
+// matching the message is unsafe because legitimate auth/branch/perm errors
+// also contain "not found" / "404" (review finding H2).
+func (g *GitHubProvider) GetFileContent(ctx context.Context, path, ref string) ([]byte, error) {
+	opts := &github.RepositoryContentGetOptions{Ref: ref}
+
+	fileContent, _, resp, err := g.client.Repositories.GetContents(ctx, g.owner, g.repo, path, opts)
+	if err != nil {
+		// go-github returns *github.ErrorResponse with the HTTP response
+		// attached; a 404 here means the requested path does not exist.
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("get file content: path %q at ref %q: %w", path, ref, ErrFileNotFound)
+		}
+		slog.Error("github get file content failed", "error", err, "path", path, "ref", ref)
+		return nil, fmt.Errorf("get file content: %w", err)
+	}
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("get file content: path %q at ref %q: %w", path, ref, ErrFileNotFound)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)
+	}
+	if fileContent == nil {
+		return nil, fmt.Errorf("get file content: path %q is not a file", path)
+	}
+
+	content, err := fileContent.GetContent()
+	if err != nil {
+		return nil, fmt.Errorf("decode file content: %w", err)
+	}
+	slog.Info("github file fetched", "path", path, "ref", ref, "size", len(content))
+	return []byte(content), nil
+}
+
+// ListDirectory returns the names of entries in a directory at the given ref.
+//
+// When the directory does not exist at all (a cluster that never had a
+// values file written, an addon that never had an override) GitHub returns
+// 404, the same as GetFileContent does for a missing file. That is wrapped
+// with gitprovider.ErrFileNotFound so callers can use errors.Is to tell
+// "nothing here" apart from a genuine listing failure (task #147
+// acceptance-walk finding — this used to come back as a bare error that
+// fail-closed callers like RemoveCluster/UnadoptCluster could not
+// distinguish from a real outage, so they refused to remove a cluster that
+// simply never had a values directory).
+func (g *GitHubProvider) ListDirectory(ctx context.Context, path, ref string) ([]string, error) {
+	opts := &github.RepositoryContentGetOptions{Ref: ref}
+
+	_, dirContents, resp, err := g.client.Repositories.GetContents(ctx, g.owner, g.repo, path, opts)
+	if err != nil {
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("list directory: path %q at ref %q: %w", path, ref, ErrFileNotFound)
+		}
+		return nil, fmt.Errorf("list directory: %w", err)
+	}
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("list directory: path %q at ref %q: %w", path, ref, ErrFileNotFound)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("list directory: unexpected status %d", resp.StatusCode)
+	}
+	if dirContents == nil {
+		return nil, fmt.Errorf("list directory: path %q is not a directory", path)
+	}
+
+	names := make([]string, 0, len(dirContents))
+	for _, entry := range dirContents {
+		names = append(names, entry.GetName())
+	}
+	return names, nil
+}
+
+// ListPullRequests returns pull requests filtered by state ("open", "closed", or "all").
+func (g *GitHubProvider) ListPullRequests(ctx context.Context, state string) ([]PullRequest, error) {
+	opts := &github.PullRequestListOptions{
+		State: state,
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	}
+
+	var allPRs []PullRequest
+
+	for {
+		prs, resp, err := g.client.PullRequests.List(ctx, g.owner, g.repo, opts)
+		if err != nil {
+			slog.Error("github list pull requests failed", "error", err, "state", state)
+			return nil, fmt.Errorf("list pull requests: %w", err)
+		}
+
+		for _, pr := range prs {
+			pullRequest := PullRequest{
+				ID:           pr.GetNumber(),
+				Title:        pr.GetTitle(),
+				Description:  pr.GetBody(),
+				Author:       pr.GetUser().GetLogin(),
+				SourceBranch: pr.GetHead().GetRef(),
+				TargetBranch: pr.GetBase().GetRef(),
+				URL:          pr.GetHTMLURL(),
+			}
+
+			// Root-cause fix (v1.21 QA Bundle 4): the GitHub /repos/{}/pulls
+			// LIST response does not reliably populate the boolean `merged`
+			// field — that field is set on per-PR Get responses but is
+			// documented as deprecated/empty for List. Use `merged_at`
+			// (which IS reliably populated for any PR that was merged) as
+			// the source of truth. Symptom of the old code: every Sharko-
+			// authored PR that the user merged on GitHub was reported as
+			// `closed`, so the Merged PRs panel and the per-addon Recent
+			// changes panel both stayed empty.
+			switch {
+			case !pr.GetMergedAt().IsZero():
+				pullRequest.Status = "merged"
+			case pr.GetMerged():
+				pullRequest.Status = "merged"
+			case pr.GetState() == "closed":
+				pullRequest.Status = "closed"
+			default:
+				pullRequest.Status = "open"
+			}
+
+			if t := pr.GetCreatedAt(); !t.IsZero() {
+				pullRequest.CreatedAt = t.Format("2006-01-02T15:04:05Z")
+			}
+			if t := pr.GetUpdatedAt(); !t.IsZero() {
+				pullRequest.UpdatedAt = t.Format("2006-01-02T15:04:05Z")
+			}
+			if t := pr.GetClosedAt(); !t.IsZero() {
+				pullRequest.ClosedAt = t.Format("2006-01-02T15:04:05Z")
+			}
+			// Prefer MergedAt over ClosedAt for the surfaced timestamp on
+			// merged PRs — same value in practice but semantically what the
+			// UI labels render ("Merged …"). Done after GetClosedAt so it
+			// wins when both are populated.
+			if t := pr.GetMergedAt(); !t.IsZero() {
+				pullRequest.ClosedAt = t.Format("2006-01-02T15:04:05Z")
+			}
+
+			allPRs = append(allPRs, pullRequest)
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	slog.Info("github pull requests listed", "state", state, "count", len(allPRs))
+	return allPRs, nil
+}
+
+// commitAuthorFor returns the *github.CommitAuthor for a given attribution.
+// When the attribution carries explicit author identity (Tier 2 + per-user PAT)
+// that identity is used; otherwise we fall back to the legacy "Sharko Bot"
+// author so the commit metadata is stable for downstream consumers.
+//
+// It reads the effective author through CommitAttribution.EffectiveAuthor so
+// the commit author email is the exact same value the Signed-off-by trailer
+// signs off (see attribution.go) — a DCO check matches the author email
+// against the sign-off line, so the two must never drift.
+//
+// Note: the GitHub write paths set this same value as both Author and
+// Committer (see github_write.go), so a single effective-author sign-off
+// satisfies DCO for author and committer alike.
+// TODO(V2-cleanup-16 follow-up): committer-vs-author sign-off under Tier 2 PAT
+// — if a future change ever makes the committer differ from the author (e.g.
+// a per-user PAT where GitHub stamps the token owner as committer), the
+// committer would also need its own Signed-off-by line.
+func commitAuthorFor(attr CommitAttribution) *github.CommitAuthor {
+	name, email := attr.EffectiveAuthor()
+	return &github.CommitAuthor{
+		Name:  github.Ptr(name),
+		Email: github.Ptr(email),
+	}
+}
+
+// TestConnection verifies that the configured repository is accessible.
+func (g *GitHubProvider) TestConnection(ctx context.Context) error {
+	_, resp, err := g.client.Repositories.Get(ctx, g.owner, g.repo)
+	if err != nil {
+		if resp != nil {
+			switch resp.StatusCode {
+			case 401:
+				return fmt.Errorf("invalid GitHub token — check that the token is correct and not expired")
+			case 403:
+				return fmt.Errorf("GitHub access denied — the token does not have permission for this repository")
+			case 404:
+				return fmt.Errorf("GitHub repository not found — check the URL, or the token may not have access to %s/%s", g.owner, g.repo)
+			}
+		}
+		return fmt.Errorf("GitHub connection failed: %w", err)
+	}
+	return nil
+}

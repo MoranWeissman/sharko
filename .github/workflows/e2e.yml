@@ -1,0 +1,320 @@
+---
+name: E2E
+
+# Comprehensive Go-native e2e suite. Runs the kind + real-argocd lane
+# (~10-15 min) on three triggers:
+#
+#   1. workflow_dispatch — ad-hoc runs from the Actions tab.
+#   2. pull_request labelled `e2e` — opt-in per-PR validation. Cheap PRs
+#      stay on the unit/UI matrix in ci.yml; only label-tagged PRs pay
+#      the e2e tax.
+#   3. nightly schedule (3am UTC) — catches drift in the kind / argocd /
+#      helm chart triplet between PRs.
+#
+# The fast in-process lane (`make test-e2e-fast`, no kind) is exercised
+# implicitly by ci.yml's go test invocation only when the e2e tag is on
+# — it's not part of the default unit pipeline. The intentional split:
+# unit + UI on every PR; full e2e on opt-in/nightly.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, opened, synchronize]
+  schedule:
+    - cron: '0 3 * * *'
+
+permissions:
+  contents: read
+  # dorny/test-reporter posts a check-run with inline test results;
+  # without these the action errors out on PRs.
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Go E2E (kind + argocd)
+    # Skip the heavy lane unless the trigger is one we care about. The
+    # `labeled` event fires for every label, but contains() narrows it
+    # to PRs that actually carry the `e2e` label — so adding any other
+    # label is a no-op for this workflow.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run E2E suite (with coverage HTML + JUnit XML)
+        env:
+          GOTMPDIR: /tmp
+          E2E_OFFLINE: "0"
+        run: make test-e2e-report
+
+      - name: Upload coverage HTML
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-coverage-${{ github.run_number }}
+          path: _dist/e2e-coverage.html
+          retention-days: 30
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-junit-${{ github.run_number }}
+          path: _dist/e2e-junit.xml
+          retention-days: 30
+
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: E2E Test Results
+          path: _dist/e2e-junit.xml
+          # Go's gotestsum-emitted JUnit shape is compatible with the
+          # java-junit reporter; there is no first-class go reporter.
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
+
+  # v4 closing wave / task #65 — live-Gitea E2E write loop.
+  #
+  # Every other GiteaProvider exercise in the repo (internal/gitprovider,
+  # the helm-mode gitfake primitive) talks to a fake. This job is the one
+  # place that drives TestGiteaLiveWriteLoop
+  # (tests/e2e/lifecycle/gitea_live_test.go) against a REAL Gitea server
+  # via a `gitea/gitea` service container, so drift between the fakes'
+  # stub shapes and the real Gitea REST API gets caught. No kind, no
+  # docker-in-docker, no Sharko boot — just the harness's GiteaProvider
+  # talking straight to the service container over localhost. Keeps this
+  # job small and fast (well under the shared timeout).
+  live-gitea:
+    name: Go E2E (live Gitea)
+    # Same opt-in gate as the other two jobs in this workflow.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      gitea:
+        image: gitea/gitea:1.23.5
+        ports:
+          - 3000:3000
+        env:
+          GITEA__security__INSTALL_LOCK: "true"
+          GITEA__database__DB_TYPE: sqlite3
+          GITEA__server__DOMAIN: localhost
+          GITEA__server__ROOT_URL: http://localhost:3000/
+          GITEA__server__DISABLE_SSH: "true"
+        options: >-
+          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:3000/api/healthz || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 10s
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Belt-and-suspenders on top of the service's own healthcheck — the
+      # healthcheck can go green a moment before the API is fully able to
+      # take writes (first-boot DB migration tail).
+      - name: Wait for Gitea API to answer
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/healthz >/dev/null 2>&1; then
+              echo "gitea API is up (attempt $i)"
+              exit 0
+            fi
+            echo "waiting for gitea API... (attempt $i)"
+            sleep 2
+          done
+          echo "gitea API never came up" >&2
+          exit 1
+
+      # Provisioning talks to the Gitea container two ways:
+      #   - `docker exec` into it to run the `gitea admin user create` CLI
+      #     (the only way to create the first admin once INSTALL_LOCK has
+      #     skipped the setup wizard).
+      #   - plain HTTP against localhost:3000 (the published service port)
+      #     for everything else — token + repo creation.
+      # ${{ job.services.gitea.id }} is the container ID GitHub Actions
+      # assigns this service; it's stable for the life of the job.
+      - name: Provision admin user, API token, and test repo
+        id: provision
+        env:
+          GITEA_CONTAINER: ${{ job.services.gitea.id }}
+          GITEA_ADMIN_USER: sharko-e2e
+          GITEA_ADMIN_PASS: Sharko-E2E-CI-Passw0rd!
+          GITEA_REPO: sharko-e2e-live
+        run: |
+          set -euo pipefail
+
+          # -u 1000:1000 is load-bearing: `docker exec` defaults to root,
+          # and Gitea's CLI hard-refuses to run as root ("Gitea is not
+          # supposed to be run as root. Sorry."). The gitea/gitea image's
+          # own entrypoint drops privileges to uid/gid 1000 (the `git`
+          # user) before starting the server, so the CLI has to run as
+          # that same user to see the same config/data. Matches Gitea's
+          # documented "create an admin account" recipe (`docker exec -u
+          # git <container> gitea admin user create ...`).
+          docker exec -u 1000:1000 "$GITEA_CONTAINER" gitea admin user create \
+            --admin \
+            --username "$GITEA_ADMIN_USER" \
+            --password "$GITEA_ADMIN_PASS" \
+            --email "sharko-e2e@example.invalid" \
+            --must-change-password=false
+
+          token_json=$(curl -sf -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASS" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"sharko-e2e-ci","scopes":["write:repository","write:issue"]}' \
+            "http://localhost:3000/api/v1/users/$GITEA_ADMIN_USER/tokens")
+          token=$(echo "$token_json" | jq -r '.sha1 // empty')
+          if [ -z "$token" ]; then
+            echo "failed to create API token: $token_json" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+          curl -sf -u "$GITEA_ADMIN_USER:$GITEA_ADMIN_PASS" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"$GITEA_REPO\",\"auto_init\":true,\"default_branch\":\"main\",\"private\":false}" \
+            "http://localhost:3000/api/v1/user/repos" >/dev/null
+
+          echo "provisioned admin=$GITEA_ADMIN_USER repo=$GITEA_ADMIN_USER/$GITEA_REPO"
+
+      - name: Run live-Gitea E2E suite
+        env:
+          GOTMPDIR: /tmp
+          SHARKO_E2E_GITEA_URL: http://localhost:3000
+          SHARKO_E2E_GITEA_TOKEN: ${{ steps.provision.outputs.token }}
+          SHARKO_E2E_GITEA_OWNER: sharko-e2e
+          SHARKO_E2E_GITEA_REPO: sharko-e2e-live
+          SHARKO_E2E_GITEA_BASE: main
+        run: |
+          go test -tags=e2e -timeout=10m -v -run '^TestGiteaLiveWriteLoop$' ./tests/e2e/lifecycle/...
+
+      - name: Dump Gitea container logs on failure
+        if: failure()
+        env:
+          GITEA_CONTAINER: ${{ job.services.gitea.id }}
+        run: docker logs --tail=200 "$GITEA_CONTAINER" || true
+
+  # Helm-mode E2E subset. Unlike the heavyweight `e2e` job above
+  # (label-gated, ~10-15 min, full suite), this lane runs the
+  # Helm-install tests so the real boot path (docker build → kind load →
+  # helm upgrade --install → bootstrap admin secret → port-forward) gets
+  # exercised. The kind+ArgoCD provisioning is owned by the test harness
+  # itself (tests/e2e/harness/kind.go + tests/e2e/lifecycle/*); CI just
+  # installs the binaries the harness shells out to (kind, kubectl,
+  # helm, docker). docker is preinstalled on ubuntu-latest.
+  helm-mode-e2e:
+    name: Go E2E (helm + kind + argocd)
+    # Same opt-in label gate as the existing e2e lane above. Helm-mode runs
+    # ~14 min and only matters when a PR touches cluster-test / provider /
+    # auth wiring. Add the `e2e` label to a PR to run this job; otherwise
+    # rely on unit + in-process integration tests (which run on every PR).
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: "latest"
+
+      # SHARKO_E2E_IMAGE_TAG defaults to e2e-<short-sha> so a re-run of
+      # the same workflow (e.g. retry after a flake) skips the docker
+      # build + kind load on cache hit. Each PR push gets a fresh tag
+      # because the SHA changes.
+      - name: Run Helm-mode E2E subset
+        env:
+          GOTMPDIR: /tmp
+          E2E_SHARKO_MODE: helm
+          SHARKO_E2E_IMAGE_TAG: e2e-${{ github.sha }}
+        run: make test-e2e-helm
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== kind clusters ==="
+          kind get clusters || true
+          echo "=== nodes (all clusters) ==="
+          for c in $(kind get clusters 2>/dev/null); do
+            echo "--- cluster: $c ---"
+            kubectl --context "kind-$c" describe nodes || true
+            echo "--- helm releases in $c ---"
+            helm --kube-context "kind-$c" list -A || true
+            echo "--- sharko deployment logs in $c ---"
+            kubectl --context "kind-$c" logs -n sharko deployment/sharko --tail=200 --all-containers=true || true
+            echo "--- argocd pods in $c ---"
+            kubectl --context "kind-$c" get pods -n argocd -o wide || true
+          done
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true

@@ -1,0 +1,921 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-build-test:
+    name: Go Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The published-metrics contract check (internal/metrics/contract_test.go)
+      # renders charts/sharko with helm so it can read the shipped alerting
+      # rules — the consumer an operator is most likely to deploy verbatim.
+      # It t.Fatals when helm is missing rather than skipping, so helm is
+      # installed here on purpose instead of relying on whatever the runner
+      # image happens to ship.
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: "latest"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race is on by default now (story 152.H) — needs -covermode=atomic,
+      # which this step already used. Verified locally: same 51/51 packages
+      # pass under -race with zero data races reported (worth re-checking
+      # if this job ever gets flaky — a flaky race report is usually real).
+      - name: Test with coverage (race detector on)
+        run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+
+      # Pinned (story 152.H) — an unpinned tool install is a supply-chain
+      # hole and makes CI results irreproducible. Bump deliberately, not
+      # silently via @latest.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      - name: Vulnerability scan
+        run: govulncheck ./...
+
+      - name: Show coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 14
+
+  ui-build-test:
+    name: UI Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      # To enable coverage, install @vitest/coverage-v8 and add --coverage flag
+      - name: Test
+        run: npm test -- --run
+
+  swagger-check:
+    name: Swagger Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install swag
+        run: go install github.com/swaggo/swag/cmd/swag@latest
+
+      - name: Regenerate swagger docs
+        run: swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add docs/swagger/
+          if ! git diff --exit-code docs/swagger/; then
+            echo "Swagger docs are out of date or missing. Run 'swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the Go-generated TypeScript provider-type union.
+  # The generator (cmd/gen-provider-types) parses
+  # internal/providers/provider.go's New() switch and writes
+  # ui/src/generated/provider-types.ts. If any contributor edits the
+  # backend factory without regenerating, this job fails the PR with a
+  # clear remediation hint. Mirrors the swagger-check shape.
+  provider-types-up-to-date:
+    name: Provider Types Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate provider types
+        run: make generate-provider-types
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/provider-types.ts
+          if ! git diff --exit-code -- ui/src/generated/provider-types.ts; then
+            echo "ui/src/generated/provider-types.ts is out of date or missing."
+            echo "Run 'make generate-provider-types' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the server-owned message catalog.
+  # cmd/gen-connection-sentences imports internal/api and reads
+  # api.ConnectionSentences AND api.ConnectionFailureMessages AT RUNTIME (it
+  # parses no Go source — several sentences are aliased across a package
+  # boundary, and a parser sees an identifier where a sentence should be). It
+  # writes ui/src/generated/connection-sentences.ts, which the connection page
+  # renders BY IDENTIFIER, so no server-authored sentence is ever typed into
+  # browser code. Edit a sentence in Go without regenerating and this job fails
+  # the PR. Mirrors the swagger-check + provider-types-up-to-date shape.
+  #
+  # It covers BOTH catalogs deliberately: the second one (story P2c) is the
+  # parameterized connection-test failure family, whose finished sentences go
+  # into the same generated file. One generator, one output path, one gate —
+  # a second job here would only be a second thing to forget.
+  #
+  # THE `git add --intent-to-add` IS LOAD-BEARING, in this job and in every
+  # sibling drift job. `git diff --exit-code` does not see an
+  # UNTRACKED file, so if the generated file is missing from the commit the
+  # generator recreates it, git reports no diff, and the job passes green
+  # having checked nothing at all. Intent-to-add makes a missing generated
+  # file show up as a diff, which is the honest answer: a generated file that
+  # is not committed IS out of date. (Story P2b closed the same hole in all
+  # four sibling drift jobs, so this is no longer the odd one out — the line is
+  # kept here because this is where the reasoning is written down.)
+  connection-sentences-up-to-date:
+    name: Connection Sentences Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate connection sentences
+        run: make generate-connection-sentences
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/connection-sentences.ts
+          if ! git diff --exit-code -- ui/src/generated/connection-sentences.ts; then
+            echo "ui/src/generated/connection-sentences.ts is out of date or missing."
+            echo "Run 'make generate-connection-sentences' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the notification identifiers.
+  # cmd/gen-notification-codes imports internal/notifications and reads
+  # notifications.DeclaredCodes() AT RUNTIME (it parses no Go source — what it
+  # needs is a slice of strings that IS a runtime value). It writes
+  # ui/src/generated/notification-codes.ts, which the notification bell routes
+  # on, so no identifier is ever typed into browser code. Declare a code in Go
+  # without regenerating and this job fails the PR.
+  #
+  # Why this is separate from connection-sentences-up-to-date: that one carries
+  # SENTENCES for the connection page, this one carries IDENTIFIERS for the
+  # bell. The product owner's ruling is precisely that those two must not be
+  # confused, and one file holding both would invite exactly that.
+  #
+  # The `git add --intent-to-add` is load-bearing here for the same reason it
+  # is in every sibling job — see the note above connection-sentences.
+  notification-codes-up-to-date:
+    name: Notification Codes Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate notification codes
+        run: make generate-notification-codes
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/notification-codes.ts
+          if ! git diff --exit-code -- ui/src/generated/notification-codes.ts; then
+            echo "ui/src/generated/notification-codes.ts is out of date or missing."
+            echo "Run 'make generate-notification-codes' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the connection-lifecycle audit event names.
+  # cmd/gen-lifecycle-events imports internal/lifecycleevents and reads
+  # lifecycleevents.Declared() AT RUNTIME (it parses no Go source). It writes
+  # ui/src/generated/lifecycle-events.ts, which the connection page's activity
+  # feed keys its title table on, so no event name is typed into browser code.
+  # Rename an event in Go without regenerating and this job fails the PR.
+  #
+  # Why this gate exists at all: the feed renders lifecycle events by name from
+  # a table with NO fallback, so a rename turned a visible event into silence —
+  # and enough of them empty the feed out, leaving a supported page stating as a
+  # fact that nothing was recorded when things did happen. The browser's copy of
+  # the list was hand-written, and so was the copy its own test compared it
+  # against, so nothing in the tree noticed a rename.
+  #
+  # The `git add --intent-to-add` is load-bearing here for the same reason it
+  # is in every sibling job — see the note above connection-sentences.
+  lifecycle-events-up-to-date:
+    name: Lifecycle Events Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate lifecycle events
+        run: make generate-lifecycle-events
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add ui/src/generated/lifecycle-events.ts
+          if ! git diff --exit-code -- ui/src/generated/lifecycle-events.ts; then
+            echo "ui/src/generated/lifecycle-events.ts is out of date or missing."
+            echo "Run 'make generate-lifecycle-events' and commit the result."
+            exit 1
+          fi
+
+  # Drift gate for the JSON Schema envelope.
+  # cmd/schema-gen reflects the Go envelope types
+  # (internal/models.ManagedClustersSpec + internal/config.AddonCatalogSpec)
+  # via invopop/jsonschema and writes the same bytes to TWO locations:
+  #   docs/schemas/managed-clusters.v1.json     (human-facing copy)
+  #   docs/schemas/addons-catalog.v1.json        (human-facing copy)
+  #   internal/schema/managed-clusters.v1.json  (embed source)
+  #   internal/schema/addons-catalog.v1.json     (embed source)
+  #
+  # The internal/schema/ copies exist because the runtime validator
+  # (internal/schema/validator.go) loads schemas via go:embed and Go's
+  # embed package rejects `..` parent-directory paths. Keeping both
+  # locations in lock-step is enforced here — any contributor who
+  # changes the envelope types without re-running the generator OR who
+  # hand-edits one location without the other gets a red build.
+  # Mirrors the swagger-check + provider-types-up-to-date shape.
+  schemas-up-to-date:
+    name: Schemas Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate schemas
+        run: make generate-schemas
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add docs/schemas/ internal/schema/managed-clusters.v1.json internal/schema/addons-catalog.v1.json
+          if ! git diff --exit-code -- docs/schemas/ internal/schema/managed-clusters.v1.json internal/schema/addons-catalog.v1.json; then
+            echo "docs/schemas/ or internal/schema/*.v1.json is out of date or missing."
+            echo "Run 'make generate-schemas' and commit the result (both locations are written from the same source)."
+            exit 1
+          fi
+
+  # v4 Wave 1 Story 2.5 — internal/engineversion/generated.go is generated
+  # from charts/sharko-engine/Chart.yaml (name + version). It is the ONLY
+  # thing that lets the server know its own bundled engine chart version
+  # for the pin-bump check, so it must never silently drift from the chart
+  # Story 2.4's release pipeline actually packages, pushes, and signs.
+  # Mirrors the schemas-up-to-date + provider-types-up-to-date shape.
+  engine-version-up-to-date:
+    name: Engine Version Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate engine version
+        run: make generate-engine-version
+
+      - name: Check for diff
+        run: |
+          git add --intent-to-add internal/engineversion/generated.go
+          if ! git diff --exit-code -- internal/engineversion/generated.go; then
+            echo "internal/engineversion/generated.go is out of date or missing."
+            echo "Run 'make generate-engine-version' and commit the result."
+            exit 1
+          fi
+
+  # PR-time Sharko YAML validation.
+  # On every pull request, this job builds the sharko CLI binary and
+  # runs `sharko validate-config` against every changed *.yaml / *.yml
+  # file in the PR diff. The CLI itself decides which files are Sharko-
+  # owned (top-level apiVersion: sharko.dev/v1) and silently skips the
+  # rest, so this job stays permissive: it only blocks PRs whose
+  # enveloped Sharko YAML actually fails schema validation. Helm
+  # templates, kustomize, workflows, kind configs, etc. all flow
+  # through untouched.
+  #
+  # Shape mirrors swagger-check + schemas-up-to-date so a contributor
+  # reading the file sees a consistent "check + remediation hint"
+  # pattern. The diff-only approach (vs validating the whole repo)
+  # keeps the job O(changed-files) rather than O(repo-yaml-count),
+  # which matters as the docs/ tree grows.
+  validate-sharko-config:
+    name: Sharko Config Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 gives us the full history so the diff range
+          # `origin/${{ github.base_ref }}...HEAD` resolves cleanly.
+          # The default fetch-depth (1) would fail with "fatal: bad
+          # revision" on the first push to a branch that hasn't been
+          # rebased onto a fresh main yet.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build sharko CLI
+        # Single static binary; same recipe `make build-go` uses but
+        # inlined here so the job doesn't depend on Makefile drift.
+        run: go build -o sharko ./cmd/sharko
+
+      - name: Validate changed Sharko YAML
+        run: |
+          set -e
+          # `git diff --name-only A...HEAD` is the symmetric-difference
+          # form — every commit reachable from HEAD but not from A.
+          # This is what `gh pr diff` shows the reviewer, so the check
+          # operates on the same set of changes the reviewer sees.
+          #
+          # tests/enginerender/testdata/nilsafety/ is excluded on purpose:
+          # those fixtures (settings-null.yaml in particular) are
+          # DELIBERATELY schema-invalid — they prove the engine chart's
+          # `| default dict` guards survive an addon's `settings:` key
+          # being present but explicitly null, a case the schema (like
+          # every optional field here) correctly rejects as a distinct
+          # concept from "absent" (see
+          # TestEngineChartTemplatePatchNilSafetyRegressionGuard in
+          # tests/enginerender/nilsafety_test.go, which asserts the
+          # unguarded template DOES crash on this exact fixture). They are
+          # negative-test data for the round-two template simulation, not
+          # examples of a valid v4 repo, so they never belong in this gate
+          # — same reasoning as internal/*/malformed_input_test.go's
+          # fixtures, which stay Go-generated bytes rather than committed
+          # YAML for exactly this reason.
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.yaml' '*.yml' ':(exclude)tests/enginerender/testdata/nilsafety/*' || true)
+          if [ -z "$changed" ]; then
+            echo "no YAML changes in this PR — skipping validation"
+            exit 0
+          fi
+          echo "Validating changed YAML files:"
+          echo "$changed"
+          echo "---"
+          fail=0
+          while IFS= read -r f; do
+            # Deleted files appear in the diff name list but no longer
+            # exist on disk — skip them rather than failing the loop.
+            [ -f "$f" ] || continue
+            ./sharko validate-config "$f" || fail=1
+          done <<< "$changed"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Sharko config validation failed — see https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/ for schema URLs"
+            exit 1
+          fi
+          echo "All changed Sharko YAML validated cleanly."
+
+  # v4 wave 1 Story 3.5 — validates catalog/addons.yaml (the monorepo's own
+  # curated catalog, distinct from the v3 GitOps-repo deployed-catalog file
+  # validate-sharko-config above checks) on any PR that touches it. Shape
+  # mirrors validate-sharko-config exactly: build the CLI, run the existing
+  # loader's validation (internal/catalog.LoadBytes, exposed via
+  # `sharko validate-catalog` — zero new validation rules), fail loud and
+  # name the offending entry. Only runs when the PR diff touches the file,
+  # so most PRs skip this job entirely.
+  validate-catalog:
+    name: Catalog Format Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check whether catalog/addons.yaml changed
+        id: changed
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD -- catalog/addons.yaml | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate catalog/addons.yaml
+        if: steps.changed.outputs.changed == 'true'
+        run: go run ./cmd/sharko validate-catalog catalog/addons.yaml
+
+  helm-validate:
+    name: Helm Lint & Template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: "latest"
+
+      - name: Helm lint and template
+        run: |
+          helm lint charts/sharko/
+          helm template sharko charts/sharko/ --values charts/sharko/values.yaml > /dev/null
+
+      - name: Bootstrap chart render regression (V2-cleanup-17)
+        # The bootstrap chart turns the addon catalog into ArgoCD ApplicationSets.
+        # Sharko writes the catalog under the sharko.dev/v1 envelope, so the addon
+        # list lives at .Values.spec.applicationsets. A path bug (reading the
+        # top-level .Values.applicationsets) rendered ZERO ApplicationSets, so no
+        # addon ever deployed. Render the bootstrap chart against an enveloped
+        # fixture and fail if it does not emit an addon ApplicationSet/AppProject.
+        run: |
+          helm lint templates/bootstrap/
+          RENDERED=$(helm template testbootstrap templates/bootstrap/ \
+            --values tests/bootstraprender/testdata/bootstrap-config.yaml \
+            --values tests/bootstraprender/testdata/addons-catalog.yaml \
+            --values tests/bootstraprender/testdata/managed-clusters.yaml)
+          echo "$RENDERED" | grep -q "kind: ApplicationSet" \
+            || { echo "::error::bootstrap chart rendered NO ApplicationSet from an enveloped catalog — addons would not deploy (V2-cleanup-17 regression)"; exit 1; }
+          echo "$RENDERED" | grep -q "kind: AppProject" \
+            || { echo "::error::bootstrap chart rendered NO AppProject from an enveloped catalog (V2-cleanup-17 regression)"; exit 1; }
+          echo "bootstrap chart render guard passed: ApplicationSet + AppProject present"
+
+      # v4 Wave 1 Story 2.4 — charts/sharko-engine is the v4 replacement for
+      # templates/bootstrap/ (see charts/sharko-engine/README.md and
+      # docs/design/2026-07-30-v4-data-file-format.md). This job previously
+      # linted only charts/sharko/ + templates/bootstrap/; add the engine
+      # chart to the same gate rather than leaving it uncovered. Render
+      # against the committed fixture repo (tests/enginerender/testdata/,
+      # the design doc's own worked example) — the exact commands documented
+      # in charts/sharko-engine/README.md's "Rendering locally" section, so
+      # that doc and this CI step cannot silently drift apart.
+      - name: Engine chart lint + render regression (v4 Wave 1 Story 2.4)
+        run: |
+          helm lint charts/sharko-engine/
+          RENDERED=$(helm template testengine charts/sharko-engine/ \
+            --values tests/enginerender/testdata/engine-values.yaml \
+            --values tests/enginerender/testdata/catalog.yaml)
+          echo "$RENDERED" | grep -q "kind: ApplicationSet" \
+            || { echo "::error::sharko-engine chart rendered NO ApplicationSet from the fixture repo — addons would not deploy"; exit 1; }
+          echo "$RENDERED" | grep -q "kind: AppProject" \
+            || { echo "::error::sharko-engine chart rendered NO AppProject from the fixture repo"; exit 1; }
+          echo "engine chart render guard passed: ApplicationSet + AppProject present"
+
+  # This job greps for ONE string: a legacy internal hostname that must never
+  # come back. That is all it has ever done, and the display name now says so.
+  #
+  # It has been renamed twice for the same reason. It started as
+  # "security-scan", which made a reader of the checks list think a real
+  # scanner ran here (it doesn't — the actual static-analysis, dependency and
+  # image scanning live in the gosec, ui-deps-audit and container-image-scan
+  # jobs below). Then it was "Forbidden Content Check", which oversold it the
+  # other way: that name promised the whole Content Policy in CLAUDE.md — the
+  # original organisation, internal domains, employee emails, real AWS account
+  # ids — while the grep only ever tested one hostname. The policy as a whole
+  # is now tested by the content-sweep job below, which is a separate check
+  # with its own name so that neither name has to cover for the other.
+  #
+  # The logic is untouched on purpose: losing this check would let the
+  # hostname back in. The pattern is written as a grep pattern with the dash
+  # in brackets, so grep still matches the old string exactly, but the plain
+  # string itself does not appear anywhere in the tree.
+  #
+  # The job id stays `forbidden-content-check`. It is a machine identifier:
+  # security-gate's `needs:` list and its NON_SECURITY_JOBS list key on it, and
+  # so do several role and documentation files outside this workflow. Renaming
+  # the id buys nothing a reader can see and breaks all of that; the display
+  # name is what shows up in the checks list, and that is what was wrong.
+  forbidden-content-check:
+    name: Legacy Internal Hostname String (one grep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for the legacy internal hostname string
+        run: |
+          FORBIDDEN_PATTERNS=(
+            "aap[-]server"
+          )
+          FOUND=0
+          for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
+            MATCHES=$(grep -r --include="*.go" --include="*.ts" --include="*.tsx" --include="*.yaml" --include="*.yml" \
+              -l "$pattern" . \
+              --exclude-dir=".git" \
+              --exclude-dir="node_modules" \
+              --exclude-dir="vendor" \
+              --exclude-dir=".github" \
+              --exclude-dir="docs/superpowers/plans" \
+              2>/dev/null || true)
+            if [ -n "$MATCHES" ]; then
+              echo "Legacy internal hostname string '$pattern' found in:"
+              echo "$MATCHES"
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" -eq 1 ]; then
+            echo "This check failed: the legacy internal hostname string is back. Remove it."
+            exit 1
+          fi
+          echo "The legacy internal hostname string is absent. That is the only thing this check tested."
+
+  # The Content Policy in CLAUDE.md, actually tested: every tracked text file
+  # read, and a failure on a credential-shaped string or an email address on a
+  # domain this project does not use. Implemented as a Go test under
+  # tests/contentsweep/ so it also runs under plain `go test ./...` — a
+  # developer sees a problem before pushing, not after.
+  #
+  # It is a separate job from the one-string grep above because the two check
+  # different things, and one check doing two jobs is how the old name came to
+  # mean less than it said.
+  #
+  # What this does NOT cover, stated here so the next reader does not trust the
+  # name further than it goes: it is not a secret scanner. The platform's own
+  # secret scanning and push protection already refuse live keys and live
+  # tokens at push time, and they cover shapes this sweep knows nothing about.
+  # What this adds is the part the platform ignores — the organisation content
+  # policy, and credential-shaped strings that are not live secrets.
+  #
+  # go-build-test already runs this test as part of `go test ./...`. The
+  # duplication is deliberate: this job gives the sweep its own line in the
+  # checks list, so a reader can see the content policy was tested without
+  # opening a log, and security-gate can name it.
+  content-sweep:
+    name: Content Sweep (credential shapes and email domains)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The sweep asks git for the tracked files, so it needs the checkout's
+      # index — which the default checkout gives it. It reads files only; it
+      # writes nothing and needs no credentials.
+      - name: Sweep every tracked file
+        run: go test ./tests/contentsweep/... -v
+
+  # New in story 152.H (task #152, Secret Sync security closure). gosec is
+  # a real static-analysis security scanner for Go — it looks for the
+  # class of bug the forbidden-content grep above was never meant to
+  # catch: TLS verification disabled, command/path/SQL injection via taint
+  # analysis, weak randomness, overly-permissive file modes, etc.
+  #
+  # Scope: everything, including internal/. When this job first landed,
+  # internal/ was temporarily excluded because stories 152.A-152.G were
+  # rewriting exactly the internal/ files gosec would flag, in parallel
+  # with this one. Those lanes have all merged, so the exclusion is gone —
+  # internal/ is where every bit of Sharko's secret handling lives, and it
+  # gets the same blocking scan as the rest of the tree. Every finding the
+  # first internal/ run produced was either fixed or annotated in place
+  # with a line-specific "#nosec <rule> -- <reason>" comment; a bare
+  # #nosec with no rule id and no reason should be treated as a review
+  # failure, not a suppression.
+  #
+  # -severity=medium -confidence=medium is the "useful, not noise" bar:
+  # it drops gosec's LOW-severity G104 (ignored io.Close() etc. — ~47 hits
+  # in this repo, essentially never a real bug on its own) and its
+  # notoriously false-positive-prone LOW-confidence G101 (flags any field
+  # literally named "password"/"token"/"secret", which this codebase's
+  # auth/config structs are full of — real hardcoded literals would trip
+  # other rules too). Everything MEDIUM+/MEDIUM+ still blocks.
+  #
+  # The --exclude-rules entries are narrow, path-scoped, and by design —
+  # not a blanket rule silence:
+  #   - cmd/sharko/*:G304,G402   — the CLI reads operator-given file paths
+  #     by design (validate-config/validate-catalog/kubeconfig), and
+  #     buildHTTPClient's InsecureSkipVerify is gated behind an explicit
+  #     --insecure opt-in flag, not a default.
+  #   - cmd/playground/*:G204,G702,G402 — the local kind-cluster dev tool
+  #     shells out to kubectl/kind/docker by design (fixed command names,
+  #     every call site literal — see cmd/playground/shell.go) and uses an
+  #     insecure TLS client only to reach a local kind cluster's
+  #     self-signed ArgoCD cert, already commented as such at the call
+  #     site.
+  #   - cmd/perf-baseline-compare/*:G304,G703 — a dev-only perf-baseline
+  #     tool that reads/writes the file path the operator passed on the
+  #     command line.
+  #   - cmd/catalog-sign/*:G204 — invokes the fixed `cosign` binary with
+  #     dynamically-built args (payload/output paths), by design.
+  # G306 (writable file perms) and G301 (writable dir perms) findings in
+  # these same generator/tooling files were fixed directly instead of
+  # excluded (0o644->0o600, 0o755->0o750) — trivial, safe, no excuse to
+  # leave them.
+  gosec:
+    name: Gosec Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+
+      - name: Run gosec
+        run: |
+          gosec -severity=medium -confidence=medium \
+            -exclude-dir=ui -exclude-dir=vendor \
+            -exclude-rules="cmd/sharko/.*:G304,G402;cmd/playground/.*:G204,G702,G402;cmd/perf-baseline-compare/.*:G304,G703;cmd/catalog-sign/.*:G204" \
+            ./...
+
+  # New in story 152.H. Dev-dependency vulnerabilities (eslint, vite,
+  # vitest, etc.) never ship to a user — they don't belong in a release
+  # gate and would just be noise a contributor can't act on without
+  # touching build tooling. --omit=dev keeps this to what actually reaches
+  # production. `npm audit` reads straight off the committed
+  # package-lock.json; no install needed, so this job is fast.
+  #
+  # --audit-level=high is the starting bar (useful, not noise) — a MODERATE
+  # finding here doesn't fail the build today but is still visible in the
+  # job output for anyone reading it.
+  ui-deps-audit:
+    name: UI Production Dependency Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  # New in story 152.H. Scans the actual image Sharko ships (same
+  # Dockerfile pr-docker.yml builds) for known OS-package and Go-module
+  # vulnerabilities, so a CVE baked into the base image or a vendored
+  # binary doesn't reach main unnoticed. Builds locally (push: false,
+  # load: true) — this job never publishes anything, it only scans.
+  #
+  # trivy-action is pinned to a full commit SHA, not the mutable "0.36.0"
+  # tag, and that's deliberate rather than the repo's usual convention
+  # (most actions here use a floating major-version tag). On 2026-03-19
+  # aquasecurity/trivy-action was compromised for ~12 hours: 76 of its 77
+  # version tags were force-pushed with a credential-stealing payload
+  # (CVE-2026-33634) that dumps CI runner memory for SSH keys, cloud
+  # credentials, and Kubernetes secrets — exactly the class of thing this
+  # whole sprint exists to stop leaking. Pinning the SHA behind the tag,
+  # rather than the tag itself, means even a future force-push to
+  # "0.36.0" can't silently change what this job runs. 0.36.0 was
+  # published on 2026-04-22, after the compromise window closed, and
+  # ed142fd0673e97e23eac54620cfb913e5ce36c25 was verified as exactly what
+  # "0.36.0" points at via the GitHub API before using it here. The pin
+  # before this one was 0.35.0, the one tag the incident left untouched.
+  #
+  # severity CRITICAL,HIGH + ignore-unfixed is the starting bar — a base
+  # image can carry MEDIUM/LOW findings or CRITICAL/HIGH ones with no
+  # upstream fix yet indefinitely; blocking on those would make this job
+  # permanently red for reasons nobody here can act on.
+  container-image-scan:
+    name: Container Image Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (local only — not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: sharko:ci-scan
+          build-args: |
+            CACHE_BUST=${{ github.sha }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha,scope=container-image-scan
+          cache-to: type=gha,mode=max,scope=container-image-scan
+
+      - name: Scan image for known vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0 — see comment above job, pinned to commit SHA not tag
+        with:
+          image-ref: sharko:ci-scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          version: v0.69.3
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # security-gate — the ONE check branch protection requires for security
+  # (story 152.J, task #152 Secret Sync security closure).
+  #
+  # THE NAME IS PERMANENT. Never rename this job and never change its
+  # `name:` field — branch protection matches the DISPLAY name, and it
+  # requires exactly the string "security-gate". This sprint already lived
+  # through what a rename does: when security-scan was renamed to
+  # forbidden-content-check, the old required name simply never reported
+  # again and every PR sat unmergeable with 19 green checks and nothing
+  # visibly wrong. The whole point of this job is that individual security
+  # jobs above stay free to be renamed, split, or replaced — only this
+  # fan-in name is frozen.
+  #
+  # ── Adding a new security job? Do this ─────────────────────────────────
+  #   1. Add its job id to the `needs:` list below. That is the entire
+  #      registration — the gate then fails whenever your job fails, is
+  #      skipped, or is cancelled.
+  #   2. If you forget, the "no job escapes this gate" step below fails
+  #      this gate and prints your job's name with these instructions —
+  #      a new job in this file CANNOT ship undecided.
+  #   3. If your new job is genuinely NOT a security check, add it to the
+  #      NON_SECURITY_JOBS list in that same step instead. That decision
+  #      then sits in the diff where a reviewer sees it.
+  #
+  # ── Rules that keep this gate honest ───────────────────────────────────
+  #   - `if: always()` is load-bearing, NOT a style choice. Without it,
+  #     a failed or skipped dependency would make this job get SKIPPED —
+  #     and GitHub reports a skipped job as "Success", which SATISFIES a
+  #     required check. A skipped gate is an open gate. For the same
+  #     reason, never use `!cancelled()` here (a cancelled run would skip
+  #     the gate and the merge button would light up green) and never add
+  #     any other condition, path filter, or `paths:` trigger filter that
+  #     could stop this job from reporting.
+  #   - Deleting or renaming a job listed in `needs:` makes this whole
+  #     workflow file invalid ("job security-gate needs X which does not
+  #     exist") — NO jobs run, the required security-gate check stays
+  #     "Expected/pending", and the PR is blocked. That fails closed, and
+  #     the Actions tab shows the workflow-file error. Fix by updating
+  #     the `needs:` entry (and NON_SECURITY_JOBS if relevant) in the
+  #     same commit as the rename.
+  #   - This gate only sees jobs in THIS file (ci.yml). A security check
+  #     added in a different workflow file is outside its reach and must
+  #     be wired into branch protection (or moved here) on its own.
+  security-gate:
+    name: security-gate  # display name == required-check context; frozen forever
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+      - go-build-test          # carries govulncheck + the -race tests
+      - forbidden-content-check
+      - content-sweep
+      - gosec
+      - ui-deps-audit
+      - container-image-scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every covered security check must have succeeded
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "Covered security checks and their results:"
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"')
+          if [ -n "$bad" ]; then
+            echo ""
+            while IFS='=' read -r job result; do
+              case "$result" in
+                failure)
+                  echo "::error::security-gate: '$job' FAILED. Open that job's log in this run to see why." ;;
+                skipped)
+                  echo "::error::security-gate: '$job' was SKIPPED — it never ran. A skipped security check is not a pass. Something (an 'if:' condition, a dependency, a filter) prevented it from running; find and remove that, or the gate stays red." ;;
+                cancelled)
+                  echo "::error::security-gate: '$job' was CANCELLED before finishing — no result is not a pass. Re-run the workflow to get a real answer." ;;
+                *)
+                  echo "::error::security-gate: '$job' ended with unexpected result '$result' — treated as a failure." ;;
+              esac
+            done <<< "$bad"
+            exit 1
+          fi
+          echo "security-gate: all covered security checks succeeded."
+
+      # Escape hatch closed: every job in ci.yml must be either covered by
+      # this gate (in `needs:` above) or explicitly declared non-security
+      # (in NON_SECURITY_JOBS below). A job that is neither fails the gate
+      # by name — so adding a job to this file forces a visible decision.
+      # What this does NOT catch: a wrong decision (someone knowingly
+      # listing a security job as non-security — that's on the reviewer),
+      # and jobs living in other workflow files.
+      - name: No job escapes this gate undecided
+        if: ${{ always() }}
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          import yaml  # preinstalled on GitHub-hosted runners
+
+          jobs = set(yaml.safe_load(open(".github/workflows/ci.yml"))["jobs"])
+          jobs.discard("security-gate")
+          covered = set(json.loads(os.environ["NEEDS_JSON"]))
+
+          # Jobs in ci.yml that are deliberately NOT security checks.
+          # Adding a job here instead of to security-gate's `needs:` is an
+          # explicit, reviewable statement that it is not a security check.
+          NON_SECURITY_JOBS = {
+              "ui-build-test",             # build/lint/unit-test quality gate
+              "swagger-check",             # generated-docs drift gate
+              "provider-types-up-to-date", # generated-code drift gate
+              "connection-sentences-up-to-date", # generated-code drift gate
+              "notification-codes-up-to-date", # generated-code drift gate
+              "lifecycle-events-up-to-date", # generated-code drift gate
+              "schemas-up-to-date",        # generated-schema drift gate
+              "engine-version-up-to-date", # generated-code drift gate
+              "validate-sharko-config",    # YAML schema validation (PR-only)
+              "validate-catalog",          # catalog format validation (PR-only)
+              "helm-validate",             # chart lint/render gate
+          }
+
+          problems = []
+          for job in sorted(jobs - covered - NON_SECURITY_JOBS):
+              problems.append(
+                  f"job '{job}' is in ci.yml but neither covered by security-gate "
+                  f"nor declared non-security. Add it to security-gate's needs: "
+                  f"list (if it is a security check) or to NON_SECURITY_JOBS in "
+                  f"this step (if it is not)."
+              )
+          for job in sorted(covered & NON_SECURITY_JOBS):
+              problems.append(
+                  f"job '{job}' is BOTH in security-gate's needs: and in "
+                  f"NON_SECURITY_JOBS — it cannot be both; remove one."
+              )
+          for job in sorted(NON_SECURITY_JOBS - jobs):
+              problems.append(
+                  f"NON_SECURITY_JOBS lists '{job}' but no such job exists in "
+                  f"ci.yml — remove the stale entry."
+              )
+
+          if problems:
+              for p in problems:
+                  print(f"::error::security-gate: {p}")
+              sys.exit(1)
+          print("security-gate: every job in ci.yml is accounted for "
+                f"({len(covered)} covered, {len(NON_SECURITY_JOBS)} declared non-security).")
+          PYEOF

@@ -1,0 +1,419 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sharko.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+{{- /*
+  BF11. Refuse the credential-bearing forms of every operator-set address the
+  chart writes into the Pod as a plain environment value. values.yaml calls
+  those fields NON-SECRET; this is what makes that true rather than a promise.
+  See sharko.validateAddresses in _helpers.tpl.
+*/}}
+{{- include "sharko.validateAddresses" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sharko.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "sharko.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- /*
+        Kubernetes gives every Pod a set of environment variables named
+        after each Service in the namespace, in the old Docker-link
+        format. Sharko's own Service is called sharko, so this Pod would
+        be handed SHARKO_PORT=tcp://<clusterIP>:80 along with about nine
+        more SHARKO_* names — none of them written by an operator, one of
+        them colliding head-on with Sharko's own former port setting.
+        The field defaults to true, so it has to be set here explicitly.
+        Operators who run their own manifests instead of this chart must
+        set it too: see docs/site/operator/configuration.md#listen-port.
+      */}}
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "sharko.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SHARKO_HTTP_PORT
+              value: "8080"
+            - name: SHARKO_STATIC_DIR
+              value: "/app/static"
+            - name: CONNECTION_SECRET_NAME
+              value: {{ .Values.config.connectionSecretName | default "sharko-connections" | quote }}
+            - name: ARGOCD_NAMESPACE
+              value: {{ include "sharko.argocdNamespace" . | quote }}
+            - name: SHARKO_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SHARKO_SECRET_NAME
+              value: {{ include "sharko.fullname" . | quote }}
+            {{- /*
+              Bootstrap admin password (V124-3.8 / BUG-013).
+              Two operator-supplied paths surface here as SHARKO_BOOTSTRAP_ADMIN_PASSWORD;
+              Sharko consumes the env var on startup and bcrypt-hashes it into the
+              Sharko Secret. The plaintext is NEVER logged — see
+              internal/auth/store.go SeedBootstrapAdminFromEnv.
+            */}}
+            {{- $bootstrap := .Values.bootstrapAdmin | default dict }}
+            {{- $existingBootstrapSecret := $bootstrap.existingSecret | default dict }}
+            {{- if and $existingBootstrapSecret.name (ne $existingBootstrapSecret.name "") }}
+            - name: SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $existingBootstrapSecret.name | quote }}
+                  key: {{ default "password" $existingBootstrapSecret.key | quote }}
+            {{- else if and $bootstrap.password (ne $bootstrap.password "") }}
+            {{- /*
+              BF11. An inline bootstrapAdmin.password used to be written here
+              as a literal `value:`. A Deployment is not a Secret — anyone who
+              can read Deployments in the namespace, and every `helm get
+              manifest`, every rendered-manifest GitOps repository and every
+              `kubectl describe pod`, then had the password in front of them.
+              So the chart puts the plaintext in its own Secret under the key
+              named below and the Pod reads it from there. The value is written
+              in ONE place and referenced here; it is never duplicated into the
+              Pod template.
+
+              The key is admin.bootstrapPassword, NOT admin.password.
+              admin.password holds a bcrypt hash, and the Pod needs the
+              plaintext — internal/auth/store.go SeedBootstrapAdminFromEnv
+              hashes it itself. Pointing this reference at admin.password would
+              seed the account with the text of a hash.
+
+              Every branch of secret.yaml that can be reached while
+              bootstrapAdmin.password is set writes admin.bootstrapPassword,
+              including the upgrade branch that preserves an existing Secret.
+              A reference to a key that is not there stops the Pod from
+              starting, so the two files have to stay in step; the guard
+              tests/serverrender/bootstrap_password_test.go pins that.
+            */}}
+            - name: SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sharko.secretName" . | quote }}
+                  key: {{ include "sharko.bootstrapPasswordKey" . | quote }}
+            {{- end }}
+            {{- /*
+              V124-6.3 / BUG-023: surface bootstrapAdmin.writeInitialSecret as
+              SHARKO_WRITE_INITIAL_ADMIN_SECRET. Sharko reads this in
+              MaybeLogBootstrapCredential — when the env is "false" the
+              dedicated `sharko-initial-admin-secret` is NOT written. Default
+              (env unset or "true") writes the secret, mirroring ArgoCD's
+              argocd-initial-admin-secret behavior.
+              The toggle has no effect on the operator-supplied paths above.
+            */}}
+            {{- if hasKey $bootstrap "writeInitialSecret" }}
+            - name: SHARKO_WRITE_INITIAL_ADMIN_SECRET
+              value: {{ ternary "true" "false" $bootstrap.writeInitialSecret | quote }}
+            {{- end }}
+            {{- /*
+              V125-1-11.5: Pre-wire ClusterRegistrationSourceConfig env vars for the
+              future V125-1-8 cluster reconciler. Always rendered with safe defaults
+              (empty strings) so existing deployments are unaffected. Consumed in
+              cmd/sharko/serve.go via providers.ClusterRegistrationSourceConfig.
+            */}}
+            - name: SHARKO_CLUSTER_REG_TYPE
+              value: {{ .Values.clusterRegSource.type | default "" | quote }}
+            - name: SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE
+              value: {{ .Values.clusterRegSource.argocdNamespace | default "" | quote }}
+            {{- if .Values.ai.enabled }}
+            - name: AI_PROVIDER
+              value: {{ .Values.ai.provider | quote }}
+            {{- if eq .Values.ai.provider "ollama" }}
+            - name: AI_OLLAMA_URL
+              {{- if .Values.ai.ollama.deploy }}
+              value: "http://{{ include "sharko.fullname" . }}-ollama:11434"
+              {{- else }}
+              value: {{ .Values.ai.ollama.url | default "http://localhost:11434" | quote }}
+              {{- end }}
+            - name: AI_OLLAMA_MODEL
+              value: {{ .Values.ai.ollama.model | quote }}
+            {{- if .Values.ai.ollama.agentModel }}
+            - name: AI_AGENT_MODEL
+              value: {{ .Values.ai.ollama.agentModel | quote }}
+            {{- end }}
+            {{- else }}
+            - name: AI_CLOUD_MODEL
+              value: {{ .Values.ai.cloudModel | quote }}
+            {{- end }}
+            {{- if .Values.ai.baseURL }}
+            - name: AI_BASE_URL
+              value: {{ .Values.ai.baseURL | quote }}
+            {{- end }}
+            {{- if .Values.ai.authHeader }}
+            - name: AI_AUTH_HEADER
+              value: {{ .Values.ai.authHeader | quote }}
+            {{- end }}
+            {{- if .Values.ai.maxIterations }}
+            - name: AI_MAX_ITERATIONS
+              value: {{ .Values.ai.maxIterations | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.config.environments }}
+            - name: APP_ENVIRONMENTS
+              value: {{ .Values.config.environments | quote }}
+            {{- end }}
+            {{- if and .Values.connectivityCheck (not .Values.connectivityCheck.enabled) }}
+            - name: SHARKO_CONNECTIVITY_CHECK
+              value: "false"
+            {{- end }}
+            {{- if and .Values.autoRemediate (not .Values.autoRemediate.enabled) }}
+            - name: SHARKO_AUTO_REMEDIATE
+              value: "false"
+            {{- end }}
+            {{- /*
+              v4 Wave 1 Story 3.4 — catalog version-freshness scheduler.
+              Same tri-state shape as connectivityCheck/autoRemediate above
+              for the enabled flag (only rendered when explicitly disabled);
+              interval is a duration string, only rendered when the operator
+              overrides the code default (24h).
+            */}}
+            {{- if and .Values.catalog .Values.catalog.freshness (not .Values.catalog.freshness.enabled) }}
+            - name: SHARKO_CATALOG_FRESHNESS_ENABLED
+              value: "false"
+            {{- end }}
+            {{- if and .Values.catalog .Values.catalog.freshness .Values.catalog.freshness.interval }}
+            - name: SHARKO_CATALOG_FRESHNESS_INTERVAL
+              value: {{ .Values.catalog.freshness.interval | quote }}
+            {{- end }}
+            {{- /*
+              V3 C1: git-native server settings (probe_mode, allow_inline_credentials).
+              Emit only when operator explicitly sets the value (tri-state: set → git wins,
+              unset → runtime ConfigMap authoritative). Empty string ⇒ no env var ⇒ undeclared.
+              For allowInlineCredentials, check both bool and string paths since --set treats it as bool.
+            */}}
+            {{- with .Values.settings }}
+            {{- if .probeMode }}
+            - name: SHARKO_PROBE_MODE
+              value: {{ .probeMode | quote }}
+            {{- end }}
+            {{- $allowInlineSet := false }}
+            {{- $allowInlineValue := "" }}
+            {{- if kindIs "bool" .allowInlineCredentials }}
+              {{- $allowInlineSet = true }}
+              {{- $allowInlineValue = ternary "true" "false" .allowInlineCredentials }}
+            {{- else if ne .allowInlineCredentials "" }}
+              {{- $allowInlineSet = true }}
+              {{- $allowInlineValue = ternary "true" "false" (eq .allowInlineCredentials "true") }}
+            {{- end }}
+            {{- if $allowInlineSet }}
+            - name: SHARKO_ALLOW_INLINE_CREDENTIALS
+              value: {{ $allowInlineValue | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.gitops.actions.enabled }}
+            - name: GITOPS_ACTIONS_ENABLED
+              value: "true"
+            {{- end }}
+            {{- /*
+              V3 C2: git-native connection config (NON-SECRET fields only).
+              Each env var is emitted ONLY when the operator explicitly sets the
+              value (tri-state: set → git wins on that field, unset → runtime
+              connection value authoritative). SECRET material (git token/PAT,
+              ArgoCD token) is NEVER declared here — it stays in the encrypted
+              sharko-connections Secret, entered via the UI. Scope is the ACTIVE
+              connection; a runtime UI edit to a declared field is reclaimed.
+            */}}
+            {{- with .Values.connection }}
+            {{- with .git }}
+            {{- if .provider }}
+            - name: SHARKO_CONN_GIT_PROVIDER
+              value: {{ .provider | quote }}
+            {{- end }}
+            {{- if .repoURL }}
+            - name: SHARKO_CONN_GIT_REPO_URL
+              value: {{ .repoURL | quote }}
+            {{- end }}
+            {{- if .owner }}
+            - name: SHARKO_CONN_GIT_OWNER
+              value: {{ .owner | quote }}
+            {{- end }}
+            {{- if .repo }}
+            - name: SHARKO_CONN_GIT_REPO
+              value: {{ .repo | quote }}
+            {{- end }}
+            {{- if .organization }}
+            - name: SHARKO_CONN_GIT_ORGANIZATION
+              value: {{ .organization | quote }}
+            {{- end }}
+            {{- if .project }}
+            - name: SHARKO_CONN_GIT_PROJECT
+              value: {{ .project | quote }}
+            {{- end }}
+            {{- if .repository }}
+            - name: SHARKO_CONN_GIT_REPOSITORY
+              value: {{ .repository | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .argocd }}
+            {{- if .serverURL }}
+            - name: SHARKO_CONN_ARGOCD_SERVER_URL
+              value: {{ .serverURL | quote }}
+            {{- end }}
+            {{- if .namespace }}
+            - name: SHARKO_CONN_ARGOCD_NAMESPACE
+              value: {{ .namespace | quote }}
+            {{- end }}
+            {{- if kindIs "bool" .insecure }}
+            - name: SHARKO_CONN_ARGOCD_INSECURE
+              value: {{ ternary "true" "false" .insecure | quote }}
+            {{- else if ne (toString .insecure) "" }}
+            - name: SHARKO_CONN_ARGOCD_INSECURE
+              value: {{ ternary "true" "false" (eq (toString .insecure) "true") | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .provider }}
+            {{- if .type }}
+            - name: SHARKO_CONN_PROVIDER_TYPE
+              value: {{ .type | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: SHARKO_CONN_PROVIDER_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .prefix }}
+            - name: SHARKO_CONN_PROVIDER_PREFIX
+              value: {{ .prefix | quote }}
+            {{- end }}
+            {{- if .namespace }}
+            - name: SHARKO_CONN_PROVIDER_NAMESPACE
+              value: {{ .namespace | quote }}
+            {{- end }}
+            {{- if .roleArn }}
+            - name: SHARKO_CONN_PROVIDER_ROLE_ARN
+              value: {{ .roleArn | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .addonSecretProvider }}
+            {{- if .type }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_TYPE
+              value: {{ .type | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            {{- if .prefix }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_PREFIX
+              value: {{ .prefix | quote }}
+            {{- end }}
+            {{- if .namespace }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_NAMESPACE
+              value: {{ .namespace | quote }}
+            {{- end }}
+            {{- if .roleArn }}
+            - name: SHARKO_CONN_ADDON_SECRET_PROVIDER_ROLE_ARN
+              value: {{ .roleArn | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .gitops }}
+            {{- if .baseBranch }}
+            - name: SHARKO_CONN_GITOPS_BASE_BRANCH
+              value: {{ .baseBranch | quote }}
+            {{- end }}
+            {{- if .branchPrefix }}
+            - name: SHARKO_CONN_GITOPS_BRANCH_PREFIX
+              value: {{ .branchPrefix | quote }}
+            {{- end }}
+            {{- if .commitPrefix }}
+            - name: SHARKO_CONN_GITOPS_COMMIT_PREFIX
+              value: {{ .commitPrefix | quote }}
+            {{- end }}
+            {{- if .hostClusterName }}
+            - name: SHARKO_CONN_GITOPS_HOST_CLUSTER_NAME
+              value: {{ .hostClusterName | quote }}
+            {{- end }}
+            {{- if .defaultAddons }}
+            - name: SHARKO_CONN_GITOPS_DEFAULT_ADDONS
+              value: {{ .defaultAddons | quote }}
+            {{- end }}
+            {{- if kindIs "bool" .prAutoMerge }}
+            - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
+              value: {{ ternary "true" "false" .prAutoMerge | quote }}
+            {{- else if ne (toString .prAutoMerge) "" }}
+            - name: SHARKO_CONN_GITOPS_PR_AUTO_MERGE
+              value: {{ ternary "true" "false" (eq (toString .prAutoMerge) "true") | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /*
+              E2E TEST HARNESS ONLY (V125-1-13.x.4). When .Values.e2e.gitHostsAllowlist
+              is non-empty, surface it as SHARKO_E2E_GIT_HOSTS_ALLOWLIST so the
+              connection validator (internal/service/connection.go::deriveProviderFromURL)
+              accepts the in-cluster gitfake service hostname during helm-mode e2e tests.
+              MUST remain empty for production — no env entry is emitted in that case.
+            */}}
+            {{- if and .Values.e2e .Values.e2e.gitHostsAllowlist }}
+            - name: SHARKO_E2E_GIT_HOSTS_ALLOWLIST
+              value: {{ .Values.e2e.gitHostsAllowlist | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "sharko.secretName" . }}
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: tmp
+              mountPath: /tmp
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sharko.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,98 @@
+version: 2
+
+builds:
+  - main: ./cmd/sharko
+    binary: sharko
+    env:
+      - CGO_ENABLED=0
+    # Windows dropped in V2-cleanup-6 (cross-platform syscall blocker:
+    # cmd/sharko/client.go uses syscall.Stat_t per the V124-2.5 defensive
+    # HOME resolver, which is Unix-only).
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}}
+
+archives:
+  - format: tar.gz
+    name_template: "sharko_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+# HONESTY PASS: one CycloneDX SBOM per released archive, made with syft
+# (installed onto PATH by release.yml's goreleaser job before this
+# runs). GoReleaser uploads these to the GitHub release the same way it
+# uploads the archives and checksums.txt — no extra_files entry needed.
+sboms:
+  - id: archive
+    artifacts: archive
+    cmd: syft
+    args: ["$artifact", "--output", "cyclonedx-json=$document"]
+
+checksum:
+  name_template: 'checksums.txt'
+
+# Story V121-8.1: cosign keyless signing of every release artifact
+# (per-OS archives + checksums.txt). Each artifact gains a `.sig` and
+# `.pem` companion in the GitHub release so consumers can verify with
+#   cosign verify-blob --certificate <name>.pem --signature <name>.sig <name>
+# Identity is bound to this repo's release workflow OIDC identity —
+# verification regex documented in docs/site/operator/supply-chain.md.
+signs:
+  - cmd: cosign
+    artifacts: all
+    signature: ${artifact}.sig
+    certificate: ${artifact}.pem
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature
+      - ${signature}
+      - --output-certificate
+      - ${certificate}
+      - ${artifact}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+
+release:
+  github:
+    owner: MoranWeissman
+    name: sharko
+  # Story V123-pretag-release-polish: auto-detect semver pre-release suffix
+  # (`-pre.N`, `-rc.N`, etc.) and mark the GitHub release accordingly. Pre-2.0.0
+  # cuts use suffixes; v2.0.0 GA omits the suffix and becomes the first
+  # "Latest release". Using `auto` (not `true`) lets the same workflow handle
+  # both pre-release and GA cuts without a manual flip.
+  prerelease: auto
+  # Story RELEASESURFACE-META: the published GitHub release title must carry
+  # the technical-preview label so operators reading the download page know
+  # the state of the release.
+  name_template: "{{ .Tag }} — technical preview"
+  # V2-cleanup-57.1 / RELEASESURFACE-META: the release body opens with the
+  # durable technical-preview warning above the CI-verified ArgoCD compatibility
+  # line. The warning sits on one physical line so YAML block-scalar wrapping
+  # does not split it. SHARKO_TESTED_ARGOCD_LINE is exported by release.yml's
+  # "Derive ArgoCD tested-range release-notes line" step, which reads
+  # ui/src/generated/argocd-tested-range.json (maintained by the weekly
+  # argocd-matrix workflow). envOrDefault keeps local/ad-hoc `goreleaser` runs
+  # working when the variable is unset — the header is then empty rather than
+  # a template error.
+  header: |
+    > **Sharko {{ .Tag }} is a technical preview. Do not use Sharko in production.** Install only published `v4.0.1`-or-later artifacts. `v3.0.0` and earlier remain retired and unsupported.
+
+    {{ envOrDefault "SHARKO_TESTED_ARGOCD_LINE" "" }}
+  # Story V123-2.5: attach per-entry cosign bundles produced by the
+  # sign-catalog-entries job to the GitHub release. The signed catalog YAML
+  # baked into the binary points `signature.bundle` URLs at these files via
+  # the deterministic `<release-base>/<name>.bundle` convention. Without
+  # them, runtime verification would 404.
+  extra_files:
+    - glob: ./_dist/catalog/*.bundle

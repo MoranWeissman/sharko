@@ -1,0 +1,155 @@
+# ----------------------------------------------------------------------------------------------------
+# Sharko Generic Addon ApplicationSet Template
+#
+# - Catalog-driven: all per-addon behavior is configured via catalog fields in Values.spec.applicationsets
+# - No addon-specific logic: no if-name blocks, no hardcoded sync waves, no addon helpers
+# - Safety features are always on: cluster secret-type filter, finalizers, RBAC, schema tolerances
+# - Additional sources, sync options, ignoreDifferences, extraHelmValues: fully conditional
+# ----------------------------------------------------------------------------------------------------
+
+{{- range $index, $appset := (.Values.spec | default dict).applicationsets }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ $appset.name }}
+  namespace: argocd
+spec:
+  clusterResourceBlacklist: []
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  destinations:
+  - namespace: '*'
+    server: '*'
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  sourceRepos:
+  - '*'
+{{- end }}
+
+{{- range $index, $appset := (.Values.spec | default dict).applicationsets }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ $appset.name }}
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=zero"]
+  generators:
+    - matrix:
+        generators:
+          # Find clusters with this addon enabled
+          - clusters:
+              selector:
+                matchLabels:
+                  argocd.argoproj.io/secret-type: cluster
+                  {{ $appset.name }}: enabled
+              values:
+                revision: '{{ $appset.version }}'
+                app: '{{ $appset.name }}'
+          # Read per-cluster values file for matched clusters
+          - git:
+              repoURL: {{ $.Values.repoURL }}
+              revision: {{ $.Values.targetRevision }}
+              files:
+                - path: "configuration/addons-clusters-values/{{`{{.name}}`}}.yaml"
+  template:
+    metadata:
+      name: '{{ $appset.name }}-{{`{{.name}}`}}'
+      labels:
+        cluster-name: '{{`{{.name}}`}}'
+        app-type: addon
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: {{ $appset.name }}
+      sources:
+        # Primary source: addon Helm chart
+        - repoURL: {{ $appset.repoURL }}
+          chart: {{ $appset.chart }}
+          targetRevision: '{{`{{default .values.revision (index .metadata.labels (print .values.app "-version"))}}`}}'
+          helm:
+            ignoreMissingValueFiles: true
+            skipSchemaValidation: true
+            # Inject per-cluster addon values from the cluster values file
+            values: |
+              {{`{{- $addonKey := index . "`}}{{ $appset.name }}{{`" -}}`}}
+              {{`{{- if $addonKey -}}`}}
+              {{`{{ $addonKey | toYaml }}`}}
+              {{`{{- end -}}`}}
+            {{- if $appset.extraHelmValues }}
+            parameters:
+            {{- range $k, $v := $appset.extraHelmValues }}
+            - name: {{ $k }}
+              value: "{{ $v }}"
+            {{- end }}
+            {{- end }}
+            valueFiles:
+            # Global values file for this addon
+            - '$values/configuration/addons-global-values/{{ $appset.name }}.yaml'
+        {{- if $appset.additionalSources }}
+        # Additional sources from catalog entry
+        {{- range $appset.additionalSources }}
+        - repoURL: {{ .repoURL | default $.Values.repoURL }}
+          targetRevision: {{ $.Values.targetRevision }}
+          {{- if .path }}
+          path: {{ .path }}
+          {{- else }}
+          chart: {{ .chart }}
+          {{- if .version }}
+          targetRevision: {{ .version }}
+          {{- end }}
+          {{- end }}
+          {{- if or .parameters .valueFiles }}
+          helm:
+            {{- if .valueFiles }}
+            valueFiles:
+            {{- range .valueFiles }}
+            - {{ . }}
+            {{- end }}
+            {{- end }}
+            {{- if .parameters }}
+            parameters:
+            {{- range $k, $v := .parameters }}
+            - name: {{ $k }}
+              value: {{ $v }}
+            {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        {{- end }}
+        # Values reference (shared across all sources via $values)
+        - repoURL: {{ $.Values.repoURL }}
+          targetRevision: {{ $.Values.targetRevision }}
+          ref: values
+      destination:
+        # Route to in-cluster API server for the host cluster, external server URL for all others
+        server: '{{`{{if eq .name "SHARKO_HOST_CLUSTER_NAME"}}https://kubernetes.default.svc{{else}}{{.server}}{{end}}`}}'
+        namespace: {{ $appset.namespace | default $appset.name }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: {{ if eq (toString $appset.selfHeal) "false" }}false{{ else }}true{{ end }}
+        syncOptions:
+        - CreateNamespace=true
+        # ServerSideApply avoids the 262144-byte last-applied annotation limit
+        # that causes client-side apply to permanently fail for large CRDs
+        # (e.g. keda scaledjobs.keda.sh). ArgoCD tolerates a duplicate entry
+        # if an addon's catalog syncOptions also specifies ServerSideApply=true.
+        - ServerSideApply=true
+        {{- if $appset.syncOptions }}
+        {{- range $appset.syncOptions }}
+        {{- if ne . "ServerSideApply=true" }}
+        - {{ . }}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+      {{- if $appset.ignoreDifferences }}
+      ignoreDifferences:
+      {{- toYaml $appset.ignoreDifferences | nindent 8 }}
+      {{- end }}
+{{- end }}

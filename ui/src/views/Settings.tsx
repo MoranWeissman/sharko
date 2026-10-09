@@ -1,0 +1,111 @@
+import { useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { Plug, Users, Key, Bot, Shield, GitMerge, UserCog, Library, Radar, Lock, Power } from 'lucide-react'
+import { DetailNavPanel } from '@/components/DetailNavPanel'
+import { ConnectionSection } from '@/views/settings/ConnectionSection'
+import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
+import { GitOpsSection } from '@/views/settings/GitOpsSection'
+import { MyAccountSection } from '@/views/settings/MyAccountSection'
+import { UserManagement } from '@/views/UserManagement'
+import { ApiKeys } from '@/views/ApiKeys'
+import { AIConfigSection } from '@/views/settings/AIConfigSection'
+import { CatalogSourcesSection } from '@/views/settings/CatalogSourcesSection'
+import { ProbeModeSection } from '@/views/settings/ProbeModeSection'
+import { InlineCredentialsSection } from '@/views/settings/InlineCredentialsSection'
+import { AddonValuesEngineSection } from '@/views/settings/AddonValuesEngineSection'
+import { useAuth } from '@/hooks/useAuth'
+
+const ALLOWED_NON_ADMIN = new Set([
+  'connections',
+  'secrets-provider',
+  'gitops',
+  'ai',
+  'my-account',
+])
+
+export function Settings() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { isAdmin } = useAuth()
+  const section = searchParams.get('section') || 'connections'
+  const setSection = (s: string) => setSearchParams({ section: s }, { replace: true })
+
+  useEffect(() => {
+    if (!isAdmin && !ALLOWED_NON_ADMIN.has(section)) {
+      setSearchParams({ section: 'connections' }, { replace: true })
+    }
+  }, [isAdmin, section, setSearchParams])
+
+  const sections = [
+    {
+      label: 'Connection',
+      items: [
+        { key: 'connections', label: 'Connection', icon: Plug },
+        { key: 'secrets-provider', label: 'Secrets Provider', icon: Shield },
+        { key: 'gitops', label: 'GitOps', icon: GitMerge },
+      ],
+    },
+    {
+      label: 'My Account',
+      items: [{ key: 'my-account', label: 'My Account', icon: UserCog }],
+    },
+    ...(isAdmin
+      ? [
+          {
+            label: 'Access',
+            items: [
+              { key: 'users', label: 'Users', icon: Users },
+              { key: 'api-keys', label: 'API Keys', icon: Key },
+            ],
+          },
+          {
+            label: 'Catalog',
+            items: [
+              { key: 'catalog-sources', label: 'Catalog Sources', icon: Library },
+            ],
+          },
+          {
+            label: 'System',
+            items: [
+              { key: 'probe-mode', label: 'Connectivity Probe', icon: Radar },
+              { key: 'inline-credentials', label: 'Legacy Inline Credentials', icon: Lock },
+              { key: 'addon-values-engine', label: 'Addon Values Engine', icon: Power },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: 'Platform',
+      items: [{ key: 'ai', label: 'AI Provider', icon: Bot }],
+    },
+  ]
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="page-title text-[#0a2a4a] dark:text-gray-100">Settings</h1>
+      </div>
+
+      <div className="flex gap-6 mt-4">
+        <DetailNavPanel
+          sections={sections}
+          activeKey={section}
+          onSelect={setSection}
+        />
+        <div className="flex-1">
+          {section === 'connections' && <ConnectionSection />}
+          {section === 'secrets-provider' && <SecretsProviderSection />}
+          {section === 'gitops' && <GitOpsSection />}
+          {section === 'my-account' && <MyAccountSection />}
+          {section === 'users' && isAdmin && <UserManagement embedded />}
+          {section === 'api-keys' && isAdmin && <ApiKeys embedded />}
+          {section === 'catalog-sources' && isAdmin && <CatalogSourcesSection />}
+          {section === 'probe-mode' && isAdmin && <ProbeModeSection />}
+          {section === 'inline-credentials' && isAdmin && <InlineCredentialsSection />}
+          {section === 'addon-values-engine' && isAdmin && <AddonValuesEngineSection />}
+          {section === 'ai' && <AIConfigSection />}
+        </div>
+      </div>
+    </div>
+  )
+}
+export default Settings

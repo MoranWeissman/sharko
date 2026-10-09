@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/marketplace-sources.v1.json
+apiVersion: sharko.dev/v1
+kind: MarketplaceSources
+metadata:
+  name: marketplace-sources
+spec:
+  # sources is the list of third-party catalog source URLs.
+  # Each URL must be HTTPS and will be validated against SSRF guards.
+  # IMPORTANT: This file is for PUBLIC / TOKENLESS source URLs only.
+  # URLs with embedded auth tokens (e.g., https://catalogs.example.com/private/<token>/cat.yaml)
+  # should remain in the SHARKO_CATALOG_URLS environment variable to avoid leaking tokens into Git.
+  sources:
+    - url: https://catalogs.example.com/community-addons.yaml
+    - url: https://marketplace.example.org/k8s-catalog.yaml
+
+  # refreshInterval (optional) is how often Sharko re-fetches each source.
+  # Accepts Go duration format (e.g., "30m", "2h"). Must be between 1m and 24h.
+  # Defaults to 1h when absent.
+  refreshInterval: 1h

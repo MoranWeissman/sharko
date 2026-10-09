@@ -1,0 +1,243 @@
+{{- if .Values.rbac.create }}
+# ClusterRole: read access to ArgoCD resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "sharko.fullname" . }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+rules:
+  # ArgoCD applications.
+  #
+  # applicationsets was added by the brownfield-takeover checks (v4 Wave 2,
+  # Epic 6) and is READ-ONLY, like everything else in this rule. Before
+  # Sharko takes over a cluster ArgoCD already manages, it has to be able to
+  # say which ApplicationSets would delete running workloads if that
+  # cluster's labels changed — that answer lives in
+  # spec.syncPolicy.preserveResourcesOnDeletion and
+  # spec.syncPolicy.applicationsSync. Sharko reads those two fields and the
+  # cluster generators' label selectors, and nothing else: spec.template
+  # (your Application template) is never read. See internal/appsets.
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects", "applicationsets"]
+    verbs: ["get", "list", "watch"]
+  # Story 152.F (least privilege): this ClusterRole used to also carry a
+  # cluster-wide `secrets: get,list` rule "for reading ArgoCD cluster
+  # Secrets". That rule was wider than the code needs — `list` on Secrets
+  # hands over their contents, and every Secret read Sharko's own
+  # ServiceAccount does on the host cluster is namespace-scoped:
+  #   - ArgoCD cluster Secrets live in rbac.argocdNamespace (default
+  #     "argocd") and are already covered, with MORE verbs than this
+  #     ClusterRole granted, by the "-argocd-secrets" Role below.
+  #   - The k8s-secrets cluster-credential/addon-secret provider backends
+  #     read Secrets from a configured namespace (default the release
+  #     namespace) — covered by the "-secrets-provider" Role/RoleBinding
+  #     pair below, one per namespace in rbac.k8sSecretsProviderNamespaces.
+  # Nothing left needs a cluster-wide Secret read, so the rule is gone. If
+  # a future feature genuinely needs one, add it back here with a comment
+  # naming the code path and why a namespaced Role can't cover it.
+  {{- if .Values.config.nodeAccess }}
+  # Node read access (default-on; set config.nodeAccess=false to disable).
+  # Used by the Dashboard node-count widget (/api/v1/cluster/nodes).
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  {{- end }}
+---
+# Bind to the Sharko service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "sharko.fullname" . }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "sharko.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharko.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role: write access to secrets in the ArgoCD namespace (cluster secret management)
+#
+# This Role also covers everything the old cluster-wide `secrets: get,list`
+# ClusterRole rule used to grant for THIS namespace (Story 152.F) — every
+# ArgoCD-cluster-Secret read in the codebase (internal/argosecrets,
+# internal/clusterreconciler, internal/providers/argocd_provider.go) already
+# targets rbac.argocdNamespace, which is exactly this Role's namespace, and
+# get/list/watch here is a strict superset of what the removed rule gave.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sharko.fullname" . }}-argocd-secrets
+  namespace: {{ include "sharko.argocdNamespace" . }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The v3 -> v4 runtime handoff (v4 Wave 2, internal/appsets/handoff.go).
+  #
+  # Migrating a repo destroys both generator arms of the ApplicationSets the
+  # old bootstrap left running here, and those ApplicationSets delete the
+  # workloads they installed when their generators go empty. So before the
+  # migration pull request is opened, Sharko has to patch them to leave
+  # running workloads alone and take the delete-everything finalizer off the
+  # Applications they made; after the pull request merges it retires them and
+  # starts the engine chart in their place.
+  #
+  # patch + delete on applicationsets, patch on applications, and only in the
+  # ArgoCD namespace — the cluster-wide ClusterRole above stays read-only.
+  # Nothing here is used by any path except the migration.
+  - apiGroups: ["argoproj.io"]
+    resources: ["applicationsets"]
+    verbs: ["get", "list", "watch", "patch", "update", "delete"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "patch"]
+---
+# RoleBinding in ArgoCD namespace — binds argocd-secrets Role to the Sharko service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sharko.fullname" . }}-argocd-secrets
+  namespace: {{ include "sharko.argocdNamespace" . }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sharko.fullname" . }}-argocd-secrets
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharko.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role: read/write own secret and read users ConfigMap in the release namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sharko.fullname" . }}-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ include "sharko.fullname" . | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sharko-migration-settings"]
+    verbs: ["get", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.config.connectionSecretName | default "sharko-connections" | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sharko-ai-config"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]  # needed to create new secrets (resourceNames can't restrict create)
+  # V124-6.3 / BUG-023: dedicated bootstrap secret (mirrors ArgoCD's
+  # argocd-initial-admin-secret). Sharko writes it on auto-generated bootstrap
+  # and deletes it on `sharko reset-admin` so it doesn't outlive the rotated
+  # password. Get is needed for the idempotent create-or-update path; delete
+  # is needed for the rotation cleanup.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sharko-initial-admin-secret"]
+    verbs: ["get", "update", "delete"]
+  # v4-coherence lane J: API tokens survive restarts. Sharko keeps bcrypt
+  # token hashes (never raw values) in this dedicated Secret — loaded at
+  # startup, written through on create/renew/revoke. Create is covered by
+  # the blanket create rule above (resourceNames can't restrict create).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sharko-api-tokens"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]  # migration state stored in ConfigMaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ printf "%s-users" (include "sharko.fullname" .) | quote }}]
+    verbs: ["get"]
+  # V3 E1: Kubernetes events for Sharko operational failures/successes
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+---
+# Bind auth role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sharko.fullname" . }}-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sharko.fullname" . }}-auth
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharko.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role + RoleBinding per namespace: read access for the k8s-secrets
+# cluster-credential provider (connection.provider) and the k8s-secrets
+# addon-secret provider (connection.addonSecretProvider) — see
+# internal/providers/k8s_secrets.go. Both providers default to a namespace
+# named literally "sharko" when left unconfigured (that default is NOT tied
+# to .Release.Namespace); if you use either provider unconfigured and your
+# release namespace isn't literally "sharko", add "sharko" (or whatever the
+# configured namespace actually is) to rbac.k8sSecretsProviderNamespaces —
+# a namespace this chart doesn't already own can't be assumed to exist, so
+# it is never added automatically.
+#
+# This is read-only (get/list, matching GetCredentials, ListClusters,
+# searchSimilarK8s and GetSecretValue — none of them write) and replaces the
+# cluster-wide `secrets: get,list` rule removed from the ClusterRole above
+# (Story 152.F). It is the reach that used to be implicit and unbounded;
+# now it is exactly the namespace(s) an operator actually configured.
+{{- $secretsProviderNamespaces := list .Release.Namespace }}
+{{- range .Values.rbac.k8sSecretsProviderNamespaces }}
+{{- $secretsProviderNamespaces = append $secretsProviderNamespaces . }}
+{{- end }}
+{{- range $ns := ($secretsProviderNamespaces | uniq) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sharko.fullname" $ }}-secrets-provider
+  namespace: {{ $ns }}
+  labels:
+    {{- include "sharko.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "sharko.fullname" $ }}-secrets-provider
+  namespace: {{ $ns }}
+  labels:
+    {{- include "sharko.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "sharko.fullname" $ }}-secrets-provider
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "sharko.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,219 @@
+package api
+
+// audit_coverage_test.go — CI guard that fails if any mutating handler lacks
+// audit.Enrich( in its body.
+//
+// The test:
+//  1. Asks the ROUTER what it registered (routeInventory, route_registry.go) —
+//     not the source for a literal mux.HandleFunc call. Reading source read one
+//     spelling of registering a route; a route registered through a helper was
+//     invisible to this guard and to its authz and tier siblings (B16).
+//  2. Keeps the handlers registered for POST/PUT/PATCH/DELETE.
+//  3. Locates func (s *Server) handleXXX in the package files.
+//  4. Checks that the function body contains audit.Enrich(.
+//  5. Handlers in the allowlist are skipped.
+//
+// collectMutatingHandlers below is the shared route-inventory seam all three
+// coverage guards use.
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// auditAllowlist contains handler names that legitimately skip handler-level
+// audit.Enrich calls. Each entry must have a justification comment.
+var auditAllowlist = map[string]string{
+	// Auth — emits fine-grained login/login_failed/logout via s.auditLog.Add;
+	// middleware skips these paths explicitly so there is no double-emission.
+	// handleLoginRateLimited is the registered handler; it applies the per-IP
+	// limit and delegates to handleLogin, which does the emitting. Both are
+	// named so the reason survives whichever one a future route points at.
+	"handleLoginRateLimited": "rate-limit wrapper around handleLogin, which emits login / login_failed directly; middleware skips /auth/login",
+	"handleLogout":           "emits logout directly; middleware skips /auth/logout",
+
+	// Stale dead-route stub (V124-6.1 / BUG-021) — returns 404 with a hint
+	// pointing at /auth/login. Not a real action; middleware skips /api/v1/login.
+	"handleStaleLoginRoute": "stale-route 404 stub; middleware skips /api/v1/login",
+
+	// Hash — utility endpoint, only available when auth is disabled; not a meaningful audit event.
+	"handleHashPassword": "utility endpoint, no meaningful audit event",
+
+	// Heartbeat — system noise (client keep-alive pings on long-running operations).
+	"handleOperationHeartbeat": "system noise; no semantic audit value",
+
+	// Mark-all-read / mark-one-read — UI state update, not an operator action.
+	"handleMarkAllNotificationsRead": "UI state update, not an operator action",
+	"handleMarkNotificationRead":     "UI state update, not an operator action",
+
+	// Agent chat — potentially high-frequency; skipped per design decision.
+	"handleAgentChat": "potentially high-frequency; skip per design decision",
+
+	// Webhooks — emits webhook_received with HMAC context; middleware skips this path.
+	"handleGitWebhook": "emits a push entry directly; middleware skips /webhooks/git",
+
+	// Read-like POSTs — these are queries/analysis that don't mutate state.
+	"handleGetAISummary": "read-only analysis endpoint; POST because it accepts a large body",
+	"handleTestAIConfig": "test-only endpoint that does not persist changes; not a mutating action",
+
+	// v1.21 QA Bundle 4 (Fix #4): preview-merge returns a candidate body
+	// for the UI diff — it does not write Git. POST is used so the body
+	// can grow optional knobs in the future.
+	"handlePreviewMergeAddonValues": "read-only diff preview; commit happens through PUT /addons/{name}/values",
+
+	// v4 Wave 2 Story 5.1: the migration preview computes the plan and
+	// writes nothing — no branch, no commit, no PR. POST so the plan can
+	// take options later. The migration itself (handleMigrateRepo) does
+	// enrich.
+	"handleMigrationPreview": "read-only migration plan; the migration itself is POST /migration/migrate",
+}
+
+// mutatingMethods is the set of HTTP methods we treat as mutating.
+var mutatingMethods = map[string]bool{
+	"POST":   true,
+	"PUT":    true,
+	"PATCH":  true,
+	"DELETE": true,
+}
+
+func TestAuditCoverage(t *testing.T) {
+	pkgDir, err := findPackageDir()
+	if err != nil {
+		t.Fatalf("cannot locate internal/api package: %v", err)
+	}
+
+	// Parse all non-test .go files in the package.
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, pkgDir, func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parsing package: %v", err)
+	}
+
+	pkg, ok := pkgs["api"]
+	if !ok {
+		t.Fatal("package 'api' not found in parsed directory")
+	}
+
+	// Step 1: collect handler names registered for mutating methods.
+	mutatingHandlers := collectMutatingHandlers(t)
+
+	// Step 2: for each handler, verify audit.Enrich presence.
+	var missing []string
+	for handler := range mutatingHandlers {
+		if reason, allowed := auditAllowlist[handler]; allowed {
+			t.Logf("SKIP %s — %s", handler, reason)
+			continue
+		}
+		if !handlerHasEnrich(pkg, handler) {
+			missing = append(missing, handler)
+		}
+	}
+
+	if len(missing) > 0 {
+		t.Errorf("\nThe following mutating handlers are missing audit.Enrich(...) calls:\n")
+		for _, h := range missing {
+			t.Errorf("  - %s", h)
+		}
+		t.Error("\nAdd audit.Enrich(r.Context(), audit.Fields{Event: \"...\", ...}) before writing the response,")
+		t.Error("or add the handler to auditAllowlist in audit_coverage_test.go with a justification.")
+	}
+}
+
+// collectMutatingHandlers returns the name of every handler the router
+// registered for a mutating HTTP method.
+//
+// It runs the real registration path and reads back what it registered, so a
+// route reached through a helper, a loop, or a handler held in a variable is
+// counted exactly like an inline one. A route that does not go through the
+// registrar is not served at all — see route_registry.go.
+func collectMutatingHandlers(t *testing.T) map[string]struct{} {
+	t.Helper()
+	handlers := make(map[string]struct{})
+	for _, route := range routeInventory() {
+		if !mutatingMethods[route.Method] {
+			continue
+		}
+		if route.Anonymous {
+			// route_registry_guard_test.go fails on this separately and by
+			// name; skipping here keeps THIS guard's message about audit.
+			continue
+		}
+		handlers[route.HandlerName] = struct{}{}
+	}
+	return handlers
+}
+
+// handlerHasEnrich checks whether the function body for handlerName contains
+// a call to audit.Enrich(.
+func handlerHasEnrich(pkg *ast.Package, handlerName string) bool {
+	for _, file := range pkg.Files {
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != handlerName || fn.Body == nil {
+				continue
+			}
+			if bodyContainsEnrich(fn.Body) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bodyContainsEnrich walks the function body AST and returns true if any
+// call to audit.Enrich is present.
+func bodyContainsEnrich(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if sel.Sel.Name == "Enrich" {
+			// Check that the receiver is the "audit" package.
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "audit" {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// findPackageDir locates the internal/api directory relative to this test file.
+func findPackageDir() (string, error) {
+	// __file__ is not available in Go tests, so we walk up from cwd.
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	// Tests run with cwd = package directory, so we can check relative paths.
+	candidate := filepath.Clean(dir)
+	if _, err := os.Stat(filepath.Join(candidate, "router.go")); err == nil {
+		return candidate, nil
+	}
+	// Fall back: walk up looking for internal/api
+	for i := 0; i < 6; i++ {
+		candidate := filepath.Join(dir, "internal", "api")
+		if _, err := os.Stat(filepath.Join(candidate, "router.go")); err == nil {
+			return candidate, nil
+		}
+		dir = filepath.Dir(dir)
+	}
+	return "", os.ErrNotExist
+}

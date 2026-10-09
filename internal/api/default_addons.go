@@ -1,0 +1,305 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/schema"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	// DefaultAddonsFilename is the canonical git filename for default addons.
+	DefaultAddonsFilename = "default-addons.yaml"
+	// DefaultAddonsPath is the full git path under the configuration directory.
+	DefaultAddonsPath = "configuration/default-addons.yaml"
+	// DefaultAddonsSchemaHeader is the yaml-language-server directive.
+	DefaultAddonsSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/default-addons.v1.json"
+)
+
+// DefaultAddonsResponse is the JSON shape returned by GET /default-addons.
+type DefaultAddonsResponse struct {
+	Addons []string `json:"addons"`
+}
+
+// DefaultAddonsPutRequest is the JSON shape accepted by PUT /default-addons.
+type DefaultAddonsPutRequest struct {
+	Addons []string `json:"addons"`
+	DryRun bool     `json:"dry_run,omitempty"`
+}
+
+// handleGetDefaultAddons godoc
+//
+// @Summary Get default addons
+// @Description Returns the current set of default addon names (auto-enabled on cluster registration without explicit addons). Reads from default-addons.yaml if present, falls back to the connection's gitops.default_addons string for backward compatibility.
+// @Tags default-addons
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} DefaultAddonsResponse "Current default addons"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /default-addons [get]
+func (s *Server) handleGetDefaultAddons(w http.ResponseWriter, r *http.Request) {
+	addons, err := s.ReadDefaultAddons(r.Context())
+	if err != nil {
+		writeServerError(w, http.StatusInternalServerError, "read_default_addons", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, DefaultAddonsResponse{Addons: addons})
+}
+
+// handlePutDefaultAddons godoc
+//
+// @Summary Update default addons
+// @Description Replaces the current default addon set with the supplied list. Opens a PR with the new default-addons.yaml (or updates an existing open PR for idempotency). Does NOT mutate the connection. This is a v3-layout-only writer (configuration/default-addons.yaml is not a file a v4 repo reads) — on a v4 repo it returns 409 with code `repo_layout`, dry_run included, the same refusal shape as the other v3 catalog writers.
+// @Tags default-addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body DefaultAddonsPutRequest true "New default addon list"
+// @Success 200 {object} map[string]interface{} "PR created/updated"
+// @Failure 400 {object} map[string]interface{} "Invalid request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "The repo uses the v4 layout (code repo_layout)"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /default-addons [put]
+func (s *Server) handlePutDefaultAddons(w http.ResponseWriter, r *http.Request) {
+	// v4-8-4 role gate audit finding: this handler mutates the GLOBAL
+	// default-addon set (every future cluster registration is affected) via
+	// a real PR write, but had no authz gate at all before this fix — any
+	// authenticated caller, viewer included, could change it. Gated at the
+	// same Operator+ level as the other catalog-editing actions
+	// (addon.add-to-catalog / addon.update-catalog).
+	if !authz.RequireWithResponse(w, r, "default-addons.update") {
+		return
+	}
+
+	// Audit enrichment (mutating handler).
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "default_addons_updated",
+		Resource: "default-addons",
+	})
+
+	// A v3 repo must migrate first (Story 5.1).
+	if s.refuseV3WriteOnActiveRepo(r.Context(), w) {
+		return
+	}
+
+	var req DefaultAddonsPutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Normalize the input: strip whitespace, deduplicate, filter empty.
+	normalized := normalizeAddonNames(req.Addons)
+
+	// Marshal to enveloped YAML.
+	fileBody, err := marshalDefaultAddons(normalized)
+	if err != nil {
+		writeServerError(w, http.StatusInternalServerError, "marshal_default_addons", err)
+		return
+	}
+
+	// Git is resolved before ArgoCD so the v4-layout check below can run
+	// before spending an upstream ArgoCD call on a request that was never
+	// going to be honoured (same rationale as
+	// refuseV3ValuesSurfaceOnActiveRepo).
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeNoActiveGitConnection(w, r)
+		return
+	}
+
+	// This writes configuration/default-addons.yaml, a v3-only file a v4
+	// repo does not have — the same class of write the #629 sweep gated on
+	// the other nine v3 writers (legacy catalog add/remove/configure,
+	// enable/disable addon). This endpoint was the one it missed (walk
+	// finding). Refuse before any read or branch, dry_run included, so a
+	// "preview" never implies a save that would never take effect. Reuses
+	// the same v4-repo probe and coded-409 shape the values-editor gate
+	// already uses (CodeRepoLayout / writeCodedError) rather than a new
+	// check.
+	if s.isV4Repo(r.Context(), git) {
+		writeCodedError(w, http.StatusConflict, CodeRepoLayout,
+			"default addons are not part of the v4 layout — addon picks happen per-cluster in the catalog",
+			nil)
+		return
+	}
+
+	// Build orchestrator (same pattern as clusters_batch.go).
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeNoActiveArgocdConnection(w, r)
+		return
+	}
+
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
+	s.attachPRTracker(orch)
+
+	files := map[string][]byte{DefaultAddonsPath: fileBody}
+	operation := "update default addons"
+	meta := orchestrator.PRMetadata{
+		OperationCode: "default_addons_update",
+		Title:         "Update default addons",
+		// Cluster and Addon fields are empty — this is a global operation.
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		filePreviews := []orchestrator.FilePreview{
+			{Path: DefaultAddonsPath, Action: "update"},
+		}
+		dryRunResult := &orchestrator.GitResult{
+			DryRun: &orchestrator.DryRunResult{
+				EffectiveAddons: normalized,
+				FilesToWrite:    filePreviews,
+				PRTitle:         meta.Title,
+				SecretsToCreate: []string{},
+			},
+		}
+		writeJSON(w, http.StatusOK, dryRunResult)
+		return
+	}
+
+	result, err := orch.CommitFilesAsPRWithMeta(r.Context(), files, operation, meta)
+	if err != nil {
+		writeServerError(w, http.StatusInternalServerError, "commit_default_addons", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Default addons PR created/updated",
+		"pr_url":  result.PRUrl,
+		"pr_id":   result.PRID,
+	})
+}
+
+// ReadDefaultAddons reads the current default addon set from git (default-addons.yaml)
+// or falls back to the connection's gitops.default_addons string. Exported so boot
+// and hot-reload can reuse the same read+fallback logic.
+func (s *Server) ReadDefaultAddons(ctx context.Context) ([]string, error) {
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		// B1: same wrap, same leak, same fix as everywhere else in this set.
+		slog.Warn("default addons: no usable Git connection for the active connection")
+		return nil, credsafe.ErrNoActiveGitConnection
+	}
+
+	// Attempt to read default-addons.yaml from git.
+	body, err := git.GetFileContent(ctx, DefaultAddonsPath, s.gitopsConfig().BaseBranch)
+	if err == nil && len(body) > 0 {
+		// File exists — parse it.
+		addons, parseErr := parseDefaultAddons(body)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing default-addons.yaml: %w", parseErr)
+		}
+		return addons, nil
+	}
+
+	// File absent or empty — fall back to connection string.
+	// Fetch connection for the fallback path.
+	conn, connErr := s.connSvc.GetActiveConnection()
+	if connErr != nil {
+		// If we can't fetch the connection and the file doesn't exist, return empty.
+		return []string{}, nil
+	}
+
+	if conn == nil || conn.GitOps == nil || conn.GitOps.DefaultAddons == "" {
+		return []string{}, nil
+	}
+
+	// Parse the comma-separated string.
+	parts := strings.Split(conn.GitOps.DefaultAddons, ",")
+	return normalizeAddonNames(parts), nil
+}
+
+// parseDefaultAddons parses a default-addons.yaml body (enveloped) and returns the addon names.
+func parseDefaultAddons(body []byte) ([]string, error) {
+	enveloped, err := schema.IsEnveloped(body)
+	if err != nil {
+		return nil, fmt.Errorf("checking envelope: %w", err)
+	}
+	if !enveloped {
+		return nil, fmt.Errorf("default-addons.yaml must be enveloped (apiVersion: sharko.dev/v1, kind: DefaultAddons)")
+	}
+
+	// Validate against schema.
+	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+		if err := validator.Validate(schema.KindDefaultAddons, body); err != nil {
+			return nil, fmt.Errorf("validating default-addons.yaml: %w", err)
+		}
+	}
+
+	// Parse the envelope.
+	var doc schema.Envelope[config.DefaultAddonsSpec]
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("unmarshalling default-addons.yaml: %w", err)
+	}
+	if doc.Kind != schema.KindDefaultAddons {
+		return nil, fmt.Errorf("wrong kind %q, expected %q", doc.Kind, schema.KindDefaultAddons)
+	}
+
+	return normalizeAddonNames(doc.Spec.Addons), nil
+}
+
+// marshalDefaultAddons serializes addon names to the enveloped default-addons.yaml format.
+func marshalDefaultAddons(addons []string) ([]byte, error) {
+	if addons == nil {
+		addons = []string{}
+	}
+
+	doc := schema.Envelope[config.DefaultAddonsSpec]{
+		APIVersion: schema.APIVersion,
+		Kind:       schema.KindDefaultAddons,
+		Metadata:   schema.Metadata{Name: "default-addons"},
+		Spec:       config.DefaultAddonsSpec{Addons: addons},
+	}
+
+	body, err := yaml.Marshal(&doc)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling envelope: %w", err)
+	}
+
+	// Validate before returning (safety net).
+	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+		if err := validator.Validate(schema.KindDefaultAddons, body); err != nil {
+			return nil, fmt.Errorf("validating before write: %w", err)
+		}
+	}
+
+	// Prepend schema header.
+	var buf strings.Builder
+	buf.WriteString(DefaultAddonsSchemaHeader)
+	buf.WriteByte('\n')
+	buf.Write(body)
+	return []byte(buf.String()), nil
+}
+
+// normalizeAddonNames trims whitespace, filters empties, and deduplicates addon names.
+func normalizeAddonNames(names []string) []string {
+	seen := make(map[string]bool, len(names))
+	var result []string
+	for _, name := range names {
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		if seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		result = append(result, trimmed)
+	}
+	return result
+}

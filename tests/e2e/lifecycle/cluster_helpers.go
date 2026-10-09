@@ -1,0 +1,634 @@
+//go:build e2e
+
+// Package lifecycle holds the V2 Epic 7-1.4+ lifecycle subtests.
+//
+// Each domain (cluster, addon, catalog, RBAC, ...) owns its own _test.go
+// file plus a sibling _helpers.go for subtest-shared utilities. The
+// helpers files are deliberately local to the package — concurrent
+// agents implementing other lifecycle stories must not depend on them
+// (they should grow their own _helpers.go alongside their _test.go).
+//
+// The cluster lifecycle file (cluster_test.go) is V2 Epic 7-1.4 — it
+// covers the cluster + cluster-orphan endpoints against an in-process
+// sharko backed by a real ArgoCD installed in a kind management
+// cluster. Subtests skip-graceful when the kubeconfig path lacks a
+// credentials provider (EKS-only handlers).
+package lifecycle
+
+import (
+	"bufio"
+	"context"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/tests/e2e/harness"
+	"gopkg.in/yaml.v3"
+)
+
+// argocdAccess captures the host-reachable URL + admin bearer token for
+// an ArgoCD installation living inside a kind management cluster.
+//
+// Lifecycle:
+//   - StartArgoCDPortForward spawns `kubectl port-forward` on a free
+//     local port, waits for the listener to come up, and registers a
+//     t.Cleanup that kills the process group.
+//   - FetchAdminPassword reads the bootstrap secret created by
+//     argocd-installer (argocd-initial-admin-secret).
+//   - Login posts /api/v1/session against the port-forwarded URL with
+//     the admin password and returns a JWT bearer token. The caller
+//     stores it on the active sharko Connection.Argocd.Token so every
+//     downstream argocd-touching handler authenticates correctly.
+//
+// The ArgoCD admin user has full-cluster permissions, which is exactly
+// what sharko's per-cluster register/list/diff calls require. Using the
+// admin token sidesteps the apiKey-capability dance the production
+// service-account flow needs (see scripts/sharko-dev.sh for that
+// version).
+type argocdAccess struct {
+	URL      string // e.g. "https://127.0.0.1:38543" — TLS, self-signed
+	Token    string // JWT bearer token from /api/v1/session
+	pfCancel context.CancelFunc
+}
+
+// startArgoCDAccess wires up host-reachable access to an ArgoCD that has
+// already been installed into mgmt via harness.InstallArgoCD. Steps:
+//
+//  1. start a `kubectl port-forward -n argocd svc/argocd-server :443`
+//     on a free local TCP port; wait until the local listener accepts
+//     a TCP connection (proves port-forward is up).
+//  2. read the argocd-initial-admin-secret to get the admin password.
+//  3. POST /api/v1/session with admin/password and capture the token
+//     from the JSON response.
+//
+// Calls t.Fatalf on any step failure and registers t.Cleanup to kill
+// the port-forward.
+func startArgoCDAccess(t *testing.T, mgmt harness.KindCluster) *argocdAccess {
+	t.Helper()
+
+	// 1. allocate a free local TCP port. We let port-forward bind to a
+	//    specific port (vs `:0`) so the URL is deterministic before the
+	//    process is up.
+	localPort, err := pickFreePort()
+	if err != nil {
+		t.Fatalf("pickFreePort: %v", err)
+	}
+
+	pfCtx, pfCancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(pfCtx, "kubectl",
+		"--kubeconfig", mgmt.Kubeconfig,
+		"port-forward", "-n", "argocd",
+		"svc/argocd-server",
+		fmt.Sprintf("%d:443", localPort),
+	)
+	// Stream port-forward output through a pipe so we can spot
+	// "error" lines in the test log without polluting stderr at
+	// process exit time.
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		pfCancel()
+		t.Fatalf("kubectl port-forward start: %v", err)
+	}
+	t.Cleanup(func() {
+		pfCancel()
+		_ = cmd.Wait()
+	})
+	go drainArgoLog(t, "argocd-pf-out", stdout)
+	go drainArgoLog(t, "argocd-pf-err", stderr)
+
+	// 2. wait for the listener to accept TCP — port-forward typically
+	//    comes up in <1s but we give it 30s (image pull on first run
+	//    can drag CI nodes).
+	addr := fmt.Sprintf("127.0.0.1:%d", localPort)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		if err == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if time.Now().After(deadline) {
+		t.Fatalf("argocd port-forward never accepted TCP on %s", addr)
+	}
+
+	urlStr := fmt.Sprintf("https://%s", addr)
+	t.Logf("harness/lifecycle: argocd port-forward up at %s", urlStr)
+
+	// 3. read admin password from argocd-initial-admin-secret.
+	pwd := fetchArgoAdminPassword(t, mgmt)
+	t.Logf("harness/lifecycle: argocd admin password obtained (len=%d)", len(pwd))
+
+	// 4. login and get a session token.
+	token := argoLogin(t, urlStr, "admin", pwd)
+	t.Logf("harness/lifecycle: argocd admin session token obtained (len=%d)", len(token))
+
+	return &argocdAccess{
+		URL:      urlStr,
+		Token:    token,
+		pfCancel: pfCancel,
+	}
+}
+
+// pickFreePort asks the kernel for a free local TCP port by binding to
+// :0 and immediately closing the listener. Race window is tiny but
+// non-zero; acceptable for a single-shot test setup.
+func pickFreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// drainArgoLog tails port-forward stdout/stderr line-by-line, mirroring
+// each line into t.Log with a prefix. Stops cleanly when the pipe
+// closes (process exit) so it does not leak goroutines.
+func drainArgoLog(t *testing.T, tag string, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		t.Logf("[%s] %s", tag, scanner.Text())
+	}
+}
+
+// fetchArgoAdminPassword runs `kubectl get secret argocd-initial-admin-secret`
+// against mgmt and returns the decoded admin password. The secret is
+// created by ArgoCD's installer and persists for the lifetime of the
+// install (it is NOT rotated on argocd-server restart by default).
+//
+// Retries for up to 90s because the initial-admin-secret is created by
+// argocd-server itself on first start, AFTER `kubectl wait
+// deployment/argocd-server --for=available` returns. Polling masks the
+// race rather than depending on a single command happening to win it.
+func fetchArgoAdminPassword(t *testing.T, mgmt harness.KindCluster) string {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	var lastErr error
+	var lastOut string
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		out, err := exec.CommandContext(ctx, "kubectl",
+			"--kubeconfig", mgmt.Kubeconfig,
+			"-n", "argocd",
+			"get", "secret", "argocd-initial-admin-secret",
+			"-o", "jsonpath={.data.password}",
+		).CombinedOutput()
+		cancel()
+		if err == nil {
+			b64 := strings.TrimSpace(string(out))
+			if b64 != "" {
+				dec, decErr := base64.StdEncoding.DecodeString(b64)
+				if decErr == nil {
+					pwd := strings.TrimSpace(string(dec))
+					if pwd != "" {
+						return pwd
+					}
+				}
+				lastErr = decErr
+			} else {
+				lastErr = fmt.Errorf("secret data.password empty")
+			}
+		} else {
+			lastErr = err
+			lastOut = string(out)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("argocd-initial-admin-secret never resolved within 90s: %v\nlast output: %s", lastErr, lastOut)
+	return "" // unreachable
+}
+
+// argoLogin POSTs /api/v1/session with username/password and returns
+// the JWT token from the JSON response. TLS verification is disabled
+// (kind-installed argocd uses a self-signed cert).
+func argoLogin(t *testing.T, baseURL, user, pwd string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{
+		"username": user,
+		"password": pwd,
+	})
+	httpClient := &http.Client{
+		Timeout:   15 * time.Second,
+		Transport: insecureTransport(),
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/session", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("argoLogin: build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("argoLogin: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("argoLogin: status=%d body=%s", resp.StatusCode, raw)
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("argoLogin: decode: %v", err)
+	}
+	if out.Token == "" {
+		t.Fatalf("argoLogin: empty token in response: %s", raw)
+	}
+	return out.Token
+}
+
+// insecureTransport returns an http.Transport with TLS verification
+// disabled. The kind-installed argocd serves a self-signed cert that no
+// trust store on the host validates by default — every existing sharko
+// argocd client also runs with insecure=true (see
+// internal/argocd/client.go NewClient call sites), so we mirror it.
+func insecureTransport() *http.Transport {
+	return &http.Transport{
+		//nolint:gosec // intentional: kind-installed argocd uses self-signed certs
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v4 bootstrap seeding
+// ---------------------------------------------------------------------------
+
+// seedV4Bootstrap commits the same v4 bootstrap seed InitRepo /
+// CollectBootstrapFiles produce in production (orchestrator.
+// BuildV4SeedFiles — empty data folders, the engine pin at
+// sharko-engine.yaml, and README.md) into mock, before any cluster
+// endpoint touches the repo.
+//
+// Why this matters here (v4 closing wave finding): every mutating
+// cluster/addon handler now refuses a write on a v3-format repo
+// (internal/orchestrator/v3_migration_gate.go) — a repo counts as
+// v3-format the moment it has real content at one of the v3 marker
+// paths (bootstrap/Chart.yaml or configuration/managed-clusters.yaml).
+// This test's own first write (RegisterManagedCluster, through the
+// v3-shaped RepoPathsConfig every in-process boot wires by default —
+// see sharko.go's startSharkoInProcess) lands exactly on that second
+// marker path, so every subtest downstream that mutates the repo again
+// inherits a 409 — the migration gate is a genuine one-way door for a
+// v3 repo already carrying real content, not something a fixture tweak
+// can route around.
+//
+// Seeding the v4 engine pin FIRST makes the repo v4-format from request
+// one: RegisterCluster (internal/orchestrator/cluster.go) already
+// branches on isV4Repo and writes the cluster registry to the v4 root
+// path (managed-clusters.yaml) instead of the v3 one (configuration/
+// managed-clusters.yaml), so the v3 marker path never gets written and
+// the migration gate never fires. Register / list / get / batch-register
+// all keep working through the SAME v3-shaped API routes this test
+// already calls — production dual-branches on repo format internally,
+// so the test needs no new endpoints for those.
+//
+// UPDATE (v4-coherence-closure lane P, e2e honesty round 2): AdoptClusters,
+// UnadoptCluster (internal/orchestrator/{adopt,unadopt}.go) and the
+// addon-label PATCH behind PatchClusterAddons (cluster.go's
+// UpdateClusterAddons) ALL now have real v4 implementations — the
+// ErrV4RepoUnsupported refusal this comment used to describe is retired
+// for those three doors (it survives only as a defensive fallback the API
+// handlers keep for a repo state the orchestrator should never produce).
+// cluster_test.go's PatchClusterLabels and UnadoptCluster subtests assert
+// real success now. AdoptClusters is the one exception worth calling out:
+// its v4 preflight needs an argo-secret-manager this harness never wires
+// (see that subtest's own comment), so it asserts a specific, documented
+// failure shape instead of a blanket "any non-2xx is fine" — not a
+// v4-unsupported 409, a real "no in-cluster install" preflight failure.
+func seedV4Bootstrap(t *testing.T, mock *harness.MockGitProvider, repoURL string) {
+	t.Helper()
+	files := orchestrator.BuildV4SeedFiles(
+		orchestrator.GitOpsConfig{RepoURL: repoURL, BaseBranch: "main"},
+		orchestrator.RepoPathsConfig{},
+	)
+	if err := mock.BatchCreateFiles(t.Context(), files, "main", "seed: v4 bootstrap"); err != nil {
+		t.Fatalf("seedV4Bootstrap: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// connection seeding
+// ---------------------------------------------------------------------------
+
+// seedActiveConnection POSTs a connection to the running sharko via the
+// public API and marks it active. Uses the bootstrap admin client, so
+// the caller does not need an explicit auth dance.
+//
+// The Git side is irrelevant for read-time GetActiveConnection() because
+// SharkoConfig.GitProvider already installed an in-memory MockGitProvider
+// override on the connection service — but the connection still needs a
+// valid Git config to pass create-time validation. We supply Owner+Repo
+// only; sharko's validator accepts that shape and the runtime git side
+// is mocked separately via SharkoConfig.GitProvider override.
+//
+// Seeding the GitOps block is mandatory. The in-process harness leaves
+// Server.gitopsCfg zero-valued, and the only path that populates it is
+// ReinitializeFromConnection, which only copies fields from a non-nil
+// conn.GitOps. Without an explicit gitops block the orchestrator
+// commits with branchName="" and base="" → ghmock CreatePR returns
+// 'base branch "" not found' → registration returns 207/partial with
+// no PR, no managed-cluster entry → every downstream subtest fails
+// with "cluster not found". Defaults match the GitOpsSettings doc
+// comments.
+//
+// pr_auto_merge=true closes Sharko's auto-merge loop in-process so the
+// register flow lands the values + managed-clusters.yaml on main
+// synchronously — the test's ListClusters Eventually-poll then sees
+// the managed cluster within one polling iteration.
+func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToken string) {
+	t.Helper()
+
+	// Validate the URL parses — surfaces config typos earlier than
+	// sharko's create handler would.
+	if _, err := url.Parse(argoURL); err != nil {
+		t.Fatalf("seedActiveConnection: invalid argoURL %q: %v", argoURL, err)
+	}
+
+	autoMerge := true
+	body := map[string]any{
+		"name": "e2e-cluster-lifecycle",
+		"git": models.GitRepoConfig{
+			Provider: models.GitProviderGitHub,
+			Owner:    "sharko-e2e",
+			Repo:     "sharko-addons",
+			Token:    "ghmock-test-token", // unused (gitprovider override is wired)
+		},
+		"argocd": models.ArgocdConfig{
+			ServerURL: argoURL,
+			Token:     argoToken,
+			Namespace: "argocd",
+			Insecure:  true,
+		},
+		"gitops": &models.GitOpsSettings{
+			BaseBranch:   "main",     // ghmock pre-seeds branch "main" with README.md
+			BranchPrefix: "sharko/",  // matches production default
+			CommitPrefix: "sharko:",  // matches production default
+			PRAutoMerge:  &autoMerge, // squash-merges land the managed-clusters update on main synchronously
+		},
+		"set_as_default": true,
+	}
+
+	// Use the lower-level Do helper so we can accept either 200 or 201
+	// (the server returns 201 on create today, but the contract is "any
+	// 2xx").
+	resp := admin.Do(t, http.MethodPost, "/api/v1/connections/", body)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("seedActiveConnection: create status=%d body=%s", resp.StatusCode, raw)
+	}
+
+	// Activate the connection (POST /connections/active).
+	resp2 := admin.Do(t, http.MethodPost, "/api/v1/connections/active", map[string]string{
+		"connection_name": "e2e-cluster-lifecycle",
+	})
+	defer resp2.Body.Close()
+	raw2, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
+		t.Fatalf("seedActiveConnection: activate status=%d body=%s", resp2.StatusCode, raw2)
+	}
+
+	t.Logf("harness/lifecycle: seeded active connection e2e-cluster-lifecycle [argo=%s]", argoURL)
+}
+
+// ---------------------------------------------------------------------------
+// kubeconfig fixture for kubeconfig-provider register
+// ---------------------------------------------------------------------------
+
+// makeKubeconfigRegisterBody assembles a kubeconfig-provider register
+// payload for the in-process Sharko in TestClusterLifecycle.
+//
+// Why BuildHostReachableKubeconfig and not BuildKubeconfig:
+// In-process Sharko runs on the HOST (httptest.NewServer on
+// 127.0.0.1:<random>). Sharko's RegisterCluster orchestrator calls
+// verify.Stage1 → Discovery().ServerVersion() against the kubeconfig's
+// server URL. BuildKubeconfig points at the Docker bridge IP
+// (172.18.0.x:6443) which is unreachable from the macOS host (Docker
+// Desktop runs containers in a Linux VM behind a non-routable bridge),
+// so the request hangs ~10s then returns 502 "context deadline exceeded".
+// BuildHostReachableKubeconfig points at the host-bound 127.0.0.1:<port>
+// that kind already exposes, so the host-process verify completes in ms.
+//
+// ArgoCD-direct callers (registerClusterInArgoCDDirect tests) still
+// use BuildKubeconfig because the consuming process is the ArgoCD Pod
+// inside the kind cluster, where the Docker bridge IP IS reachable.
+// See harness.BuildHostReachableKubeconfig doc for the full contrast.
+func makeKubeconfigRegisterBody(t *testing.T, target harness.KindCluster, name string) map[string]any {
+	t.Helper()
+	saName := "sharko-e2e-sa"
+	_ = harness.CreateServiceAccountToken(t, target, saName)
+	kubeconfig := harness.BuildHostReachableKubeconfig(t, target, saName)
+	return map[string]any{
+		"name":       name,
+		"provider":   "kubeconfig",
+		"kubeconfig": kubeconfig,
+		"addons":     map[string]bool{}, // no addons for the register path test
+	}
+}
+
+// enableLegacyInlinePaste opts this test's Sharko into legacy inline
+// credentials through the real settings door — the same
+// PUT /api/v1/settings/allow-inline-credentials an admin uses. The
+// server-wide default is OFF (connection-reconciliation epic, product
+// correction 5), and every makeKubeconfigRegisterBody registration pastes a
+// kubeconfig — the inline path the default now refuses. Each test that
+// registers this way opts in explicitly; the default itself and the refusal
+// are never weakened.
+func enableLegacyInlinePaste(t *testing.T, admin *harness.Client) {
+	t.Helper()
+	var resp struct {
+		AllowInlineCredentials bool `json:"allow_inline_credentials"`
+	}
+	admin.PutJSON(t, "/api/v1/settings/allow-inline-credentials",
+		map[string]any{"allow_inline_credentials": true}, &resp)
+	if !resp.AllowInlineCredentials {
+		t.Fatalf("enable legacy inline credentials: the server did not confirm the setting")
+	}
+}
+
+// fileExists is a tiny helper for the prereq-skip guards in
+// cluster_test.go. exec.LookPath returns an error AND nil binary when
+// the lookup fails; we want a single-bool answer.
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// ---------------------------------------------------------------------------
+// Direct ArgoCD cluster registration helper
+// ---------------------------------------------------------------------------
+
+// buildTLSClientConfig returns the ArgoCD cluster-secret tlsClientConfig
+// block, enforcing the same insecure/caData mutual exclusion Sharko's own
+// production client uses when it builds this exact payload
+// (internal/argocd/client_write.go::RegisterCluster): caData present always
+// pairs with insecure:false, never insecure:true. The two fields answer the
+// same question two different ways — "skip verifying the cert" vs. "verify
+// it against this CA" — so sending both is a contradiction the ArgoCD
+// cluster API is entitled to reject, or at best silently ignore one of.
+//
+// insecure:true drops caData entirely rather than sending both — this is
+// task #49 round 2: round 1 (PR #585) changed this helper's hard-coded
+// "insecure": false to "insecure": true so the ephemeral kind cluster's
+// self-signed cert would be tolerated under a stricter, unpinned ArgoCD
+// stable, but left the caData field sitting right next to it, so the
+// payload asked ArgoCD to both skip verification AND validate against a CA
+// in the same breath. Every registration/cluster payload the harness builds
+// should go through this helper rather than assembling tlsClientConfig
+// inline, so the class does not resurface at a second call site.
+func buildTLSClientConfig(insecure bool, caDataB64 string) map[string]any {
+	if insecure {
+		return map[string]any{"insecure": true}
+	}
+	return map[string]any{
+		"caData":   caDataB64,
+		"insecure": false,
+	}
+}
+
+// registerClusterInArgoCDDirect registers a target kind cluster directly in
+// ArgoCD via ArgoCD's REST API, bypassing Sharko's POST /api/v1/clusters
+// flow entirely.
+//
+// Why this exists: Sharko's RegisterCluster path goes through Git
+// (commitChangesWithMeta → CreateBranch / BatchCreateFiles / CreatePullRequest /
+// MergePullRequest). Sharko's GitHubProvider uses the go-github REST client
+// hard-wired to api.github.com — the in-cluster gitfake Service speaks the
+// git smart-HTTP wire protocol, NOT GitHub's REST API, so an in-pod Sharko
+// can never satisfy its own git operations against the gitfake. Registering
+// the cluster directly via ArgoCD's REST API lands a bearerToken-shape
+// cluster Secret in the argocd namespace — the same end-state Sharko's flow
+// would have produced — and lets the helm-mode Test endpoint subtests exercise
+// the ArgoCDProvider GetCredentials path against a real cluster Secret without
+// any git involvement.
+//
+// Mirrors internal/argocd/client_write.go::RegisterCluster: POST to
+// /api/v1/clusters on the host-port-forwarded ArgoCD URL with a JSON payload
+// {name, server, config: {bearerToken, tlsClientConfig: {caData, insecure}}}.
+//
+// Returns the parsed kubeconfig fields (server, token, ca) for the caller's
+// diagnostic logging. t.Fatalf on any failure.
+func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, target harness.KindCluster, clusterName string) {
+	t.Helper()
+
+	// 1. Build kubeconfig for the target via the existing harness helper —
+	//    this creates an SA + ClusterRoleBinding on the target and assembles
+	//    a kubeconfig with the Docker-network-internal IP (reachable from
+	//    inside the kind cluster's ArgoCD pod).
+	saName := "sharko-e2e-direct-sa"
+	_ = harness.CreateServiceAccountToken(t, target, saName)
+	kubeconfigYAML := harness.BuildKubeconfig(t, target, saName)
+
+	// 2. Parse the kubeconfig to extract Server, CAData (base64), Token.
+	//    Mirrors providers.ParseInlineKubeconfig — but inlined here so the
+	//    test doesn't depend on production package internals.
+	server, caDataB64, token, err := parseKubeconfigForArgoCDRegister(kubeconfigYAML)
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): parse kubeconfig: %v", clusterName, err)
+	}
+
+	// 3. Build the ArgoCD POST /api/v1/clusters payload. The shape matches
+	//    internal/argocd/client_write.go::RegisterCluster exactly so the
+	//    resulting cluster Secret carries the same auth shape Sharko would
+	//    have produced. insecure=true matches the in-process e2e baseline
+	//    (see the buildTLSClientConfig doc comment for why caData is
+	//    dropped when insecure is set).
+	payload := map[string]any{
+		"name":   clusterName,
+		"server": server,
+		"config": map[string]any{
+			"bearerToken":     token,
+			"tlsClientConfig": buildTLSClientConfig(true, caDataB64),
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): marshal payload: %v", clusterName, err)
+	}
+
+	// 4. POST to ArgoCD via the test's existing port-forward + admin JWT.
+	//    upsert=true (ArgoCD honours this only as a query parameter, not as
+	//    a body field) lets the V2-1 perf-loop register the same server URL
+	//    repeatedly with fresh SA tokens without ArgoCD complaining that the
+	//    cluster spec is different from the previous registration.
+	url := argoAccess.URL + "/api/v1/clusters?upsert=true"
+	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: insecureTransport()}
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): build request: %v", clusterName, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+argoAccess.Token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): POST %s: %v", clusterName, url, err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): POST %s status=%d body=%s",
+			clusterName, url, resp.StatusCode, respBody)
+	}
+	t.Logf("harness/lifecycle: registered cluster %q directly in ArgoCD [server=%s]", clusterName, server)
+}
+
+// parseKubeconfigForArgoCDRegister extracts (server, base64CAData, token) from
+// a single-cluster, single-user kubeconfig YAML. Used by
+// registerClusterInArgoCDDirect to convert the kubeconfig produced by
+// harness.BuildKubeconfig into the fields ArgoCD's POST /api/v1/clusters
+// payload requires.
+//
+// We can't use clientcmd.RESTConfigFromKubeConfig directly because that
+// returns *rest.Config with CAData as raw bytes; ArgoCD's payload wants
+// base64-encoded CAData. The kubeconfig harness.BuildKubeconfig produces
+// already has the CA in base64 form (the YAML key
+// "certificate-authority-data"), so we parse the YAML directly to preserve
+// that encoding without a base64 round-trip.
+func parseKubeconfigForArgoCDRegister(kubeconfigYAML string) (server, caDataB64, token string, err error) {
+	var kc struct {
+		Clusters []struct {
+			Cluster struct {
+				Server                   string `yaml:"server"`
+				CertificateAuthorityData string `yaml:"certificate-authority-data"`
+			} `yaml:"cluster"`
+		} `yaml:"clusters"`
+		Users []struct {
+			User struct {
+				Token string `yaml:"token"`
+			} `yaml:"user"`
+		} `yaml:"users"`
+	}
+	if err := yaml.Unmarshal([]byte(kubeconfigYAML), &kc); err != nil {
+		return "", "", "", fmt.Errorf("yaml.Unmarshal: %w", err)
+	}
+	if len(kc.Clusters) == 0 {
+		return "", "", "", fmt.Errorf("no clusters in kubeconfig")
+	}
+	if len(kc.Users) == 0 {
+		return "", "", "", fmt.Errorf("no users in kubeconfig")
+	}
+	server = kc.Clusters[0].Cluster.Server
+	caDataB64 = kc.Clusters[0].Cluster.CertificateAuthorityData
+	token = kc.Users[0].User.Token
+	if server == "" || caDataB64 == "" || token == "" {
+		return "", "", "", fmt.Errorf("missing required kubeconfig fields (server=%v ca=%v token=%v)",
+			server != "", caDataB64 != "", token != "")
+	}
+	return server, caDataB64, token, nil
+}

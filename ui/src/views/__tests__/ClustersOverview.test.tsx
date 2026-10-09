@@ -1,0 +1,758 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { StrictMode } from 'react';
+import { ClustersOverview, CLUSTERS_CACHE_KEY } from '@/views/ClustersOverview';
+import { setCached } from '@/lib/viewCache';
+
+const mockNavigate = vi.fn();
+const mockLocationState: { state?: Record<string, unknown> } = {};
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+    useLocation: () => ({ state: mockLocationState.state }),
+  };
+});
+
+const mockGetClusters = vi.fn();
+const mockHealth = vi.fn();
+vi.mock('@/services/api', () => ({
+  api: {
+    getClusters: (...args: unknown[]) => mockGetClusters(...args),
+    // BUG-041: ClustersOverview now fetches /api/v1/health on mount to read
+    // the cluster_test_available capability flag. Default the mock to "true"
+    // so existing tests keep observing the Test button enabled and do not
+    // need to be rewritten.
+    health: (...args: unknown[]) => mockHealth(...args),
+    // V2-cleanup-89.6 kill switch — not under test here, keep the default.
+    getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
+  },
+}));
+
+const clustersResponse = {
+  clusters: [
+    {
+      name: 'prod-eu',
+      labels: { env: 'prod', region: 'eu' },
+      server_version: '1.28',
+      connection_status: 'connected',
+    },
+    {
+      name: 'staging-us',
+      labels: { env: 'staging' },
+      server_version: '1.27',
+      connection_status: 'failed',
+    },
+    {
+      name: 'in-cluster',
+      labels: {},
+      server_version: '1.28',
+      connection_status: 'connected',
+    },
+  ],
+  health_stats: {
+    total_in_git: 2,
+    connected: 2,
+    failed: 1,
+    missing_from_argocd: 0,
+    not_in_git: 1,
+  },
+};
+
+// V2-cleanup-61.3 (B3): the stat-card row + advanced filter bar are now
+// hidden below 5 total clusters. `clustersResponse` above has only 3 —
+// tests that specifically exercise the stat cards / filter bar need a
+// fixture at or above the collapse threshold.
+const clustersResponseAtThreshold = {
+  clusters: [
+    ...clustersResponse.clusters,
+    {
+      name: 'qa-cluster',
+      labels: { env: 'qa' },
+      server_version: '1.28',
+      connection_status: 'connected',
+    },
+    {
+      name: 'dev-cluster',
+      labels: { env: 'dev' },
+      server_version: '1.28',
+      connection_status: 'connected',
+    },
+  ],
+  health_stats: {
+    total_in_git: 4,
+    connected: 4,
+    failed: 1,
+    missing_from_argocd: 0,
+    not_in_git: 1,
+  },
+};
+
+function renderView() {
+  return render(
+    <MemoryRouter>
+      <ClustersOverview />
+    </MemoryRouter>,
+  );
+}
+
+describe('ClustersOverview', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLocationState.state = undefined;
+    mockGetClusters.mockResolvedValue(clustersResponse);
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: true,
+    });
+  });
+
+  it('renders loading state initially', () => {
+    mockGetClusters.mockReturnValue(new Promise(() => {})); // never resolves
+    renderView();
+    expect(screen.getByText('Loading clusters...')).toBeInTheDocument();
+  });
+
+  // S4 (walk day 7, missing-truth finding a): a quiet subtitle line under
+  // the page title saying what these clusters are and who owns the
+  // connection — the maintainer's walk found the page never said this.
+  it('shows the "Clusters ArgoCD deploys to" subtitle under the page title', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('Clusters ArgoCD deploys to — Sharko manages their connections from git.'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders error state on API failure', async () => {
+    mockGetClusters.mockRejectedValue(new Error('Network error'));
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error')).toBeInTheDocument();
+    });
+  });
+
+  it('renders Try Again button on error and re-fetches when clicked (V124-2.3)', async () => {
+    // First call fails, second call (the retry) succeeds.
+    mockGetClusters.mockRejectedValueOnce(new Error('Boom'));
+    mockGetClusters.mockResolvedValueOnce(clustersResponse);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Boom')).toBeInTheDocument();
+    });
+
+    const retryBtn = screen.getByRole('button', { name: /try again/i });
+    fireEvent.click(retryBtn);
+
+    await waitFor(() => {
+      // Successful retry surfaces the cluster list.
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    // The error message must be gone — not silently lingering.
+    expect(screen.queryByText('Boom')).not.toBeInTheDocument();
+    expect(mockGetClusters).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps prior data on screen when a background refresh fails (V124-2.3)', async () => {
+    // Initial load succeeds.
+    mockGetClusters.mockResolvedValueOnce(clustersResponse);
+    // Background refresh (Refresh button click) fails.
+    mockGetClusters.mockRejectedValueOnce(new Error('Transient 5xx'));
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Trigger a background refresh via the Refresh button (same code path as
+    // the 30s auto-refresh tick). The failed refresh must NOT wipe the
+    // visible cluster list — that was the V124-2.3 blank-out bug.
+    fireEvent.click(screen.getByTitle('Refresh'));
+
+    await waitFor(() => {
+      expect(mockGetClusters).toHaveBeenCalledTimes(2);
+    });
+
+    // Prior good data still on screen — no blank state, no ErrorState
+    // takeover that would wipe the cluster table.
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.queryByText('Transient 5xx')).not.toBeInTheDocument();
+  });
+
+  it('renders clusters data with stat cards and table', async () => {
+    // Stat cards only render at/above the 5-cluster collapse threshold
+    // (V2-cleanup-61.3, B3) — use the at-threshold fixture.
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters')).toBeInTheDocument();
+    });
+
+    // Stat cards — canonical connection vocabulary (V2-cleanup-61.2, D2;
+    // LW-11: "Not managed" reframed as "Available to manage"). "All
+    // Clusters" now also appears as an option in the S3 status select next
+    // to the managed list, so this asserts at-least-one like its siblings
+    // below, not exactly-one.
+    expect(screen.getAllByText('All Clusters').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Connected').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Disconnected').length).toBeGreaterThanOrEqual(1);
+    // v4 walk-findings W2, item 2: this lane's canonical vocabulary label
+    // (clusterStatus.ts) is "Not connected" — "Connecting" implied a
+    // transient wait that this state (ArgoCD has no connection at all) is
+    // not. "Not connected" also appears in the on-demand legend strip, so
+    // (like Connected/Disconnected above) this asserts at-least-one, not
+    // exactly-one.
+    expect(screen.getAllByText('Not connected').length).toBeGreaterThanOrEqual(1);
+    // "Available to manage" appears in both the stat card and the legend.
+    expect(screen.getAllByText('Available to manage').length).toBeGreaterThanOrEqual(1);
+    // The old competing names are gone (including pre-LW-11 "Not managed").
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not Deployed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not managed')).not.toBeInTheDocument();
+
+    // Stat values - total = total_in_git + not_in_git = 5
+    // Use getAllByText because '5' may appear in both the stat card and a count badge
+    expect(screen.getAllByText('5').length).toBeGreaterThanOrEqual(1);
+
+    // Table rows
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.getByText('staging-us')).toBeInTheDocument();
+    expect(screen.getByText('in-cluster')).toBeInTheDocument();
+  });
+
+  // Walk day 3 lock: the hostname-guess cluster type badge (EKS/AKS/GKE/
+  // kind/Self-hosted/Unknown) left list surfaces first, then the cluster
+  // detail header too (maintainer's later live finding — same no-benefit
+  // verdict). The ClusterTypeBadge component itself is gone from the
+  // codebase now; this test just pins that the clusters list has never
+  // rendered anything with a "Cluster type: <type>" aria-label.
+  it('does not render the cluster type badge on the clusters list (list surface, walk day 3 lock)', async () => {
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByLabelText(/^Cluster type:/)).not.toBeInTheDocument();
+  });
+
+  it('filters clusters by name search', async () => {
+    // The name-search input lives in the filter bar, hidden below the
+    // 5-cluster collapse threshold (V2-cleanup-61.3, B3).
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search clusters by name...');
+    fireEvent.change(searchInput, { target: { value: 'prod' } });
+
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.queryByText('staging-us')).not.toBeInTheDocument();
+  });
+
+  it('navigates to cluster detail on row click', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('prod-eu'));
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters/prod-eu');
+  });
+
+  it('does not navigate when clicking in-cluster row', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('in-cluster')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('in-cluster'));
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('failed background refresh stays clean in StrictMode (V124-3.1)', async () => {
+    // Regression guard for the React anti-pattern in fetchData's catch block.
+    //
+    // The pre-fix code called setError + setHealthStats from inside a
+    //   setAllClusters((prev) => { ... return prev; })
+    // updater. React 18+ StrictMode invokes setState updaters TWICE in dev to
+    // surface impurity. With side effects inside the updater, this meant
+    // setError + setHealthStats were dispatched twice per failed refresh and
+    // would emit "Cannot update a component while rendering a different
+    // component" / impure-updater warnings in dev.
+    //
+    // The fix moves the conditional state writes outside any updater. In
+    // StrictMode the failed background refresh:
+    //   1. Produces no React warnings about impure updaters or nested setState
+    //   2. Leaves prior data on screen (no duplicated DOM, no blank state)
+    //
+    // A regression — re-introducing setError inside an updater — would
+    // either trip a console warning (caught here) or render anomalously.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      // Initial load(s) succeed so we have prior data on screen. StrictMode
+      // double-mounts the fetch effect, so the initial mount may invoke
+      // getClusters twice — both must resolve. We swap to a rejecting impl
+      // only after the initial render is committed and we have prior data
+      // visible (so the failed refresh hits the prior-data branch).
+      mockGetClusters.mockResolvedValue(clustersResponse);
+
+      render(
+        <StrictMode>
+          <MemoryRouter>
+            <ClustersOverview />
+          </MemoryRouter>
+        </StrictMode>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Now flip the mock so the next call (the background refresh) fails.
+      mockGetClusters.mockReset();
+      mockGetClusters.mockRejectedValue(new Error('Strict refresh fail'));
+
+      // Reset the error spy after the initial mount so we only capture
+      // warnings from the explicit background refresh below.
+      errorSpy.mockClear();
+      const callsBeforeRefresh = mockGetClusters.mock.calls.length;
+
+      fireEvent.click(screen.getByTitle('Refresh'));
+      await waitFor(() => {
+        expect(mockGetClusters.mock.calls.length).toBe(callsBeforeRefresh + 1);
+      });
+
+      // 1. No React warnings from the failed refresh. The previous anti-pattern
+      //    (state updates inside a setState updater) is exactly the kind of
+      //    thing React surfaces in dev, and we explicitly want zero such
+      //    warnings on the catch path.
+      const reactWarnings = errorSpy.mock.calls.filter((args) => {
+        const first = args[0];
+        if (typeof first !== 'string') return false;
+        return (
+          first.includes('Warning:') ||
+          first.includes('Cannot update a component') ||
+          first.includes('act(')
+        );
+      });
+      expect(reactWarnings).toEqual([]);
+
+      // 2. Prior data still rendered exactly once (no duplicated rows from a
+      //    re-invoked impure updater); error message NOT surfaced because we
+      //    have prior data.
+      expect(screen.getAllByText('prod-eu').length).toBe(1);
+      expect(screen.queryByText('Strict refresh fail')).not.toBeInTheDocument();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  // BUG-040 (redefined by the dashboard UX review 2026-08-01, blocker B1):
+  // the Dashboard's "N disconnected cluster(s)" link navigates to
+  // /clusters?status=disconnected. The Clusters page resolves that
+  // deep-link to failed + missing ONLY now — a cluster ArgoCD simply
+  // hasn't probed yet ("unknown"/pending) is neutral, not a problem, so it
+  // no longer counts as "disconnected" here either (that used to conflate
+  // "definitely broken" with "just registered, give it a minute" under one
+  // red bucket). Originally this test asserted `unknown-cluster` also
+  // showed up under this filter; it now explicitly must NOT.
+  it('?status=disconnected filter resolves to failed + missing managed clusters only (BUG-040)', async () => {
+    const mixedDisconnected = {
+      clusters: [
+        {
+          name: 'prod-eu',
+          labels: { env: 'prod' },
+          server_version: '1.28',
+          connection_status: 'connected',
+          managed: true,
+        },
+        {
+          name: 'failing-cluster',
+          labels: { env: 'staging' },
+          server_version: '1.27',
+          connection_status: 'failed',
+          managed: true,
+        },
+        {
+          name: 'missing-cluster',
+          labels: { env: 'dev' },
+          server_version: '1.28',
+          connection_status: 'missing',
+          managed: true,
+        },
+        {
+          name: 'unknown-cluster',
+          labels: { env: 'lab' },
+          server_version: '1.28',
+          connection_status: 'unknown',
+          managed: true,
+        },
+        {
+          name: 'discovered-cluster',
+          labels: {},
+          server_version: '1.28',
+          connection_status: 'not_in_git',
+          managed: false,
+        },
+      ],
+      health_stats: {
+        total_in_git: 4,
+        connected: 1,
+        failed: 1,
+        missing_from_argocd: 1,
+        not_in_git: 1,
+      },
+    };
+    mockGetClusters.mockResolvedValue(mixedDisconnected);
+
+    render(
+      <MemoryRouter initialEntries={["/clusters?status=disconnected"]}>
+        <ClustersOverview />
+      </MemoryRouter>,
+    );
+
+    // Wait for the row of any of the disconnected (failed/missing) clusters
+    // to show.
+    await waitFor(() => {
+      expect(screen.getByText('failing-cluster')).toBeInTheDocument();
+    });
+
+    // failed + missing managed clusters appear under the deep-link.
+    expect(screen.getByText('failing-cluster')).toBeInTheDocument();
+    expect(screen.getByText('missing-cluster')).toBeInTheDocument();
+
+    // Connected, pending/unknown (neutral, not a problem), and
+    // discovered/unmanaged clusters must NOT appear.
+    expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
+    expect(screen.queryByText('unknown-cluster')).not.toBeInTheDocument();
+    expect(screen.queryByText('discovered-cluster')).not.toBeInTheDocument();
+  });
+
+  // S5 (scale-walk) — the dashboard donut's "connected" legend row now
+  // deep-links here as ?status=connected. Bug found during grounding: the
+  // initial-state mapping only ever special-cased `disconnected`/`issues`,
+  // so `?status=connected` silently fell through to `all` even though the
+  // row-filter switch below has always understood the `connected` case
+  // (reachable by clicking the equivalent legend/segment button by hand).
+  it('?status=connected filter resolves to connected managed clusters only', async () => {
+    const mixedDisconnected = {
+      clusters: [
+        {
+          name: 'prod-eu',
+          labels: { env: 'prod' },
+          server_version: '1.28',
+          connection_status: 'connected',
+          managed: true,
+        },
+        {
+          name: 'failing-cluster',
+          labels: { env: 'staging' },
+          server_version: '1.27',
+          connection_status: 'failed',
+          managed: true,
+        },
+        {
+          name: 'unknown-cluster',
+          labels: { env: 'lab' },
+          server_version: '1.28',
+          connection_status: 'unknown',
+          managed: true,
+        },
+      ],
+      health_stats: {
+        total_in_git: 3,
+        connected: 1,
+        failed: 1,
+        missing_from_argocd: 0,
+        not_in_git: 0,
+      },
+    };
+    mockGetClusters.mockResolvedValue(mixedDisconnected);
+
+    render(
+      <MemoryRouter initialEntries={["/clusters?status=connected"]}>
+        <ClustersOverview />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.queryByText('failing-cluster')).not.toBeInTheDocument();
+    expect(screen.queryByText('unknown-cluster')).not.toBeInTheDocument();
+  });
+
+  // BUG-041: Test button on each cluster row must be disabled (with a
+  // tooltip pointing at Settings → Connections) when /api/v1/health
+  // reports cluster_test_available=false. That happens whenever no
+  // secrets backend (Vault / AWS Secrets Manager / file-store /
+  // ArgoCDProvider auto-default) is configured on the active connection
+  // — typically the `--demo` dev path. Previously the button was always
+  // enabled, the user clicked it, and the test endpoint returned 503 +
+  // error_code=no_secrets_backend — confusing UX.
+  it('disables Test button when health reports cluster_test_available=false (BUG-041)', async () => {
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: false,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Wait for the /health fetch to resolve and the gate to flip.
+    await waitFor(() => {
+      const testButtons = screen.getAllByRole('button', { name: /no secrets backend/i });
+      expect(testButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    const testButtons = screen.getAllByRole('button', { name: /no secrets backend/i });
+    for (const btn of testButtons) {
+      expect(btn).toBeDisabled();
+      // The aria-label / title both contain the explanatory tooltip copy.
+      const tooltipSource = btn.getAttribute('title') ?? btn.getAttribute('aria-label') ?? '';
+      expect(tooltipSource).toMatch(/secrets backend/i);
+      expect(tooltipSource).toMatch(/Settings\s*→\s*Connections/);
+    }
+  });
+
+  // BUG-041 (paired): the default-enabled path must remain enabled when
+  // /health reports cluster_test_available=true so existing flows work.
+  it('keeps Test button enabled when cluster_test_available=true (BUG-041)', async () => {
+    // Default beforeEach mock already returns true; just confirm.
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Allow /health fetch to resolve.
+    await waitFor(() => {
+      expect(mockHealth).toHaveBeenCalled();
+    });
+
+    // After health resolves with true, no Test connection button is disabled
+    // by the gate. (it may still be disabled while testing=true, but no test
+    // is in flight.)
+    const testButtons = screen.getAllByRole('button', { name: /^Test connection$/ });
+    expect(testButtons.length).toBeGreaterThanOrEqual(1);
+    for (const btn of testButtons) {
+      expect(btn).not.toBeDisabled();
+    }
+  });
+
+  it('toggles status filter on stat card click and scrolls to the managed clusters list (S3, walk day 7)', async () => {
+    // jsdom doesn't implement scrollIntoView — mock it so the click handler
+    // doesn't throw, and so the scroll call itself can be asserted.
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+
+    // Stat cards only render at/above the 5-cluster collapse threshold
+    // (V2-cleanup-61.3, B3).
+    mockGetClusters.mockResolvedValue(clustersResponseAtThreshold);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Click the "Disconnected" stat card to filter - find the one inside a
+    // stat card (role=button); the composite row pill also says
+    // "Disconnected" but is a plain <button> without the role attribute.
+    const disconnectedCards = screen.getAllByText('Disconnected');
+    const disconnectedStatCard = disconnectedCards
+      .map((el) => el.closest('[role="button"]'))
+      .find(Boolean);
+    expect(disconnectedStatCard).toBeTruthy();
+    fireEvent.click(disconnectedStatCard!);
+
+    // Only the failed cluster should remain
+    expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
+    expect(screen.getByText('staging-us')).toBeInTheDocument();
+
+    // S3: the click also jumps down to the managed clusters list, so the
+    // filter change is visible instead of leaving the user scrolled at the
+    // top wondering if anything happened.
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' });
+
+    // S3: the list's own status select is two-way synced — clicking the
+    // stat card updates it to match.
+    const statusSelect = screen.getByLabelText('Status') as HTMLSelectElement;
+    expect(statusSelect.value).toBe('failed');
+
+    // And picking a different value from the select updates the filter the
+    // other way — clearing back to "all" restores every cluster.
+    fireEvent.change(statusSelect, { target: { value: 'all' } });
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.getByText('staging-us')).toBeInTheDocument();
+  });
+
+  // V3-D5: cluster removal PR note carried via router state after a successful
+  // removal — shows as a dismissible banner, clears state so refresh drops it.
+  describe('V3-D5: removal PR note from router state', () => {
+    beforeEach(() => {
+      mockGetClusters.mockResolvedValue(clustersResponse);
+      mockHealth.mockResolvedValue({ cluster_test_available: true });
+    });
+
+    it('renders dismissible note when removalPR state is present', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: false,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Removal PR opened for "prod-eu"/i)).toBeInTheDocument();
+        expect(screen.getByRole('link', { name: /^View PR #42$/i })).toHaveAttribute(
+          'href',
+          'https://github.com/example/repo/pull/42',
+        );
+      });
+    });
+
+    it('clears router state after reading removalPR', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: false,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(mockNavigate).toHaveBeenCalledWith('.', { replace: true, state: {} });
+      });
+    });
+
+    it('dismissing the note hides it', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: false,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Removal PR opened for "prod-eu"/i)).toBeInTheDocument();
+      });
+
+      const dismissButton = screen.getByLabelText('Dismiss');
+      fireEvent.click(dismissButton);
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Removal PR opened for "prod-eu"/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not render note when no removalPR state', async () => {
+      mockLocationState.state = {};
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/Removal PR opened/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/removed/i)).not.toBeInTheDocument();
+    });
+
+    it('shows merged message when merged=true', async () => {
+      mockLocationState.state = {
+        removalPR: {
+          cluster: 'prod-eu',
+          pr_url: 'https://github.com/example/repo/pull/42',
+          pr_id: 42,
+          merged: true,
+        },
+      };
+
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText(/Cluster "prod-eu" removed/i)).toBeInTheDocument();
+      });
+    });
+  });
+});
+
+// perf S2 — a same-session revisit paints from the last successful load
+// instantly (no spinner), then quietly refreshes in the background.
+describe('ClustersOverview stale-while-refresh (perf S2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLocationState.state = undefined;
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: true,
+    });
+  });
+
+  it('renders cached clusters immediately on mount, then replaces them once the background refetch resolves', async () => {
+    setCached(CLUSTERS_CACHE_KEY, {
+      allClusters: [
+        {
+          name: 'stale-cluster',
+          labels: {},
+          server_version: '1.20',
+          connection_status: 'connected',
+        },
+      ],
+      healthStats: null,
+      pendingRegistrations: [],
+      orphanRegistrations: [],
+      argoCDUnreachable: false,
+    });
+
+    // The background refetch resolves with the fresh fixture data.
+    mockGetClusters.mockResolvedValue(clustersResponse);
+
+    renderView();
+
+    // Instant paint from cache — no loading spinner, the stale cluster's
+    // name visible without waiting on any fetch.
+    expect(screen.queryByText('Loading clusters...')).not.toBeInTheDocument();
+    expect(screen.getByText('stale-cluster')).toBeInTheDocument();
+
+    // Background refresh lands and replaces the stale list with fresh data.
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('stale-cluster')).not.toBeInTheDocument();
+  });
+});

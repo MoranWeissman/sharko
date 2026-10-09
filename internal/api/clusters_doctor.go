@@ -1,0 +1,1037 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/capabilities"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	"github.com/MoranWeissman/sharko/internal/verify"
+)
+
+// selfManagedConnectionsDocURL is the public, clickable location of the
+// self-managed-connections operator guide (V2-cleanup-90.1, review finding
+// part of M6/L4). Duplicated as a small unexported constant in
+// internal/orchestrator (which cannot import this package) rather than
+// exported from one place, since the two packages must not share an import
+// edge — matches the base every other in-app readthedocs link uses (see
+// e.g. ui/src/components/ClusterIdentityPanel.tsx).
+const selfManagedConnectionsDocURL = "https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/"
+
+// Connection doctor (V2-cleanup-88.4) — an attempt-based permission
+// preflight for a cluster's connection. Unlike the IAM diagnose tool
+// (internal/diagnose), every check here is a REAL attempt against the real
+// system (fetch, read, assume, write) — never policy simulation — and every
+// failure carries a plain-English, non-developer-facing fix.
+//
+// The four checks are independent verdicts in one response, not a
+// short-circuiting pipeline: a failure in an earlier check does not abort
+// the request, so the caller always gets the fullest picture available.
+// The one real dependency is checkClusterAccess, which needs the
+// credentials fetched by checkConnectionCredentials to build a client at
+// all — when those are missing it reports "not-applicable" rather than
+// failing outright.
+
+// doctorRunTimeout bounds the ENTIRE doctor run (all four checks
+// combined) so the endpoint can never hang a caller.
+const doctorRunTimeout = 30 * time.Second
+
+// doctorCheckTimeout bounds a single check. Each check derives its context
+// from the run-level context, so the run-level deadline always wins when
+// it's sooner — this is a per-check ceiling, not an extension of the total
+// budget.
+const doctorCheckTimeout = 10 * time.Second
+
+// Check IDs (doctorCheck.ID). Stable — the UI story (88.5) dispatches
+// copy/icons off these values.
+const (
+	doctorCheckConnectionCredentials = "connection-credentials"
+	doctorCheckAddonSecretPaths      = "addon-secret-paths"
+	doctorCheckAssumeRole            = "assume-role"
+	doctorCheckClusterAccess         = "cluster-access"
+	// doctorCheckSecretOwnership is the fifth check (V2-cleanup-89.5): does
+	// this cluster's ArgoCD cluster Secret carry a foreign ArgoCD tracking
+	// marker, meaning another Application renders it from Git and could
+	// fight Sharko over the addon labels it writes. Not-applicable for
+	// Sharko-managed connections (Sharko is the Secret's sole writer there)
+	// and for self-managed connections with no Secret yet.
+	doctorCheckSecretOwnership = "secret-ownership"
+	// doctorCheckConnectivityApp is the sixth check (V3 BUG-1): does the
+	// connectivity-check ApplicationSet have a stale selector that doesn't
+	// match the connectivity-check label Sharko is now writing? A managed
+	// cluster labeled for connectivity-check but with no generated
+	// connectivity-check Application is the signature of this drift.
+	// Not-applicable for clusters without the connectivity-check label and
+	// for clusters with real addons deployed (the check app intentionally
+	// yields to real addons).
+	doctorCheckConnectivityApp = "connectivity-app-drift"
+)
+
+// Check statuses (doctorCheck.Status). "warn" (V2-cleanup-90.1) is
+// additive — a check can be worse than pass but not bad enough to fail the
+// whole connection outright; currently only check 5 (secret-ownership) ever
+// returns it, for a soft-confidence foreign-owner signal.
+const (
+	doctorStatusPass          = "pass"
+	doctorStatusFail          = "fail"
+	doctorStatusNotApplicable = "not-applicable"
+	doctorStatusWarn          = "warn"
+)
+
+// Overall verdicts (doctorClusterResponse.Overall).
+const (
+	doctorOverallPass    = "pass"
+	doctorOverallFail    = "fail"
+	doctorOverallPartial = "partial"
+)
+
+// connectionSecretReadDetail and connectionSecretReadFix are the safe
+// sentences for "Sharko tried to read this cluster's ArgoCD connection Secret
+// and the read failed".
+//
+// # What was wrong
+//
+// Two checks — secret-ownership and connectivity-app-drift — built their
+// Detail AND their Fix by concatenating err.Error(), so the same Kubernetes
+// error text went out twice per failure, on two fields that both carry a
+// `json:` tag and both land in the doctor response a browser renders. One of
+// the two reads is a bare client-go Secret Get, so that text is a raw
+// *apierrors.StatusError: on a 403 it names the ServiceAccount Sharko runs as,
+// the namespace, the verb and the resource; on other failures it can carry the
+// API server host or whatever an admission webhook decided to say.
+//
+// Three checks in this same file already did the safe thing (the credentials
+// fetch, the assume-role check, and the client build all go through
+// credsafe.Sentence), which is what makes these two an oversight rather than a
+// decision.
+//
+// # Why it is classified by type
+//
+// apierrors.IsForbidden / IsUnauthorized / IsNotFound read the typed Status
+// code, never the message wording. A substring match would stop working the
+// day client-go rephrased itself — that is the rule credsafe exists to hold,
+// applied here to a Kubernetes error rather than a credentials one.
+//
+// # What an operator can still work out
+//
+// The cluster name (Sharko's own), and which of three different things to go
+// and fix: an RBAC grant, a Secret that is not there, or an unreachable API
+// server. The Fix sentence is chosen to match. The Kubernetes text itself goes
+// to the server log line at the call site.
+func connectionSecretReadDetail(clusterName string, err error) string {
+	switch {
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return fmt.Sprintf("Sharko is not allowed to read cluster %q's ArgoCD connection secret.", clusterName)
+	case apierrors.IsNotFound(err):
+		return fmt.Sprintf("Cluster %q's ArgoCD connection secret is not there to read.", clusterName)
+	default:
+		return fmt.Sprintf("Sharko could not read cluster %q's ArgoCD connection secret.", clusterName)
+	}
+}
+
+// connectionSecretReadFix is the matching next step for the Detail above.
+func connectionSecretReadFix(err error) string {
+	switch {
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return "Give Sharko's service account RBAC permission to read secrets in the argocd namespace, then run the doctor again."
+	case apierrors.IsNotFound(err):
+		return "Register or re-apply this cluster's connection so the secret is created, then run the doctor again."
+	default:
+		// An untyped error lands here — including a plain errors.New that no
+		// apierrors predicate recognises. RBAC is still the likeliest cause
+		// of a failed Secret read in the argocd namespace, so the fallback
+		// names it too rather than going vague.
+		return "Check that Sharko can reach the Kubernetes API and has RBAC permission to read secrets in the argocd namespace, then run the doctor again."
+	}
+}
+
+// doctorCheck is one attempt-based check's structured verdict.
+type doctorCheck struct {
+	ID     string `json:"id" example:"connection-credentials"`
+	Status string `json:"status" enums:"pass,fail,not-applicable,warn"`
+	Detail string `json:"detail"`
+	Fix    string `json:"fix,omitempty"`
+}
+
+// doctorClusterResponse is the full response for POST /clusters/{name}/doctor.
+type doctorClusterResponse struct {
+	Checks  []doctorCheck `json:"checks"`
+	Overall string        `json:"overall" enums:"pass,fail,partial"`
+}
+
+// handleDoctorCluster godoc
+//
+// @Summary Run the connection doctor
+// @Description Runs up to six real-attempt checks against the named cluster's
+// @Description connection and returns a structured pass/fail/warn/not-applicable
+// @Description verdict per check, each with a plain-English fix on failure or
+// @Description warning: (1) can Sharko read the cluster's connection credentials,
+// @Description (2) can Sharko read every provider path an enabled addon's
+// @Description secrets need, (3) if a cross-account IAM role is in play, can
+// @Description Sharko assume it, (4) does the cluster itself accept the
+// @Description resulting token (reuses the existing Stage-1 secret CRUD cycle),
+// @Description and (5) for a self-managed connection, is its ArgoCD cluster
+// @Description Secret free of a tracking marker that may belong to another
+// @Description application — a verified tracking-id match against this exact
+// @Description Secret fails the check, a weaker signal (a mismatched
+// @Description tracking-id or only the app.kubernetes.io/instance label, which
+// @Description a plain Helm release also stamps) warns instead of failing —
+// @Description not-applicable for Sharko-managed connections, and (6) for a
+// @Description cluster labeled sharko.dev/connectivity-check: enabled, does the
+// @Description expected connectivity-check Application exist in ArgoCD — a
+// @Description missing app is only diagnosed as a possible stale ApplicationSet
+// @Description selector once the cluster is confirmed connected in ArgoCD and has
+// @Description no addons deployed; not-applicable when the cluster isn't yet
+// @Description registered in ArgoCD or its connection hasn't resolved. Every check
+// @Description is a real attempt, never IAM policy simulation, and read-only except
+// @Description check 4, which reuses Stage-1's existing create/read/delete
+// @Description canary secret. The whole run is bounded to about 30 seconds.
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Success 200 {object} doctorClusterResponse "Doctor verdict"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Router /clusters/{name}/doctor [post]
+// handleDoctorCluster handles POST /api/v1/clusters/{name}/doctor.
+func (s *Server) handleDoctorCluster(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "cluster.doctor") {
+		return
+	}
+
+	name := r.PathValue("name")
+	slog.Info("[cluster-doctor] starting", "name", name)
+
+	ctx, cancel := context.WithTimeout(r.Context(), doctorRunTimeout)
+	defer cancel()
+
+	credCheck, creds := s.doctorCheckCredentials(ctx, name)
+	secretsCheck := s.doctorCheckAddonSecretPaths(ctx, name)
+	assumeCheck := s.doctorCheckAssumeRole(ctx, name)
+	accessCheck := s.doctorCheckClusterAccess(ctx, name, creds, assumeCheck.Status == doctorStatusPass)
+	ownershipCheck := s.doctorCheckSecretOwnership(ctx, name)
+	connectivityAppCheck := s.doctorCheckConnectivityApp(ctx, name)
+
+	checks := []doctorCheck{credCheck, secretsCheck, assumeCheck, accessCheck, ownershipCheck, connectivityAppCheck}
+	resp := doctorClusterResponse{Checks: checks, Overall: doctorOverallStatus(checks)}
+
+	slog.Info("[cluster-doctor] complete", "name", name, "overall", resp.Overall)
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_doctor_run",
+		Resource: fmt.Sprintf("cluster:%s", name),
+		Detail:   fmt.Sprintf("overall=%s", resp.Overall),
+	})
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// doctorOverallStatus rolls up all checks: "fail" when nothing that ran
+// passed, "partial" when some passed and some failed, "pass" when nothing
+// failed (regardless of how many checks were not-applicable). V2-cleanup-90.1
+// extends (does not replace) that pre-existing fail/pass logic: a "warn" on
+// any check also pulls an otherwise-clean run down to "partial" — a warning
+// is weaker than a failure, so it never turns a run into "fail", but it is
+// not nothing either, so an all-pass-plus-warn run should not read as a
+// clean "pass".
+func doctorOverallStatus(checks []doctorCheck) string {
+	hasFail := false
+	hasPass := false
+	hasWarn := false
+	for _, c := range checks {
+		switch c.Status {
+		case doctorStatusFail:
+			hasFail = true
+		case doctorStatusPass:
+			hasPass = true
+		case doctorStatusWarn:
+			hasWarn = true
+		}
+	}
+	switch {
+	case hasFail && hasPass:
+		return doctorOverallPartial
+	case hasFail:
+		return doctorOverallFail
+	case hasWarn:
+		return doctorOverallPartial
+	default:
+		return doctorOverallPass
+	}
+}
+
+// doctorCheckCredentials is check 1: can Sharko fetch the cluster's
+// connection credentials from its configured source? Reuses
+// fetchClusterCredentials — the exact same routed-fetch helper the Test
+// handler uses — building no new fetch logic. Returns the fetched
+// credentials so doctorCheckClusterAccess can reuse them without a second
+// fetch.
+func (s *Server) doctorCheckCredentials(ctx context.Context, name string) (doctorCheck, *providers.Kubeconfig) {
+	if s.credProvider() == nil {
+		return doctorCheck{
+			ID:     doctorCheckConnectionCredentials,
+			Status: doctorStatusFail,
+			Detail: "Sharko has no secrets backend or ArgoCD connection configured, so it cannot read any cluster's connection credentials.",
+			Fix:    "Configure a secrets backend (Vault / AWS Secrets Manager / Kubernetes Secrets) or the built-in ArgoCD connection in Settings -> Connections.",
+		}, nil
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	creds, err := s.fetchClusterCredentials(cctx, name)
+	if err != nil {
+		var argoErr *providers.ArgoCDProviderError
+		if errors.As(err, &argoErr) {
+			return doctorCheck{
+				ID:     doctorCheckConnectionCredentials,
+				Status: doctorStatusFail,
+				Detail: fmt.Sprintf("Sharko could not read connection credentials for cluster %q: %s", name, argoErr.Detail),
+				Fix:    doctorFixForArgoCDError(argoErr),
+			}, nil
+		}
+		// PUBLIC BOUNDARY. A doctor check's Detail goes straight into the API
+		// response, so a credentials-backend error gets the fixed sentence.
+		return doctorCheck{
+			ID:     doctorCheckConnectionCredentials,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Sharko could not read connection credentials for cluster %q: %s", name, credsafe.Sentence(err)),
+			Fix:    "Check that the cluster is registered and its credentials still exist at the configured source (secret path or ArgoCD cluster Secret), then try again.",
+		}, nil
+	}
+
+	return doctorCheck{
+		ID:     doctorCheckConnectionCredentials,
+		Status: doctorStatusPass,
+		Detail: fmt.Sprintf("Sharko can read the connection credentials for cluster %q.", name),
+	}, creds
+}
+
+// doctorFixForArgoCDError maps the stable ArgoCDProviderError codes
+// (V2-cleanup-88.2) to a plain-English, non-developer-facing fix.
+func doctorFixForArgoCDError(argoErr *providers.ArgoCDProviderError) string {
+	switch argoErr.Code {
+	case providers.ArgoCDProviderCodeIAMRequired:
+		return "Give Sharko's own AWS identity (IRSA / EKS Pod Identity) permission to mint a token for this cluster — sts:AssumeRole on the role this connection names, or direct EKS access if no role is set. If no AWS region could be found, set one on the ArgoCD cluster Secret or the cluster's region label."
+	case providers.ArgoCDProviderCodeExecUnsupported:
+		return "Re-register this cluster's connection with a supported auth method (bearer token, client certificate, or AWS IAM) — Sharko never runs exec-plugin binaries."
+	case providers.ArgoCDProviderCodeUnsupportedAuth:
+		return "Re-register this cluster's connection — its ArgoCD cluster Secret has no recognized authentication field (bearer token, client certificate, or AWS IAM)."
+	default:
+		return "Re-check this cluster's connection in Settings -> Connections."
+	}
+}
+
+// doctorCheckAddonSecretPaths is check 2: for each addon enabled on this
+// cluster whose catalog entry declares a secrets block, can Sharko read
+// every provider path it references? Read-only — GetSecretValue never
+// writes. Reuses the same catalog + managed-clusters read/parse the secrets
+// reconciler uses (internal/secrets/reconciler.go) and the same
+// providers.NewAddonSecretProvider factory the reconciler is built from;
+// this function builds no new fetch logic of its own.
+func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName string) doctorCheck {
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	gp, err := s.connSvc.GetActiveGitProvider()
+	if err != nil || gp == nil {
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: "Sharko has no active Git connection, so it cannot tell which addons are enabled on this cluster.",
+			Fix:    "Connect a Git repository in Settings -> Connections, then run the doctor again.",
+		}
+	}
+
+	catalogData, err := gp.GetFileContent(cctx, s.repoPaths.Catalog, s.gitopsConfig().BaseBranch)
+	if err != nil {
+		// The Git provider's own text stays here. It used to be appended to
+		// Detail, which is a `json:"detail"` field a browser renders.
+		slog.Error("[doctor] reading the addon catalog from Git failed", "step", "read-catalog", "error", err)
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: "Sharko could not read the addon catalog from Git.",
+			Fix:    "Check that the addon catalog file still exists on the configured branch.",
+		}
+	}
+	parser := config.NewParser()
+	catalog, err := parser.ParseAddonsCatalog(catalogData)
+	if err != nil {
+		slog.Error("[doctor] parsing the addon catalog failed", "step", "parse-catalog", "error", err)
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: "Sharko could not parse the addon catalog.",
+			Fix:    "Fix the YAML in the addon catalog file and try again.",
+		}
+	}
+
+	clusterData, err := gp.GetFileContent(cctx, s.repoPaths.ManagedClusters, s.gitopsConfig().BaseBranch)
+	if err != nil {
+		slog.Error("[doctor] reading the managed-clusters file from Git failed", "step", "read-managed-clusters", "error", err)
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: "Sharko could not read the managed-clusters file from Git.",
+			Fix:    "Check that the managed-clusters file still exists on the configured branch.",
+		}
+	}
+	clusters, err := parser.ParseClusterAddons(clusterData)
+	if err != nil {
+		slog.Error("[doctor] parsing the managed-clusters file failed", "step", "parse-managed-clusters", "error", err)
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: "Sharko could not parse the managed-clusters file.",
+			Fix:    "Fix the YAML in the managed-clusters file and try again.",
+		}
+	}
+
+	var cluster *models.Cluster
+	for i := range clusters {
+		if clusters[i].Name == clusterName {
+			cluster = &clusters[i]
+			break
+		}
+	}
+	if cluster == nil {
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is not in the managed-clusters file, so it has no addons enabled.", clusterName),
+		}
+	}
+
+	enabledAddons := parser.GetEnabledAddons(*cluster, catalog)
+	enabledByName := make(map[string]bool, len(enabledAddons))
+	for _, ea := range enabledAddons {
+		if ea.Enabled {
+			enabledByName[ea.AddonName] = true
+		}
+	}
+
+	type secretPathRef struct {
+		addon, key, path string
+	}
+	var refs []secretPathRef
+	for _, entry := range catalog {
+		if !enabledByName[entry.Name] || len(entry.Secrets) == 0 {
+			continue
+		}
+		for _, secretRef := range entry.Secrets {
+			for key, path := range secretRef.Keys {
+				refs = append(refs, secretPathRef{addon: entry.Name, key: key, path: path})
+			}
+		}
+	}
+	if len(refs) == 0 {
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusNotApplicable,
+			Detail: "No addon enabled on this cluster declares any secrets, so there is nothing to check.",
+		}
+	}
+
+	cfg := s.addonSecretCfg()
+	if cfg == nil {
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("This cluster has %d addon secret path(s) to check, but Sharko has no addon-secret provider configured.", len(refs)),
+			Fix:    "Configure a secrets backend (Vault / AWS Secrets Manager / Kubernetes Secrets) for addon secrets in Settings -> Connections.",
+		}
+	}
+	secretProvider, err := s.getDoctorAddonSecretProviderFn()(*cfg)
+	if err != nil {
+		// credsafe.Sentence, not err: building a secrets provider is a
+		// credentials-adjacent step and this is the one detail that could
+		// carry backend text even in a log line.
+		slog.Error("[doctor] building the addon-secret provider failed", "step", "build-secret-provider", "error", credsafe.Sentence(err))
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: "Sharko could not build the addon-secret provider.",
+			Fix:    "Check the addon-secret provider configuration in Settings -> Connections.",
+		}
+	}
+
+	var firstFailure *secretPathRef
+	failures := 0
+	for i := range refs {
+		if _, err := secretProvider.GetSecretValue(cctx, refs[i].path); err != nil {
+			failures++
+			if firstFailure == nil {
+				firstFailure = &refs[i]
+			}
+		}
+	}
+	if failures > 0 {
+		// V3 E1: surface the secrets-backend read failure as a k8s Warning
+		// event. The message names the cluster and the addon and a count —
+		// never the secret path or key (those can leak the layout of the
+		// backend) and never the secret value.
+		s.emitWarning(events.ReasonAWSSecretsGetFailed,
+			fmt.Sprintf("Secrets backend read failed for cluster %q: Sharko could not read %d of %d addon secret path(s) (first failing addon: %q).", clusterName, failures, len(refs), firstFailure.addon))
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Sharko cannot read %d of %d addon secret path(s). First failure: addon %q needs key %q at path %q.", failures, len(refs), firstFailure.addon, firstFailure.key, firstFailure.path),
+			Fix:    fmt.Sprintf("Check that the path %q exists in the secrets backend and that Sharko's identity has permission to read it.", firstFailure.path),
+		}
+	}
+
+	return doctorCheck{
+		ID:     doctorCheckAddonSecretPaths,
+		Status: doctorStatusPass,
+		Detail: fmt.Sprintf("Sharko can read all %d addon secret path(s) needed by this cluster's enabled addons.", len(refs)),
+	}
+}
+
+// getDoctorAssumeRoleFn lazily builds (and caches, via sync.Once) the
+// Server's AssumeRole test function, backed by
+// capabilities.NewAssumeRoleChecker().Check. Lazy rather than wired in
+// NewServer so Server literals built directly by table-driven tests
+// (bypassing NewServer) still work; tests in this package may also pre-set
+// s.doctorAssumeRoleFn directly to inject a fake attempt — mirrors
+// getAWSDetector / getHubPlatformDetector in capabilities.go exactly.
+func (s *Server) getDoctorAssumeRoleFn() func(ctx context.Context, roleARN, region string) error {
+	s.doctorAssumeRoleOnce.Do(func() {
+		if s.doctorAssumeRoleFn == nil {
+			s.doctorAssumeRoleFn = capabilities.NewAssumeRoleChecker().Check
+		}
+	})
+	return s.doctorAssumeRoleFn
+}
+
+// getDoctorAddonSecretProviderFn lazily builds (and caches, via sync.Once)
+// the Server's addon-secret provider factory, backed by
+// providers.NewAddonSecretProvider — same lazy-init and test-injection
+// rationale as the other doctor seams.
+func (s *Server) getDoctorAddonSecretProviderFn() func(providers.AddonSecretProviderConfig) (providers.SecretProvider, error) {
+	s.doctorAddonSecretProviderOnce.Do(func() {
+		if s.doctorAddonSecretProviderFn == nil {
+			s.doctorAddonSecretProviderFn = providers.NewAddonSecretProvider
+		}
+	})
+	return s.doctorAddonSecretProviderFn
+}
+
+// doctorCheckAssumeRole is check 3: when a cross-account IAM role is in
+// play for this cluster's connection, does a real STS AssumeRole with
+// Sharko's own identity succeed? "not-applicable" when no role is
+// involved at all.
+func (s *Server) doctorCheckAssumeRole(ctx context.Context, clusterName string) doctorCheck {
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	roleARN, region := s.doctorResolveRoleInPlay(cctx, clusterName)
+	if roleARN == "" {
+		return doctorCheck{
+			ID:     doctorCheckAssumeRole,
+			Status: doctorStatusNotApplicable,
+			Detail: "This cluster's connection does not use a cross-account IAM role, so there is nothing to assume.",
+		}
+	}
+
+	if err := s.getDoctorAssumeRoleFn()(cctx, roleARN, region); err != nil {
+		// V3 E1: surface the AWS assume-role failure as a k8s Warning event.
+		// The message names the cluster only — never the role ARN (it embeds
+		// an AWS account id) and never the raw error string.
+		s.emitWarning(events.ReasonAWSAssumeRoleFailed,
+			fmt.Sprintf("AWS assume-role failed while checking cluster %q: Sharko's identity could not assume the cluster's IAM role.", clusterName))
+		// PUBLIC BOUNDARY. Detail no longer carries the AWS error's own text.
+		// Fix still comes from verify.AssumeRoleHint, which reads the real
+		// message to CHOOSE between Sharko's own pre-written hints and never
+		// echoes any part of it — so the operator keeps the useful advice.
+		return doctorCheck{
+			ID:     doctorCheckAssumeRole,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Sharko could not assume role %q: %s", roleARN, credsafe.Sentence(err)),
+			Fix:    verify.AssumeRoleHint(err),
+		}
+	}
+
+	return doctorCheck{
+		ID:     doctorCheckAssumeRole,
+		Status: doctorStatusPass,
+		Detail: fmt.Sprintf("Sharko successfully assumed role %q.", roleARN),
+	}
+}
+
+// doctorResolveRoleInPlay determines the cross-account IAM role ARN (and a
+// best-effort region hint) in play for this cluster's connection, WITHOUT
+// fetching or minting any credentials — read-only introspection reused
+// only by the assume-role check. Checked in order:
+//
+//  1. The per-cluster role_arn stored on the cluster's managed-clusters.yaml
+//     record (V2-cleanup-62.2) — set for eks-token / secret-kubeconfig
+//     backend registrations.
+//  2. A role ARN embedded in the cluster's own ArgoCD cluster Secret
+//     (awsAuthConfig.roleARN, or execProviderConfig's --role-arn flag —
+//     V2-cleanup-88.2). role_arn on the register request is REJECTED
+//     outright for inline-kubeconfig registrations (see
+//     orchestrator/role_arn_stamp_test.go), so this is the ONLY place a
+//     role lives for a cluster discovered from an existing ArgoCD install.
+//
+// Returns roleARN == "" when no role is involved in this connection at all.
+func (s *Server) doctorResolveRoleInPlay(ctx context.Context, clusterName string) (roleARN, region string) {
+	_, credsSource, perClusterRoleARN := s.credentialRouting(ctx, clusterName)
+	if perClusterRoleARN != "" {
+		return perClusterRoleARN, ""
+	}
+
+	router := s.credsRouter()
+	if router == nil {
+		return "", ""
+	}
+
+	var argoProvider *providers.ArgoCDProvider
+	if ap, ok := router.Backend.(*providers.ArgoCDProvider); ok {
+		// Single-path short circuit, mirroring ClusterCredsRouter.Fetch:
+		// the configured backend IS the ArgoCD reader.
+		argoProvider = ap
+	} else if router.ArgoCDReaderFn != nil &&
+		(credsSource == models.CredsSourceInlineKubeconfig || credsSource == "") {
+		// Inline / unknown-source clusters route to the ArgoCD reader
+		// (see ClusterCredsRouter.Fetch) — the same reader instance holds
+		// the cluster Secret a role would be parsed from.
+		if reader, err := router.ArgoCDReaderFn(); err == nil {
+			if ap, ok := reader.(*providers.ArgoCDProvider); ok {
+				argoProvider = ap
+			}
+		}
+	}
+	if argoProvider == nil {
+		return "", ""
+	}
+
+	arn, rgn, ok, err := argoProvider.ResolveRoleARN(clusterName)
+	if err != nil || !ok {
+		return "", ""
+	}
+	return arn, rgn
+}
+
+// getDoctorK8sClientFn lazily builds (and caches, via sync.Once) the
+// Server's kubeconfig-to-client builder, backed by
+// remoteclient.NewClientFromKubeconfig — same lazy-init and test-injection
+// rationale as getDoctorAssumeRoleFn / getAWSDetector.
+func (s *Server) getDoctorK8sClientFn() func(kubeconfig []byte) (kubernetes.Interface, error) {
+	s.doctorK8sClientOnce.Do(func() {
+		if s.doctorK8sClientFn == nil {
+			s.doctorK8sClientFn = remoteclient.NewClientFromKubeconfig
+		}
+	})
+	return s.doctorK8sClientFn
+}
+
+// doctorCheckClusterAccess is check 4: does the cluster itself accept the
+// credentials Sharko holds? Reuses verify.Stage1 — the SAME secret CRUD
+// cycle the Test handler runs — rather than inventing a second write
+// probe. "not-applicable" when check 1 could not produce credentials to
+// test with at all. When Stage1 fails immediately after a successful
+// assume-role check, the fix message names the L6/L12 distinction: AWS
+// accepted the role, but the cluster's own access control does not yet
+// trust it.
+func (s *Server) doctorCheckClusterAccess(ctx context.Context, clusterName string, creds *providers.Kubeconfig, roleAssumeSucceeded bool) doctorCheck {
+	if creds == nil {
+		return doctorCheck{
+			ID:     doctorCheckClusterAccess,
+			Status: doctorStatusNotApplicable,
+			Detail: "Skipped — Sharko could not read this cluster's connection credentials (see the first check above).",
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	client, err := s.getDoctorK8sClientFn()(creds.Raw)
+	if err != nil {
+		return doctorCheck{
+			ID:     doctorCheckClusterAccess,
+			Status: doctorStatusFail,
+			// PUBLIC BOUNDARY. client-go builds this error FROM the credential
+			// material it was handed, so its text can quote part of it back.
+			Detail: "Sharko could not build a Kubernetes client from this cluster's credentials: " + credsafe.Sentence(err),
+			Fix:    "Check that the cluster's stored credentials still point at a reachable API server.",
+		}
+	}
+
+	result := verify.Stage1(cctx, client, verify.TestNamespace())
+	if result.Success {
+		return doctorCheck{
+			ID:     doctorCheckClusterAccess,
+			Status: doctorStatusPass,
+			Detail: fmt.Sprintf("Sharko created, read back, and deleted a test Secret on cluster %q — the connection works end to end.", clusterName),
+		}
+	}
+
+	fix := "Check Sharko's RBAC permissions on this cluster (the Diagnose tool gives a namespace-level permission breakdown)."
+	if roleAssumeSucceeded {
+		fix = "The role works in AWS, but the cluster doesn't trust it yet — add an EKS access entry (or aws-auth mapping) for this role."
+	}
+	return doctorCheck{
+		ID:     doctorCheckClusterAccess,
+		Status: doctorStatusFail,
+		Detail: fmt.Sprintf("Sharko's connection test on cluster %q failed: %s", clusterName, result.ErrorMessage),
+		Fix:    fix,
+	}
+}
+
+// doctorCheckSecretOwnership is check 5 (V2-cleanup-89.5, refined by
+// V2-cleanup-90.1): for a self-managed connection (connectionManagedBy:
+// user), does its ArgoCD cluster Secret carry a tracking marker that may
+// belong to another application — i.e. could it ALSO be rendered from Git
+// by another ArgoCD Application, or is it just a plain Helm-installed
+// secret carrying Helm's own release label? Reuses
+// argosecrets.Manager.GetSecretOwnership — ONE Get that derives both the
+// managed-by label and the foreign-tracking-owner signal from the same
+// object, replacing the pre-90.1 two-Get pattern (GetManagedByLabel +
+// GetTrackingOwner) that cost an extra API round trip and left a race
+// window between the two reads. A verified (hard-confidence) tracking-id
+// match fails the check exactly as before; a weaker (soft-confidence)
+// signal — a mismatched tracking-id or a label-only match, which is also
+// what a plain Helm release stamps — warns instead of failing, so a
+// Helm-only user no longer sees a scary false-positive FAIL.
+// Not-applicable for a Sharko-managed connection (Sharko is the Secret's
+// sole writer there, so a foreign marker is a different, out-of-scope
+// problem) and for a self-managed connection whose Secret the user hasn't
+// created yet.
+func (s *Server) doctorCheckSecretOwnership(ctx context.Context, clusterName string) doctorCheck {
+	if s.argoSecretManager == nil {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusNotApplicable,
+			Detail: "Sharko has no ArgoCD cluster-secret manager configured, so it cannot inspect this cluster's connection secret.",
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	ownership, found, err := s.argoSecretManager.GetSecretOwnership(cctx, clusterName)
+	if err != nil {
+		// GetSecretOwnership already treats a missing Secret as found=false,
+		// err=nil (see below), so any error reaching here is a REAL read
+		// failure — permission, timeout, or something else — never the
+		// missing-secret case. The fix must name the actual problem instead
+		// of the misleading "secret still exists" advice.
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusFail,
+			Detail: connectionSecretReadDetail(clusterName, err),
+			Fix:    connectionSecretReadFix(err),
+		}
+	}
+	if !found {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q has no ArgoCD connection secret yet, so there is nothing to check for foreign ownership.", clusterName),
+		}
+	}
+	if ownership.ManagedBy == argosecrets.ManagedByValue {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q's connection secret is managed by Sharko directly — foreign-ownership checks only apply to self-managed (user-owned) connections.", clusterName),
+		}
+	}
+	if !ownership.ForeignOwnerFound {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusPass,
+			Detail: fmt.Sprintf("Cluster %q's connection secret carries no tracking markers from another application.", clusterName),
+		}
+	}
+	if ownership.ForeignOwnerConfidence == argosecrets.ConfidenceHard {
+		return doctorCheck{
+			ID:     doctorCheckSecretOwnership,
+			Status: doctorStatusFail,
+			Detail: fmt.Sprintf("Cluster %q's connection secret is rendered by ArgoCD application %q — that application can overwrite Sharko's addon labels on it.", clusterName, ownership.ForeignOwnerAppName),
+			Fix:    fmt.Sprintf("In application %q's manifest, make sure it doesn't define Sharko's addon labels and doesn't use the Replace sync option, or they will fight over this secret. See %s.", ownership.ForeignOwnerAppName, selfManagedConnectionsDocURL),
+		}
+	}
+	return doctorCheck{
+		ID:     doctorCheckSecretOwnership,
+		Status: doctorStatusWarn,
+		Detail: fmt.Sprintf("Cluster %q's connection secret may be managed by ArgoCD application or Helm release %q — the signal isn't strong enough to be sure it's ArgoCD.", clusterName, ownership.ForeignOwnerAppName),
+		Fix:    fmt.Sprintf("If an ArgoCD application named %q renders this secret from Git, make sure its manifest doesn't define Sharko's addon labels and doesn't use the Replace sync option. See %s.", ownership.ForeignOwnerAppName, selfManagedConnectionsDocURL),
+	}
+}
+
+// doctorCheckConnectivityApp is check 6 (V3 BUG-1, walk-finding follow-up):
+// for a managed cluster labeled for connectivity-check, does the expected
+// connectivity-check Application exist in ArgoCD?
+//
+// A missing check app has THREE possible causes, and this function tells
+// them apart the same way the dashboard's five-state cluster breakdown does
+// (internal/service/dashboard.go GetStats, ~lines 248-294) before it ever
+// says "selector":
+//
+//  1. The cluster isn't registered in ArgoCD's cluster list at all (the
+//     dashboard's "missing" bucket) — nothing has been created for it yet,
+//     full stop. Not a selector problem.
+//  2. The cluster is registered but its connection hasn't resolved to a
+//     confirmed Successful/Connected state yet (the dashboard's
+//     "untested"/"pending" buckets) — it's still settling. Also not a
+//     selector problem; asking "where's the check app" is premature.
+//  3. ONLY when the cluster shows a confirmed Successful/Connected state,
+//     the label is present, and the check app is still absent does a
+//     stale ApplicationSet selector become a plausible cause — and even
+//     then it's named as one possible cause, not the diagnosis, because a
+//     real addon deployment intentionally makes the placeholder check app
+//     yield (see the hasAnyAddon branch below).
+//
+// Not-applicable for clusters without the connectivity-check label — UNLESS
+// the cluster is Sharko-managed (not adopted, not self-managed) with zero
+// enabled addons, in which case the label is a genuine miss and this reports
+// a real finding instead (walk finding: bare spoke).
+func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName string) doctorCheck {
+	if s.argoSecretManager == nil {
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: "Sharko has no ArgoCD cluster-secret manager configured, so it cannot inspect this cluster's labels.",
+		}
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, doctorCheckTimeout)
+	defer cancel()
+
+	// Read the cluster's ArgoCD Secret to check its labels. GetSecretOwnership
+	// doesn't expose labels, so use the manager's client to Get the full Secret.
+	k8sClient, namespace, ok := s.k8sClientAndNamespace()
+	if !ok {
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: "Sharko has no Kubernetes client configured, so it cannot inspect this cluster's labels.",
+		}
+	}
+
+	secret, err := k8sClient.CoreV1().Secrets(namespace).Get(cctx, clusterName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return doctorCheck{
+				ID:     doctorCheckConnectivityApp,
+				Status: doctorStatusNotApplicable,
+				Detail: fmt.Sprintf("Cluster %q has no ArgoCD connection secret yet, so there is nothing to check.", clusterName),
+			}
+		}
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusFail,
+			Detail: connectionSecretReadDetail(clusterName, err),
+			Fix:    connectionSecretReadFix(err),
+		}
+	}
+
+	// Check if the cluster Secret has the connectivity-check label.
+	// Use the models.HasConnectivityCheckLabel helper which recognizes
+	// both canonical and legacy keys.
+	if !models.HasConnectivityCheckLabel(secret.Labels) {
+		// Walk finding (bare spoke): a Sharko-MANAGED cluster (not adopted,
+		// not self-managed — those never carry this label by design) with
+		// zero enabled addons SHOULD carry the connectivity-check label.
+		// Before the reconciler self-heal fix, a Secret created outside
+		// createOne's create-time derivation could sit missing this label
+		// forever. Adopted and self-managed connections are correctly
+		// unlabeled regardless of addon count, so this is scoped to Sharko's
+		// own (non-adopted) Secrets only.
+		isSharkoManaged := secret.Labels[argosecrets.LabelManagedBy] == argosecrets.ManagedByValue && !argosecrets.IsAdopted(secret.Annotations)
+		if isSharkoManaged && models.EnabledAddonCount(secret.Labels) == 0 {
+			return doctorCheck{
+				ID:     doctorCheckConnectivityApp,
+				Status: doctorStatusFail,
+				Detail: fmt.Sprintf("Cluster %q has zero enabled addons — this cluster should carry the connectivity-check label so ArgoCD can prove the connection, but it doesn't.", clusterName),
+				// Names no machinery and promises no timeframe: the check
+				// interval is operator-settable, so "within ~30 seconds" was
+				// false on any installation that sets it longer. The phrase
+				// for the component is the one repairFailNoReconciler already
+				// uses, so a person meets one name for it, not two.
+				Fix: "Sharko automatically adds this label. If it does not appear, check that the part of Sharko that manages cluster connections is running on this server.",
+			}
+		}
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is not labeled for connectivity-check, so no check application is expected.", clusterName),
+		}
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusFail,
+			Detail: "Sharko has no active ArgoCD connection, so it cannot check for the connectivity-check application.",
+			Fix:    "Configure an ArgoCD connection in Settings -> Connections, then run the doctor again.",
+		}
+	}
+
+	// Cause 1 & 2 — same distinctions as dashboard.go's five-state
+	// breakdown: is the cluster even in ArgoCD's cluster list, and if so,
+	// has its connection actually resolved to Successful/Connected?
+	// ArgoCD's cluster-list API only returns an entry for a cluster that
+	// HAS a cluster secret registered, mirroring dashboard.go's own
+	// comment on this exact call.
+	argocdClusters, err := ac.ListClusters(cctx)
+	if err != nil {
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusFail,
+			Detail: argoListFailureSentence(argoReadClusters, err),
+			Fix:    "Check Sharko's RBAC permissions on ArgoCD — the service account must be able to list clusters.",
+		}
+	}
+	var clusterEntry *models.ArgocdCluster
+	for i := range argocdClusters {
+		if argocdClusters[i].Name == clusterName {
+			clusterEntry = &argocdClusters[i]
+			break
+		}
+	}
+	if clusterEntry == nil {
+		// Cause 1 — the cluster isn't registered in ArgoCD's cluster list
+		// at all. There is nothing for a selector to have matched or
+		// missed; nothing has been created for this cluster yet.
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is labeled for connectivity-check but is not registered in ArgoCD's cluster list yet — there is nothing to check for a stale selector until ArgoCD has a cluster secret for it.", clusterName),
+		}
+	}
+	connected := clusterEntry.ConnectionState == "Successful" || clusterEntry.ConnectionState == "Connected"
+	if !connected {
+		// Cause 2 — the cluster is registered but its connection hasn't
+		// resolved yet (empty/Unknown = still settling) or is itself
+		// failing (a different, already-covered problem — checks 1 and 4
+		// diagnose credential/access failures). Either way, a missing
+		// check app here says nothing about the selector.
+		state := clusterEntry.ConnectionState
+		if state == "" {
+			state = "Unknown"
+		}
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is labeled for connectivity-check, but ArgoCD's connection state for it is %q, not a confirmed Successful/Connected — it's too early to say a missing check application is a stale selector. If the connection itself is failing, see the credentials and cluster-access checks above.", clusterName, state),
+		}
+	}
+
+	// The cluster is labeled AND genuinely connected. Query ArgoCD for the
+	// expected connectivity-check-<cluster> Application.
+	checkAppName := "connectivity-check-" + clusterName
+
+	apps, err := ac.ListApplications(cctx)
+	if err != nil {
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusFail,
+			Detail: argoListFailureSentence(argoReadApplications, err),
+			Fix:    "Check Sharko's RBAC permissions on ArgoCD — the service account must be able to list applications.",
+		}
+	}
+
+	// Search for the connectivity-check application.
+	var checkApp *models.ArgocdApplication
+	for i := range apps {
+		if apps[i].Name == checkAppName {
+			checkApp = &apps[i]
+			break
+		}
+	}
+
+	if checkApp != nil {
+		// The app exists — no drift detected.
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusPass,
+			Detail: fmt.Sprintf("Cluster %q is labeled for connectivity-check and the expected application %q exists in ArgoCD.", clusterName, checkAppName),
+		}
+	}
+
+	// The cluster is connected and labeled but the app does NOT exist.
+	// Check one more thing: does the cluster have any real addon
+	// applications deployed? If yes, the placeholder connectivity-check
+	// app intentionally yielded and this is NOT drift — cause 3 (zero
+	// addons) of the doc comment's framing, checked here via ArgoCD's own
+	// Applications list rather than git-enabled counts, since that's what
+	// this check already has in hand.
+	hasAnyAddon := false
+	for i := range apps {
+		app := &apps[i]
+		// Skip system apps using the orchestrator package's helper. System apps
+		// include the bootstrap root and any connectivity-check apps.
+		if orchestrator.IsSharkoSystemApp(app.Name) {
+			continue
+		}
+		// Check if this app targets our cluster via name-suffix matching
+		// (the clusterHasHealthyAddon predicate pattern from connectivity_status.go).
+		// Name-suffix matching is sufficient for this drift guard.
+		if strings.HasSuffix(app.Name, "-"+clusterName) {
+			hasAnyAddon = true
+			break
+		}
+	}
+
+	if hasAnyAddon {
+		// The cluster has a real addon deployed, so the check app correctly
+		// yielded — not drift, not applicable.
+		return doctorCheck{
+			ID:     doctorCheckConnectivityApp,
+			Status: doctorStatusNotApplicable,
+			Detail: fmt.Sprintf("Cluster %q is labeled for connectivity-check, but a real addon application is deployed so the check app correctly yielded.", clusterName),
+		}
+	}
+
+	// The cluster is connected, labeled, has no real addons, and the check
+	// app is still missing. A stale selector is now a plausible cause —
+	// named as one possibility, not declared as the diagnosis — and the
+	// fix is layout-aware: v3 repos still walk templates/bootstrap/, v4
+	// repos have no scaffolded templates at all (the check ships inside
+	// the engine chart since chart 0.3.0).
+	return doctorCheck{
+		ID:     doctorCheckConnectivityApp,
+		Status: doctorStatusWarn,
+		Detail: fmt.Sprintf("Cluster %q is connected, labeled sharko.dev/connectivity-check: enabled, and has no addons deployed, but the expected connectivity-check application is not present in ArgoCD — one possible cause is a stale ApplicationSet selector.", clusterName),
+		Fix:    s.connectivityAppDriftFix(ctx),
+	}
+}
+
+// connectivityAppDriftFix returns the layout-aware Fix text for the
+// connectivity-app-drift warning. v4 repos have no scaffolded
+// templates/bootstrap/ tree to "re-apply" — the connectivity check ships
+// inside the engine chart itself (charts/sharko-engine/templates/
+// connectivity-check.yaml, since chart 0.3.0), so the actionable fix there
+// is checking the engine Application's health and pin version. v3 repos
+// keep the original bootstrap-templates wording. Reuses s.isV4Repo
+// (internal/api/v4_editor_gate.go) — the same engine-pin probe every other
+// v4-aware read path in this package uses — rather than inventing a new
+// layout detector.
+func (s *Server) connectivityAppDriftFix(ctx context.Context) string {
+	gp, err := s.connSvc.GetActiveGitProvider()
+	if err == nil && gp != nil && s.isV4Repo(ctx, gp) {
+		return "The connectivity check ships inside the sharko-engine chart (since chart 0.3.0), not a scaffolded template — check that the engine Application (sharko-engine.yaml) is healthy and pinned to chart version 0.3.0 or newer. If it's older, open the engine upgrade PR and let it merge, then run the doctor again."
+	}
+	return "Re-apply the current bootstrap templates to this hub cluster to refresh the connectivity-check ApplicationSet selector from sharko.io/connectivity-check (legacy) to sharko.dev/connectivity-check (current). The bootstrapped templates live in templates/bootstrap/."
+}

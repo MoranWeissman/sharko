@@ -1,0 +1,14 @@
+# Sharko configuration (local development)
+#
+# This is a local-development stub used by the `sharko serve --config` default
+# (see cmd/sharko/serve.go). The values below are placeholders, not real
+# production config — do not deploy this file as-is.
+connections:
+  - name: dev
+    default: true
+    git:
+      provider: github
+      owner: your-org
+      repo: your-addons-repo
+    argocd:
+      server_url: https://argocd.example.com

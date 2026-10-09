@@ -1,0 +1,1367 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/secrets"
+	"github.com/MoranWeissman/sharko/internal/service"
+)
+
+// ---------------------------------------------------------------------------
+// Fake GitProvider for handler tests
+// ---------------------------------------------------------------------------
+
+// handlerFakeGitProvider is a minimal gitprovider.GitProvider that returns a
+// fixed set of file contents. Missing paths return a non-nil error that wraps
+// gitprovider.ErrFileNotFound — mirroring the real GitHub/Azure providers so
+// callers using errors.Is(err, gitprovider.ErrFileNotFound) classify a genuine
+// missing file (not a broken connection).
+//
+// To simulate a transport/TLS failure (where the repo can't be reached at all),
+// set `getErr` — it is returned verbatim from GetFileContent and does NOT wrap
+// the sentinel, so callers classify it as a connection error.
+// Tests that exercise recent-PRs endpoints can optionally set `prs` to stub
+// the ListPullRequests response.
+type handlerFakeGitProvider struct {
+	files  map[string][]byte
+	prs    []gitprovider.PullRequest
+	getErr error // when set, GetFileContent returns this verbatim (connection failure)
+}
+
+func (f *handlerFakeGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	data, ok := f.files[path]
+	if !ok {
+		return nil, fmt.Errorf("get file content: path %q not found: %w", path, gitprovider.ErrFileNotFound)
+	}
+	return data, nil
+}
+
+func (f *handlerFakeGitProvider) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
+	return nil, nil
+}
+
+func (f *handlerFakeGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
+	return f.prs, nil
+}
+
+func (f *handlerFakeGitProvider) TestConnection(_ context.Context) error { return nil }
+
+func (f *handlerFakeGitProvider) CreateBranch(_ context.Context, _, _ string) error { return nil }
+
+func (f *handlerFakeGitProvider) CreateOrUpdateFile(_ context.Context, _ string, _ []byte, _, _ string) error {
+	return nil
+}
+
+func (f *handlerFakeGitProvider) BatchCreateFiles(_ context.Context, _ map[string][]byte, _, _ string) error {
+	return nil
+}
+
+func (f *handlerFakeGitProvider) DeleteFile(_ context.Context, _, _, _ string) error { return nil }
+
+func (f *handlerFakeGitProvider) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *handlerFakeGitProvider) MergePullRequest(_ context.Context, _ int) error { return nil }
+
+func (f *handlerFakeGitProvider) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
+	return "open", nil
+}
+
+func (f *handlerFakeGitProvider) DeleteBranch(_ context.Context, _ string) error { return nil }
+
+// ---------------------------------------------------------------------------
+// Fake SecretReconciler for handler tests
+// ---------------------------------------------------------------------------
+
+type fakeReconciler struct {
+	triggered bool
+	stats     secrets.ReconcileStats
+	// itemChecked lets tests seed a per cluster+addon last-checked
+	// timestamp for LastItemChecked, keyed by [cluster, addon]. Nil/empty
+	// means "nothing known" — LastItemChecked returns ok=false, matching
+	// a real Reconciler that has never processed the pair.
+	itemChecked map[[2]string]time.Time
+	// itemOutcome lets tests seed a per cluster+addon last outcome for
+	// LastItemOutcome (S4), same keying/nil-means-unknown convention as
+	// itemChecked above.
+	itemOutcome map[[2]string]string
+	// itemError lets tests seed a per cluster+addon RAW error for
+	// LastItemError (S8), same keying/nil-means-unknown convention as
+	// itemOutcome above.
+	itemError map[[2]string]string
+	// itemConsecutiveFailures (P2-D D3) lets tests seed a per cluster+addon
+	// consecutive-failure count, same keying/nil-means-unknown convention
+	// as itemError above.
+	itemConsecutiveFailures map[[2]string]int
+	// knownItemCount (P3-F1) is what KnownItemCount reports — the blast
+	// radius a "Refresh all" audit entry states. 0 is the real "no pass has
+	// run yet" answer, which is what most tests want.
+	knownItemCount int
+
+	// checkOutcome/checkErr and syncOutcome/syncErr (S4) are what
+	// CheckOne/SyncOne return; checkCalls/syncCalls record every
+	// (cluster, addon) pair they were called with, for assertions.
+	checkOutcome string
+	checkErr     error
+	checkCalls   []itemCallArgs
+
+	syncOutcome string
+	syncErr     error
+	syncCalls   []itemCallArgs
+
+	// SyncCluster seams (task #152, story 152.A) — what the git-backed
+	// cluster refresh returns, and every (cluster, addon) pair it was
+	// called with.
+	syncClusterRefreshed []string
+	syncClusterFailed    []string
+	syncClusterErr       error
+	syncClusterCalls     []itemCallArgs
+
+	// checkedAll counts CheckAll calls (P1-A A3). Guarded because the
+	// handler runs the check in a goroutine.
+	checkAllMu sync.Mutex
+	checkedAll int
+
+	// lastError/lastErrorCluster/lastErrorAt (P1-B B2) let tests configure
+	// the engine-level error the LastError/LastErrorCluster/LastErrorAt
+	// trio reports — zero values mean "no error", same as a clean pass.
+	lastError        string
+	lastErrorCluster string
+	lastErrorAt      time.Time
+
+	// orphanedSecrets / deleteOrphanErr / deleteOrphanCalls (leftover-
+	// secrets S1) let tests seed OrphanedSecrets' return value and
+	// configure/assert DeleteOrphanedSecret calls.
+	orphanedSecrets   []models.OrphanedSecret
+	deleteOrphanErr   error
+	deleteOrphanCalls []orphanDeleteCallArgs
+
+	// disabled (M6, code review) lets a test simulate the addon-values
+	// engine's off switch. Zero value false means IsEnabled reports true —
+	// every existing test that never sets this keeps seeing an enabled
+	// engine, matching the real Reconciler's nil-enabledFn default.
+	disabled bool
+}
+
+// orphanDeleteCallArgs records one DeleteOrphanedSecret call for assertions.
+type orphanDeleteCallArgs struct{ cluster, namespace, name string }
+
+func (r *fakeReconciler) Trigger() { r.triggered = true }
+
+func (r *fakeReconciler) IsEnabled(_ context.Context) bool { return !r.disabled }
+
+func (r *fakeReconciler) GetStats() secrets.ReconcileStats { return r.stats }
+
+func (r *fakeReconciler) LastRunTime() time.Time   { return time.Time{} }
+func (r *fakeReconciler) LastError() string        { return r.lastError }
+func (r *fakeReconciler) LastErrorCluster() string { return r.lastErrorCluster }
+func (r *fakeReconciler) LastErrorAt() time.Time   { return r.lastErrorAt }
+func (r *fakeReconciler) Interval() time.Duration  { return 0 }
+
+func (r *fakeReconciler) LastItemChecked(cluster, addon string) (time.Time, bool) {
+	if r.itemChecked == nil {
+		return time.Time{}, false
+	}
+	t, ok := r.itemChecked[[2]string{cluster, addon}]
+	return t, ok
+}
+
+func (r *fakeReconciler) LastItemOutcome(cluster, addon string) (string, bool) {
+	if r.itemOutcome == nil {
+		return "", false
+	}
+	o, ok := r.itemOutcome[[2]string{cluster, addon}]
+	return o, ok
+}
+
+func (r *fakeReconciler) LastItemError(cluster, addon string) (string, bool) {
+	if r.itemError == nil {
+		return "", false
+	}
+	e, ok := r.itemError[[2]string{cluster, addon}]
+	return e, ok
+}
+
+func (r *fakeReconciler) LastItemConsecutiveFailures(cluster, addon string) (int, bool) {
+	if r.itemConsecutiveFailures == nil {
+		return 0, false
+	}
+	c, ok := r.itemConsecutiveFailures[[2]string{cluster, addon}]
+	return c, ok
+}
+
+func (r *fakeReconciler) KnownItemCount() int {
+	return r.knownItemCount
+}
+
+func (r *fakeReconciler) CheckOne(_ context.Context, cluster, addon string) (string, error) {
+	r.checkCalls = append(r.checkCalls, itemCallArgs{cluster, addon})
+	return r.checkOutcome, r.checkErr
+}
+
+func (r *fakeReconciler) SyncOne(_ context.Context, cluster, addon string) (string, error) {
+	r.syncCalls = append(r.syncCalls, itemCallArgs{cluster, addon})
+	return r.syncOutcome, r.syncErr
+}
+
+func (r *fakeReconciler) SyncCluster(_ context.Context, cluster, addon string) ([]string, []string, error) {
+	r.syncClusterCalls = append(r.syncClusterCalls, itemCallArgs{cluster, addon})
+	return r.syncClusterRefreshed, r.syncClusterFailed, r.syncClusterErr
+}
+
+func (r *fakeReconciler) CheckAll(_ context.Context) error {
+	r.checkAllMu.Lock()
+	defer r.checkAllMu.Unlock()
+	r.checkedAll++
+	return nil
+}
+
+func (r *fakeReconciler) OrphanedSecrets() []models.OrphanedSecret {
+	return r.orphanedSecrets
+}
+
+func (r *fakeReconciler) DeleteOrphanedSecret(_ context.Context, cluster, namespace, name string) error {
+	r.deleteOrphanCalls = append(r.deleteOrphanCalls, orphanDeleteCallArgs{cluster, namespace, name})
+	return r.deleteOrphanErr
+}
+
+// ---------------------------------------------------------------------------
+// handleRepoStatus
+// ---------------------------------------------------------------------------
+
+func TestHandleRepoStatus_NotInitialized_NoConnection(t *testing.T) {
+	// No connection configured — connSvc returns error from GetActiveGitProvider.
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repo/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["initialized"] != false {
+		t.Errorf("expected initialized=false, got %v", body["initialized"])
+	}
+	if body["reason"] != "no_connection" {
+		t.Errorf("expected reason=no_connection, got %v", body["reason"])
+	}
+	// V124-22 / BUG-046: bootstrap_synced is always present in the body.
+	// When the repo isn't initialized, bootstrap_synced must be false —
+	// the wizard gate combines (!initialized || !bootstrap_synced).
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])
+	}
+}
+
+func TestHandleRepoStatus_NotInitialized_NotBootstrapped(t *testing.T) {
+	// Connection present but bootstrap/Chart.yaml does not exist.
+	srv := newTestServer()
+	// Install a git provider override that returns nothing (all paths return error).
+	gp := &handlerFakeGitProvider{files: map[string][]byte{}}
+	srv.connSvc.SetGitProviderOverride(gp)
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repo/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["initialized"] != false {
+		t.Errorf("expected initialized=false, got %v", body["initialized"])
+	}
+	if body["reason"] != "not_bootstrapped" {
+		t.Errorf("expected reason=not_bootstrapped, got %v", body["reason"])
+	}
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])
+	}
+}
+
+// TestHandleRepoStatus_NotInitialized_ConnectionError is the V2-cleanup-50
+// reproducer: a corporate TLS-inspection proxy (Zscaler) makes the
+// bootstrap/Chart.yaml fetch fail with an x509 "unknown authority" error.
+// That is NOT a missing file — it does not wrap gitprovider.ErrFileNotFound —
+// so the handler must classify it as "connection_error". Pre-fix this was
+// reported as "not_bootstrapped", which threw the user into the re-bootstrap
+// wizard even though a working bootstrap was already in place.
+func TestHandleRepoStatus_NotInitialized_ConnectionError(t *testing.T) {
+	srv := newTestServer()
+	// getErr is a generic transport/TLS error that does NOT wrap
+	// gitprovider.ErrFileNotFound — i.e. the repo could not be reached.
+	gp := &handlerFakeGitProvider{
+		files:  map[string][]byte{},
+		getErr: errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"),
+	}
+	srv.connSvc.SetGitProviderOverride(gp)
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repo/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["initialized"] != false {
+		t.Errorf("expected initialized=false, got %v", body["initialized"])
+	}
+	if body["reason"] != "connection_error" {
+		t.Errorf("expected reason=connection_error, got %v", body["reason"])
+	}
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])
+	}
+}
+
+// repoStatusInitializedTestSetup wires up a server with the bootstrap file
+// present on the base branch and the supplied ArgocdClient override. It
+// returns the body decoded from a GET /api/v1/repo/status — the four
+// V124-22 cases below differ only in the override behaviour.
+func repoStatusInitializedTestSetup(t *testing.T, ac orchestrator.ArgocdClient) map[string]interface{} {
+	t.Helper()
+	srv := newTestServer()
+	srv.publishGitopsCfg(orchestrator.GitOpsConfig{BaseBranch: "main"})
+	gp := &handlerFakeGitProvider{files: map[string][]byte{
+		orchestrator.BootstrapRootAppPath: []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+	}}
+	srv.connSvc.SetGitProviderOverride(gp)
+	if ac != nil {
+		srv.connSvc.SetArgocdClientOverride(ac)
+	}
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repo/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["initialized"] != true {
+		t.Errorf("expected initialized=true, got %v", body["initialized"])
+	}
+	return body
+}
+
+// V124-22 / BUG-046 — repo initialized + bootstrap Synced + Healthy →
+// bootstrap_synced=true. Wizard stays out of the way, dashboard renders.
+func TestHandleRepoStatus_Initialized_BootstrapHealthy(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "Synced",
+			HealthStatus: "Healthy",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != true {
+		t.Errorf("expected bootstrap_synced=true (Synced+Healthy app), got %v",
+			body["bootstrap_synced"])
+	}
+	// A healthy bootstrap carries no reason (reason is omitempty, so absent).
+	if r, ok := body["reason"]; ok && r != "" {
+		t.Errorf("expected no reason for a healthy bootstrap, got %v", r)
+	}
+}
+
+// V124-22 / BUG-046 — repo initialized + bootstrap missing → bootstrap_synced=false.
+// This is the BUG-046 reproducer: user wiped the GitHub repo + ran
+// `sharko-dev.sh argocd-reset`, then visited the UI. Without this fix,
+// the dashboard renders with errors instead of the wizard.
+func TestHandleRepoStatus_Initialized_BootstrapMissing(t *testing.T) {
+	ac := &initFakeArgocd{
+		getErr: errors.New("application not found: cluster-addons-bootstrap"),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (app missing), got %v",
+			body["bootstrap_synced"])
+	}
+}
+
+// V2-cleanup-51.1 — repo initialized + bootstrap app Sync=Unknown (ArgoCD's
+// repo-server can't reach the Git repo) → bootstrap_synced=false AND
+// reason="bootstrap_unreachable". This is the live Zscaler bug: re-init can't
+// fix a connection problem, so the UI must NOT auto-trap the user.
+func TestHandleRepoStatus_Initialized_BootstrapUnreachable(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "Unknown",
+			HealthStatus: "Error",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (Sync=Unknown), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "bootstrap_unreachable" {
+		t.Errorf("expected reason=bootstrap_unreachable, got %v", body["reason"])
+	}
+}
+
+// V2-cleanup-51.1 — repo initialized + bootstrap genuinely degraded
+// (OutOfSync/Degraded) → bootstrap_synced=false AND reason="bootstrap_degraded".
+// ArgoCD read the repo and found a fixable problem, so re-init/repair is the
+// right move — distinct from the unreachable (connection) case above.
+func TestHandleRepoStatus_Initialized_BootstrapDegradedReason(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "OutOfSync",
+			HealthStatus: "Degraded",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (OutOfSync+Degraded), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "bootstrap_degraded" {
+		t.Errorf("expected reason=bootstrap_degraded, got %v", body["reason"])
+	}
+}
+
+// V124-22 / BUG-046 — repo initialized + bootstrap exists but degraded
+// (OutOfSync / Degraded) → bootstrap_synced=false. Protects against the
+// "user manually deleted the deployment" partial-state case so the wizard
+// is the recovery surface, not a broken dashboard.
+func TestHandleRepoStatus_Initialized_BootstrapDegraded(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "OutOfSync",
+			HealthStatus: "Degraded",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (OutOfSync+Degraded), got %v",
+			body["bootstrap_synced"])
+	}
+}
+
+// V124-22 / BUG-046 — repo initialized + ArgoCD client unavailable →
+// bootstrap_synced=false (defensive). When we can't probe the cluster,
+// the safe answer for the wizard gate is "treat as degraded" so the
+// recovery surface is the wizard, not a dashboard that's silently
+// missing the bootstrap. Achieved here by NOT installing an override
+// AND keeping the ConnectionService without a configured connection
+// (no test override → GetActiveOrchestratorArgocdClient returns an error,
+// which the handler treats as "no probe possible" → bootstrap_synced=false).
+func TestHandleRepoStatus_Initialized_ArgocdUnavailable(t *testing.T) {
+	body := repoStatusInitializedTestSetup(t, nil)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (no ArgoCD client), got %v",
+			body["bootstrap_synced"])
+	}
+	// Error review package 1: no ArgoCD client at all is a "couldn't check"
+	// state — reason must be non-empty and honest, not silently blank.
+	if body["reason"] != "argocd_unreachable" {
+		t.Errorf("expected reason=argocd_unreachable, got %v", body["reason"])
+	}
+}
+
+// Error review package 1 — repo initialized + ArgoCD rejects the bootstrap
+// probe with a 401 (invalid/expired token) → bootstrap_synced=false AND
+// reason="argocd_auth_failed". This is the root-cause bug reproducer: before
+// argocd.ErrTokenInvalid existed, a 401 fell into the same generic bucket as
+// a genuinely degraded app and the wizard claimed the engine app "already
+// exists but is not healthy" — a fact Sharko never verified because it never
+// got past the token check.
+func TestHandleRepoStatus_Initialized_ArgocdAuthFailed(t *testing.T) {
+	ac := &initFakeArgocd{
+		listErr: fmt.Errorf("listing applications: %w", argocd.ErrTokenInvalid),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (auth failed), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "argocd_auth_failed" {
+		t.Errorf("expected reason=argocd_auth_failed, got %v", body["reason"])
+	}
+}
+
+// Error review package 1 — repo initialized + the ArgoCD LIST call fails for
+// an uncategorized reason (neither a 403 permission problem nor a 401
+// invalid token) → bootstrap_synced=false AND reason="argocd_unreachable".
+// This must NOT be "bootstrap_degraded" — Sharko never got app data back, so
+// it cannot honestly claim the engine app is degraded.
+func TestHandleRepoStatus_Initialized_ArgocdListFailsGeneric(t *testing.T) {
+	ac := &initFakeArgocd{
+		listErr: errors.New("dial tcp: i/o timeout"),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (list failed), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "argocd_unreachable" {
+		t.Errorf("expected reason=argocd_unreachable, got %v", body["reason"])
+	}
+}
+
+// Review findings r1, H1 — repo initialized + ArgoCD rejects the bootstrap
+// probe with a 403 (valid token, no RBAC permission) → bootstrap_synced=false
+// AND reason="argocd_forbidden". Before this fix, probeBootstrapSynced
+// dropped bootstrapForbidden into the `default:` arm and reported
+// "bootstrap_degraded" — falsely claiming Sharko had looked at the engine
+// app and found it broken, when it never got past the permission check.
+func TestHandleRepoStatus_Initialized_ArgocdForbidden(t *testing.T) {
+	ac := &initFakeArgocd{
+		listErr: fmt.Errorf("listing applications: %w", argocd.ErrPermissionDenied),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (forbidden), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "argocd_forbidden" {
+		t.Errorf("expected reason=argocd_forbidden, got %v", body["reason"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleTriggerReconcile
+// ---------------------------------------------------------------------------
+
+func TestHandleTriggerReconcile_NotConfigured(t *testing.T) {
+	srv := newTestServer()
+	// secretReconciler is nil (not configured).
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/reconcile", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleTriggerReconcile_Configured(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/reconcile", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", w.Code)
+	}
+	if !rec.triggered {
+		t.Error("expected reconciler.Trigger() to have been called")
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "reconcile triggered" {
+		t.Errorf("unexpected status: %v", body["status"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleCheckSecrets (P1-A A3) — the read-only fleet-wide check
+// ---------------------------------------------------------------------------
+
+func TestHandleCheckSecrets_RunsTheCheckAndNotTheWritePass(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	// The check runs in a goroutine, so wait for it rather than racing it.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec.checkAllMu.Lock()
+		n := rec.checkedAll
+		rec.checkAllMu.Unlock()
+		if n == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected CheckAll to run exactly once, saw %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rec.triggered {
+		t.Error("a check must never fire the write pass")
+	}
+}
+
+func TestHandleCheckSecrets_NotConfigured(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+// TestHandleCheckSecrets_EngineDisabled_Returns409NoAuditEntry is M6's pin
+// (code review): before this fix, a disabled engine still got a 202 and an
+// audit entry claiming a check started (written BEFORE the goroutine ran),
+// and the goroutine's own ErrReconcilerDisabled only reached a log line.
+// Now the engine's enabled state is checked SYNCHRONOUSLY, before either
+// the response or the audit entry: disabled means 409, no CheckAll call,
+// and no audit entry saying a check happened.
+func TestHandleCheckSecrets_EngineDisabled_Returns409NoAuditEntry(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{disabled: true}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/check", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
+	}
+
+	// Give any stray goroutine a moment to prove it did NOT run.
+	time.Sleep(20 * time.Millisecond)
+	rec.checkAllMu.Lock()
+	n := rec.checkedAll
+	rec.checkAllMu.Unlock()
+	if n != 0 {
+		t.Errorf("CheckAll called %d times on a disabled engine, want 0", n)
+	}
+
+	for _, e := range srv.AuditLog().List(0) {
+		if e.Event == "addon_values_secret_check_triggered" {
+			t.Errorf("an audit entry claims a check started on a disabled engine: %+v", e)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleReconcileStatus
+// ---------------------------------------------------------------------------
+
+func TestHandleReconcileStatus_NotConfigured(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleReconcileStatus_ReturnsStats(t *testing.T) {
+	// W3-6b: real production shape is secrets.ReconcileStats (see the
+	// SecretReconciler.GetStats doc comment) — a completed run with a real
+	// LastRun timestamp. last_run must survive as an RFC3339 string, and
+	// every outcome count must survive byte-compatible.
+	lastRun := time.Date(2026, 8, 16, 10, 30, 0, 0, time.UTC)
+	srv := newTestServer()
+	rec := &fakeReconciler{stats: secrets.ReconcileStats{
+		Checked:  5,
+		Created:  1,
+		Updated:  2,
+		Deleted:  0,
+		Skipped:  1,
+		Errors:   0,
+		Duration: "1.2s",
+		LastRun:  lastRun,
+	}}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	// JSON numbers are float64 by default.
+	if body["checked"] != float64(5) {
+		t.Errorf("expected checked=5, got %v", body["checked"])
+	}
+	if body["created"] != float64(1) {
+		t.Errorf("expected created=1, got %v", body["created"])
+	}
+	if body["updated"] != float64(2) {
+		t.Errorf("expected updated=2, got %v", body["updated"])
+	}
+	if body["skipped"] != float64(1) {
+		t.Errorf("expected skipped=1, got %v", body["skipped"])
+	}
+	if body["duration"] != "1.2s" {
+		t.Errorf("expected duration=1.2s, got %v", body["duration"])
+	}
+	wantLastRun := lastRun.UTC().Format(time.RFC3339)
+	if body["last_run"] != wantLastRun {
+		t.Errorf("expected last_run=%s, got %v", wantLastRun, body["last_run"])
+	}
+}
+
+// TestHandleReconcileStatus_NeverRun is the contract the product owner ruled
+// on (W3-6b): before any reconcile run has completed, the public boundary
+// must NEVER show Go's zero time ("0001-01-01T00:00:00Z") — last_run must be
+// absent (or null) instead. secrets.ReconcileStats{} is the zero value the
+// real Reconciler starts with before its first pass completes.
+func TestHandleReconcileStatus_NeverRun(t *testing.T) {
+	srv := newTestServer()
+	rec := &fakeReconciler{stats: secrets.ReconcileStats{}}
+	srv.SetSecretReconciler(rec)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	raw := w.Body.String()
+	if strings.Contains(raw, "0001-01-01") {
+		t.Fatalf("response body contains Go's zero time, must never reach the public boundary: %s", raw)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if v, present := body["last_run"]; present && v != nil {
+		t.Errorf("expected last_run to be absent or null before any run has completed, got %v", v)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleGetFleetStatus — resilient when Git/ArgoCD unavailable
+// ---------------------------------------------------------------------------
+
+func TestHandleGetFleetStatus_NoConnections(t *testing.T) {
+	// No connections configured — both git_unavailable and argo_unavailable should be true.
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Must always return 200 even with no providers.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body fleetStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.GitUnavailable {
+		t.Error("expected git_unavailable=true when no connection configured")
+	}
+	if !body.ArgoUnavailable {
+		t.Error("expected argo_unavailable=true when no connection configured")
+	}
+	if body.Clusters == nil {
+		t.Error("expected clusters to be a non-nil slice")
+	}
+}
+
+func TestHandleGetFleetStatus_HasServerVersion(t *testing.T) {
+	srv := newTestServer()
+	srv.SetVersion("1.2.3")
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body fleetStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ServerVersion != "1.2.3" {
+		t.Errorf("expected server_version=1.2.3, got %q", body.ServerVersion)
+	}
+}
+
+func TestHandleGetFleetStatus_DefaultVersion(t *testing.T) {
+	// When version is not set, should fall back to "dev".
+	srv := newTestServer()
+	// Do NOT call SetVersion — version field remains zero value.
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var body fleetStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ServerVersion != "dev" {
+		t.Errorf("expected server_version=dev, got %q", body.ServerVersion)
+	}
+}
+
+// TestHandleGetFleetStatus_ClustersFailureDiscardsCatalogResult is the
+// perf M2 behavior-preservation regression test: computeFleetStatus now
+// fetches the cluster-list and catalog pipelines CONCURRENTLY (they used
+// to run one after another), but the original code only ever used the
+// catalog result when the clusters fetch also succeeded. This test forces
+// a hard Git-side error on both pipelines (both read managed-clusters.yaml)
+// and asserts the output is EXACTLY what the original sequential code
+// would have produced: ArgoUnavailable set (from the clusters-fetch
+// failure), and AddonDataUnavailable / TotalAddons left untouched at their
+// zero values — never reached, because the concurrent catalog fetch's
+// result must still be discarded when the clusters fetch fails, byte-
+// identical to the pre-M2 sequential behavior.
+func TestHandleGetFleetStatus_ClustersFailureDiscardsCatalogResult(t *testing.T) {
+	// A closed local port — GetActiveArgocdClient constructs successfully
+	// (no I/O at construction time) but any actual HTTP call against it
+	// fails immediately with connection-refused. Good enough here: the
+	// clusters pipeline fails on the GIT side before ever needing a real
+	// ArgoCD response, and the catalog pipeline's own ArgoCD calls just
+	// degrade to a log.Warn (GetCatalog only hard-fails on Git errors).
+	srv := newTestServerWithArgocd(t, "http://127.0.0.1:1", "dummy-token")
+	srv.connSvc.SetGitProviderOverride(&handlerFakeGitProvider{
+		getErr: fmt.Errorf("simulated git outage"), // NOT wrapped with ErrFileNotFound — a hard failure
+	})
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/fleet/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var body fleetStatusResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.ArgoUnavailable {
+		t.Error("expected argo_unavailable=true when the clusters fetch hard-fails")
+	}
+	if body.AddonDataUnavailable {
+		t.Error("expected addon_data_unavailable=false — the catalog branch must never be reached when the clusters fetch fails, even though the catalog fetch itself ran concurrently")
+	}
+	if body.TotalAddons != 0 {
+		t.Errorf("expected total_addons=0 (catalog result discarded), got %d", body.TotalAddons)
+	}
+	if body.TotalClusters != 0 {
+		t.Errorf("expected total_clusters=0, got %d", body.TotalClusters)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReinitializeFromConnection
+// ---------------------------------------------------------------------------
+
+// newIsolatedTestServer creates a Server backed by a unique temp file store so that
+// ReinitializeFromConnection tests do not share state with newTestServer() or each other.
+func newIsolatedTestServer(t *testing.T) *Server {
+	t.Helper()
+	f, err := os.CreateTemp("", "sharko-test-*.yaml")
+	if err != nil {
+		t.Fatalf("create temp config file: %v", err)
+	}
+	f.Close()
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	store := config.NewFileStore(f.Name())
+	connSvc := service.NewConnectionService(store)
+	clusterSvc := service.NewClusterService("")
+	addonSvc := service.NewAddonService("")
+	dashboardSvc := service.NewDashboardService(connSvc, "")
+	observabilitySvc := service.NewObservabilityService(clusterSvc)
+	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), nil, "")
+	aiClient := ai.NewClient(ai.Config{})
+	return withLegacyOpenAuthForTests(NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient))
+}
+
+// staticVault wraps a fixed provider value as a clusterreconciler.Deps.Vault
+// resolver. Test wiring only — for reconcilers whose backend genuinely never
+// changes mid-test. Production wiring resolves the live provider on every
+// call (serve.go wires Server.ClusterCredentialsProvider); freezing a boot
+// value there is the R2-1 bug.
+func staticVault(v providers.ClusterCredentialsProvider) func() providers.ClusterCredentialsProvider {
+	return func() providers.ClusterCredentialsProvider { return v }
+}
+
+// installCredProvider publishes cp as the server's cluster-credentials
+// provider (with optional typed configs) through the same race-safe
+// publication point production uses — with the ArgoCD-read route DISABLED
+// so unit tests stay hermetic: the production ArgoCD reader falls back to
+// ~/.kube/config out-of-cluster, which must never be touched from a test.
+func installCredProvider(srv *Server, cp providers.ClusterCredentialsProvider, addonCfg *providers.AddonSecretProviderConfig, testCfg *providers.ClusterTestProviderConfig) {
+	srv.providerState.Store(&providerSet{
+		credProvider:   cp,
+		addonSecretCfg: addonCfg,
+		clusterTestCfg: testCfg,
+		credsRouter: &providers.ClusterCredsRouter{
+			Backend: cp,
+			ArgoCDReaderFn: func() (providers.ClusterCredentialsProvider, error) {
+				return nil, fmt.Errorf("argocd reader disabled in unit tests")
+			},
+		},
+	})
+}
+
+// seedActiveConnection saves a Connection and marks it active on the server's connSvc.
+func seedActiveConnection(t *testing.T, srv *Server, conn models.Connection) {
+	t.Helper()
+	if err := srv.connSvc.Create(models.CreateConnectionRequest{
+		Name:                conn.Name,
+		Git:                 conn.Git,
+		Argocd:              conn.Argocd,
+		Provider:            conn.Provider,
+		AddonSecretProvider: conn.AddonSecretProvider,
+		GitOps:              conn.GitOps,
+	}); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	if err := srv.connSvc.SetActive(conn.Name); err != nil {
+		t.Fatalf("set active connection: %v", err)
+	}
+}
+
+func TestReinitializeFromConnection_NoConnection(t *testing.T) {
+	// No active connection — ReinitializeFromConnection must not panic
+	// and credProvider must remain nil.
+	srv := newIsolatedTestServer(t)
+	srv.ReinitializeFromConnection()
+
+	if srv.credProvider() != nil {
+		t.Error("expected credProvider to remain nil when no active connection")
+	}
+}
+
+func TestReinitializeFromConnection_GitOpsConfig(t *testing.T) {
+	// Connection with GitOps settings populated.
+	// ReinitializeFromConnection must copy those values into published gitops config (GF2).
+	srv := newIsolatedTestServer(t)
+
+	autoMerge := true
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "gitops-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		GitOps: &models.GitOpsSettings{
+			BaseBranch:   "develop",
+			BranchPrefix: "feature/",
+			CommitPrefix: "feat:",
+			PRAutoMerge:  &autoMerge,
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	cfg := srv.gitopsConfig()
+	if cfg.BaseBranch != "develop" {
+		t.Errorf("expected BaseBranch=develop, got %q", cfg.BaseBranch)
+	}
+	if cfg.BranchPrefix != "feature/" {
+		t.Errorf("expected BranchPrefix=feature/, got %q", cfg.BranchPrefix)
+	}
+	if cfg.CommitPrefix != "feat:" {
+		t.Errorf("expected CommitPrefix=feat:, got %q", cfg.CommitPrefix)
+	}
+	if !cfg.PRAutoMerge {
+		t.Error("expected PRAutoMerge=true")
+	}
+}
+
+func TestReinitializeFromConnection_SetsProvider(t *testing.T) {
+	// Connection with an aws-sm provider config.
+	// providers.New(aws-sm) succeeds without real credentials at construction time
+	// (the AWS SDK defers credential resolution to the first API call).
+	// After ReinitializeFromConnection, credProvider must be non-nil.
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "aws-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type:   "aws-sm",
+			Region: "us-east-1",
+			Prefix: "clusters/",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// V2-cleanup-53.1: the aws-sm cluster-creds arm is RESTORED. With
+	// provider.type="aws-sm" the cluster-test fan-through now routes to the
+	// SM-backed provider — construction succeeds without real credentials
+	// (the AWS SDK defers resolution to the first API call), so this is
+	// deterministic in CI. This is also the hot-reload contract: this same
+	// method runs on every connection save, so the swap here IS what makes
+	// a Settings change take effect without a pod restart.
+	if _, ok := srv.credProvider().(*providers.AWSSecretsManagerProvider); !ok {
+		t.Fatalf("credProvider = %T, want *providers.AWSSecretsManagerProvider (restored aws-sm cluster-creds arm)", srv.credProvider())
+	}
+	if srv.clusterTestCfg() == nil || srv.clusterTestCfg().Type != "aws-sm" {
+		t.Errorf("expected clusterTestCfg.Type=aws-sm, got %+v", srv.clusterTestCfg())
+	}
+	if srv.clusterTestCfg() != nil && srv.clusterTestCfg().ArgoCDNamespace != "" {
+		t.Errorf("ArgoCDNamespace = %q, want empty (V125-1-10.8 guard)", srv.clusterTestCfg().ArgoCDNamespace)
+	}
+	if srv.addonSecretCfg() == nil || srv.addonSecretCfg().Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %+v", srv.addonSecretCfg())
+	}
+}
+
+func TestReinitializeFromConnection_RepoURL(t *testing.T) {
+	// Connection with a git RepoURL — published gitops config RepoURL must be populated (GF2).
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "repo-conn",
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderGitHub,
+			Owner:    "owner",
+			Repo:     "repo",
+			RepoURL:  "https://github.com/owner/repo.git",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	cfg := srv.gitopsConfig()
+	if cfg.RepoURL != "https://github.com/owner/repo.git" {
+		t.Errorf("expected RepoURL=https://github.com/owner/repo.git, got %q", cfg.RepoURL)
+	}
+}
+
+// V3-P1.1: when Connection has BOTH Provider (cluster-creds) AND
+// AddonSecretProvider (addon-secret), hot-reload must route them separately.
+// This is the "argocd for cluster-creds + aws-sm for addon-secrets" scenario.
+func TestReinitializeFromConnection_SeparateAddonSecretProvider(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "split-providers",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type: "argocd", // cluster-creds only
+		},
+		AddonSecretProvider: &models.ProviderConfig{
+			Type:   "aws-sm", // addon-secrets only
+			Region: "us-east-1",
+			Prefix: "addons/",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// Cluster-test config: argocd (config must publish even if provider construction failed)
+	testCfg := srv.clusterTestCfg()
+	if testCfg == nil {
+		t.Fatalf("expected clusterTestCfg to be published, got nil")
+	}
+	if testCfg.Type != "argocd" {
+		t.Errorf("expected clusterTestCfg.Type=argocd, got %q", testCfg.Type)
+	}
+
+	// Addon-secret config: aws-sm with explicit fields (independent of cluster-creds provider)
+	addonCfg := srv.addonSecretCfg()
+	if addonCfg == nil {
+		t.Fatalf("expected addonSecretCfg to be published, got nil")
+	}
+	if addonCfg.Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %q", addonCfg.Type)
+	}
+	if addonCfg.Region != "us-east-1" {
+		t.Errorf("expected addonSecretCfg.Region=us-east-1, got %q", addonCfg.Region)
+	}
+	if addonCfg.Prefix != "addons/" {
+		t.Errorf("expected addonSecretCfg.Prefix=addons/, got %q", addonCfg.Prefix)
+	}
+}
+
+// V3-P1.1 backward compat: legacy connection (Provider set, AddonSecretProvider
+// nil) must resolve addon-secret backend from Provider exactly as before.
+func TestReinitializeFromConnection_LegacyProviderBackwardCompat(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "legacy-provider",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type:   "aws-sm",
+			Region: "eu-west-1",
+			Prefix: "clusters/",
+		},
+		AddonSecretProvider: nil, // not set (pre-V3 connection)
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// Both cluster-test and addon-secret should resolve from Provider (backward compat)
+	if srv.clusterTestCfg() == nil || srv.clusterTestCfg().Type != "aws-sm" {
+		t.Errorf("expected clusterTestCfg.Type=aws-sm, got %+v", srv.clusterTestCfg())
+	}
+	if srv.addonSecretCfg() == nil || srv.addonSecretCfg().Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm (fallback from Provider), got %+v", srv.addonSecretCfg())
+	}
+	if srv.addonSecretCfg().Region != "eu-west-1" {
+		t.Errorf("expected addonSecretCfg.Region=eu-west-1, got %q", srv.addonSecretCfg().Region)
+	}
+	if srv.addonSecretCfg().Prefix != "clusters/" {
+		t.Errorf("expected addonSecretCfg.Prefix=clusters/, got %q", srv.addonSecretCfg().Prefix)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-10.7: provider auto-default end-to-end through ReinitializeFromConnection
+// ---------------------------------------------------------------------------
+//
+// Story 10.7 removed the `pc.Type != ""` gate around providers.New so that the
+// V125-1-10.2 auto-default path (in-cluster + empty type → ArgoCDProvider) can
+// fire from the api-level ReinitializeFromConnection call site. The unit-level
+// auto-default behavior is exhaustively tested in
+// internal/providers/provider_test.go (TestNew_AutoDefault* — they swap the
+// inClusterConfigFn package-private seam). The tests below cover the api-level
+// wiring around providers.New: explicit "argocd"/"k8s-secrets" routing,
+// out-of-cluster empty-type still leaves credProvider nil safely (no panic, no
+// crash), and nil Provider in the connection is also tolerated.
+
+func TestReinitializeFromConnection_ArgoCDExplicit(t *testing.T) {
+	// Explicit Type="argocd" — the new dropdown option.
+	// providers.New("argocd") may construct successfully when ~/.kube/config is
+	// available, or return an error otherwise. Either way it must NOT return
+	// "unknown provider type" — that's the regression we're guarding against.
+	srv := newIsolatedTestServer(t)
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "argocd-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type: "argocd",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// We can't assert credProvider != nil because constructing an
+	// ArgoCDProvider out-of-cluster without a kubeconfig fails by design.
+	// What we CAN assert: when construction succeeded the addon-secret
+	// typed config should reflect the wired-through type, and the call
+	// must not panic.
+	if srv.addonSecretCfg() != nil && srv.addonSecretCfg().Type != "argocd" {
+		t.Errorf("expected addonSecretCfg.Type=argocd when set, got %q", srv.addonSecretCfg().Type)
+	}
+}
+
+func TestReinitializeFromConnection_K8sSecretsRegression(t *testing.T) {
+	// k8s-secrets — regression guard for V125-1-10.7.
+	// Pre-fix path was `pc.Type != ""` → still passed for k8s-secrets, so the
+	// behavior is the same. We test it explicitly to lock in that the ungate
+	// did not regress the existing branch.
+	srv := newIsolatedTestServer(t)
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "k8s-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type: "k8s-secrets",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// k8s-secrets construction may fail in the unit-test env (no in-cluster
+	// config + no ~/.kube/config), but the api code must not crash and the
+	// type must round-trip when a provider was successfully constructed.
+	if srv.addonSecretCfg() != nil && srv.addonSecretCfg().Type != "k8s-secrets" {
+		t.Errorf("expected addonSecretCfg.Type=k8s-secrets when set, got %q", srv.addonSecretCfg().Type)
+	}
+}
+
+func TestReinitializeFromConnection_EmptyType_OutOfCluster(t *testing.T) {
+	// Type=="" + out-of-cluster (the unit-test environment) → providers.New
+	// returns the legacy "no provider configured" error. Pre-V125-1-10.7 the
+	// providers.New call was gated and silently skipped — credProvider stayed
+	// nil and the test would have passed for the wrong reason. Post-fix, the
+	// call is made unconditionally; the same nil credProvider outcome is now
+	// the result of the auto-default deciding "not in cluster, no provider
+	// configured." The user-visible BUG-035 surface is preserved.
+	srv := newIsolatedTestServer(t)
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "empty-type-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type: "",
+		},
+	})
+
+	// Must not panic.
+	srv.ReinitializeFromConnection()
+
+	if srv.credProvider() != nil {
+		t.Error("expected credProvider to remain nil when out-of-cluster + empty provider type")
+	}
+}
+
+func TestReinitializeFromConnection_NilProvider(t *testing.T) {
+	// conn.Provider == nil + out-of-cluster → providers.New is still called
+	// (pre-fix it was skipped entirely on the `pc != nil && pc.Type != ""`
+	// guard) and returns the legacy "no provider configured" error.
+	// credProvider stays nil safely.
+	//
+	// This case is the one the maintainer hit live on 2026-05-14: a fresh
+	// install with no provider stored on the connection. Pre-fix
+	// ReinitializeFromConnection skipped providers.New entirely, so even when
+	// running in-cluster the ArgoCD auto-default never fired. Now the call is
+	// made and (in-cluster) the auto-default returns ArgoCDProvider — proven
+	// at the unit level by TestNew_AutoDefaultInCluster in
+	// internal/providers/provider_test.go.
+	srv := newIsolatedTestServer(t)
+	seedActiveConnection(t, srv, models.Connection{
+		Name:     "nil-provider-conn",
+		Git:      models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: nil,
+	})
+
+	// Must not panic.
+	srv.ReinitializeFromConnection()
+
+	// In the test env (out-of-cluster), the auto-default fails and credProvider
+	// stays nil. The fact that the call was made — and didn't panic — IS the
+	// fix; the in-cluster success branch is covered at the unit level.
+	if srv.credProvider() != nil {
+		t.Error("expected credProvider to remain nil when out-of-cluster + nil provider config")
+	}
+}
+
+// TestReinitializeFromConnection_NoCrossContaminationIntoClusterTestNamespace
+// is the unit-level guard for V125-1-11.7-fix.
+//
+// Story 11.6's fan-out copied conn.Provider.Namespace into BOTH
+// addonSecretCfg.Namespace (correct — addon-secret namespace semantics) AND
+// clusterTestCfg.ArgoCDNamespace (WRONG — addon-secret-shaped value bleeding
+// into the argocd-install-namespace slot, recreating the V125-1-10.8 cross-
+// contamination via a different code path).
+//
+// This test exercises the exact wire-shape that the e2e helm test
+// TestClusterTest_ProviderCrossContamination_NamespaceSwitch caught at the
+// integration layer: a connection with Provider.Type="argocd" AND
+// Provider.Namespace="sharko" (the leftover addon-secrets value from a
+// previous dropdown selection). The assertion: clusterTestCfg.ArgoCDNamespace
+// MUST be empty after fan-out so resolveArgoCDNamespaceTyped falls back to
+// the env-var (deprecated compat alias) or the "argocd" hardcoded default
+// — NOT inherit "sharko" verbatim.
+//
+// Keeping this at the unit level means future regressions get caught in
+// `go test ./internal/api/...` (seconds) instead of `make test-e2e-helm`
+// (minutes + kind cluster spin-up).
+func TestReinitializeFromConnection_NoCrossContaminationIntoClusterTestNamespace(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "cross-contamination-unit-guard",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type:      "argocd",
+			Namespace: "sharko", // leftover from a prior k8s-secrets selection
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	// Even when ReinitializeFromConnection fans out the connection-level
+	// Provider block, addonSecretCfg gets the namespace ("sharko" is the
+	// correct addon-secret value) while clusterTestCfg MUST keep
+	// ArgoCDNamespace empty — letting resolveArgoCDNamespaceTyped fall back
+	// through env / "argocd" default.
+	//
+	// Out-of-cluster the cluster-test factory returns the legacy "no provider
+	// configured" error so credProvider stays nil and clusterTestCfg stays
+	// nil too. That's fine — the bug we're guarding against can only fire
+	// when the cluster-test config is actually used, which means
+	// clusterTestCfg got set. So we assert ONLY the populated case (matching
+	// the existing TestReinitializeFromConnection_SetsProvider pattern).
+	if srv.clusterTestCfg() != nil && srv.clusterTestCfg().ArgoCDNamespace != "" {
+		t.Errorf("V125-1-11.7-fix regression: clusterTestCfg.ArgoCDNamespace = %q, want \"\" "+
+			"(addon-secrets-shaped Provider.Namespace must NOT bleed into the argocd-install-namespace slot)",
+			srv.clusterTestCfg().ArgoCDNamespace)
+	}
+
+	// addonSecretCfg in this case can still be populated when the
+	// cluster-test factory fails (because the addon-secret config is built
+	// alongside but stashed only when credProvider succeeds). Either way,
+	// the addon-secret Namespace SHOULD carry the connection's
+	// Provider.Namespace verbatim when the factory completes — that's the
+	// correct addon-secret-namespace semantics and explicitly NOT the bug
+	// we're guarding against here.
+	if srv.addonSecretCfg() != nil && srv.addonSecretCfg().Namespace != "sharko" {
+		t.Errorf("addonSecretCfg.Namespace = %q, want \"sharko\" "+
+			"(addon-secret namespace should carry the connection's Provider.Namespace through verbatim)",
+			srv.addonSecretCfg().Namespace)
+	}
+}

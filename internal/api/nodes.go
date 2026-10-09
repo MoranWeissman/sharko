@@ -1,0 +1,119 @@
+package api
+
+import (
+	"context"
+	"net/http"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+type nodeInfo struct {
+	Name              string `json:"name"`
+	Status            string `json:"status"` // "Ready" or "NotReady"
+	InstanceType      string `json:"instance_type"`
+	Architecture      string `json:"architecture"`
+	OS                string `json:"os"`
+	CapacityCPU       string `json:"capacity_cpu"`
+	CapacityMemory    string `json:"capacity_memory"`
+	AllocatableCPU    string `json:"allocatable_cpu"`
+	AllocatableMemory string `json:"allocatable_memory"`
+}
+
+// handleGetNodeInfo godoc
+//
+// @Summary Get node info
+// @Description Returns Kubernetes node capacity, allocatable resources, and readiness status (in-cluster only)
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Node info with capacity and status"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /cluster/nodes [get]
+func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"nodes":   []nodeInfo{},
+			"message": "Node info only available when running in-cluster",
+		})
+		return
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create Kubernetes client: "+err.Error())
+		return
+	}
+
+	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		// Gracefully degrade when the ServiceAccount lacks cluster-wide
+		// list-nodes permission (config.nodeAccess=false in the Helm
+		// chart). The Dashboard polls this endpoint every 30s; returning
+		// 500 would spam the UI with errors. Instead, return 200 with an
+		// empty list and a clear message so the widget shows a degraded
+		// state rather than an error state.
+		if apierrors.IsForbidden(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"nodes":   []nodeInfo{},
+				"message": "Node info disabled — set config.nodeAccess=true in Helm values to enable.",
+			})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to list nodes: "+err.Error())
+		return
+	}
+
+	result := make([]nodeInfo, 0, len(nodes.Items))
+	for _, node := range nodes.Items {
+		// Determine node ready status
+		status := "NotReady"
+		for _, cond := range node.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				status = "Ready"
+				break
+			}
+		}
+
+		info := nodeInfo{
+			Name:         node.Name,
+			Status:       status,
+			InstanceType: node.Labels["node.kubernetes.io/instance-type"],
+			Architecture: node.Status.NodeInfo.Architecture,
+			OS:           node.Status.NodeInfo.OperatingSystem,
+		}
+
+		if cpu := node.Status.Capacity.Cpu(); cpu != nil {
+			info.CapacityCPU = cpu.String()
+		}
+		if mem := node.Status.Capacity.Memory(); mem != nil {
+			info.CapacityMemory = mem.String()
+		}
+		if cpu := node.Status.Allocatable.Cpu(); cpu != nil {
+			info.AllocatableCPU = cpu.String()
+		}
+		if mem := node.Status.Allocatable.Memory(); mem != nil {
+			info.AllocatableMemory = mem.String()
+		}
+
+		result = append(result, info)
+	}
+
+	readyCount := 0
+	for _, n := range result {
+		if n.Status == "Ready" {
+			readyCount++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"nodes":     result,
+		"total":     len(result),
+		"ready":     readyCount,
+		"not_ready": len(result) - readyCount,
+	})
+}

@@ -1,0 +1,718 @@
+import { useState, useEffect, useCallback } from 'react'
+import type { FormEvent } from 'react'
+import {
+  GitBranch,
+  Server,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  AlertTriangle,
+  Sparkles,
+  FolderGit2,
+  Clock,
+  Circle,
+} from 'lucide-react'
+import { initRepo, getOperation, operationHeartbeat } from '@/services/api'
+import type { OperationStep } from '@/services/api'
+import { useConnections } from '@/hooks/useConnections'
+import { api } from '@/services/api'
+import { LoadingState } from '@/components/LoadingState'
+import { ErrorState } from '@/components/ErrorState'
+import { ErrorDetail } from '@/components/ErrorDetail'
+
+interface ConnectionFormData {
+  git_url: string
+  git_token: string
+  argocd_server_url: string
+  argocd_token: string
+  argocd_namespace: string
+  argocd_insecure: boolean
+}
+
+interface TestStatus {
+  git: 'idle' | 'testing' | 'ok' | 'error'
+  argocd: 'idle' | 'testing' | 'ok' | 'error'
+  gitMessage?: string
+  argocdMessage?: string
+  gitAuth?: string
+  argocdAuth?: string
+}
+
+interface LiveStatus {
+  git: 'idle' | 'testing' | 'ok' | 'error'
+  argocd: 'idle' | 'testing' | 'ok' | 'error'
+}
+
+const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
+const inputCls =
+  'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
+
+export function ConnectionSection() {
+  const { connections, loading, error, refreshConnections } = useConnections()
+
+  const existingConn = connections.find((c) => c.is_active) ?? connections[0] ?? null
+  const isEdit = existingConn !== null
+
+  const [form, setForm] = useState<ConnectionFormData>({
+    git_url: '',
+    git_token: '',
+    argocd_server_url: '',
+    argocd_token: '',
+    argocd_namespace: 'argocd',
+    argocd_insecure: false,
+  })
+
+  const [saving, setSaving] = useState(false)
+  // Holds whatever handleSubmit's catch received (an ApiError from
+  // api.ts's shared throw path, a bare Error, or null) so ErrorDetail can
+  // render the server's cause/hint alongside the headline instead of a
+  // flattened string (error review package 2).
+  const [saveError, setSaveError] = useState<unknown>(null)
+  const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>({ git: 'idle', argocd: 'idle' })
+  const [justSaved, setJustSaved] = useState(false)
+
+  const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; reason?: string } | null>(null)
+  const [initState, setInitState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
+  const [initError, setInitError] = useState<string | null>(null)
+  const [operationId, setOperationId] = useState<string | null>(null)
+  const [initSteps, setInitSteps] = useState<OperationStep[]>([])
+  const [operationStatus, setOperationStatus] = useState<string>('idle')
+  const [prUrl, setPrUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (existingConn) {
+      let gitUrl = ''
+      if (existingConn.git_provider === 'github') {
+        gitUrl = `https://github.com/${existingConn.git_repo_identifier}`
+      } else if (existingConn.git_provider === 'azuredevops') {
+        const parts = existingConn.git_repo_identifier.split('/')
+        if (parts.length >= 3) {
+          gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
+        }
+      }
+      // Gitea: self-hosted host not recoverable from API (git_repo_identifier
+      // is only owner/repo). Leave blank — user must re-enter the full URL to
+      // change it; "Test Git" is disabled when git_url is empty so no garbage
+      // is sent to the backend.
+      setForm({
+        git_url: gitUrl,
+        git_token: '',
+        argocd_server_url: existingConn.argocd_server_url,
+        argocd_token: '',
+        argocd_namespace: existingConn.argocd_namespace,
+        argocd_insecure: existingConn.argocd_insecure ?? false,
+      })
+    }
+  }, [existingConn?.name]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchLiveStatus = useCallback(() => {
+    setLiveStatus({ git: 'testing', argocd: 'testing' })
+    api
+      .testConnection()
+      .then((res) => {
+        setLiveStatus({
+          git: res.git.status === 'ok' ? 'ok' : 'error',
+          argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
+        })
+      })
+      .catch(() => setLiveStatus({ git: 'error', argocd: 'error' }))
+  }, [])
+
+  const fetchRepoStatus = useCallback(() => {
+    if (existingConn) {
+      api.getRepoStatus()
+        .then(data => setRepoStatus(data))
+        .catch(() => setRepoStatus(null))
+    }
+  }, [existingConn?.name]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (existingConn) {
+      fetchLiveStatus()
+      fetchRepoStatus()
+    }
+  }, [existingConn?.name, fetchLiveStatus, fetchRepoStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleInitRepo = useCallback(async (autoMerge: boolean) => {
+    setInitState('running')
+    setInitError(null)
+    setInitSteps([])
+    setOperationStatus('idle')
+    setPrUrl(null)
+    setOperationId(null)
+    try {
+      const res = await initRepo({ bootstrap_argocd: true, auto_merge: autoMerge })
+      if (res?.operation_id) {
+        setOperationId(res.operation_id)
+      } else {
+        // Legacy synchronous response fallback
+        const url = res?.pr_url || res?.pull_request_url || null
+        setPrUrl(url)
+        setOperationStatus('completed')
+        setInitState('done')
+        fetchRepoStatus()
+      }
+    } catch (e: unknown) {
+      setInitError(e instanceof Error ? e.message : 'Failed to initialize repository')
+      setInitState('error')
+    }
+  }, [fetchRepoStatus])
+
+  useEffect(() => {
+    if (!operationId) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getOperation(operationId)
+        setInitSteps(status.steps || [])
+        setOperationStatus(status.status)
+        if (status.wait_payload) setPrUrl(status.wait_payload)
+
+        if (
+          status.status === 'completed' ||
+          status.status === 'failed' ||
+          status.status === 'cancelled'
+        ) {
+          clearInterval(pollInterval)
+          clearInterval(heartbeatInterval)
+          if (status.status === 'completed') {
+            setInitState('done')
+            fetchRepoStatus()
+          } else {
+            setInitError(status.error || `Operation ${status.status}`)
+            setInitState('error')
+          }
+        }
+      } catch {
+        // ignore transient poll errors
+      }
+    }, 2000)
+
+    const heartbeatInterval = setInterval(() => {
+      operationHeartbeat(operationId)
+    }, 15000)
+
+    return () => {
+      clearInterval(pollInterval)
+      clearInterval(heartbeatInterval)
+    }
+  }, [operationId, fetchRepoStatus])
+
+  async function testCredentials(which: 'git' | 'argocd') {
+    const payload = buildPayload(form, existingConn?.name)
+    if (which === 'git') setTestStatus(prev => ({ ...prev, git: 'testing', gitMessage: undefined }))
+    if (which === 'argocd') setTestStatus(prev => ({ ...prev, argocd: 'testing', argocdMessage: undefined }))
+    try {
+      const res = await api.testCredentials(payload)
+      if (which === 'git') {
+        setTestStatus(prev => ({ ...prev, git: res.git.status === 'ok' ? 'ok' : 'error', gitMessage: res.git.message, gitAuth: res.git.auth }))
+      }
+      if (which === 'argocd') {
+        setTestStatus(prev => ({ ...prev, argocd: res.argocd.status === 'ok' ? 'ok' : 'error', argocdMessage: res.argocd.message, argocdAuth: res.argocd.auth }))
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Test failed'
+      if (which === 'git') setTestStatus(prev => ({ ...prev, git: 'error', gitMessage: msg }))
+      if (which === 'argocd') setTestStatus(prev => ({ ...prev, argocd: 'error', argocdMessage: msg }))
+    }
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const payload = buildPayload(form, existingConn?.name)
+      if (isEdit && existingConn) {
+        await api.updateConnection(existingConn.name, payload)
+      } else {
+        await api.createConnection(payload)
+      }
+      refreshConnections()
+      setJustSaved(true)
+      fetchLiveStatus()
+    } catch (err) {
+      setSaveError(err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <LoadingState message="Loading connection..." />
+  if (error) return <ErrorState message={error} onRetry={refreshConnections} />
+
+  return (
+    <div className="space-y-6">
+      {/* Repo not initialized banner */}
+      {existingConn && repoStatus && !repoStatus.initialized && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-700 dark:bg-amber-950/30">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Repository not initialized</p>
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">
+              Your Git repository has not been set up yet. Sharko cannot manage addons until the repository is initialized.
+            </p>
+            <div className="mt-3 space-y-3">
+              {initState === 'idle' && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Initialize &amp; Auto-merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(false)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 shadow-sm hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                  >
+                    <FolderGit2 className="h-3.5 w-3.5" />
+                    Initialize (manual PR review)
+                  </button>
+                </div>
+              )}
+              {initState === 'running' && initSteps.length === 0 && (
+                <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Starting initialization…
+                </div>
+              )}
+              {initSteps.length > 0 && (
+                <div className="space-y-1.5">
+                  {initSteps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      {step.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />}
+                      {step.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-amber-600 shrink-0" />}
+                      {step.status === 'waiting' && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                      {step.status === 'pending' && <Circle className="h-4 w-4 text-amber-300 shrink-0" />}
+                      {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                      <span className={step.status === 'pending' ? 'text-amber-600 dark:text-amber-500' : 'text-amber-900 dark:text-amber-200'}>
+                        {step.name}
+                      </span>
+                      {step.detail && (
+                        <span className="text-sm text-amber-600 dark:text-amber-400">— {step.detail}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {operationStatus === 'waiting' && (
+                <div className="rounded-lg border border-amber-400 bg-amber-100 p-3 dark:bg-amber-900/30">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Waiting for PR to be merged…</p>
+                  {prUrl && (
+                    <a
+                      href={prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-amber-700 underline hover:text-amber-900 dark:text-amber-400"
+                    >
+                      Review and merge the PR →
+                    </a>
+                  )}
+                </div>
+              )}
+              {initState === 'done' && (
+                <div className="flex items-center gap-1.5 text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    Repository initialized successfully.
+                    {prUrl && (
+                      <>
+                        {' '}
+                        <a
+                          href={prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-green-900 dark:hover:text-green-300"
+                        >
+                          View Pull Request
+                        </a>
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+              {initState === 'error' && (
+                <div className="flex items-start gap-2">
+                  <span className="flex items-center gap-1 text-sm text-red-700 dark:text-red-400">
+                    <XCircle className="h-4 w-4 shrink-0" />
+                    {initError}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setInitState('idle')}
+                    className="text-sm text-amber-700 underline hover:text-amber-900 dark:text-amber-400 shrink-0"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Live status readout (passive) */}
+      {isEdit && (
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Connection</h3>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+              <GitBranch className="h-3.5 w-3.5" />
+              Git:
+              {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
+              {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
+              {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+              {liveStatus.git === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+            </span>
+            <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+              <Server className="h-3.5 w-3.5" />
+              ArgoCD:
+              {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
+              {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
+              {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+              {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800"
+      >
+        <div className="space-y-6">
+          {/* Git Configuration */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <GitBranch className="h-4 w-4 text-[#2a5a7a]" />
+              <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Git Repository</h5>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Repository URL</label>
+                <input
+                  className={inputCls}
+                  value={form.git_url}
+                  onChange={(e) => { setForm(prev => ({ ...prev, git_url: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  placeholder={
+                    existingConn?.git_provider === 'gitea' && !form.git_url
+                      ? `Gitea repository: ${existingConn.git_repo_identifier} (enter full URL to change)`
+                      : 'https://github.com/org/repo'
+                  }
+                  required={existingConn?.git_provider !== 'gitea'}
+                />
+                <p className="mt-1 text-sm text-[#3a6a8a]">
+                  {existingConn?.git_provider === 'gitea' && !form.git_url
+                    ? 'Gitea host not shown (self-hosted). Enter the full Gitea URL to update.'
+                    : 'GitHub, GitHub Enterprise, Azure DevOps, or Gitea (auto-detected from URL)'}
+                </p>
+              </div>
+              <div>
+                <label className={labelCls}>Token</label>
+                <input
+                  className={inputCls}
+                  type="password"
+                  value={form.git_token}
+                  onChange={(e) => { setForm(prev => ({ ...prev, git_token: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  placeholder={isEdit ? 'Leave blank to keep existing' : 'Personal access token'}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => testCredentials('git')}
+                disabled={testStatus.git === 'testing' || !form.git_url}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {testStatus.git === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
+                Test Git
+              </button>
+              {testStatus.git === 'ok' && (
+                <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle className="h-3.5 w-3.5" />
+                  Connected{testStatus.gitAuth && testStatus.gitAuth !== 'provided' ? ` (via ${testStatus.gitAuth})` : ''}
+                </span>
+              )}
+              {testStatus.git === 'error' && (
+                <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
+                  <XCircle className="h-3.5 w-3.5" />
+                  {testStatus.gitMessage || 'Failed'}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* ArgoCD Configuration */}
+          <div>
+            <div className="mb-3 flex items-center gap-2">
+              <Server className="h-4 w-4 text-[#2a5a7a]" />
+              <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">ArgoCD</h5>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className={labelCls}>Server URL</label>
+                <input
+                  className={inputCls}
+                  value={form.argocd_server_url}
+                  onChange={(e) => { setForm(prev => ({ ...prev, argocd_server_url: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  placeholder="Auto-discovered from cluster"
+                />
+                <p className="mt-1 text-sm text-[#3a6a8a]">Auto-filled for in-cluster. Override for external ArgoCD.</p>
+              </div>
+              <div>
+                <label className={labelCls}>Token</label>
+                <input
+                  className={inputCls}
+                  type="password"
+                  value={form.argocd_token}
+                  onChange={(e) => { setForm(prev => ({ ...prev, argocd_token: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  placeholder={isEdit ? 'Leave blank to keep existing' : 'ArgoCD API token'}
+                />
+                <p className="mt-1 text-sm text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
+              </div>
+              <div>
+                <label className={labelCls}>Namespace</label>
+                <input
+                  className={inputCls}
+                  value={form.argocd_namespace}
+                  onChange={(e) => { setForm(prev => ({ ...prev, argocd_namespace: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  placeholder="argocd"
+                  required
+                />
+              </div>
+              <div className="flex items-start gap-2 sm:col-span-2">
+                <input
+                  id="conn-argocd-insecure"
+                  type="checkbox"
+                  checked={form.argocd_insecure}
+                  onChange={(e) => { setForm(prev => ({ ...prev, argocd_insecure: e.target.checked })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
+                  className="mt-0.5 h-4 w-4 rounded border-[#5a9dd0] text-teal-600 focus:ring-teal-500 dark:border-gray-600"
+                />
+                <label htmlFor="conn-argocd-insecure" className="text-sm text-[#0a3a5a] dark:text-gray-300">
+                  Skip TLS certificate verification
+                  <span className="block text-xs text-[#3a6a8a] dark:text-gray-500">
+                    Only for an ArgoCD with a self-signed certificate. Keep this off unless the
+                    connection test tells you to turn it on — with it on, the connection can be
+                    read by anyone between Sharko and ArgoCD.
+                  </span>
+                </label>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => testCredentials('argocd')}
+                disabled={testStatus.argocd === 'testing'}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {testStatus.argocd === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Server className="h-3 w-3" />}
+                Test ArgoCD
+              </button>
+              {testStatus.argocd === 'ok' && (
+                <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle className="h-3.5 w-3.5" />
+                  Connected{testStatus.argocdAuth && testStatus.argocdAuth !== 'provided' ? ` (via ${testStatus.argocdAuth})` : ''}
+                </span>
+              )}
+              {testStatus.argocd === 'error' && (
+                <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
+                  <XCircle className="h-3.5 w-3.5" />
+                  {testStatus.argocdMessage || 'Failed'}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {saveError != null && (
+          <ErrorDetail className="mt-3" error={saveError} fallbackMessage="Save failed" />
+        )}
+
+        <div className="mt-6 flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+          >
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {isEdit ? 'Update Connection' : 'Save Connection'}
+          </button>
+          {justSaved && (
+            <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+              <CheckCircle className="h-3.5 w-3.5" /> Saved
+            </span>
+          )}
+        </div>
+      </form>
+
+      {/* Initialize Repository */}
+      {isEdit && (
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Initialize Repository</h3>
+            {justSaved && (
+              <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-300">
+                Connection saved
+              </span>
+            )}
+          </div>
+          <div className={`rounded-xl ring-2 bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 transition-all ${
+            justSaved
+              ? 'ring-teal-400 border border-teal-200 dark:ring-teal-600 dark:border-teal-800'
+              : 'ring-[#6aade0] dark:ring-gray-700'
+          }`}>
+            {justSaved && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg bg-teal-50 p-3 dark:bg-teal-950/30">
+                <Sparkles className="h-4 w-4 mt-0.5 shrink-0 text-teal-600 dark:text-teal-400" />
+                <p className="text-sm text-teal-700 dark:text-teal-300">
+                  Connection saved. If the repository is empty, initialize it now to create the required folder structure and deployment templates.
+                </p>
+              </div>
+            )}
+            <p className="mb-4 text-sm text-[#1a4a6a] dark:text-gray-400">
+              Set up the Git repository with the required Sharko directory structure and ArgoCD resources.
+              Safe to run on an already-initialized repository.
+            </p>
+            <div className="space-y-3">
+              {initState === 'idle' && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Initialize &amp; Auto-merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(false)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                  >
+                    <FolderGit2 className="h-4 w-4" />
+                    Initialize (manual PR review)
+                  </button>
+                  {justSaved && (
+                    <button
+                      type="button"
+                      onClick={() => setJustSaved(false)}
+                      className="text-xs text-[#3a6a8a] hover:text-[#1a4a6a] dark:text-gray-500 dark:hover:text-gray-400"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {initState === 'running' && initSteps.length === 0 && (
+                <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Starting initialization…
+                </div>
+              )}
+
+              {initSteps.length > 0 && (
+                <div className="space-y-1.5">
+                  {initSteps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      {step.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />}
+                      {step.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-[#2a5a7a] shrink-0" />}
+                      {step.status === 'waiting' && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                      {step.status === 'pending' && <Circle className="h-4 w-4 text-[#bee0ff] shrink-0" />}
+                      {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                      <span className={step.status === 'pending' ? 'text-[#3a6a8a]' : 'text-[#0a2a4a] dark:text-gray-200'}>
+                        {step.name}
+                      </span>
+                      {step.detail && (
+                        <span className="text-xs text-[#3a6a8a] dark:text-gray-400">— {step.detail}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {operationStatus === 'waiting' && (
+                <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-4 dark:bg-amber-900/20">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Waiting for PR to be merged…</p>
+                  {prUrl && (
+                    <a
+                      href={prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[#1a4a8a] underline hover:text-[#0a3a6a] dark:text-blue-400"
+                    >
+                      Review and merge the PR →
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {initState === 'done' && (
+                <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    Repository initialized successfully.
+                    {prUrl && (
+                      <>
+                        {' '}
+                        <a
+                          href={prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-green-800 dark:hover:text-green-300"
+                        >
+                          View Pull Request
+                        </a>
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+
+              {initState === 'error' && (
+                <div className="flex items-start gap-3">
+                  <span className="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400">
+                    <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    {initError}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setInitState('idle')}
+                    className="text-xs text-[#3a6a8a] underline hover:text-[#1a4a6a] dark:text-gray-400 shrink-0"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function buildPayload(form: ConnectionFormData, name?: string) {
+  return {
+    name: name || undefined,
+    git: {
+      repo_url: form.git_url,
+      token: form.git_token || undefined,
+    },
+    argocd: {
+      server_url: form.argocd_server_url || '',
+      token: form.argocd_token || undefined,
+      namespace: form.argocd_namespace || 'argocd',
+      // Verification is on unless the operator explicitly ticked the
+      // skip-verification checkbox. This used to be hardcoded `true`,
+      // which silently turned verification off for every connection
+      // saved through this form (task #152 adversarial finding).
+      insecure: form.argocd_insecure,
+    },
+  }
+}

@@ -1,0 +1,38 @@
+# Roundtrip-test fixture catalog (V124-1.3).
+#
+# Two synthetic entries used only by cmd/catalog-sign's roundtrip_test.go
+# (build tag: roundtrip). The test signs each entry through the production
+# cosignCLI signer and then re-parses the emitted bundle bytes through the
+# production signing.Verifier — proving the writer + reader agree on the
+# byte format end-to-end.
+#
+# NOT shipped in any binary. NOT loaded by the runtime. This is a CI-only
+# fixture so the roundtrip job has a deterministic, small surface to sign
+# without pulling in (or being affected by) the real curated catalog.
+#
+# Fields match the schema enforced by internal/catalog/loader.go validateEntry.
+# Category + curated_by must be in the allowed sets; everything else is
+# free-form but must be non-empty where required.
+addons:
+  - name: roundtrip-fixture-alpha
+    description: First synthetic fixture entry for the V124-1.3 roundtrip test.
+    chart: roundtrip-fixture-alpha
+    repo: https://charts.example.invalid/alpha
+    default_namespace: roundtrip-alpha
+    maintainers:
+      - sharko-ci
+    license: Apache-2.0
+    category: observability
+    curated_by:
+      - cncf-graduated
+  - name: roundtrip-fixture-beta
+    description: Second synthetic fixture entry for the V124-1.3 roundtrip test.
+    chart: roundtrip-fixture-beta
+    repo: https://charts.example.invalid/beta
+    default_namespace: roundtrip-beta
+    maintainers:
+      - sharko-ci
+    license: Apache-2.0
+    category: security
+    curated_by:
+      - cncf-graduated

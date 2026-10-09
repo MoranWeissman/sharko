@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters-v3.v1.json",
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
+    },
+    "kind": {
+      "const": "ManagedClusters"
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "clusters": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "secretPath": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "labels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "connectionManagedBy": {
+                "type": "string",
+                "enum": [
+                  "sharko",
+                  "user"
+                ]
+              },
+              "credsSource": {
+                "type": "string",
+                "enum": [
+                  "inline-kubeconfig",
+                  "secret-kubeconfig",
+                  "eks-token"
+                ]
+              },
+              "roleArn": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "clusters"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "Sharko ManagedClusters (pre-v4 shape)",
+  "description": "configuration/managed-clusters.yaml — the same cluster registry as managed-clusters.v1.json, in the older spec:-wrapped shape a repository bootstrapped before v4 still has on disk. Sharko reads this shape but no longer writes it."
+}

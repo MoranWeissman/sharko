@@ -1,0 +1,9 @@
+[
+  {
+    "name": "index.ts",
+    "path": "lib/addons/broken-addon/index.ts",
+    "type": "file",
+    "download_url": "${BASE_URL}/raw/broken-addon.ts",
+    "html_url": "${BASE_URL}/blob/main/lib/addons/broken-addon/index.ts"
+  }
+]

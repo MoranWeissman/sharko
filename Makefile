@@ -1,0 +1,549 @@
+# Sharko — Makefile
+
+.PHONY: help demo demo-big dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-gitea test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-connection-sentences generate-notification-codes generate-lifecycle-events generate-schemas generate-engine-version build-gitfake-image playground-up playground-status playground-tunnels playground-down operator-playground-up operator-playground-status operator-playground-tunnels operator-playground-down
+
+PORT ?= 8080
+DEMO_BIG_PORT ?= 8090
+
+help: ## Show available targets
+	@echo ""
+	@echo "  🦈 Sharko"
+	@echo ""
+	@echo "  Quick Start:"
+	@echo "    make demo             Build UI + start with mock backends (http://localhost:$(PORT))"
+	@echo "    make demo-big         A SECOND demo instance with a 50-cluster/30-addon estate (http://localhost:$(DEMO_BIG_PORT))"
+	@echo "    make dev              Hot-reload dev mode (http://localhost:5173)"
+	@echo ""
+	@echo "  Build & Test:"
+	@echo "    make build            Build Go binary + UI"
+	@echo "    make test             Run all tests (Go + UI)"
+	@echo "    make lint             Go vet + UI build check"
+	@echo ""
+	@echo "  E2E (V2 Epic 7-1):"
+	@echo "    make test-e2e-fast         In-process e2e suite (~30s, no kind/docker)"
+	@echo "    make test-e2e              Full e2e suite (kind + real argocd, ~10-15 min)"
+	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
+	@echo "    make test-e2e-helm         Wave-D Helm-mode subset (~5-8 min, requires docker+kind+helm)"
+	@echo "    make test-e2e-gitea        Live-Gitea write loop (task #65, requires SHARKO_E2E_GITEA_URL/TOKEN)"
+	@echo "    make test-e2e-perf         V2-1 perf baselines (~2-5 min in-process; cluster path needs kind)"
+	@echo "    make test-e2e-perf-capture Run perf harness + capture timings to _dist/perf-timings.jsonl (CI)"
+	@echo "    make test-e2e-perf-compare Compare captured timings against baselines YAML — exits 2 on >20% p99 regression"
+	@echo "    make test-e2e-clean        Force-delete every sharko-e2e-* kind cluster (manual recovery)"
+	@echo "    make test-e2e-coverage     Full e2e + coverage HTML in _dist/"
+	@echo "    make test-e2e-fast-coverage  Fast e2e + coverage HTML in _dist/"
+	@echo "    make test-e2e-junit        Full e2e + JUnit XML in _dist/"
+	@echo "    make test-e2e-report       Full e2e + coverage HTML + JUnit XML"
+	@echo "    make install-test-tools    Install test tooling (gotestsum)"
+	@echo "    make kind-up               Provision a sharko-e2e kind topology"
+	@echo "    make kind-down             Destroy stale sharko-e2e-* kind clusters"
+	@echo ""
+	@echo "  Local Playground (hub + spokes + ArgoCD + Sharko + Gitea):"
+	@echo "    make playground-up         Spin up hub + N spokes + ArgoCD + Sharko + GitFake"
+	@echo "    make playground-status     Show current state (cluster/label/Gitea state)"
+	@echo "    make playground-tunnels    Open browser tunnels (Sharko+ArgoCD+Gitea), Ctrl+C closes all"
+	@echo "    make playground-down       Tear down all playground clusters (safe)"
+	@echo "    (Set PLAYGROUND_SPOKES=N to override default 2 spokes)"
+	@echo "    (operator-playground-* names still work as aliases)"
+	@echo ""
+
+demo: ## Build UI + start server in demo mode
+	@# Kill any existing sharko demo server
+	@-pkill -f "sharko serve --demo" 2>/dev/null || true
+	@sleep 0.5
+	@echo ""
+	@echo "  🦈 Sharko Demo Mode"
+	@echo "  Building UI..."
+	@rm -rf ui/dist
+	@cd ui && npm run build 2>&1 | grep -v "PLUGIN_TIMINGS\|chunks are larger\|dynamic import\|codeSplitting\|chunkSizeWarningLimit\|rolldown.rs"
+	@echo "  Open http://localhost:$(PORT)"
+	@echo "  Login: admin/admin (admin) or qa/sharko (viewer)"
+	@echo ""
+	go run ./cmd/sharko serve --demo --port $(PORT) --static ui/dist
+
+demo-big: ## A SECOND local demo instance with a big (50-cluster/30-addon) estate, alongside your real playground
+	@echo ""
+	@echo "  🦈 Sharko Demo Mode — big estate"
+	@echo "  This runs as a SECOND, separate instance — it does not touch or"
+	@echo "  replace whatever you already have running on 'make demo' or a"
+	@echo "  real playground; both can stay up at the same time."
+	@echo "  Building UI..."
+	@rm -rf ui/dist
+	@cd ui && npm run build 2>&1 | grep -v "PLUGIN_TIMINGS\|chunks are larger\|dynamic import\|codeSplitting\|chunkSizeWarningLimit\|rolldown.rs"
+	@echo "  Open http://localhost:$(DEMO_BIG_PORT)"
+	@echo "  Login: admin/admin (admin) or qa/sharko (viewer) — demo mode still"
+	@echo "  requires signing in; it only replaces the ArgoCD/Git backends, not auth."
+	@echo ""
+	go run ./cmd/sharko serve --demo --demo-scale big --port $(DEMO_BIG_PORT) --static ui/dist
+
+dev: ## Start backend (demo) + frontend with hot reload
+	@-pkill -f "sharko serve --demo" 2>/dev/null || true
+	@sleep 0.5
+	@echo ""
+	@echo "  🦈 Sharko Dev Mode (hot reload)"
+	@echo "  Backend: http://localhost:$(PORT) (demo mode)"
+	@echo "  Frontend: http://localhost:5173 ← open this"
+	@echo "  Login: admin/admin or qa/sharko"
+	@echo ""
+	@trap 'kill 0' EXIT; \
+		go run ./cmd/sharko serve --demo --port $(PORT) & \
+		cd ui && npm run dev & \
+		wait
+
+build: ui-build build-go ## Build Go binary + UI
+
+build-go: ## Build Go binary
+	@mkdir -p bin
+	CGO_ENABLED=0 go build \
+		-ldflags "-X main.version=$$(cat version.txt) -X main.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo dev)" \
+		-o bin/sharko ./cmd/sharko
+	@echo "Built: bin/sharko"
+
+ui-build: ## Build the React UI
+	cd ui && npm run build
+
+ui-install: ## Install UI dependencies
+	cd ui && npm install
+
+test: test-go test-ui ## Run all tests
+
+test-go: ## Run Go tests
+	go clean -testcache
+	go test ./...
+
+test-ui: ## Run UI tests
+	cd ui && npm test -- --run
+
+lint: ## Go vet + UI build check
+	go vet ./...
+	cd ui && npm run build
+
+# V125-1-13.7 — code generator: parses internal/providers/provider.go's
+# New() switch via go/ast and emits ui/src/generated/provider-types.ts as
+# a frozen `as const` literal. The Settings dropdown imports
+# VALID_PROVIDER_TYPES from that file so it cannot drift from the
+# backend factory. CI's "Provider Types Up To Date" check runs this
+# target then `git diff --exit-code` on the output to catch stale files.
+#
+# Coordination note: V125-1-13.8 adds a `test-e2e-helm` target — a
+# different concern (e2e Helm install harness). Keep these two targets
+# textually adjacent in the file but logically independent.
+generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
+	go run ./cmd/gen-provider-types
+
+# The server-owned message catalog. cmd/gen-connection-sentences imports
+# internal/api and reads api.ConnectionSentences AND
+# api.ConnectionFailureMessages AT RUNTIME — it parses no Go source, because
+# several sentences are aliased across a package boundary and a source parser
+# sees an identifier where a sentence should be. Output is
+# ui/src/generated/connection-sentences.ts, which the connection page renders
+# BY IDENTIFIER so no sentence is ever typed into browser code.
+#
+# The second catalog is the PARAMETERIZED family (story P2c): the
+# connection-test failure sentence, which the server assembles from a per-kind
+# fragment and a runtime hint. The finished sentences are emitted; the
+# fragment, the hint and the join are NOT, because the browser must never
+# reproduce the concatenation. One generator and one output file cover both,
+# so one drift gate covers both.
+#
+# CI's "Connection Sentences Up To Date" check runs this target then
+# `git diff --exit-code` on the output. Same shape as generate-provider-types
+# and generate-schemas: edit the Go sentence, run this target, commit both.
+generate-connection-sentences: ## Regenerate ui/src/generated/connection-sentences.ts from internal/api/connection_sentences.go
+	go run ./cmd/gen-connection-sentences
+
+# The notification identifiers. cmd/gen-notification-codes imports
+# internal/notifications and reads notifications.DeclaredCodes() AT RUNTIME —
+# same argument as generate-connection-sentences: what it needs is a slice of
+# strings that IS a runtime value, so it reads the value rather than parsing Go
+# source, and therefore holds no copy of any identifier. Output is
+# ui/src/generated/notification-codes.ts, which the bell routes on.
+#
+# Why its own generator rather than folding into generate-connection-sentences:
+# that one emits SENTENCES for the connection page; this one emits IDENTIFIERS
+# for the notification bell. Putting display text and routing keys in one file
+# would mix the two things the product owner's ruling exists to keep apart.
+#
+# CI's "Notification Codes Up To Date" check runs this target then
+# `git diff --exit-code` on the output.
+generate-notification-codes: ## Regenerate ui/src/generated/notification-codes.ts from internal/notifications/codes.go
+	go run ./cmd/gen-notification-codes
+
+# The connection-lifecycle audit event names. cmd/gen-lifecycle-events imports
+# internal/lifecycleevents and reads lifecycleevents.Declared() AT RUNTIME —
+# same argument as its two siblings above: what it needs is a slice of strings
+# that IS a runtime value, so it reads the value rather than parsing Go source,
+# and therefore holds no copy of any name. Output is
+# ui/src/generated/lifecycle-events.ts, which the connection page's activity
+# feed keys its title table on.
+#
+# Why it matters more than it looks: the feed renders these events by name from
+# a table with NO fallback, so a rename on the server used to turn a visible
+# lifecycle event into silence — and enough of them empty the feed out, leaving
+# the page stating as a fact that nothing was recorded when things did happen.
+# The browser's copy of the list was hand-written, and so was the copy its own
+# test compared it against, so nothing anywhere noticed a rename.
+#
+# CI's "Lifecycle Events Up To Date" check runs this target then
+# `git diff --exit-code` on the output.
+generate-lifecycle-events: ## Regenerate ui/src/generated/lifecycle-events.ts from internal/lifecycleevents/events.go
+	go run ./cmd/gen-lifecycle-events
+
+# V125-1-9.3 + 9.4 — schema generator. Reflects the envelope Go types in
+# internal/models (ManagedClustersSpec) and internal/config
+# (AddonCatalogSpec) via cmd/schema-gen and writes to TWO mirrored
+# locations:
+#   docs/schemas/managed-clusters.v1.json      (human-facing)
+#   docs/schemas/addon-catalog.v1.json         (human-facing)
+#   internal/schema/managed-clusters.v1.json   (V125-1-9.4 embed source)
+#   internal/schema/addon-catalog.v1.json      (V125-1-9.4 embed source)
+#
+# The internal/schema/ copies feed the runtime validator's go:embed in
+# internal/schema/embed.go (Story 9.4); the docs/schemas/ copies are
+# what the public schema URLs + editor headers point at. All four files
+# are committed to git. CI's "Schemas Up To Date" check runs this target
+# then `git diff --exit-code` against both paths to catch stale files —
+# same shape as the swagger and provider-types drift gates.
+#
+# Idempotent by design: invopop/jsonschema preserves struct declaration
+# order, encoding/json sorts map keys, so back-to-back runs produce
+# byte-identical output at every location.
+generate-schemas: ## Regenerate docs/schemas/*.v1.json + internal/schema/*.v1.json from the Sharko envelope Go types
+	go run ./cmd/schema-gen
+
+# v4 Wave 1 Story 2.5 — reads charts/sharko-engine/Chart.yaml (name +
+# version) and writes internal/engineversion/generated.go, the constant
+# the engine pin-bump check compares a repo's pinned engine/application.yaml
+# targetRevision against. Same shape as generate-schemas /
+# generate-provider-types: CI's "Engine Version Up To Date" job runs this
+# target then `git diff --exit-code` on the output. Bump
+# charts/sharko-engine/Chart.yaml's version, run this target, commit both.
+generate-engine-version: ## Regenerate internal/engineversion/generated.go from charts/sharko-engine/Chart.yaml
+	go run ./cmd/gen-engine-version
+
+clean: ## Remove build artifacts
+	rm -rf bin/ ui/dist/ _dist/
+
+catalog-scan: ## Run the catalog-scan bot in --dry-run mode (V123-3.1 skeleton)
+	@npm install --prefix scripts --silent
+	@node scripts/catalog-scan.mjs --dry-run
+
+catalog-scan-pr: ## Preview the catalog-scan PR body (V123-3.4) — runs scanner then pr-open --dry-run. Requires _dist/catalog-scan/changeset.json on disk; produce it with `GITHUB_TOKEN=$$(gh auth token) node scripts/catalog-scan.mjs --catalog catalog/addons.yaml`.
+	@npm install --prefix scripts --silent
+	@node scripts/catalog-scan/pr-open.mjs --dry-run
+
+# E2E test suite (V2 Epic 7-1).
+#
+# The Go-native harness under tests/e2e/ replaced the legacy
+# setup.sh/teardown.sh + port-forward shell flow in story 7-1.15. Two
+# entry points: test-e2e-fast (in-process, ~30s, no kind required) and
+# test-e2e (full suite, ~10-15 min, requires docker + kind). The
+# in-process boot path uses httptest + an in-memory git server so the
+# fast lane needs no external services. See
+# docs/site/developer-guide/e2e-testing.md for the full reference.
+#
+# All targets set GOTMPDIR=/tmp because go-test writes large temp dirs
+# under /var/folders on macOS by default and that path can run out of
+# space during a full run.
+
+test-e2e: ## Run the full E2E suite (kind + real argocd; ~10-15 min). Requires docker.
+	@echo "==> Running comprehensive E2E suite (kind + real argocd)..."
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m -v ./tests/e2e/...
+
+# test-e2e-fast: only top-level test functions that boot in-process
+# (httptest + GitFake + GitMock). The five kind-required tests are
+# excluded explicitly so this lane stays under ~2 min on a laptop
+# without docker:
+#   - TestHarnessKindMultiCluster   (kind harness smoke)
+#   - TestPerClusterAddonLifecycle  (full cluster register + addon)
+#   - TestClusterLifecycle          (cluster CRUD against argocd)
+#   - TestConnectionsDiscoverAndTest (live kubeconfig probe)
+#   - TestFleetStatusWithArgocd     (dashboard fleet status)
+test-e2e-fast: ## Run only the in-process E2E tests (~30s, no kind needed).
+	@echo "==> Running fast in-process E2E tests..."
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=2m -v -run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretEndpointsRetired|TestCatalogEditDeleteV4|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess|TestBuildTLSClientConfig_InsecureAndCAData|TestBuildTLSClientConfig_NeverBothFields)$$' ./tests/e2e/...
+
+test-e2e-domain: ## Run a single domain (e.g. make test-e2e-domain DOMAIN=Cluster).
+	@if [ -z "$(DOMAIN)" ]; then \
+		echo "ERROR: usage: make test-e2e-domain DOMAIN=<Cluster|Catalog|Auth|RBAC|Tokens|Addon|AI|Values|PR|Notifications|Dashboard|Connections|Foundation|Harness>"; \
+		exit 1; \
+	fi
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m -v -run "$(DOMAIN)" ./tests/e2e/...
+
+# V125-1-13.8 — Helm-mode E2E subset. Runs Wave D's three lifecycle
+# tests through the real Helm-installed Sharko boot path
+# (E2E_SHARKO_MODE=helm) instead of the in-process httptest server.
+# Requires docker + kind + helm + kubectl on PATH; CI provisions all
+# four. The harness (V125-1-13.1) honours SHARKO_E2E_IMAGE_TAG to skip
+# the docker-build + kind-load roundtrip on cache hit, so re-runs of
+# the same git SHA reuse a previously-built image. The default tag
+# pins to the current commit's short SHA so back-to-back local runs
+# share a build but a fresh commit forces a rebuild.
+#
+# Test selection covers Wave D's three top-level functions:
+#   - TestClusterTest_ArgoCDProvider                       (V125-1-13.4)
+#   - TestClusterTest_ProviderAutoDefault_HappyPath        (V125-1-13.5)
+#   - TestClusterTest_ProviderCrossContamination_NamespaceSwitch (V125-1-13.6)
+# These are the only suites that exercise the real Helm install path
+# end-to-end; the rest of the e2e tree stays on the in-process boot.
+test-e2e-helm: ## Run the Wave-D Helm-mode E2E subset (~5-8 min, requires docker + kind + helm + kubectl).
+	@echo "==> Running Helm-mode E2E tests against kind + ArgoCD + Helm-installed Sharko"
+	@SHARKO_E2E_IMAGE_TAG=$${SHARKO_E2E_IMAGE_TAG:-e2e-$$(git rev-parse --short HEAD)} \
+	 E2E_SHARKO_MODE=helm \
+	 GOTMPDIR=/tmp \
+	 go test -tags=e2e -timeout=20m -v \
+	 -run '^(TestClusterTest_ArgoCDProvider|TestClusterTest_ProviderAutoDefault_HappyPath|TestClusterTest_ProviderCrossContamination_NamespaceSwitch)$$' \
+	 ./tests/e2e/lifecycle/...
+
+# v4 closing wave / task #65 — live-Gitea E2E write loop.
+#
+# TestGiteaLiveWriteLoop (tests/e2e/lifecycle/gitea_live_test.go) drives
+# internal/gitprovider.GiteaProvider against a REAL Gitea server — CI runs
+# it with a `gitea/gitea` service container (see .github/workflows/e2e.yml,
+# job `live-gitea`); this target is the local equivalent, so you need a
+# Gitea instance of your own (e.g. `docker run -p 3000:3000 gitea/gitea`,
+# then create an admin user + token + an auto-inited repo) and to export
+# SHARKO_E2E_GITEA_URL + SHARKO_E2E_GITEA_TOKEN before running this. See
+# docs/site/developer-guide/e2e-testing.md for the full local recipe.
+# With the env vars unset, the test just skips — this target still exits 0.
+test-e2e-gitea: ## Run the live-Gitea write loop (task #65; requires SHARKO_E2E_GITEA_URL/TOKEN, else it skips).
+	@echo "==> Running live-Gitea E2E write loop"
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=10m -v -run '^TestGiteaLiveWriteLoop$$' ./tests/e2e/lifecycle/...
+
+# V2-1.1 + V2-1.2 — perf baseline harness.
+#
+# Build-tag combo `e2e perf` opts in to tests/e2e/lifecycle/perf_test.go,
+# which loops each of the 4 locked critical paths (see
+# tests/e2e/harness/phases.go) perfIterations=30 times and emits
+# structured JSON timing lines per (path, phase, iteration). Each subtest
+# logs a rolled-up p50/p95/p99 table to the test output; the canonical
+# numbers live in docs/site/operator/perf-baselines.md (refreshed
+# manually by re-running this target and pasting the table updates).
+#
+# The cluster_registration subtest is kind-backed and skip-graceful when
+# kind / docker / kubectl are absent; the other three subtests run
+# fully in-process and complete in <2 minutes on a developer laptop.
+test-e2e-perf: ## V2-1 perf baselines (~2-5 min in-process; cluster path needs kind).
+	@echo "==> Running V2-1 perf baseline harness (30+ iterations per path)"
+	GOTMPDIR=/tmp go test -tags='e2e perf' -timeout=20m -v \
+	 -run '^TestPerf$$' \
+	 ./tests/e2e/lifecycle/...
+
+# V2-1.4 — perf-regression CI gate plumbing.
+#
+# Two targets:
+#
+#   test-e2e-perf-capture — runs the perf harness AND tees the test log to
+#     _dist/perf-timings.jsonl. The harness's PhaseTimer emissions land on
+#     stderr alongside slog noise; the comparator's loader is robust to
+#     that mix (lines that don't start with `{` are dropped). Used by
+#     .github/workflows/perf-regression.yml.
+#
+#   test-e2e-perf-compare — invokes cmd/perf-baseline-compare against the
+#     captured timings + the canonical baselines YAML, returning non-zero
+#     when any p99 regresses >20%. The workflow's `make` invocation thus
+#     fails the job naturally, no awk needed on the workflow side.
+#
+# These targets are intentionally additive — `make test-e2e-perf` retains
+# its developer-laptop shape (no capture file, no comparator). Capture +
+# compare only matters when the gate is the consumer.
+
+test-e2e-perf-capture: ## Run the perf harness and capture timings to _dist/perf-timings.jsonl (V2-1.4 CI input).
+	@mkdir -p _dist
+	@echo "==> Running V2-1 perf harness and capturing timings to _dist/perf-timings.jsonl"
+	@# The harness writes PhaseTimer emissions to stderr (default sink).
+	@# We tee combined output to the capture file; cmd/perf-baseline-compare
+	@# ignores non-JSON lines, so slog noise from the test process is fine.
+	@GOTMPDIR=/tmp go test -tags='e2e perf' -timeout=30m -v \
+	 -run '^TestPerf$$' \
+	 ./tests/e2e/lifecycle/... 2>&1 | tee _dist/perf-timings.jsonl
+	@echo "==> Captured: _dist/perf-timings.jsonl"
+
+test-e2e-perf-compare: ## Compare _dist/perf-timings.jsonl against docs/site/operator/perf-baselines.yaml (V2-1.4 gate).
+	@go run ./cmd/perf-baseline-compare \
+	 -timings _dist/perf-timings.jsonl \
+	 -baselines docs/site/operator/perf-baselines.yaml
+
+# V126-4.1 / task #188 — Manual recovery for leaked e2e kind clusters.
+#
+# Intent: a developer who hits Ctrl+C mid-run, or comes back to a host
+# with a corrupted kind state file, can `make test-e2e-clean` once and
+# get back to zero. Safe to run with no leaks present — kind get
+# clusters returns nothing, the xargs no-ops, docker prune is a no-op,
+# and the target exits 0. Companion to the in-test
+# DestroyAllStaleE2EClusters helper (which only runs from inside a
+# go test process). The sharko-e2e- name prefix is the load-bearing
+# safety filter — only harness-provisioned clusters match; the
+# maintainer's hand-managed kind clusters (sharko-dev, etc.) are never
+# touched.
+test-e2e-clean: ## Force-delete every sharko-e2e-* kind cluster (manual recovery).
+	@kind get clusters 2>/dev/null | grep -E '^sharko-e2e-' | xargs -I{} kind delete cluster --name {} || true
+	@docker container prune -f --filter "label=io.x-k8s.kind.cluster" >/dev/null
+	@echo "e2e cleanup complete"
+
+# V125-1-13.x.1 — Build the gitfake-server image.
+#
+# Mirrors the Sharko image-cache probe pattern used by test-e2e-helm:
+# `docker image inspect` is the cheapest cache hit (exits 0 / non-zero).
+# On a cache hit we skip the (~30s) docker build entirely; back-to-back
+# local runs of downstream stories (13.x.2+) that re-deploy the same SHA
+# pay zero rebuild cost.
+#
+# SHARKO_GITFAKE_IMAGE_TAG defaults to e2e-<short-sha> so a fresh commit
+# forces a rebuild and a re-run on the same commit reuses the cached
+# image. Build context is the repo root because the Dockerfile copies
+# go.mod + the harness package from there.
+SHARKO_GITFAKE_IMAGE_TAG ?= e2e-$(shell git rev-parse --short HEAD)
+SHARKO_GITFAKE_IMAGE ?= sharko-gitfake:$(SHARKO_GITFAKE_IMAGE_TAG)
+
+build-gitfake-image: ## Build the gitfake-server image (skips on docker-image cache hit).
+	@if docker image inspect $(SHARKO_GITFAKE_IMAGE) >/dev/null 2>&1; then \
+		echo "==> gitfake image $(SHARKO_GITFAKE_IMAGE) already present locally — skipping build"; \
+	else \
+		echo "==> Building $(SHARKO_GITFAKE_IMAGE) from tests/e2e/harness/gitfake/Dockerfile"; \
+		docker build -f tests/e2e/harness/gitfake/Dockerfile -t $(SHARKO_GITFAKE_IMAGE) .; \
+	fi
+
+# Test reports (V2 Epic 7-1.16). The KEY flag is
+# -coverpkg=./internal/...,./cmd/... — without it, the coverage profile
+# only measures tests/e2e/* itself (useless). With it, the report shows
+# which lines of sharko's actual code got executed by the e2e suite.
+#
+# gotestsum resolution (V2 Epic 7-1.17): `go install` writes binaries to
+# $(go env GOPATH)/bin which most users do NOT have on their PATH.
+# Resolve gotestsum in this order:
+#   1. PATH (if user added GOPATH/bin themselves)
+#   2. $(go env GOPATH)/bin/gotestsum (the standard install location)
+# This way `make install-test-tools && make test-e2e-report` Just Works
+# without forcing the user to fix their shell rc.
+GOTESTSUM := $(shell command -v gotestsum 2>/dev/null || echo "$(shell go env GOPATH)/bin/gotestsum")
+
+install-test-tools: ## Install test tooling (gotestsum)
+	go install gotest.tools/gotestsum@latest
+	@echo "==> Installed gotestsum to $(shell go env GOPATH)/bin/gotestsum"
+	@echo "==> Makefile auto-resolves it from there — no PATH edit needed."
+
+test-e2e-coverage: ## Run E2E suite with coverage of internal/* and produce _dist/e2e-coverage.html
+	@mkdir -p _dist
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m \
+		-coverprofile=_dist/e2e-coverage.out \
+		-coverpkg=./internal/...,./cmd/... \
+		./tests/e2e/...
+	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
+	@echo "==> Coverage HTML:    file://$$(pwd)/_dist/e2e-coverage.html"
+	@go tool cover -func=_dist/e2e-coverage.out | tail -1
+
+test-e2e-fast-coverage: ## Fast in-process E2E with coverage of internal/* (~30s)
+	@mkdir -p _dist
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=2m \
+		-coverprofile=_dist/e2e-coverage.out \
+		-coverpkg=./internal/...,./cmd/... \
+		-run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretEndpointsRetired|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess)$$' \
+		./tests/e2e/...
+	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
+	@echo "==> Coverage HTML:    file://$$(pwd)/_dist/e2e-coverage.html"
+	@go tool cover -func=_dist/e2e-coverage.out | tail -1
+
+test-e2e-junit: ## Run E2E suite with gotestsum + produce _dist/e2e-junit.xml
+	@mkdir -p _dist
+	@test -x "$(GOTESTSUM)" || { echo "ERROR: gotestsum not found at $(GOTESTSUM). Run: make install-test-tools"; exit 1; }
+	GOTMPDIR=/tmp $(GOTESTSUM) \
+		--junitfile=_dist/e2e-junit.xml \
+		--format=testname \
+		-- -tags=e2e -timeout=30m ./tests/e2e/...
+	@echo "==> JUnit XML:        file://$$(pwd)/_dist/e2e-junit.xml"
+
+test-e2e-report: ## Run E2E suite producing BOTH coverage HTML + JUnit XML in _dist/
+	@mkdir -p _dist
+	@test -x "$(GOTESTSUM)" || { echo "ERROR: gotestsum not found at $(GOTESTSUM). Run: make install-test-tools"; exit 1; }
+	GOTMPDIR=/tmp $(GOTESTSUM) \
+		--junitfile=_dist/e2e-junit.xml \
+		--format=testname \
+		-- -tags=e2e -timeout=30m \
+		-coverprofile=_dist/e2e-coverage.out \
+		-coverpkg=./internal/...,./cmd/... \
+		./tests/e2e/...
+	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
+	@go tool cover -func=_dist/e2e-coverage.out | tail -1
+	@echo "==> JUnit XML:        file://$$(pwd)/_dist/e2e-junit.xml"
+	@echo "==> Coverage HTML:    file://$$(pwd)/_dist/e2e-coverage.html"
+
+kind-up: ## Provision a sharko-e2e kind topology (1 mgmt + 1 target).
+	@echo "==> Provisioning sharko-e2e kind topology..."
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=10m -v -run TestHarnessKindMultiCluster ./tests/e2e/harness/...
+
+kind-down: ## Destroy all sharko-e2e-* kind clusters (sentinel-labeled only).
+	@echo "==> Destroying stale sharko-e2e kind clusters..."
+	@kind get clusters 2>/dev/null | grep "^sharko-e2e-" | xargs -I{} kind delete cluster --name {} || echo "(none)"
+
+# Legacy alias — `make e2e` previously bash-scripted setup.sh +
+# port-forward + teardown.sh. The Go harness replaces all of that;
+# keep the alias so existing muscle memory still works.
+e2e: test-e2e ## Alias for `make test-e2e` (legacy name).
+
+release: ## Tag and push a release (usage: make release VERSION=1.0.0)
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=1.0.0"; exit 1; fi
+	@echo ""
+	@echo "  🦈 Sharko Release v$(VERSION)"
+	@echo ""
+	@echo "$(VERSION)" > version.txt
+	@sed -i '' 's/^version:.*/version: $(VERSION)/' charts/sharko/Chart.yaml
+	@sed -i '' 's/^appVersion:.*/appVersion: "$(VERSION)"/' charts/sharko/Chart.yaml
+	@if git diff --quiet version.txt charts/sharko/Chart.yaml; then \
+		echo "  Version already set to $(VERSION) — tagging current main"; \
+		git tag -a "v$(VERSION)" -m "Release v$(VERSION)"; \
+	else \
+		git checkout -b release/v$(VERSION); \
+		git add -f version.txt charts/sharko/Chart.yaml; \
+		git commit -m "release: v$(VERSION)"; \
+		git push -u origin release/v$(VERSION); \
+		gh pr create --title "release: v$(VERSION)" --body "Version bump to $(VERSION)"; \
+		gh pr merge --squash; \
+		git checkout main; \
+		git pull origin main; \
+		git tag -a "v$(VERSION)" -m "Release v$(VERSION)"; \
+	fi
+	@echo ""
+	@echo "  ✅ Tagged v$(VERSION). Push the tag:"
+	@echo "    git push origin v$(VERSION)"
+	@echo ""
+
+# Local Playground (hub + N spokes + ArgoCD + Sharko + Gitea, full GitOps loop)
+# One-command kind topology for a realistic local end-to-end test bed.
+
+PLAYGROUND_SPOKES ?= 2
+PLAYGROUND_HUB_CONTEXT := kind-sharko-play-hub
+PLAYGROUND_NAMESPACE := sharko
+PLAYGROUND_RELEASE := sharko
+
+playground-up: ## Provision playground (hub + N spokes + ArgoCD + Sharko + GitFake)
+	@echo "==> Starting playground (hub + $(PLAYGROUND_SPOKES) spokes)"
+	@PLAYGROUND_SPOKES=$(PLAYGROUND_SPOKES) go run ./cmd/playground up
+
+playground-status: ## Show playground status — cluster/label/Gitea state per spoke
+	@bash scripts/playground-status.sh
+
+playground-tunnels: ## Open browser tunnels for Sharko + ArgoCD + Gitea (Ctrl+C closes all)
+	@bash scripts/playground-tunnels.sh
+
+playground-down: ## Delete ONLY sharko-play-* clusters (name-guarded teardown)
+	@echo "==> Deleting playground clusters (sharko-play-* prefix only)"
+	@CLUSTERS=$$(kind get clusters 2>/dev/null | grep -E '^sharko-play-' || true); \
+	if [ -z "$$CLUSTERS" ]; then \
+		echo "    (none found — already clean)"; \
+	else \
+		echo "    Will delete:"; \
+		echo "$$CLUSTERS" | sed 's/^/      - /'; \
+		echo "$$CLUSTERS" | xargs -I{} kind delete cluster --name {}; \
+		echo "    Clusters deleted"; \
+	fi
+	@if [ "$(PRUNE_IMAGES)" = "1" ]; then \
+		echo "==> Pruning sharko-gitfake image (PRUNE_IMAGES=1)"; \
+		docker rmi sharko-gitfake:e2e-* 2>/dev/null || echo "    (no gitfake images to prune)"; \
+	fi
+
+# Aliases — kept so muscle memory from the old operator-playground-* names
+# still works. The playground-* targets above are canonical.
+operator-playground-up: playground-up
+operator-playground-status: playground-status
+operator-playground-tunnels: playground-tunnels
+operator-playground-down: playground-down

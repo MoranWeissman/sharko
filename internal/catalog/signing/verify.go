@@ -1,0 +1,712 @@
+package signing
+
+import (
+	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
+	"github.com/sigstore/sigstore-go/pkg/root"
+	"github.com/sigstore/sigstore-go/pkg/verify"
+
+	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+)
+
+// maxBundleBytes caps how much we'll read from a sidecar HTTP body.
+// Sigstore bundle JSONs are tiny (a few KB at most). Anything bigger is
+// either misconfiguration or an attempt to make us OOM on the bundle
+// fetch.
+const maxBundleBytes int64 = 1 << 20 // 1 MiB
+
+// defaultBundleFetchTimeout is the per-bundle HTTP fetch ceiling when
+// the caller does not supply a configured client. Tight because the
+// bundle is small and we don't want a slow signer to hold up catalog
+// loading.
+const defaultBundleFetchTimeout = 30 * time.Second
+
+// trustedMaterialProvider is the abstraction the verifier uses to
+// resolve the Sigstore trust root (Fulcio CAs + Rekor pubkeys + CT
+// logs). In production the provider returns the bundled public-good
+// trust root (or one fetched via TUF). In tests
+// the provider returns the *ca.VirtualSigstore (which itself implements
+// root.TrustedMaterial).
+type trustedMaterialProvider interface {
+	TrustedMaterial(ctx context.Context) (root.TrustedMaterial, error)
+}
+
+// Verifier is the production SidecarVerifier implementation (whole-file
+// path) AND the per-entry fetch wrapper. Construct via NewVerifier.
+//
+// Zero value is not usable. The Verifier holds an HTTP client for
+// bundle-URL fetches and a trustedMaterialProvider for the Sigstore
+// trust root. Both are pluggable via constructor options for tests.
+type Verifier struct {
+	httpClient *http.Client
+	trust      trustedMaterialProvider
+	log        *slog.Logger
+}
+
+// VerifierOption configures a Verifier at construction time.
+type VerifierOption func(*Verifier)
+
+// WithHTTPClient overrides the HTTP client used for bundle-URL fetches.
+// Production callers pass a configured client (proxies, timeouts);
+// tests pass an httptest.Server-backed client that talks to a local
+// bundle stub.
+func WithHTTPClient(c *http.Client) VerifierOption {
+	return func(v *Verifier) {
+		if c != nil {
+			v.httpClient = c
+		}
+	}
+}
+
+// WithTrustedMaterial overrides the trust root provider. Tests pass a
+// VirtualSigstore-backed provider so cert validation passes without
+// reaching out to Fulcio. Production gets a baked-in default that
+// uses the public-good Sigstore root.
+func WithTrustedMaterial(tm root.TrustedMaterial) VerifierOption {
+	return func(v *Verifier) {
+		v.trust = staticTrust{tm: tm}
+	}
+}
+
+// WithLogger overrides the slog.Logger the verifier uses for success
+// (INFO) and failure (WARN) records. Production callers leave this
+// alone — the default `slog.Default().With("component",
+// "catalog-signing")` is the right answer in every real deployment.
+//
+// The seam exists so tests can swap in a recording handler and assert
+// on the exact `reason` attribute attached to a failure log — the only
+// observable that distinguishes a signature-mismatch outcome from an
+// untrusted-identity outcome (both collapse to (false, "", nil) on
+// the wire). nil is ignored to keep the option tolerant of "build the
+// slice up dynamically" callers.
+func WithLogger(log *slog.Logger) VerifierOption {
+	return func(v *Verifier) {
+		if log != nil {
+			v.log = log
+		}
+	}
+}
+
+// staticTrust adapts a fixed root.TrustedMaterial to the
+// trustedMaterialProvider interface.
+type staticTrust struct{ tm root.TrustedMaterial }
+
+func (s staticTrust) TrustedMaterial(ctx context.Context) (root.TrustedMaterial, error) {
+	if s.tm == nil {
+		return nil, errors.New("trust root not configured")
+	}
+	return s.tm, nil
+}
+
+// NewVerifier constructs a Verifier ready to use. If no
+// WithTrustedMaterial option is supplied, the verifier returns
+// (false, "", err) on every call until trust is configured. This is a
+// deliberate fail-closed default: a misconfigured Sharko refuses to
+// mark anything verified rather than silently trusting
+// nothing-or-everything.
+//
+// nil httpClient is fine — a sane default with a 30s timeout is used.
+func NewVerifier(httpClient *http.Client, opts ...VerifierOption) *Verifier {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: defaultBundleFetchTimeout}
+	}
+	v := &Verifier{
+		httpClient: httpClient,
+		trust:      staticTrust{}, // unconfigured by default — fail closed
+		log:        slog.Default().With("component", "catalog-signing"),
+	}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v
+}
+
+// Verify implements sources.SidecarVerifier — the whole-file path. The
+// fetcher discovered a `.bundle` sidecar URL next to a fetched catalog
+// YAML and is asking us whether it verifies against catalogBytes under
+// the configured trust policy.
+//
+// Return contract is the SidecarVerifier contract verbatim — see
+// internal/catalog/sources/verifier.go. Sig-mismatch / untrusted-identity
+// → (false, "", nil), not an error. Network fetch failure or malformed
+// bundle → (false, "", err).
+func (v *Verifier) Verify(
+	ctx context.Context,
+	catalogBytes []byte,
+	sidecarURL string,
+	trustPolicy sources.TrustPolicy,
+) (verified bool, issuer string, err error) {
+	bundleBytes, err := v.fetchBundle(ctx, sidecarURL)
+	if err != nil {
+		return false, "", fmt.Errorf("fetch sidecar bundle: %w", err)
+	}
+	return v.verifyBundleBytes(ctx, catalogBytes, bundleBytes, trustPolicy, sidecarURL)
+}
+
+// VerifyEntry is the per-entry verifier called by the catalog loader
+// when an individual CatalogEntry has a non-nil Signature.Bundle URL.
+// The caller is responsible for computing the canonical entry bytes
+// (via signing.CanonicalEntryBytes) and passing them as `payload`.
+//
+// Same return contract as Verify — sig-mismatch / untrusted-identity
+// → (false, "", nil); infra failure → (false, "", err).
+func (v *Verifier) VerifyEntry(
+	ctx context.Context,
+	canonicalEntryBytes []byte,
+	bundleURL string,
+	trustPolicy sources.TrustPolicy,
+) (verified bool, issuer string, err error) {
+	bundleBytes, err := v.fetchBundle(ctx, bundleURL)
+	if err != nil {
+		return false, "", fmt.Errorf("fetch entry bundle: %w", err)
+	}
+	return v.verifyBundleBytes(ctx, canonicalEntryBytes, bundleBytes, trustPolicy, bundleURL)
+}
+
+// VerifyBundleBytes verifies a bundle the caller already holds in memory
+// against a payload the caller already computed. Same verification core,
+// same trust policy handling and the same return contract as Verify and
+// VerifyEntry — the only difference is that nothing is fetched over HTTP.
+//
+// This exists for the release pipeline. The release workflow generates
+// bundles into a directory on the runner and must prove they verify
+// BEFORE the signed catalogue is embedded into the release binaries and
+// the container image. At that moment the bundles are local files and the
+// release assets they will eventually be served from do not exist yet, so
+// neither Verify nor VerifyEntry can be used. Handing the bytes straight
+// to the same core is what makes the release-time check identical to the
+// check `sharko serve` runs at startup: if the pipeline's own bundles
+// would not verify at runtime, the pipeline stops.
+//
+// Callers pass the canonical entry bytes from signing.CanonicalEntryBytes
+// (or catalog.CatalogEntry.CanonicalBytes) as payload — the same message
+// the signer signed.
+func (v *Verifier) VerifyBundleBytes(
+	ctx context.Context,
+	payload []byte,
+	bundleBytes []byte,
+	trustPolicy sources.TrustPolicy,
+) (verified bool, issuer string, err error) {
+	// The sourceURL argument exists only to describe where the bundle came
+	// from; verifyEntity never puts it in a log line (logFailure refuses to
+	// take an address at all — see its doc comment). A fixed label keeps
+	// that property obvious at this call site.
+	return v.verifyBundleBytes(ctx, payload, bundleBytes, trustPolicy, "local-bundle")
+}
+
+// VerifyEntryFunc returns a closure that conforms to
+// catalog.VerifyEntryFunc — closing over the verifier itself and the
+// trust policy so the loader doesn't have to know about either. This
+// is the canonical wiring point for cmd/sharko/serve.go.
+//
+// The trust policy can't be a parameter on the loader callback because
+// the loader package cannot import sources.TrustPolicy without
+// creating an import cycle. Closing it in here is the single-statement
+// fix.
+func (v *Verifier) VerifyEntryFunc(trustPolicy sources.TrustPolicy) catalog.VerifyEntryFunc {
+	return func(ctx context.Context, canonicalEntryBytes []byte, bundleURL string) (bool, string, error) {
+		return v.VerifyEntry(ctx, canonicalEntryBytes, bundleURL, trustPolicy)
+	}
+}
+
+// verifyBundleBytes parses the bundle bytes and runs the verification
+// core. Splitting parse-from-bytes out of the SignedEntity core lets
+// unit tests verify a *ca.TestEntity directly (which already implements
+// verify.SignedEntity) without needing to mint a serialized bundle.
+func (v *Verifier) verifyBundleBytes(
+	ctx context.Context,
+	payload []byte,
+	bundleBytes []byte,
+	trustPolicy sources.TrustPolicy,
+	sourceURL string,
+) (bool, string, error) {
+	b := &bundle.Bundle{}
+	if err := b.UnmarshalJSON(bundleBytes); err != nil {
+		return false, "", fmt.Errorf("parse bundle: %w", err)
+	}
+	return v.verifyEntity(ctx, b, payload, trustPolicy, sourceURL)
+}
+
+// verifyEntity runs the verification primitive against any
+// verify.SignedEntity. This is the single place all verification
+// outcomes are decided — the production Verify/VerifyEntry paths funnel
+// through here after parsing bundle bytes, and tests funnel through here
+// directly with a *ca.TestEntity.
+//
+// Steps:
+//  1. Fail-closed check: TrustPolicy.Identities empty → reject.
+//  2. Compile each Identities regex; reject any malformed regex
+//     (infrastructure error — this is configuration, not signature).
+//  3. Resolve trust root from the configured provider.
+//  4. Construct a sigstore-go Verifier with sensible defaults: require
+//     transparency-log inclusion (Rekor), accept the bundle's own
+//     observer timestamps (the Rekor SignedEntryTimestamp covers cert
+//     validity at the moment of signing, which is what we want).
+//  5. Build the verification policy: artifact = SHA-256(payload),
+//     identity = "match anything" (we re-check identity ourselves
+//     against TrustPolicy regexes after, so the policy is a
+//     WithoutIdentitiesUnsafe to avoid double-matching against the
+//     sigstore-side regex shape).
+//  6. Run Verify. On verification failure (cert-chain bad, sig bad,
+//     no Rekor entry) return (false, "", nil) — the design treats
+//     unverifiable bundles the same as missing bundles.
+//  7. Extract OIDC subject from the verified cert.
+//  8. Match subject against compiled TrustPolicy regexes. No match →
+//     (false, "", nil) (untrusted identity).
+//  9. When the policy pins them (Sharko's own embedded catalogue only),
+//     require the exact OIDC issuer and the exact SAN — see
+//     assertExactSigner. Then the workflow_ref claim and the
+//     release-commit binding.
+//  10. All passed → (true, subject, nil). Log success at INFO with the
+//     subject and the safe form of the source address.
+func (v *Verifier) verifyEntity(
+	ctx context.Context,
+	entity verify.SignedEntity,
+	payload []byte,
+	trustPolicy sources.TrustPolicy,
+	sourceURL string,
+) (bool, string, error) {
+	// Step 1: fail-closed when no identities are configured.
+	if len(trustPolicy.Identities) == 0 {
+		v.logFailure("no trusted identities configured (fail-closed)")
+		return false, "", nil
+	}
+
+	// Step 2: compile all identity regexes up front.
+	patterns, err := compileIdentityPatterns(trustPolicy.Identities)
+	if err != nil {
+		return false, "", fmt.Errorf("compile trust policy: %w", err)
+	}
+
+	// Step 3: resolve trust root.
+	tm, err := v.trust.TrustedMaterial(ctx)
+	if err != nil {
+		return false, "", fmt.Errorf("trust root: %w", err)
+	}
+
+	// Step 4: build verifier with the standard "require Rekor inclusion"
+	// posture. WithObserverTimestamps(1) accepts the bundle's signed
+	// entry timestamp from Rekor, which is the canonical attestation of
+	// "the cert was valid when this was signed" for short-lived Fulcio
+	// keyless certs.
+	sev, err := verify.NewVerifier(tm,
+		verify.WithTransparencyLog(1),
+		verify.WithObserverTimestamps(1),
+	)
+	if err != nil {
+		return false, "", fmt.Errorf("construct sigstore verifier: %w", err)
+	}
+
+	// Step 5: build the verification policy. We pin the artifact to a
+	// pre-computed SHA-256 of the payload (faster than streaming via
+	// WithArtifact for an in-memory byte slice) and skip the
+	// sigstore-side identity matching — we apply our TrustPolicy regex
+	// after extracting the subject from the verified cert. This keeps
+	// the regex semantics under our control and lets us return the
+	// (issuer-empty-string) sentinel on untrusted identity without
+	// conflating it with a sig-mismatch error.
+	digest := sha256.Sum256(payload)
+	policy := verify.NewPolicy(
+		verify.WithArtifactDigest("sha256", digest[:]),
+		verify.WithoutIdentitiesUnsafe(),
+	)
+
+	// Step 6: run the verifier. A non-nil error here means the bundle
+	// failed cryptographic verification — bad signature, cert chain
+	// untrusted, no Rekor entry, etc. Per the SidecarVerifier contract
+	// these are NOT infrastructure errors; they're "this signature
+	// doesn't verify" → (false, "", nil).
+	if _, verr := sev.Verify(entity, policy); verr != nil {
+		v.logFailure("bundle verification failed: " + verr.Error())
+		return false, "", nil
+	}
+
+	// Step 7: pull the OIDC subject out of the verified cert. The
+	// VerificationContent on the entity always carries the leaf cert for
+	// a Sigstore keyless bundle; PublicKey is for non-keyless paths
+	// which the v1.23 design doesn't support.
+	vc, err := entity.VerificationContent()
+	if err != nil {
+		// The verifier accepted the entity but we can't extract its
+		// content — this is a corrupt bundle that somehow passed
+		// verification. Treat as infra error so the operator notices.
+		return false, "", fmt.Errorf("extract verification content: %w", err)
+	}
+	cert := vc.Certificate()
+	if cert == nil {
+		// Same: keyless verification with no cert is impossible. If we
+		// got here something's wrong with the bundle structure.
+		return false, "", errors.New("verified entity has no certificate (keyless required)")
+	}
+	subject, err := extractSubject(cert)
+	if err != nil {
+		return false, "", fmt.Errorf("extract OIDC subject: %w", err)
+	}
+
+	// Step 8: match against trust policy regexes.
+	if !matchAnyPattern(subject, patterns) {
+		v.logFailure(
+			"signature verified but identity not in trust policy: " + subject)
+		return false, "", nil
+	}
+
+	// Exact issuer and exact identity. Applies to Sharko's own embedded
+	// catalogue only — RequiredIssuer and RequiredIdentity are empty for
+	// every third-party feed, so this is a no-op on that path. It runs
+	// AFTER the pattern match above, never instead of it, so an operator's
+	// identity list still narrows the embedded catalogue.
+	if reason, ok := assertExactSigner(cert, subject, trustPolicy.RequiredIssuer, trustPolicy.RequiredIdentity); !ok {
+		v.logFailure(reason)
+		return false, "", nil
+	}
+
+	// Cert-claim assertion: defense-in-depth layered on top of the SAN
+	// regex above — even an attacker whose SAN matches the trust
+	// policy must ALSO have come from a workflow ref the operator
+	// allows. Default-secure: production wiring populates
+	// trustPolicy.WorkflowRef with ^refs/tags/v.*$ when the env var
+	// is unset. Empty WorkflowRef in a TrustPolicy means SKIP
+	// (back-compat for callers that construct TrustPolicy directly,
+	// e.g. unit tests).
+	if reason, ok := assertWorkflowRef(cert, trustPolicy.WorkflowRef); !ok {
+		v.logFailure(reason)
+		return false, "", nil
+	}
+
+	// Release-commit binding. Applies to Sharko's own embedded catalogue
+	// only — RequireReleaseCommit is false for every third-party feed, so
+	// this is a no-op on that path. See assertReleaseCommit.
+	if reason, ok := assertReleaseCommit(cert, trustPolicy.ReleaseCommit, trustPolicy.RequireReleaseCommit); !ok {
+		v.logFailure(reason)
+		return false, "", nil
+	}
+
+	// Step 9: success. Log the subject (which IS in the cert and is not
+	// URL-related, so logging it is fine — it's the operator's whole
+	// point in configuring the trust policy).
+	v.log.Info("catalog signature verified",
+		"source", credsafe.PublicSourceLabel(),
+		"identity", subject)
+	return true, subject, nil
+}
+
+// fetchBundle pulls the bundle JSON over HTTP. Honors the caller's
+// ctx for cancellation and clamps body size to maxBundleBytes.
+func (v *Verifier) fetchBundle(ctx context.Context, bundleURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bundleURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.dev.sigstore.bundle+json, application/json, */*;q=0.5")
+	req.Header.Set("User-Agent", "sharko-catalog-signing/1.0")
+
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.CopyN(io.Discard, resp.Body, 1024)
+		return nil, fmt.Errorf("http %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBundleBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(body)) > maxBundleBytes {
+		return nil, fmt.Errorf("bundle exceeds %d bytes", maxBundleBytes)
+	}
+	return body, nil
+}
+
+// logFailure emits a WARN log for a verification failure on a bundle
+// the caller actually fetched. The `source` field is always the fixed
+// word from credsafe.PublicSourceLabel — a catalog source address (and
+// the sidecar addresses derived from it) may carry a token in its own
+// path, so the address is sensitive by type and never appears here in
+// any form: not raw, and nothing derived from it either (no hash, no
+// length, no partial). The function does not even take the address —
+// there is nothing it would be allowed to do with it.
+func (v *Verifier) logFailure(reason string) {
+	v.log.Warn("catalog signature verification failed",
+		"source", credsafe.PublicSourceLabel(),
+		"reason", reason)
+}
+
+// compileIdentityPatterns turns each TrustPolicy.Identities entry into
+// a *regexp.Regexp. A malformed pattern is an operator-side
+// configuration error — surface it as a non-nil error so the caller
+// can fail loudly at startup / fetch rather than silently rejecting
+// every signature.
+func compileIdentityPatterns(identities []string) ([]*regexp.Regexp, error) {
+	out := make([]*regexp.Regexp, 0, len(identities))
+	for _, raw := range identities {
+		re, err := regexp.Compile(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trust policy regex %q: %w", raw, err)
+		}
+		out = append(out, re)
+	}
+	return out, nil
+}
+
+// matchAnyPattern returns true when `subject` matches at least one
+// compiled pattern. We use MatchString (substring), not full-match —
+// that mirrors cosign's certificate-identity-regexp semantics where
+// `^` and `$` anchors are explicit when the operator wants a strict
+// match. This is documented in the trust policy env var help text
+// when strict matching is required.
+func matchAnyPattern(subject string, patterns []*regexp.Regexp) bool {
+	for _, re := range patterns {
+		if re.MatchString(subject) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractSubject pulls the OIDC subject out of a Fulcio leaf cert.
+// Uses sigstore-go's own SummarizeCertificate which knows the SAN
+// extension layout (handles email SANs and OtherName SANs uniformly).
+func extractSubject(cert *x509.Certificate) (string, error) {
+	summary, err := certificate.SummarizeCertificate(cert)
+	if err != nil {
+		return "", err
+	}
+	if summary.SubjectAlternativeName == "" {
+		return "", errors.New("certificate has empty SAN")
+	}
+	return summary.SubjectAlternativeName, nil
+}
+
+// assertWorkflowRef enforces the optional cert-claim
+// assertion on a Fulcio leaf cert's GitHub workflow_ref extension.
+//
+// Contract:
+//   - policy == "" → returns ("", true). The assertion is opt-in at the
+//     TrustPolicy level; an empty policy means "skip" so callers that
+//     construct TrustPolicy directly (older unit tests, fixtures) are
+//     not silently broken when the WorkflowRef field is added.
+//   - policy != "" → extracts the cert's GithubWorkflowRef claim and
+//     matches it against the compiled policy regex. Match → ("", true).
+//     Non-match → (reason, false) where `reason` is a clear log line
+//     naming the actual claim value and the policy.
+//   - Empty claim (cert lacks the workflow_ref extension entirely, e.g.
+//     a non-GitHub-Actions issuer minted the cert) with a non-empty
+//     policy → rejected: an empty claim cannot satisfy a policy the
+//     operator explicitly configured. An operator wanting to also
+//     accept non-GHA-issued certs sets the policy to ".*" which
+//     matches the empty string.
+//   - Regex compile failure on a non-empty policy → ("policy compile
+//     failed", false). Validated at startup by LoadTrustPolicyFromEnv,
+//     but kept defensive here in case a future caller wires a raw
+//     policy that wasn't pre-validated.
+//
+// We use ParseExtensions (not SummarizeCertificate) because the latter
+// returns an error when the cert has no SAN — and we want to reject
+// gracefully on a cert-claim mismatch even when the SAN check already
+// passed via SummarizeCertificate moments ago in the caller. The
+// extensions parse is cheap and side-effect-free.
+func assertWorkflowRef(cert *x509.Certificate, policy string) (reason string, ok bool) {
+	if policy == "" {
+		// Assertion disabled — backward-compat path for direct
+		// TrustPolicy construction without going through the env loader.
+		return "", true
+	}
+	re, err := regexp.Compile(policy)
+	if err != nil {
+		return fmt.Sprintf(
+			"cert-claim assertion failed: workflow_ref policy %q does not compile: %v",
+			policy, err), false
+	}
+	ext, err := certificate.ParseExtensions(cert.Extensions)
+	if err != nil {
+		return fmt.Sprintf(
+			"cert-claim assertion failed: parse cert extensions: %v", err), false
+	}
+	claim := ext.GithubWorkflowRef
+	if !re.MatchString(claim) {
+		return fmt.Sprintf(
+			"cert-claim assertion failed: workflow_ref %q does not match policy %q",
+			claim, policy), false
+	}
+	return "", true
+}
+
+// assertExactSigner enforces the exact issuer and exact identity pins that
+// only Sharko's own embedded catalogue carries (see
+// EmbeddedCatalogTrustPolicy).
+//
+// Contract, in the order the branches are taken:
+//
+//   - requiredIssuer != "" and the certificate carries no issuer at all
+//     → REFUSED, with a reason that says the issuer is missing. A missing
+//     issuer is never treated as a pass.
+//   - requiredIssuer != "" and the issuer differs → REFUSED, naming both
+//     values.
+//   - requiredIdentity != "" and the SAN differs → REFUSED, naming both
+//     values. Plain equality: no pattern, no prefix, no case folding.
+//   - otherwise ("", true). Both fields empty (every third-party policy)
+//     means nothing is checked here.
+//
+// The issuer is read with certificate.ParseExtensions, which reads both
+// the current Fulcio issuer extension (OID 1.3.6.1.4.1.57264.1.8) and the
+// older one (1.3.6.1.4.1.57264.1.1).
+func assertExactSigner(cert *x509.Certificate, subject, requiredIssuer, requiredIdentity string) (reason string, ok bool) {
+	if requiredIssuer != "" {
+		ext, err := certificate.ParseExtensions(cert.Extensions)
+		if err != nil {
+			return fmt.Sprintf(
+				"signer check failed: parse cert extensions to read the OIDC issuer: %v", err), false
+		}
+		if ext.Issuer == "" {
+			return fmt.Sprintf(
+				"signer check failed: certificate carries no OIDC issuer "+
+					"(OID 1.3.6.1.4.1.57264.1.8 or 1.3.6.1.4.1.57264.1.1), but %q is required",
+				requiredIssuer), false
+		}
+		if ext.Issuer != requiredIssuer {
+			return fmt.Sprintf(
+				"signer check failed: certificate OIDC issuer %q is not the required issuer %q",
+				ext.Issuer, requiredIssuer), false
+		}
+	}
+	if requiredIdentity != "" && subject != requiredIdentity {
+		return fmt.Sprintf(
+			"signer check failed: certificate identity %q is not the required identity %q",
+			subject, requiredIdentity), false
+	}
+	return "", true
+}
+
+// Fulcio field names, written down so the failure messages and the tests
+// name the same field the certificate does rather than a paraphrase.
+const (
+	fieldSourceRepositoryDigest = "sourceRepositoryDigest (OID 1.3.6.1.4.1.57264.1.13)"
+	fieldGithubWorkflowSHA      = "githubWorkflowSHA (OID 1.3.6.1.4.1.57264.1.3)"
+)
+
+// certSourceCommit pulls the certificate's authenticated claim about
+// WHICH SOURCE COMMIT the signing build was based on, and says which
+// field it came from.
+//
+// Which field carries it, confirmed by decoding the certificates inside
+// all 45 published v4.0.1 bundles rather than read off an OID table:
+// four fields carry the same full 40-character commit
+// (`sourceRepositoryDigest` .1.13, `githubWorkflowSHA` .1.3,
+// `buildSignerDigest` .1.10 and `buildConfigDigest` .1.19), and all 45
+// certificates carry a byte-identical extension set. Two of those four
+// describe the build INSTRUCTIONS rather than the source — .1.10 and
+// .1.19 are the version of the workflow file that signed — so they are
+// deliberately not used here even though today they happen to hold the
+// same value.
+//
+// sourceRepositoryDigest is preferred: sigstore-go documents it as
+// "immutable reference to a specific version of the source code that the
+// build was based upon", and it is the field Fulcio's current extension
+// family uses. githubWorkflowSHA carries the same meaning and is marked
+// Deprecated in sigstore-go, so it is a fallback for a certificate minted
+// before the newer field existed — not a widening. Both live inside the
+// signed certificate, so neither can be set by anything outside Fulcio.
+//
+// A certificate with neither field returns ("", "") and the caller
+// refuses. It never returns a value it had to guess at.
+func certSourceCommit(cert *x509.Certificate) (claim string, field string) {
+	ext, err := certificate.ParseExtensions(cert.Extensions)
+	if err != nil {
+		return "", ""
+	}
+	if s := strings.TrimSpace(ext.SourceRepositoryDigest); s != "" {
+		return s, fieldSourceRepositoryDigest
+	}
+	if s := strings.TrimSpace(ext.GithubWorkflowSHA); s != "" {
+		return s, fieldGithubWorkflowSHA
+	}
+	return "", ""
+}
+
+// assertReleaseCommit enforces that the certificate was minted by a build
+// of the exact commit this Sharko binary was released from.
+//
+// What it is for. Sharko's release workflow runs on `workflow_run`, and
+// for that trigger Fulcio's workflow_ref claim is structurally always the
+// ref the workflow file lives on, so no assertion on workflow_ref can
+// distinguish a release build from any other run of the same workflow
+// file. The source-commit claim can: it names the commit that was built.
+// Comparing it against the commit THIS BINARY was built from accepts the
+// genuine catalogue signed for this release and refuses a signature made
+// from any other commit, including a genuine, fully valid signature made
+// from a later commit on `main`.
+//
+// Contract, in the order the branches are taken:
+//
+//   - require == false → ("", true). Not Sharko's own catalogue. Every
+//     third-party feed takes this branch, and so does any caller that
+//     builds a sources.TrustPolicy directly (unit tests, fixtures), which
+//     keeps the field additive.
+//   - require == true and expected == "" → REFUSED. This build carries no
+//     release-commit stamp, so there is nothing to compare the claim
+//     against. Refusing is the point: skipping here would be exactly the
+//     silent bypass this check exists to prevent, and a signature nobody
+//     could bind to a release must not be presented as verified. The
+//     message says which build shape causes it so the reader is not left
+//     guessing.
+//   - the certificate carries no source-commit claim → REFUSED, naming
+//     both fields that were looked for.
+//   - claim and expected differ → REFUSED, naming both values so the
+//     reader can see at a glance that this is a different commit and not
+//     a broken signature.
+//   - equal → ("", true).
+//
+// Comparison is full-length and case-insensitive: both sides must be
+// exactly 40 hex characters. No prefix matching. expected is already
+// validated and lowercased by EmbeddedCatalogTrustPolicy; the length
+// check is repeated here so a caller that wires a raw policy cannot turn
+// a truncated value into a prefix match.
+func assertReleaseCommit(cert *x509.Certificate, expected string, require bool) (reason string, ok bool) {
+	if !require {
+		return "", true
+	}
+	if expected == "" {
+		return "release-commit binding failed: this build carries no release commit, " +
+			"so no signature can be bound to a release. A release binary is stamped with " +
+			"the commit it was built from; a development build, or an image built without " +
+			"the COMMIT build argument, is not. Sharko refuses to mark its own catalogue " +
+			"verified rather than skip the check", false
+	}
+	if !IsFullCommitSHA(expected) {
+		return fmt.Sprintf(
+			"release-commit binding failed: expected release commit %q is not a full "+
+				"40-character commit hash, so it cannot be compared", expected), false
+	}
+	claim, field := certSourceCommit(cert)
+	if claim == "" {
+		return fmt.Sprintf(
+			"release-commit binding failed: certificate carries no source-commit claim "+
+				"in %s or %s, so it cannot be bound to release commit %s",
+			fieldSourceRepositoryDigest, fieldGithubWorkflowSHA, expected), false
+	}
+	if !strings.EqualFold(claim, expected) {
+		return fmt.Sprintf(
+			"release-commit binding failed: certificate %s claims source commit %s "+
+				"but this build was released from commit %s",
+			field, claim, expected), false
+	}
+	return "", true
+}

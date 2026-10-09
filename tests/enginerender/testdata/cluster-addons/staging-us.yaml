@@ -1,0 +1,11 @@
+# Fixture cluster-addons/staging-us.yaml — ClusterAddons, flat (decision 9). Neither
+# addon has a per-cluster override: both follow whatever catalog.yaml (the
+# org's approved list) says.
+apiVersion: sharko.dev/v1
+kind: ClusterAddons
+cluster: staging-us
+addons:
+  cert-manager:
+    enabled: true
+  metrics-server:
+    enabled: true

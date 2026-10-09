@@ -1,0 +1,178 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Use Inter as the default font for the entire app */
+body {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  :root {
+    /* House-style pass (maintainer's adopted design review, H1): the old
+       value (`oklch(0.88 0.04 220)`) was a genuinely saturated blue that
+       competed with page content for attention. The FIRST fix
+       (`oklch(0.93 0.008 230)`) over-corrected — chroma 0.008 reads as
+       plain grey, and the maintainer called it out directly: "why gray?
+       this is literally copying argocd one to one." Sharko's own identity
+       is blue (sidebar navy #1a3d5c, the pale surfaces #f0f7ff/#dceaf5,
+       the #6aade0 accent) — the habit we actually wanted, "quieter than
+       the content", holds fine in that blue. This value keeps the page
+       light enough that white content still reads as the brighter surface,
+       with enough chroma to read as Sharko blue, not neutral. This is a
+       global token change; every page's background shifts. TO REVERT JUST
+       THIS PAGE COLOUR: put back `oklch(0.88 0.04 220)`. */
+    --background: oklch(0.95 0.022 235); /* ~#e9f0f7 — light Sharko blue, not grey */
+    --foreground: oklch(0.15 0.02 240);
+    --card: oklch(0.98 0.015 220);
+    --card-foreground: oklch(0.15 0.02 240);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.15 0.02 240);
+    --primary: oklch(0.35 0.08 240);
+    --primary-foreground: oklch(0.95 0.02 220);
+    --secondary: oklch(0.92 0.03 220);
+    --secondary-foreground: oklch(0.25 0.03 240);
+    --muted: oklch(0.92 0.03 220);
+    --muted-foreground: oklch(0.5 0.02 240);
+    --accent: oklch(0.35 0.08 240);
+    --accent-foreground: oklch(0.95 0.02 220);
+    --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.577 0.245 27.325);
+    /* House-style pass (H4): the old value was a mid-saturation blue line
+       (~#4a8cc0) — every border in the app, including every row divider,
+       was that same strong blue, which is why rows read as "boxes with a
+       frame" instead of a list with a hairline between entries. Keeping it
+       a hairline was right; the follow-up fix (`oklch(0.86 0.012 225)`)
+       just carried the H1 over-correction along — chroma 0.012 is grey,
+       same complaint as the background. This is a global token change
+       (every `border`/`divide` in the app lightens, applied everywhere via
+       `* { @apply border-border }`) — TO REVERT JUST THIS LINE: put back
+       `oklch(0.55 0.08 220)`. --input is intentionally left alone — it's a
+       separate token, not touched by this pass. */
+    --border: oklch(0.88 0.03 230); /* pale hairline, recognisably Sharko blue */
+    --input: oklch(0.55 0.08 220);
+    --ring: oklch(0.35 0.08 240);
+    --chart-1: oklch(0.45 0.1 240);
+    --chart-2: oklch(0.6 0.118 184.704);
+    --chart-3: oklch(0.398 0.07 227.392);
+    --chart-4: oklch(0.828 0.189 84.429);
+    --chart-5: oklch(0.769 0.188 70.08);
+    --radius: 0.625rem;
+    --sidebar: oklch(0.18 0.04 240);
+    --sidebar-foreground: oklch(0.88 0.04 220);
+    --sidebar-primary: oklch(0.65 0.08 220);
+    --sidebar-primary-foreground: oklch(0.95 0 0);
+    --sidebar-accent: oklch(0.25 0.04 240);
+    --sidebar-accent-foreground: oklch(0.88 0.04 220);
+    --sidebar-border: oklch(0.25 0.04 240);
+    --sidebar-ring: oklch(0.65 0.08 220);
+  }
+
+  .dark {
+    --background: oklch(0.13 0.01 260);
+    --foreground: oklch(0.93 0.005 240);
+    --card: oklch(0.18 0.012 260);
+    --card-foreground: oklch(0.93 0.005 240);
+    --popover: oklch(0.18 0.012 260);
+    --popover-foreground: oklch(0.93 0.005 240);
+    --primary: oklch(0.7 0.15 168);
+    --primary-foreground: oklch(0.13 0.01 260);
+    --secondary: oklch(0.25 0.012 260);
+    --secondary-foreground: oklch(0.93 0.005 240);
+    --muted: oklch(0.25 0.012 260);
+    --muted-foreground: oklch(0.65 0.01 260);
+    --accent: oklch(0.7 0.15 168);
+    --accent-foreground: oklch(0.13 0.01 260);
+    --destructive: oklch(0.396 0.141 25.723);
+    --destructive-foreground: oklch(0.637 0.237 25.331);
+    --border: oklch(0.28 0.012 260);
+    --input: oklch(0.28 0.012 260);
+    --ring: oklch(0.7 0.14 168);
+    --chart-1: oklch(0.7 0.15 168);
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+    --chart-4: oklch(0.627 0.265 303.9);
+    --chart-5: oklch(0.645 0.246 16.439);
+    --sidebar: oklch(0.13 0.01 260);
+    --sidebar-foreground: oklch(0.93 0.005 240);
+    --sidebar-primary: oklch(0.7 0.15 168);
+    --sidebar-primary-foreground: oklch(0.93 0.005 240);
+    --sidebar-accent: oklch(0.25 0.012 260);
+    --sidebar-accent-foreground: oklch(0.93 0.005 240);
+    --sidebar-border: oklch(0.28 0.012 260);
+    --sidebar-ring: oklch(0.7 0.15 168);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+  }
+}
+
+@layer components {
+  /* Story SSF-13 (typography correction) — one page-title style shared by
+     Dashboard, AddonCatalog and Settings so they stop drifting. Measured
+     before this change: Dashboard's title rendered 24px on mobile / 30px
+     desktop (bold), AddonCatalog and Settings both rendered a flat 24px
+     (bold), with no shared rule tying the three together. This sets one
+     scale — 24px on small screens, 28px from `sm:` up, semibold — and
+     leaves text color to each caller. */
+  .page-title {
+    @apply text-2xl font-semibold tracking-tight sm:text-[1.75rem];
+  }
+
+  /* Story SSF-13 — the same "16px semibold, card-foreground" panel-heading
+     string (Recent Activity / Issues / Pull Requests / GitOps corrections)
+     was already byte-identical in 6 places across Dashboard.tsx,
+     PullRequestsPanel.tsx and DriftAlertsPanel.tsx before this pass, and
+     already matched the approved 16px section-heading target — this is a
+     pure de-duplication, not a size or color change. */
+  .section-heading {
+    @apply text-base font-semibold text-card-foreground;
+  }
+}

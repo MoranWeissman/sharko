@@ -1,0 +1,23 @@
+name: Validate Sharko Config
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Sharko CLI
+        env:
+          # Pin the tag. Release archives carry their version in the filename,
+          # so there is no version-less name to fetch, and pinning is what keeps
+          # a build reproducible. v4.0.1 is the floor: earlier lines are retired.
+          SHARKO_TAG: v4.0.1
+        run: |
+          ARCHIVE="sharko_${SHARKO_TAG#v}_linux_amd64.tar.gz"
+          BASE="https://github.com/MoranWeissman/sharko/releases/download/${SHARKO_TAG}"
+          curl -fsSLO "${BASE}/${ARCHIVE}"
+          curl -fsSLO "${BASE}/checksums.txt"
+          sha256sum -c --ignore-missing checksums.txt
+          tar xzf "${ARCHIVE}" sharko
+          chmod +x sharko
+      - name: Validate
+        run: ./sharko validate .

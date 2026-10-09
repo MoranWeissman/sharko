@@ -1,0 +1,601 @@
+package settings
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+)
+
+// failGetConfigMaps installs a reactor on client that fails every "get
+// configmaps" call with simulatedErr — used to exercise the read-error /
+// cache-fallback paths in IsInlineCredentialsAllowed and IsAPITest
+// (V2-cleanup-90.3 / review finding M4).
+func failGetConfigMaps(client *fake.Clientset, simulatedErr error) {
+	client.PrependReactor("get", "configmaps", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, simulatedErr
+	})
+}
+
+func TestGetProbeMode_DefaultsToCheckApp(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	mode, err := store.GetProbeMode(ctx)
+	if err != nil {
+		t.Fatalf("GetProbeMode: %v", err)
+	}
+	if mode != ProbeModeCheckApp {
+		t.Errorf("GetProbeMode = %q, want default %q", mode, ProbeModeCheckApp)
+	}
+}
+
+func TestSetProbeMode_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetProbeMode(ctx, ProbeModeAPITest); err != nil {
+		t.Fatalf("SetProbeMode: %v", err)
+	}
+
+	mode, err := store.GetProbeMode(ctx)
+	if err != nil {
+		t.Fatalf("GetProbeMode: %v", err)
+	}
+	if mode != ProbeModeAPITest {
+		t.Errorf("GetProbeMode = %q, want %q", mode, ProbeModeAPITest)
+	}
+
+	// Flip back — the ConfigMap is updated, not recreated.
+	if err := store.SetProbeMode(ctx, ProbeModeCheckApp); err != nil {
+		t.Fatalf("SetProbeMode (revert): %v", err)
+	}
+	mode, err = store.GetProbeMode(ctx)
+	if err != nil {
+		t.Fatalf("GetProbeMode (after revert): %v", err)
+	}
+	if mode != ProbeModeCheckApp {
+		t.Errorf("GetProbeMode (after revert) = %q, want %q", mode, ProbeModeCheckApp)
+	}
+}
+
+func TestSetProbeMode_RejectsUnrecognizedValue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	err := store.SetProbeMode(ctx, "bogus-mode")
+	if err == nil {
+		t.Fatal("expected an error for an unrecognized probe_mode value, got nil")
+	}
+	if _, ok := err.(*InvalidProbeModeError); !ok {
+		t.Errorf("expected *InvalidProbeModeError, got %T: %v", err, err)
+	}
+
+	// The invalid write must not have persisted anything — the value stays default.
+	mode, getErr := store.GetProbeMode(ctx)
+	if getErr != nil {
+		t.Fatalf("GetProbeMode: %v", getErr)
+	}
+	if mode != ProbeModeCheckApp {
+		t.Errorf("GetProbeMode after rejected write = %q, want default %q", mode, ProbeModeCheckApp)
+	}
+}
+
+func TestIsAPITest(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if store.IsAPITest(ctx) {
+		t.Error("IsAPITest should be false by default (check-app)")
+	}
+
+	if err := store.SetProbeMode(ctx, ProbeModeAPITest); err != nil {
+		t.Fatalf("SetProbeMode: %v", err)
+	}
+	if !store.IsAPITest(ctx) {
+		t.Error("IsAPITest should be true after SetProbeMode(api-test)")
+	}
+}
+
+func TestIsAPITest_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if store.IsAPITest(context.Background()) {
+		t.Error("IsAPITest on a nil *Store must default to false (check-app), never panic or report true")
+	}
+}
+
+// V2-cleanup-89.6 — allow_inline_credentials, the legacy escape hatch.
+// Default flipped to FALSE by the connection-reconciliation epic (product
+// correction 5): legacy inline credentials are opt-in now.
+
+func TestGetAllowInlineCredentials_DefaultsToFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	allow, err := store.GetAllowInlineCredentials(ctx)
+	if err != nil {
+		t.Fatalf("GetAllowInlineCredentials: %v", err)
+	}
+	if allow {
+		t.Error("GetAllowInlineCredentials = true, want default false (legacy inline credentials are opt-in, product correction 5)")
+	}
+}
+
+func TestSetAllowInlineCredentials_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
+		t.Fatalf("SetAllowInlineCredentials(false): %v", err)
+	}
+	allow, err := store.GetAllowInlineCredentials(ctx)
+	if err != nil {
+		t.Fatalf("GetAllowInlineCredentials: %v", err)
+	}
+	if allow {
+		t.Error("GetAllowInlineCredentials = true after SetAllowInlineCredentials(false), want false")
+	}
+
+	// Flip back — the ConfigMap is updated, not recreated.
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
+		t.Fatalf("SetAllowInlineCredentials(true): %v", err)
+	}
+	allow, err = store.GetAllowInlineCredentials(ctx)
+	if err != nil {
+		t.Fatalf("GetAllowInlineCredentials (after revert): %v", err)
+	}
+	if !allow {
+		t.Error("GetAllowInlineCredentials (after revert) = false, want true")
+	}
+}
+
+func TestIsInlineCredentialsAllowed(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("IsInlineCredentialsAllowed should be false by default (legacy inline credentials are opt-in)")
+	}
+
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
+		t.Fatalf("SetAllowInlineCredentials: %v", err)
+	}
+	if !store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("IsInlineCredentialsAllowed should be true after an explicit SetAllowInlineCredentials(true)")
+	}
+
+	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
+		t.Fatalf("SetAllowInlineCredentials: %v", err)
+	}
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("IsInlineCredentialsAllowed should be false after SetAllowInlineCredentials(false)")
+	}
+}
+
+func TestIsInlineCredentialsAllowed_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if store.IsInlineCredentialsAllowed(context.Background()) {
+		t.Error("IsInlineCredentialsAllowed on a nil *Store must default to false (fail-closed), never panic or report true")
+	}
+}
+
+// V2-cleanup-90.3 / review finding M4 — the kill switch must not silently
+// fail open on a read error. These three tests pin the cache-fallback
+// contract end to end.
+
+func TestIsInlineCredentialsAllowed_ErrorAfterTrueWasRead_StaysTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// An admin explicitly enables the legacy option, and it is successfully
+	// read back once — this seeds the cache with true. (With the default now
+	// false, true is the discriminating direction: a fallback to the static
+	// default would silently flip an admin's explicit enable back off.)
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
+		t.Fatalf("SetAllowInlineCredentials: %v", err)
+	}
+	if !store.IsInlineCredentialsAllowed(ctx) {
+		t.Fatal("expected IsInlineCredentialsAllowed to be true before injecting any read error")
+	}
+
+	// Now every subsequent ConfigMap read fails. The wrapper must keep
+	// serving the last successfully-read value (true), never the static
+	// default (false).
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	for i := 0; i < 3; i++ {
+		if !store.IsInlineCredentialsAllowed(ctx) {
+			t.Fatalf("iteration %d: IsInlineCredentialsAllowed must stay true (cached) on a read error after true was successfully read, got false", i)
+		}
+	}
+}
+
+func TestIsInlineCredentialsAllowed_ErrorBeforeAnyRead_DefaultsFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// No successful read has ever happened on this Store — the cache is
+	// empty, so the static default (false, refused) applies. Fail-closed:
+	// an unreadable settings store never opens the legacy paste path.
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Error("expected the static default (false) when no successful read has ever happened, got true")
+	}
+}
+
+func TestIsInlineCredentialsAllowed_RecoversAfterError(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetAllowInlineCredentials(ctx, false); err != nil {
+		t.Fatalf("SetAllowInlineCredentials: %v", err)
+	}
+
+	var readErr error
+	client.PrependReactor("get", "configmaps", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		if readErr != nil {
+			return true, nil, readErr
+		}
+		return false, nil, nil // fall through to the default reactor chain
+	})
+
+	readErr = errors.New("simulated API server outage")
+	if store.IsInlineCredentialsAllowed(ctx) {
+		t.Fatal("expected cached false to be served while reads are failing")
+	}
+
+	// The outage clears. An admin (or the next successful read) flips the
+	// live value back to true — the wrapper must resume reading live,
+	// not keep serving the stale cached false forever.
+	readErr = nil
+	if err := store.SetAllowInlineCredentials(ctx, true); err != nil {
+		t.Fatalf("SetAllowInlineCredentials(true): %v", err)
+	}
+	if !store.IsInlineCredentialsAllowed(ctx) {
+		t.Fatal("expected IsInlineCredentialsAllowed to resume live reads and report true once the outage clears")
+	}
+
+	// And a fresh outage after the recovery must now cache-fallback to the
+	// newly recovered value (true), not the old stale false.
+	readErr = errors.New("simulated API server outage, take two")
+	if !store.IsInlineCredentialsAllowed(ctx) {
+		t.Fatal("expected the cache to reflect the post-recovery value (true) during a second outage")
+	}
+}
+
+// probe_mode gets the same cache-on-error treatment as
+// allow_inline_credentials (V2-cleanup-90.3 M4 — "3-line symmetry" call).
+
+func TestIsAPITest_ErrorAfterAPITestWasRead_StaysTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetProbeMode(ctx, ProbeModeAPITest); err != nil {
+		t.Fatalf("SetProbeMode: %v", err)
+	}
+	if !store.IsAPITest(ctx) {
+		t.Fatal("expected IsAPITest to be true before injecting any read error")
+	}
+
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	if !store.IsAPITest(ctx) {
+		t.Error("expected IsAPITest to stay true (cached) on a read error after api-test was successfully read, got false")
+	}
+}
+
+func TestIsAPITest_ErrorBeforeAnyRead_DefaultsFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if store.IsAPITest(ctx) {
+		t.Error("expected the static default (false / check-app) when no successful read has ever happened, got true")
+	}
+}
+
+// V3 G3 — managed_cluster_self_heal opt-in self-heal for managed clusters.
+
+func TestGetManagedClusterSelfHeal_DefaultsToFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	selfHeal, err := store.GetManagedClusterSelfHeal(ctx)
+	if err != nil {
+		t.Fatalf("GetManagedClusterSelfHeal: %v", err)
+	}
+	if selfHeal {
+		t.Error("GetManagedClusterSelfHeal = true, want default false (drift detection only)")
+	}
+}
+
+func TestSetManagedClusterSelfHeal_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal(true): %v", err)
+	}
+	selfHeal, err := store.GetManagedClusterSelfHeal(ctx)
+	if err != nil {
+		t.Fatalf("GetManagedClusterSelfHeal: %v", err)
+	}
+	if !selfHeal {
+		t.Error("GetManagedClusterSelfHeal = false after SetManagedClusterSelfHeal(true), want true")
+	}
+
+	// Flip back — the ConfigMap is updated, not recreated.
+	if err := store.SetManagedClusterSelfHeal(ctx, false); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal(false): %v", err)
+	}
+	selfHeal, err = store.GetManagedClusterSelfHeal(ctx)
+	if err != nil {
+		t.Fatalf("GetManagedClusterSelfHeal (after revert): %v", err)
+	}
+	if selfHeal {
+		t.Error("GetManagedClusterSelfHeal (after revert) = true, want false")
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Error("IsManagedClusterSelfHealEnabled should be false by default")
+	}
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if !store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Error("IsManagedClusterSelfHealEnabled should be true after SetManagedClusterSelfHeal(true)")
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if store.IsManagedClusterSelfHealEnabled(context.Background()) {
+		t.Error("IsManagedClusterSelfHealEnabled on a nil *Store must default to false, never panic or report true")
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled_ErrorAfterTrueWasRead_StaysTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// Admin turns self-heal on, and it is successfully read back once — cache
+	// seeded with true.
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if !store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Fatal("expected IsManagedClusterSelfHealEnabled to be true before injecting any read error")
+	}
+
+	// Now every subsequent ConfigMap read fails. The setting must keep
+	// reporting true (serve from cache), never fail to the static default (false).
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	for i := 0; i < 3; i++ {
+		if !store.IsManagedClusterSelfHealEnabled(ctx) {
+			t.Fatalf("iteration %d: IsManagedClusterSelfHealEnabled must stay true (cached) on a read error after true was successfully read, got false", i)
+		}
+	}
+}
+
+func TestIsManagedClusterSelfHealEnabled_ErrorBeforeAnyRead_DefaultsFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// No successful read has ever happened on this Store — the cache is
+	// empty, so the static default (false, disabled) applies.
+	if store.IsManagedClusterSelfHealEnabled(ctx) {
+		t.Error("expected the static default (false) when no successful read has ever happened, got true")
+	}
+}
+
+// gitops-proud P4-I (D2) — addon_values_engine_enabled. Same shape as the
+// managed_cluster_self_heal block above, with the opposite default: this
+// setting defaults to true (engine ON) — an admin has to explicitly switch
+// it off, unlike self-heal which has to be explicitly switched on.
+
+func TestGetAddonValuesEngineEnabled_DefaultsToTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	enabled, err := store.GetAddonValuesEngineEnabled(ctx)
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled: %v", err)
+	}
+	if !enabled {
+		t.Error("GetAddonValuesEngineEnabled = false, want default true (engine on)")
+	}
+}
+
+func TestSetAddonValuesEngineEnabled_RoundTrip(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled(false): %v", err)
+	}
+	enabled, err := store.GetAddonValuesEngineEnabled(ctx)
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled: %v", err)
+	}
+	if enabled {
+		t.Error("GetAddonValuesEngineEnabled = true after SetAddonValuesEngineEnabled(false), want false")
+	}
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, true); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled(true): %v", err)
+	}
+	enabled, err = store.GetAddonValuesEngineEnabled(ctx)
+	if err != nil {
+		t.Fatalf("GetAddonValuesEngineEnabled (after revert): %v", err)
+	}
+	if !enabled {
+		t.Error("GetAddonValuesEngineEnabled (after revert) = false, want true")
+	}
+}
+
+func TestIsAddonValuesEngineEnabled(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if !store.IsAddonValuesEngineEnabled(ctx) {
+		t.Error("IsAddonValuesEngineEnabled should be true by default")
+	}
+
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	if store.IsAddonValuesEngineEnabled(ctx) {
+		t.Error("IsAddonValuesEngineEnabled should be false after SetAddonValuesEngineEnabled(false)")
+	}
+}
+
+func TestIsAddonValuesEngineEnabled_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	if !store.IsAddonValuesEngineEnabled(context.Background()) {
+		t.Error("IsAddonValuesEngineEnabled on a nil *Store must default to true, never panic or report false")
+	}
+}
+
+func TestIsAddonValuesEngineEnabled_ErrorAfterFalseWasRead_StaysFalse(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// Admin turns the engine off, and it is successfully read back once —
+	// cache seeded with false.
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	if store.IsAddonValuesEngineEnabled(ctx) {
+		t.Fatal("expected IsAddonValuesEngineEnabled to be false before injecting any read error")
+	}
+
+	// Now every subsequent ConfigMap read fails. The setting must keep
+	// reporting false (serve from cache), never silently fail back open to
+	// the static default (true) — a transient ConfigMap outage must not
+	// turn a switched-off engine back on.
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	for i := 0; i < 3; i++ {
+		if store.IsAddonValuesEngineEnabled(ctx) {
+			t.Fatalf("iteration %d: IsAddonValuesEngineEnabled must stay false (cached) on a read error after false was successfully read, got true", i)
+		}
+	}
+}
+
+func TestIsAddonValuesEngineEnabled_ErrorBeforeAnyRead_DefaultsTrue(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	// No successful read has ever happened on this Store — the cache is
+	// empty, so the static default (true, enabled) applies.
+	if !store.IsAddonValuesEngineEnabled(ctx) {
+		t.Error("expected the static default (true) when no successful read has ever happened, got false")
+	}
+}
+
+// TestGetManagedSecretsSettings_OneConfigMapReadForBothFlags is L14's core
+// pin (code review): GetManagedSecretsSettings must fetch the ConfigMap
+// exactly ONCE per call, not once per flag. Before this method existed,
+// GET /system/managed-secrets read managed_cluster_self_heal and
+// addon_values_engine_enabled through two separate calls
+// (IsManagedClusterSelfHealEnabled, IsAddonValuesEngineEnabled), each doing
+// its own live "get configmaps" against the identical object — two API
+// round trips for one request, times however many tabs poll this endpoint
+// every 30 seconds.
+func TestGetManagedSecretsSettings_OneConfigMapReadForBothFlags(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	gets := 0
+	client.PrependReactor("get", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		gets++
+		return false, nil, nil // let the default reactor chain answer
+	})
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+	gets = 0 // only the read under test counts
+
+	got := store.GetManagedSecretsSettings(ctx)
+	if got.SelfHealEnabled != true {
+		t.Errorf("SelfHealEnabled = %v, want true", got.SelfHealEnabled)
+	}
+	if got.AddonValuesEngineEnabled != false {
+		t.Errorf("AddonValuesEngineEnabled = %v, want false", got.AddonValuesEngineEnabled)
+	}
+	if gets != 1 {
+		t.Errorf("GetManagedSecretsSettings made %d \"get configmaps\" calls, want exactly 1 (one ConfigMap, both flags)", gets)
+	}
+}
+
+func TestGetManagedSecretsSettings_NilStoreIsSafe(t *testing.T) {
+	var store *Store
+	got := store.GetManagedSecretsSettings(context.Background())
+	if got.SelfHealEnabled != defaultManagedClusterSelfHeal {
+		t.Errorf("SelfHealEnabled = %v, want the static default %v on a nil store", got.SelfHealEnabled, defaultManagedClusterSelfHeal)
+	}
+	if got.AddonValuesEngineEnabled != defaultAddonValuesEngineEnabled {
+		t.Errorf("AddonValuesEngineEnabled = %v, want the static default %v on a nil store", got.AddonValuesEngineEnabled, defaultAddonValuesEngineEnabled)
+	}
+}
+
+func TestGetManagedSecretsSettings_ReadErrorFallsBackToLastKnownPerFlag(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store := NewStore(client, "sharko")
+	ctx := context.Background()
+
+	if err := store.SetManagedClusterSelfHeal(ctx, true); err != nil {
+		t.Fatalf("SetManagedClusterSelfHeal: %v", err)
+	}
+	if err := store.SetAddonValuesEngineEnabled(ctx, false); err != nil {
+		t.Fatalf("SetAddonValuesEngineEnabled: %v", err)
+	}
+
+	failGetConfigMaps(client, errors.New("simulated API server outage"))
+
+	got := store.GetManagedSecretsSettings(ctx)
+	if got.SelfHealEnabled != true {
+		t.Errorf("SelfHealEnabled = %v, want the cached true (last successful read), not the static default", got.SelfHealEnabled)
+	}
+	if got.AddonValuesEngineEnabled != false {
+		t.Errorf("AddonValuesEngineEnabled = %v, want the cached false (last successful read), not the static default", got.AddonValuesEngineEnabled)
+	}
+}

@@ -1,0 +1,2089 @@
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import {
+  Search,
+  Filter,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+  Package,
+  CheckCircle,
+  AlertTriangle,
+  ArrowUpCircle,
+  ExternalLink,
+  Eye,
+  GitPullRequest,
+  LayoutGrid,
+  LayoutList,
+  Table,
+  Plus,
+  Loader2,
+  RefreshCw,
+  X,
+  Boxes,
+  Store,
+} from 'lucide-react'
+import { api, fetchTrackedPRs } from '@/services/api'
+import type {
+  AddonCatalogItem,
+  AddonCatalogResponse,
+  AddToCatalogResult,
+  CatalogRepoChartsResponse,
+  CatalogValidateResponse,
+  CatalogVersionsResponse,
+  DryRunResult,
+  TrackedPR,
+  VersionMatrixResponse,
+} from '@/services/models'
+import { getCached, setCached } from '@/lib/viewCache'
+import { StatCard } from '@/components/StatCard'
+import { StatusBadge } from '@/components/StatusBadge'
+import { LoadingState } from '@/components/LoadingState'
+import { ErrorState } from '@/components/ErrorState'
+import { RoleGuard } from '@/components/RoleGuard'
+import { MarketplaceTab } from '@/components/MarketplaceTab'
+import { VersionPicker } from '@/components/VersionPicker'
+import {
+  DryRunPreview,
+  EnableOnClusterField,
+  SubmitPhaseBanner,
+  type SubmitPhase,
+} from '@/components/AddAddonFlow'
+import { PRModelExplainer } from '@/components/PRFeedback'
+import { AddonVersionList } from '@/components/AddonVersionList'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+
+// The tab value is `'catalog'` (not `'installed'`) because an addon listed
+// in the catalog is not necessarily running on a cluster. The tile badge
+// sources its copy from deployed_cluster_count /
+// total_target_cluster_count (see DeploymentBadge).
+type AddonsView = 'catalog' | 'marketplace'
+
+// perf S2 — exported so tests can prime/inspect the same key the component
+// uses.
+export const ADDON_CATALOG_CACHE_KEY = 'addon-catalog'
+
+// S1 (scale-walk day 7): the Healthy / With issues / Broken split moved off
+// this page — the addons page's job is inventory, not health monitoring
+// (health lives on the Dashboard and Observability's addon groups). Their
+// FilterType values ('healthy' | 'partial' | 'broken') are gone too.
+// 'unhealthy' stays — it's still a real filter option in the dropdown
+// ("Any issue"), not one of the removed stat cards. Any deep link or stale
+// state that still asks for a removed value falls through the switch
+// below's `default: return true`, which behaves exactly like 'all' (every
+// addon passes) — no crash, no stuck empty state.
+type FilterType = 'all' | 'unhealthy' | 'git-only' | 'drifted'
+
+// True when any enabled application runs a version different from the
+// catalog version. Shared by the card drift chip, the `drifted` filter,
+// and the `?drift=true` deep-link from the Dashboard (V2-cleanup-61.2).
+function countDriftedApps(addon: AddonCatalogItem): number {
+  return addon.applications.filter(
+    (a) => a.enabled && a.deployed_version && a.deployed_version !== addon.version,
+  ).length
+}
+
+/**
+ * Three honest buckets per addon, replacing the old "any single bad app
+ * flips the whole addon to unhealthy" rule (walk finding: at 50 clusters,
+ * virtually every addon had at least one degraded/missing app somewhere,
+ * so ALL 30 addons showed red while the dashboard's own numbers said 518
+ * of 660 apps were healthy).
+ *
+ *   - 'healthy' — no degraded/missing apps
+ *   - 'partial' — some apps are bad, but some are also healthy
+ *   - 'broken'  — zero healthy apps
+ *
+ * Checked broken-first: an addon with zero healthy apps is never "healthy"
+ * even in the edge case where degraded/missing both happen to read 0 too
+ * (nothing has reported in yet). Only meaningful for addons enabled on at
+ * least one cluster — callers check enabled_clusters > 0 first; a disabled
+ * addon isn't in any of these three buckets at all.
+ */
+type AddonHealthBucket = 'healthy' | 'partial' | 'broken'
+
+function addonHealthBucket(addon: AddonCatalogItem): AddonHealthBucket {
+  if (addon.healthy_applications === 0) return 'broken'
+  if (addon.degraded_applications === 0 && addon.missing_applications === 0) return 'healthy'
+  return 'partial'
+}
+
+/** "48 of 50 apps healthy" — the plain-words fraction shown on partial and
+ *  broken cards, so the count backs up the color instead of just a red dot. */
+function addonHealthFraction(addon: AddonCatalogItem): string {
+  const total =
+    addon.healthy_applications + addon.degraded_applications + addon.missing_applications
+  return `${addon.healthy_applications} of ${total} ${total === 1 ? 'app' : 'apps'} healthy`
+}
+type SortBy = 'name' | 'applications'
+type PageSize = 15 | 30 | 60
+
+/**
+ * AddonGridItem — the catalog grid/list renders two kinds of tile side by
+ * side (walk finding, pending-addons-as-ghost-cards): a real addon from
+ * the merged catalog, or a "ghost" for an addon whose add-PR is still
+ * open (invisible to the catalog reads until it merges — both only see
+ * the merged base branch). Kept as a single discriminated union so
+ * sorting/filtering/pagination treat both as one list instead of two
+ * separately-paginated lanes.
+ */
+type AddonGridItem =
+  | { kind: 'real'; addon: AddonCatalogItem }
+  | { kind: 'pending'; pr: TrackedPR }
+
+/** Best-effort display name for a pending add-PR — the tracked-PR record
+ *  doesn't always have `addon` populated (older PRs, or the field failing
+ *  to parse), so fall back to the PR title rather than showing nothing. */
+function pendingDisplayName(pr: TrackedPR): string {
+  return (pr.addon || pr.pr_title || 'Pending addon').trim()
+}
+
+/**
+ * Top-of-page tab control switching between the user's "Catalog" and the
+ * curated "Marketplace" tab. Implemented as a real WAI-ARIA tablist so
+ * keyboard users get arrow-key navigation for free via the browser's
+ * default radio-group behaviour on the underlying buttons.
+ */
+function AddonsTabBar({
+  tab,
+  onChange,
+}: {
+  tab: AddonsView
+  onChange: (next: AddonsView) => void
+}) {
+  const items: { value: AddonsView; label: string; icon: React.ReactNode }[] = [
+    { value: 'catalog', label: 'Catalog', icon: <Boxes className="h-4 w-4" /> },
+    { value: 'marketplace', label: 'Marketplace', icon: <Store className="h-4 w-4" /> },
+  ]
+  return (
+    <div
+      role="tablist"
+      aria-label="Addons view"
+      className="inline-flex w-fit gap-1 rounded-lg bg-[#d0e8f8] p-1 dark:bg-gray-900"
+    >
+      {items.map((item) => {
+        const active = tab === item.value
+        return (
+          <button
+            key={item.value}
+            type="button"
+            role="tab"
+            id={`addons-tab-${item.value}`}
+            aria-selected={active}
+            aria-controls={`addons-panel-${item.value}`}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(item.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault()
+                onChange(tab === 'catalog' ? 'marketplace' : 'catalog')
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] ${
+              active
+                ? 'bg-white text-[#0a2a4a] shadow-sm dark:bg-gray-700 dark:text-white'
+                : 'text-[#2a5a7a] hover:bg-[#e0f0ff] dark:text-gray-400 dark:hover:bg-gray-800'
+            }`}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * Tile badge that shows deployment status. LW-13: on the catalog, remove the
+ * "Waiting to deploy" amber deploy-progress state (deployed==0 && target>0).
+ * Deploy progress is a fleet concern, not a catalog concern. States that remain:
+ *
+ *   target = 0           → "Not deployed yet"        (neutral — in catalog,
+ *                                                     not enabled on any cluster)
+ *   Sync failing         → "Sync failing"            (red — any enabled app failing)
+ *   Deploying (first)    → "Deploying…"              (blue — active first rollout)
+ *   0 of M, not healthy  → "Not healthy on K clusters" (red — v4.0.4 U3)
+ *   0 of M, other        → "Enabled on M clusters, not running yet" (blue)
+ *   N == M, M > 0        → "Running on N clusters"   (green — fully covered)
+ *   0 < N < M            → "Running on N/M clusters" (blue — partial coverage)
+ */
+type DeploymentTone = 'neutral' | 'blue' | 'green' | 'red'
+
+const pluralClusters = (n: number) => `${n} ${n === 1 ? 'cluster' : 'clusters'}`
+
+/**
+ * deploymentBadgeState — the ONE place that turns an addon's counts into the
+ * grid badge and the list-view cell, so the two views (and the
+ * "Not deployed yet" summary box, which counts addons enabled on no cluster)
+ * always agree.
+ *
+ * v4.0.4 U3 (demo video): an addon enabled on one cluster but not healthy
+ * there read "Not deployed yet" — deployed_cluster_count only counts
+ * Synced+Healthy apps, so 0-of-1 fell into the same branch as "enabled
+ * nowhere". "Not deployed yet" now means ONLY "enabled on no cluster"
+ * (target === 0), the same meaning as the summary box and the legend.
+ */
+export function deploymentBadgeState(addon: AddonCatalogItem): {
+  label: string
+  tone: DeploymentTone
+} {
+  const deployed = addon.deployed_cluster_count ?? 0
+  const target = addon.total_target_cluster_count ?? 0
+  const enabledApps = addon.applications.filter((a) => a.enabled)
+  const hasSyncFailing = enabledApps.some((a) => a.status === 'sync_failing')
+  const hasDeploying = enabledApps.some((a) => a.status === 'deploying')
+  const unhealthyCount = enabledApps.filter((a) => a.status === 'unhealthy').length
+
+  if (hasSyncFailing) return { label: 'Sync failing', tone: 'red' }
+  // Benign: nothing has opted in yet. Neutral, not a warning.
+  if (target === 0) return { label: 'Not deployed yet', tone: 'neutral' }
+  if (deployed === 0 && hasDeploying) return { label: 'Deploying…', tone: 'blue' }
+  if (deployed === 0 && unhealthyCount > 0) {
+    return { label: `Not healthy on ${pluralClusters(unhealthyCount)}`, tone: 'red' }
+  }
+  if (deployed === 0) {
+    // Enabled somewhere, but nothing is running yet (e.g. the app has not
+    // shown up in ArgoCD). Not "Not deployed yet" — it IS enabled.
+    return { label: `Enabled on ${pluralClusters(target)}, not running yet`, tone: 'blue' }
+  }
+  // N == M, M > 0 — cleaner copy than "Running on N/N clusters"
+  if (deployed === target) return { label: `Running on ${pluralClusters(deployed)}`, tone: 'green' }
+  // 0 < N < M — partial coverage
+  return { label: `Running on ${deployed}/${target} clusters`, tone: 'blue' }
+}
+
+function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
+  const { label, tone } = deploymentBadgeState(addon)
+
+  const toneClasses: Record<typeof tone, string> = {
+    neutral:
+      // Neutral blue-tinted "inactive" tokens — matches the Unknown /
+      // Connecting… styling elsewhere.
+      'bg-[#d6eeff] text-[#1a4a6a] ring-[#a0d0f0] dark:bg-gray-700 dark:text-gray-300 dark:ring-gray-600',
+    blue:
+      // Sharko project-blue tokens, matches the existing tile chrome.
+      'bg-[#d0e8f8] text-[#0a3a5a] ring-[#6aade0] dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-700',
+    green:
+      'bg-green-50 text-green-700 ring-green-200 dark:bg-green-900/30 dark:text-green-400 dark:ring-green-700',
+    red:
+      'bg-red-50 text-red-700 ring-red-200 dark:bg-red-900/30 dark:text-red-400 dark:ring-red-700',
+  }
+
+  return (
+    <span
+      data-testid="addon-deployment-badge"
+      className={`mt-1 inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ${toneClasses[tone]}`}
+    >
+      {label}
+    </span>
+  )
+}
+
+/** Small colored dot (green/amber/red per addonHealthBucket) shown on the
+ *  catalog tile in place of the old visible health-fraction line (S1,
+ *  scale-walk day 7) — the addons page's job is inventory, not health
+ *  monitoring. The plain-words fraction ("48 of 50 apps healthy") still
+ *  exists, just as the dot's hover tooltip instead of body text. Only
+ *  rendered when there's something to say: an addon enabled nowhere isn't
+ *  in any health bucket at all. */
+function AddonHealthDot({ addon }: { addon: AddonCatalogItem }) {
+  if (addon.enabled_clusters === 0) return null
+  const bucket = addonHealthBucket(addon)
+  const dotColor =
+    bucket === 'healthy'
+      ? 'bg-green-500'
+      : bucket === 'partial'
+        ? 'bg-amber-500'
+        : 'bg-red-500'
+  return (
+    <span
+      data-testid="addon-health-dot"
+      title={addonHealthFraction(addon)}
+      aria-label={addonHealthFraction(addon)}
+      className={`mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${dotColor}`}
+    />
+  )
+}
+
+function AddonCard({ addon }: { addon: AddonCatalogItem }) {
+  const [expanded, setExpanded] = useState(false)
+  const navigate = useNavigate()
+
+  const namespace =
+    addon.applications.find((a) => a.enabled && a.namespace)?.namespace ??
+    addon.namespace ??
+    addon.addon_name
+
+  const handleCardClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button, a')) return
+    navigate(`/addons/${addon.addon_name}`)
+  }
+
+  return (
+    <div
+      onClick={handleCardClick}
+      className="group flex cursor-pointer flex-col rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:ring-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
+    >
+      <div className="flex flex-1 flex-col p-4">
+        {/* Header */}
+        <div className="mb-2 flex items-start justify-between">
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
+              {addon.addon_name}
+            </h3>
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Version: {addon.version}</p>
+            {/* S1 scope addition (maintainer's walk day 7): a long
+                namespace on one line with "Version: ... · Namespace: ..."
+                got cut off with an ellipsis. Its own line, dim mono (same
+                treatment the cluster secret panel uses for resource
+                names), and break-all so it wraps instead of truncating —
+                the full namespace is never hidden. Bumped from text-xs to
+                text-sm in the SSF-13 typography pass: Version/Namespace are
+                the card's primary identifying facts, not metadata, and
+                mono content has a 13-14px floor in the approved scale. */}
+            <p className="mt-0.5 break-all font-mono text-sm text-[#5a8aaa] dark:text-gray-500">
+              Namespace: {namespace}
+            </p>
+            {/* S1 (scale-walk day 7): the badge already carries the
+                deployment count — the "Installed on N/M clusters" line
+                that used to sit below it said the same thing twice. The
+                health fraction ("48 of 50 apps healthy") moved from a
+                visible line to this dot's hover tooltip — inventory is
+                this page's job, not health monitoring. */}
+            <div className="mt-1 flex items-center gap-2">
+              <DeploymentBadge addon={addon} />
+              <AddonHealthDot addon={addon} />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setExpanded((v) => !v)
+            }}
+            className="ml-2 shrink-0 rounded p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-[#1a4a6a] dark:hover:bg-gray-700 dark:hover:text-[#5a8aaa]"
+            title={expanded ? 'Collapse details' : 'Expand details'}
+          >
+            {expanded ? (
+              <ChevronUp className="h-5 w-5" />
+            ) : (
+              <ChevronDown className="h-5 w-5" />
+            )}
+          </button>
+        </div>
+
+        {/* Version drift indicator */}
+        {(() => {
+          const driftCount = countDriftedApps(addon)
+          if (driftCount > 0) {
+            return (
+              <div className="mt-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                  ⚠ {driftCount} drifted
+                </span>
+              </div>
+            )
+          }
+          return null
+        })()}
+
+        {/* View Details button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            navigate(`/addons/${addon.addon_name}`)
+          }}
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          View Details
+        </button>
+
+        {/* Expanded section */}
+        {expanded && (
+          <div className="mt-3 border-t border-[#6aade0] pt-3 dark:border-gray-700">
+            <h4 className="mb-2 text-sm font-semibold text-[#0a3a5a] dark:text-gray-300">
+              Cluster Deployments
+            </h4>
+            <div className="max-h-60 overflow-auto rounded border text-sm dark:border-gray-700">
+              <table className="w-full">
+                <thead className="sticky top-0 bg-[#d0e8f8] dark:bg-gray-900">
+                  <tr>
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
+                      Cluster
+                    </th>
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
+                      Env
+                    </th>
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
+                      Health
+                    </th>
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
+                      Version
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#a0d0f0] dark:divide-gray-700">
+                  {addon.applications
+                    .filter((a) => a.enabled)
+                    .map((app) => (
+                      <tr key={app.cluster_name}>
+                        <td className="px-2 py-1 font-medium dark:text-gray-200">
+                          {app.cluster_name}
+                        </td>
+                        <td className="px-2 py-1 text-[#2a5a7a] dark:text-gray-400">
+                          {app.cluster_environment ?? 'unknown'}
+                        </td>
+                        <td className="px-2 py-1">
+                          <StatusBadge status={app.health_status ?? app.status} />
+                        </td>
+                        <td className="px-2 py-1 font-mono dark:text-gray-300">
+                          {app.deployed_version ?? app.configured_version ?? 'N/A'}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * PendingAddonCard — the maintainer's exact design (walk finding): a
+ * pending catalog-add PR renders in the SAME grid as real addon cards,
+ * using the same layout/header/badge-slot as AddonCard above — but
+ * transparent (opacity) with a very subtle amber tint, and the badge slot
+ * that would say "Not deployed yet" instead reads "Pending". The whole
+ * card links straight to the PR (new tab), never to the addon detail
+ * route — that page 404s until the PR merges, so linking there would be
+ * dishonest.
+ */
+function PendingAddonCard({ pr }: { pr: TrackedPR }) {
+  const name = pendingDisplayName(pr)
+  const subtitle = pr.pr_id
+    ? `PR #${pr.pr_id} open — merge to approve`
+    : 'Pull request open — merge to approve'
+
+  const cardClass =
+    'group flex flex-col rounded-lg ring-2 ring-[#6aade0] bg-amber-50/60 opacity-60 shadow-sm transition-opacity duration-150 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:ring-gray-700 dark:bg-amber-950/10'
+
+  const body = (
+    <div className="flex flex-1 flex-col p-4">
+      <div className="mb-2 flex items-start justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
+            {name}
+          </h3>
+          <p className="truncate text-sm text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
+          <span
+            data-testid="addon-deployment-badge"
+            className="mt-1 inline-flex w-fit items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700"
+          >
+            Pending
+          </span>
+        </div>
+      </div>
+      <div className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-[#5a9dd0] px-3 py-1.5 text-sm font-medium text-[#0a3a5a] dark:border-gray-600 dark:text-gray-300">
+        <GitPullRequest className="h-3.5 w-3.5" />
+        View pull request
+      </div>
+    </div>
+  )
+
+  if (!pr.pr_url) {
+    return (
+      <div data-testid="pending-addon-card" className={cardClass}>
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <a
+      data-testid="pending-addon-card"
+      href={pr.pr_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cardClass}
+    >
+      {body}
+    </a>
+  )
+}
+
+function PaginationControls({
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  page: number
+  totalPages: number
+  onPageChange: (p: number) => void
+}) {
+  if (totalPages <= 1) return null
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        disabled={page <= 1}
+        onClick={() => onPageChange(page - 1)}
+        className="rounded border px-3 py-1 text-sm font-medium text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+      >
+        Prev
+      </button>
+      {Array.from({ length: totalPages }, (_, i) => i + 1)
+        .filter(
+          (p) =>
+            p === 1 ||
+            p === totalPages ||
+            Math.abs(p - page) <= 1,
+        )
+        .reduce<(number | 'ellipsis')[]>((acc, p, idx, arr) => {
+          if (idx > 0 && p - (arr[idx - 1] as number) > 1) {
+            acc.push('ellipsis')
+          }
+          acc.push(p)
+          return acc
+        }, [])
+        .map((item, idx) =>
+          item === 'ellipsis' ? (
+            <span key={`e-${idx}`} className="px-1 text-[#3a6a8a]">
+              ...
+            </span>
+          ) : (
+            <button
+              key={item}
+              type="button"
+              onClick={() => onPageChange(item)}
+              className={`rounded px-3 py-1 text-sm font-medium transition-colors ${
+                item === page
+                  ? 'bg-teal-600 text-white'
+                  : 'text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700'
+              }`}
+            >
+              {item}
+            </button>
+          ),
+        )}
+      <button
+        type="button"
+        disabled={page >= totalPages}
+        onClick={() => onPageChange(page + 1)}
+        className="rounded border px-3 py-1 text-sm font-medium text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+      >
+        Next
+      </button>
+    </div>
+  )
+}
+
+function AddonListTable({ items }: { items: AddonGridItem[] }) {
+  const navigate = useNavigate()
+  return (
+    <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+      <table className="w-full text-left text-sm">
+        <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <tr>
+            <th className="px-6 py-3">Addon Name</th>
+            <th className="px-6 py-3">Version</th>
+            <th className="px-6 py-3">Deployed</th>
+            <th className="px-6 py-3">Healthy</th>
+            <th className="px-6 py-3">Degraded</th>
+            {/* The PROBLEM column (V2-cleanup-61.2, D1 + LW-12): enabled
+                in the catalog but ArgoCD has no Application. Reworded per
+                LW-12 to be unambiguous. */}
+            <th className="px-6 py-3">Enabled but not created in ArgoCD</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
+          {items.map((item) =>
+            item.kind === 'pending' ? (
+              <tr
+                key={`pending-${item.pr.pr_id}`}
+                data-testid="pending-addon-row"
+                onClick={() => {
+                  if (item.pr.pr_url) {
+                    window.open(item.pr.pr_url, '_blank', 'noopener,noreferrer')
+                  }
+                }}
+                className="cursor-pointer bg-amber-50/50 opacity-60 hover:bg-amber-50/80 hover:opacity-90 dark:bg-amber-950/10 dark:hover:bg-amber-950/20"
+              >
+                <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                  {pendingDisplayName(item.pr)}
+                </td>
+                <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">—</td>
+                <td className="px-6 py-3">
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700">
+                    Pending
+                  </span>
+                </td>
+                <td className="px-6 py-3" />
+                <td className="px-6 py-3" />
+                <td className="px-6 py-3" />
+              </tr>
+            ) : (
+              <tr
+                key={item.addon.addon_name}
+                onClick={() => navigate(`/addons/${item.addon.addon_name}`)}
+                className="cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700"
+              >
+                <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                  {item.addon.addon_name}
+                </td>
+                <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
+                  {item.addon.version}
+                </td>
+                <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
+                  <DeploymentBadge addon={item.addon} />
+                </td>
+                <td className="px-6 py-3">
+                  {item.addon.healthy_applications > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      {item.addon.healthy_applications}
+                    </span>
+                  )}
+                </td>
+                <td className="px-6 py-3">
+                  {item.addon.degraded_applications > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+                      {item.addon.degraded_applications}
+                    </span>
+                  )}
+                </td>
+                <td className="px-6 py-3">
+                  {item.addon.missing_applications > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                      {item.addon.missing_applications}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ),
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+export function AddonCatalog() {
+  // Tab state — kept in URL so Marketplace deep links survive a refresh.
+  // Default tab is "catalog". Stale `?tab=installed` links from old
+  // bookmarks are normalised to the new value via a one-shot redirect
+  // effect so they don't crash and the URL stays canonical.
+  // Marketplace is opt-in via ?tab=marketplace or the tab control.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const initialTab: AddonsView =
+    searchParams.get('tab') === 'marketplace' ? 'marketplace' : 'catalog'
+  const [tab, setTab] = useState<AddonsView>(initialTab)
+  // Stale `?tab=installed` redirect — strip the legacy param so the URL
+  // stays canonical. Runs once on mount; subsequent navigation goes through
+  // switchTab below.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'installed') {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('tab')
+      setSearchParams(params, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const switchTab = useCallback(
+    (next: AddonsView) => {
+      setTab(next)
+      const params = new URLSearchParams(searchParams.toString())
+      if (next === 'marketplace') params.set('tab', 'marketplace')
+      else params.delete('tab')
+      setSearchParams(params, { replace: true })
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const [catalogData, setCatalogData] = useState<AddonCatalogResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // The version matrix view is now linkable (walk finding #1): the
+  // Dashboard's Upgrades card deep-links here with `?view=matrix` (carried
+  // through the /version-matrix redirect by 61.1's RedirectPreservingQuery)
+  // so "click Upgrades" lands directly on the matrix instead of the plain
+  // catalog grid.
+  const [viewMode, setViewMode] = useState<'grid' | 'list' | 'matrix'>(
+    searchParams.get('view') === 'matrix' ? 'matrix' : 'grid',
+  )
+  const switchView = useCallback(
+    (next: 'grid' | 'list' | 'matrix') => {
+      setViewMode(next)
+      const params = new URLSearchParams(searchParams.toString())
+      if (next === 'matrix') params.set('view', next)
+      else params.delete('view')
+      setSearchParams(params, { replace: true })
+    },
+    [searchParams, setSearchParams],
+  )
+  const [search, setSearch] = useState('')
+  // The Dashboard's "addons with drift" button deep-links here with
+  // `?drift=true` (carried through the /version-matrix redirect by 61.1's
+  // RedirectPreservingQuery). Honor it: land pre-filtered on the drifted
+  // addons (V2-cleanup-61.2 handover).
+  const [filterType, setFilterType] = useState<FilterType>(
+    searchParams.get('drift') === 'true' ? 'drifted' : 'all',
+  )
+  // Fleet Status Strip v2 (WQ-2) — the version-matrix page's own
+  // "outdated" filter (upstream newest_available), still reachable by a
+  // direct `?view=matrix&filter=outdated` link even though the dashboard
+  // no longer deep-links to it (walk day 5 — that number was trivia).
+  const [matrixOutdatedOnly, setMatrixOutdatedOnly] = useState(
+    searchParams.get('filter') === 'outdated',
+  )
+  const clearMatrixOutdatedFilter = useCallback(() => {
+    setMatrixOutdatedOnly(false)
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('filter')
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
+  // Walk day 5 finding — the Fleet Status Strip's third segment now deep-
+  // links here with `?view=matrix&filter=behind-catalog` so it lands
+  // pre-filtered to just the applications behind their addon's catalog
+  // version (drift_from_catalog), not the upstream-freshness "outdated"
+  // filter above.
+  const [matrixBehindCatalogOnly, setMatrixBehindCatalogOnly] = useState(
+    searchParams.get('filter') === 'behind-catalog',
+  )
+  const clearMatrixBehindCatalogFilter = useCallback(() => {
+    setMatrixBehindCatalogOnly(false)
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('filter')
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
+  // S1 (scale-walk day 7) — the new "Behind catalog version" stat card
+  // jumps straight to the versions view, pre-filtered, same landing spot
+  // as the Fleet Status Strip's own deep link.
+  const openBehindCatalogVersions = useCallback(() => {
+    setViewMode('matrix')
+    setMatrixBehindCatalogOnly(true)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('view', 'matrix')
+    params.set('filter', 'behind-catalog')
+    setSearchParams(params, { replace: true })
+  }, [searchParams, setSearchParams])
+  const [sortBy, setSortBy] = useState<SortBy>('name')
+  const [pageSize, setPageSize] = useState<PageSize>(15)
+  const [page, setPage] = useState(1)
+
+  // Add Addon dialog state. Advanced options (sync options, ignore
+  // differences, additional sources) are set on the addon's Deployment
+  // Options tab after the addon exists. The dialog auto-validates the
+  // repo URL and offers chart/version dropdowns.
+  const [addAddonOpen, setAddAddonOpen] = useState(false)
+  const [addonForm, setAddonForm] = useState({
+    name: '',
+    chart: '',
+    repo_url: '',
+    version: '',
+    namespace: '',
+  })
+  const [addAddonSubmitting, setAddAddonSubmitting] = useState(false)
+  const [addAddonError, setAddAddonError] = useState<string | null>(null)
+
+  // V2-cleanup-15 — parity with the Marketplace add-addon flow (#397). The
+  // catalog "Register addon" dialog now offers a dry-run preview,
+  // branch→commit→PR→merge progress, a clickable PR link, and an HONEST
+  // merged-vs-open outcome. Auto-merge is now controlled globally.
+  const [addAddonDryRun, setAddAddonDryRun] = useState<DryRunResult | null>(null)
+  const [addAddonPreviewing, setAddAddonPreviewing] = useState(false)
+  const [addAddonPhase, setAddAddonPhase] = useState<SubmitPhase>('idle')
+  const [addAddonResult, setAddAddonResult] =
+    useState<AddToCatalogResult | null>(null)
+  // Captured at submit time so the "View addon" terminal button still knows
+  // the name after the form is reset (V2-cleanup-66.1).
+  const [addAddonSubmittedName, setAddAddonSubmittedName] = useState('')
+
+  // Repo URL validation lifecycle. Debounced auto-fire on blur or after
+  // 500ms of typing pause. We only set validRepo=true after a successful
+  // chart-listing call so the chart dropdown can rely on it.
+  const [repoValidating, setRepoValidating] = useState(false)
+  const [repoValidState, setRepoValidState] = useState<'idle' | 'valid' | 'invalid'>('idle')
+  const [repoValidError, setRepoValidError] = useState<string | null>(null)
+  const [repoCharts, setRepoCharts] = useState<string[]>([])
+
+  // Chart version state. Populated when the user picks (or types) a chart
+  // and we successfully validate the (repo, chart) pair via /catalog/validate.
+  const [chartVersionsResp, setChartVersionsResp] = useState<CatalogVersionsResponse | null>(null)
+  const [chartVersionsLoading, setChartVersionsLoading] = useState(false)
+  const [chartVersionsError, setChartVersionsError] = useState<string | null>(null)
+  const [chartShowPrereleases, setChartShowPrereleases] = useState(false)
+
+  // Toast notification state (shown after successful addon registration)
+  const [toast, setToast] = useState<{ message: string; prUrl?: string } | null>(null)
+
+  // v4 walk-findings W2, item 4 — the OPTIONAL "also enable on a cluster"
+  // combo for the manual "Add your own chart" door. Managed cluster names
+  // are fetched once on mount (best-effort — an empty list just hides the
+  // selector, see EnableOnClusterField).
+  const [addAddonEnableOnCluster, setAddAddonEnableOnCluster] = useState('')
+  const [managedClusterNames, setManagedClusterNames] = useState<string[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getClusters()
+      .then((resp) => {
+        if (cancelled) return
+        const names = (resp.clusters ?? [])
+          .filter((c) => c.managed !== false && c.connection_status !== 'not_in_git')
+          .map((c) => c.name)
+        setManagedClusterNames(names)
+      })
+      .catch(() => {
+        if (!cancelled) setManagedClusterNames([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v4 walk-findings W2, item 5 — addons with an open add-PR (catalog-add /
+  // catalog-add-enable) are invisible on both catalog reads (they only see
+  // the merged base branch). Fetch the open PRs alongside the catalog so a
+  // "pending" lane can render them instead of them vanishing until merge.
+  const [pendingAddonPRs, setPendingAddonPRs] = useState<TrackedPR[]>([])
+  // Surfaced when the pending-PR fetch itself fails (e.g. a 401 on a
+  // half-dead session) — this used to be swallowed silently, which showed
+  // an empty pending lane with no visible reason (real live debugging
+  // cost, walk finding).
+  const [pendingAddonPRsError, setPendingAddonPRsError] = useState(false)
+
+  const fetchPendingAddonPRs = useCallback(() => {
+    setPendingAddonPRsError(false)
+    return fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
+      .then((resp) => setPendingAddonPRs(resp.prs ?? []))
+      .catch((e: unknown) => {
+        console.warn('Failed to check for pending addon PRs', e)
+        setPendingAddonPRs([])
+        setPendingAddonPRsError(true)
+      })
+  }, [])
+
+  useEffect(() => {
+    void fetchPendingAddonPRs()
+  }, [fetchPendingAddonPRs])
+
+  // S1 (scale-walk day 7) — the "Behind catalog version" stat card and the
+  // versions view (AddonVersionList, S2) both need GET /addons/version-matrix.
+  // Fetched here, once, so the two share a single request instead of each
+  // firing its own: the stat card fills in quietly once this lands (shows
+  // "—" until then, never a spinner that blocks the top row), and switching
+  // to the versions view just hands over data that's already in flight or
+  // already here.
+  const [matrixData, setMatrixData] = useState<VersionMatrixResponse | null>(null)
+  const [matrixLoading, setMatrixLoading] = useState(true)
+  const [matrixError, setMatrixError] = useState<string | null>(null)
+
+  const fetchVersionMatrix = useCallback(() => {
+    return api
+      .getVersionMatrix()
+      .then((data) => {
+        setMatrixData(data)
+        setMatrixError(null)
+      })
+      .catch((e: unknown) => {
+        setMatrixError(e instanceof Error ? e.message : 'Could not load addon versions')
+      })
+      .finally(() => setMatrixLoading(false))
+  }, [])
+
+  useEffect(() => {
+    void fetchVersionMatrix()
+  }, [fetchVersionMatrix])
+
+  const fetchCatalog = useCallback((background = false) => {
+    if (background) {
+      setIsRefreshing(true)
+    }
+    return api
+      .getAddonCatalog()
+      .then((data) => {
+        setCatalogData(data)
+        // perf S2 write-through — any mutation that ends by calling
+        // fetchCatalog() (add addon, etc.) refreshes this same cache entry,
+        // so there's no separate invalidation path to keep in sync.
+        setCached(ADDON_CATALOG_CACHE_KEY, data)
+      })
+      .catch((e: unknown) => {
+        if (!background) {
+          setError(e instanceof Error ? e.message : 'Failed to load addon catalog')
+        }
+      })
+      .finally(() => {
+        setLoading(false)
+        setIsRefreshing(false)
+      })
+  }, [])
+
+  // Refresh has to re-check both: the catalog itself AND the pending-PR
+  // lane. Before this fix it only called fetchCatalog, so a "ghost" card
+  // for a PR that got closed/deleted on the server would survive every
+  // click of this button and only clear on the 60s auto-poll or a full
+  // page reload (maintainer's live finding).
+  const handleRefresh = useCallback(() => {
+    void fetchCatalog(true)
+    void fetchPendingAddonPRs()
+    void fetchVersionMatrix()
+  }, [fetchCatalog, fetchPendingAddonPRs, fetchVersionMatrix])
+
+  // perf S2 — stale-while-refresh: a cache hit paints the grid instantly
+  // (no spinner) from this session's last successful load, then a normal
+  // background fetch quietly brings it current.
+  useEffect(() => {
+    const cached = getCached<AddonCatalogResponse>(ADDON_CATALOG_CACHE_KEY)
+    if (cached) {
+      setCatalogData(cached.data)
+      setLoading(false)
+      void fetchCatalog(true)
+    } else {
+      void fetchCatalog()
+    }
+  }, [fetchCatalog])
+
+  // Auto-refresh every 60s (less critical page). Also re-polls the pending
+  // add-PR lane on the same cadence — existing refresh cadence is fine
+  // (v4 walk-findings W2, item 5): a pending row disappears once its PR
+  // merges without needing a full page reload.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchCatalog(true)
+      void fetchPendingAddonPRs()
+      void fetchVersionMatrix()
+    }, 60_000)
+    return () => clearInterval(interval)
+  }, [fetchCatalog, fetchPendingAddonPRs, fetchVersionMatrix])
+
+  const resetAddonFormState = useCallback(() => {
+    setAddAddonError(null)
+    setAddonForm({ name: '', chart: '', repo_url: '', version: '', namespace: '' })
+    setRepoValidating(false)
+    setRepoValidState('idle')
+    setRepoValidError(null)
+    setRepoCharts([])
+    setChartVersionsResp(null)
+    setChartVersionsLoading(false)
+    setChartVersionsError(null)
+    setChartShowPrereleases(false)
+    setAddAddonDryRun(null)
+    setAddAddonPreviewing(false)
+    setAddAddonPhase('idle')
+    setAddAddonResult(null)
+    setAddAddonSubmittedName('')
+    // v4 walk-findings W2, item 4 — never carry a picked cluster into the
+    // next open of the dialog; the combo is opt-in every time.
+    setAddAddonEnableOnCluster('')
+  }, [])
+
+  const openAddAddon = useCallback(() => {
+    setAddAddonOpen(true)
+    resetAddonFormState()
+  }, [resetAddonFormState])
+
+  // Trigger repo validation. Called on blur and after a 500ms typing
+  // debounce. Hits /catalog/repo-charts so we get both "is this URL OK"
+  // and "what charts can I offer in the dropdown" in one round-trip.
+  const validateRepoUrl = useCallback(async (rawUrl: string) => {
+    const url = rawUrl.trim()
+    if (!url) {
+      setRepoValidState('idle')
+      setRepoValidError(null)
+      setRepoCharts([])
+      return
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setRepoValidState('invalid')
+      setRepoValidError('Repo URL must start with http:// or https://')
+      setRepoCharts([])
+      return
+    }
+    setRepoValidating(true)
+    setRepoValidError(null)
+    try {
+      const resp: CatalogRepoChartsResponse = await api.listRepoCharts(url)
+      if (resp.valid && resp.charts) {
+        setRepoValidState('valid')
+        setRepoCharts(resp.charts)
+        setRepoValidError(null)
+      } else {
+        setRepoValidState('invalid')
+        setRepoValidError(resp.message ?? 'Could not list charts at this URL')
+        setRepoCharts([])
+      }
+    } catch (e: unknown) {
+      setRepoValidState('invalid')
+      setRepoValidError(e instanceof Error ? e.message : 'Repo validation failed')
+      setRepoCharts([])
+    } finally {
+      setRepoValidating(false)
+    }
+  }, [])
+
+  // Debounce: when the user types a new repo URL, wait 500ms before firing
+  // validation. Covers paste-and-pause as well as continuous typing.
+  useEffect(() => {
+    if (!addAddonOpen) return
+    const url = addonForm.repo_url.trim()
+    if (!url) return
+    const t = setTimeout(() => {
+      void validateRepoUrl(url)
+    }, 500)
+    return () => clearTimeout(t)
+  }, [addAddonOpen, addonForm.repo_url, validateRepoUrl])
+
+  // When the chart name changes (and the repo is valid), fetch versions
+  // via /catalog/validate so the version picker can populate. Also acts as
+  // confirmation that the (repo, chart) pair is real.
+  useEffect(() => {
+    if (!addAddonOpen) return
+    if (repoValidState !== 'valid') return
+    const repo = addonForm.repo_url.trim()
+    const chart = addonForm.chart.trim()
+    if (!repo || !chart) {
+      setChartVersionsResp(null)
+      setChartVersionsError(null)
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      setChartVersionsLoading(true)
+      setChartVersionsError(null)
+      try {
+        const resp: CatalogValidateResponse = await api.validateCatalogChart(
+          repo,
+          chart,
+        )
+        if (cancelled) return
+        if (resp.valid && resp.versions) {
+          const versionsResp: CatalogVersionsResponse = {
+            addon: chart,
+            chart,
+            repo: resp.repo,
+            versions: resp.versions,
+            latest_stable: resp.latest_stable,
+            cached_at: resp.cached_at ?? new Date().toISOString(),
+          }
+          setChartVersionsResp(versionsResp)
+          // Auto-select latest stable when no version chosen yet, so the
+          // form is submittable in one step.
+          if (resp.latest_stable && !addonForm.version.trim()) {
+            setAddonForm((prev) => ({ ...prev, version: resp.latest_stable! }))
+          }
+        } else {
+          setChartVersionsResp(null)
+          setChartVersionsError(resp.message ?? 'Chart not found in repo')
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setChartVersionsError(
+            e instanceof Error ? e.message : 'Failed to load chart versions',
+          )
+        }
+      } finally {
+        if (!cancelled) setChartVersionsLoading(false)
+      }
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+    // We deliberately omit addonForm.version from deps so picking a version
+    // doesn't refire the validate call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addAddonOpen, addonForm.chart, addonForm.repo_url, repoValidState])
+
+  // Shared request payload for both the preview and the real submit so the
+  // dry-run previews exactly what the real call will write. This is the
+  // "add your own chart" door — a non-marketplace catalog entry — so it
+  // posts to POST /api/v1/catalog/addons (v4 wave 2.5 review B-3; the old
+  // legacy POST /addons 409s on a v4 repo).
+  //
+  // v4 walk-findings W2, item 4 — when a cluster is picked in the optional
+  // "Also enable on a cluster" selector, this sends the SAME combo payload
+  // the cluster-side V4EnableAddonDialog sends: `enable_on_cluster` + one
+  // pull request that touches both catalog.yaml and cluster-addons/<name>.yaml.
+  // `yes: true` is only required (and only sent) on the real submit — the
+  // server does not require it for a dry-run preview.
+  const buildAddRequest = useCallback(
+    (dryRun: boolean) => ({
+      addons: [
+        {
+          name: addonForm.name.trim(),
+          from_marketplace: false,
+          chart: addonForm.chart.trim(),
+          repo_url: addonForm.repo_url.trim(),
+          version: addonForm.version.trim(),
+          namespace: addonForm.namespace.trim() || undefined,
+        },
+      ],
+      enable_on_cluster: addAddonEnableOnCluster || undefined,
+      yes: !dryRun && addAddonEnableOnCluster ? true : undefined,
+      // auto_merge omitted — falls back to the global GitOps setting.
+      dry_run: dryRun,
+    }),
+    [addonForm, addAddonEnableOnCluster],
+  )
+
+  const addAddonFormValid =
+    !!addonForm.name.trim() &&
+    !!addonForm.chart.trim() &&
+    !!addonForm.repo_url.trim() &&
+    !!addonForm.version.trim() &&
+    repoValidState === 'valid'
+
+  // Editing any form field invalidates a stale dry-run preview so the operator
+  // never confirms against an out-of-date file list.
+  useEffect(() => {
+    setAddAddonDryRun(null)
+  }, [
+    addonForm.name,
+    addonForm.chart,
+    addonForm.repo_url,
+    addonForm.version,
+    addonForm.namespace,
+    addAddonEnableOnCluster,
+  ])
+
+  // Preview step: dry-run the add and render the files it would write. No PR,
+  // no commit. Re-runnable — the operator can tweak the form and preview again.
+  const handlePreviewAddon = useCallback(async () => {
+    if (!addAddonFormValid) return
+    setAddAddonPreviewing(true)
+    setAddAddonError(null)
+    setAddAddonDryRun(null)
+    try {
+      const res = await api.addToCatalog(buildAddRequest(true))
+      if (res.dry_run) setAddAddonDryRun(res.dry_run)
+    } catch (e: unknown) {
+      setAddAddonError(e instanceof Error ? e.message : 'Failed to preview')
+    } finally {
+      setAddAddonPreviewing(false)
+    }
+  }, [addAddonFormValid, buildAddRequest])
+
+  const handleAddAddon = useCallback(async () => {
+    if (!addAddonFormValid) return
+    setAddAddonSubmitting(true)
+    setAddAddonPhase('submitting')
+    setAddAddonError(null)
+    const addonName = addonForm.name.trim()
+    setAddAddonSubmittedName(addonName)
+    try {
+      const result = await api.addToCatalog(buildAddRequest(false))
+      setAddAddonResult(result)
+      // api.addToCatalog unwraps the attribution envelope centrally — no
+      // need to also check result.result?.x here.
+      const prUrl = result.pr_url
+      const prId = result.pr_id
+      const wasMerged = result.merged ?? false
+      const label = prId ? `PR #${prId}` : 'PR'
+
+      // Branch STRICTLY on `merged` so an open PR is never presented as
+      // already-cataloged ("not really in git" was the v2.0.2 smoke-test bug):
+      //   - merged === true  → the addon really landed. KEEP the dialog open
+      //     (V2-cleanup-66.1) showing the lifecycle window's terminal
+      //     "Merged ✓" state instead of closing instantly — the user moves
+      //     on via the explicit "View addon" button. Refresh the catalog in
+      //     the background now so it's ready when they do.
+      //   - merged === false → a PR is awaiting review → DO NOT refresh the
+      //     catalog (it isn't in git yet). Keep the dialog open showing the
+      //     honest "PR open — merge to apply" banner with the clickable PR.
+      if (wasMerged) {
+        setAddAddonPhase('merged')
+        setToast({
+          message: `\`${addonName}\` added to your catalog.`,
+          prUrl: prUrl || undefined,
+        })
+        setTimeout(() => setToast(null), 6000)
+        void fetchCatalog()
+      } else {
+        setAddAddonPhase('opened')
+        // Leave the dialog open so the SubmitResultBanner shows the clickable
+        // PR. The catalog is NOT refreshed — the addon isn't in git until the
+        // PR merges. A toast also points at the pending-PR dashboard.
+        setToast({
+          message: `${label} opened — merge it to apply. Track it on the Dashboard.`,
+          prUrl: prUrl || undefined,
+        })
+        setTimeout(() => setToast(null), 8000)
+        // v4 walk-findings W2, item 5 — an open catalog-add PR belongs in
+        // the pending lane immediately, not after the next 60s poll.
+        void fetchPendingAddonPRs()
+      }
+    } catch (e: unknown) {
+      setAddAddonPhase('idle')
+      setAddAddonError(e instanceof Error ? e.message : 'Failed to add addon')
+    } finally {
+      setAddAddonSubmitting(false)
+    }
+  }, [addAddonFormValid, buildAddRequest, addonForm, fetchCatalog, fetchPendingAddonPRs])
+
+  // Reset page on filter/search/sort/pageSize change
+  useEffect(() => {
+    setPage(1)
+  }, [search, filterType, sortBy, pageSize])
+
+  // Pending ghost entries — an addon with an open add-PR that isn't ALSO
+  // already a real catalog entry (dedupe: the real card wins once the PR
+  // merges, no leftover ghost duplicate).
+  const pendingGhosts = useMemo(() => {
+    if (!catalogData) return []
+    const existingNames = new Set(
+      catalogData.addons.map((a) => a.addon_name.trim().toLowerCase()),
+    )
+    return pendingAddonPRs.filter(
+      (pr) => !existingNames.has(pendingDisplayName(pr).toLowerCase()),
+    )
+  }, [catalogData, pendingAddonPRs])
+
+  const filteredItems = useMemo(() => {
+    if (!catalogData) return [] as AddonGridItem[]
+
+    let realItems: AddonGridItem[] = catalogData.addons.map((addon) => ({
+      kind: 'real',
+      addon,
+    }))
+    // Pending ghosts have no health/deployment data, so the health-shaped
+    // filters (healthy/unhealthy/git-only/drifted) don't apply to them —
+    // they only show up in the unfiltered "All Addons" view.
+    let ghostItems: AddonGridItem[] =
+      filterType === 'all'
+        ? pendingGhosts.map((pr) => ({ kind: 'pending', pr }))
+        : []
+
+    // Search — applies to both real and pending entries.
+    if (search) {
+      const q = search.toLowerCase()
+      realItems = realItems.filter(
+        (item) =>
+          item.kind === 'real' &&
+          (item.addon.addon_name.toLowerCase().includes(q) ||
+            item.addon.chart.toLowerCase().includes(q) ||
+            item.addon.namespace?.toLowerCase().includes(q)),
+      )
+      ghostItems = ghostItems.filter(
+        (item) => item.kind === 'pending' && pendingDisplayName(item.pr).toLowerCase().includes(q),
+      )
+    }
+
+    // Filter (real addons only — see ghostItems above)
+    if (filterType !== 'all') {
+      realItems = realItems.filter((item) => {
+        if (item.kind !== 'real') return false
+        const a = item.addon
+        switch (filterType) {
+          case 'unhealthy':
+            return a.enabled_clusters > 0 && addonHealthBucket(a) !== 'healthy'
+          case 'git-only':
+            return a.enabled_clusters === 0
+          case 'drifted':
+            return countDriftedApps(a) > 0
+          default:
+            return true
+        }
+      })
+    }
+
+    // Sort — pending ghosts sort in naturally alongside real addons
+    // (alphabetical, or wherever they'd land by application count).
+    const merged = [...realItems, ...ghostItems]
+    merged.sort((x, y) => {
+      const nameX = x.kind === 'real' ? x.addon.addon_name : pendingDisplayName(x.pr)
+      const nameY = y.kind === 'real' ? y.addon.addon_name : pendingDisplayName(y.pr)
+      if (sortBy === 'applications') {
+        const appsX = x.kind === 'real' ? x.addon.enabled_clusters : 0
+        const appsY = y.kind === 'real' ? y.addon.enabled_clusters : 0
+        if (appsX !== appsY) return appsY - appsX
+      }
+      return nameX.localeCompare(nameY)
+    })
+
+    return merged
+  }, [catalogData, pendingGhosts, search, filterType, sortBy])
+
+  const totalPages = Math.ceil(filteredItems.length / pageSize)
+  const paginatedItems = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filteredItems.slice(start, start + pageSize)
+  }, [filteredItems, page, pageSize])
+
+  const handleStatFilter = (filter: FilterType) => {
+    setFilterType(filterType === filter ? 'all' : filter)
+  }
+
+  // "Behind catalog version" stat card (S1) — count of ADDONS with at
+  // least one deployed cell whose drift_from_catalog is true, not a count
+  // of cells. null while the matrix response hasn't landed yet, so the
+  // card can show its quiet "—" placeholder instead of a false zero.
+  const behindCatalogAddonCount = useMemo(() => {
+    if (!matrixData) return null
+    return matrixData.addons.filter((row) =>
+      Object.values(row.cells || {}).some((cell) => cell?.drift_from_catalog),
+    ).length
+  }, [matrixData])
+
+  // The page header + tabs render unconditionally so the Marketplace tab is
+  // reachable even while the installed catalog is loading or errored.
+  const renderPageHeader = () => (
+    <div className="space-y-4">
+      <div>
+        <h2 className="page-title text-[#0a2a4a] dark:text-gray-100">Addons</h2>
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+          {tab === 'catalog'
+            ? 'Addons in your Git catalog, with deployment coverage, health, and version.'
+            : 'Browse addons to add to your catalog.'}
+        </p>
+      </div>
+      <AddonsTabBar tab={tab} onChange={switchTab} />
+    </div>
+  )
+
+  if (tab === 'marketplace') {
+    return (
+      <div className="space-y-6">
+        {renderPageHeader()}
+        <MarketplaceTab />
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        {renderPageHeader()}
+        <LoadingState message="Loading addon catalog..." />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        {renderPageHeader()}
+        <ErrorState message={error} />
+      </div>
+    )
+  }
+
+  if (!catalogData) {
+    return (
+      <div className="space-y-6">
+        {renderPageHeader()}
+        <p className="text-[#2a5a7a] dark:text-gray-400">No addon catalog data available.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {renderPageHeader()}
+      {/* Toast notification */}
+      {toast && (
+        <div className="flex items-start justify-between gap-3 rounded-lg bg-green-50 px-4 py-3 ring-1 ring-green-300 dark:bg-green-950/30 dark:ring-green-700">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+            <p className="text-sm text-green-800 dark:text-green-300 break-all">
+              {toast.message}
+              {toast.prUrl && (
+                <>
+                  {' '}
+                  <a
+                    href={toast.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-0.5 font-medium underline hover:no-underline"
+                  >
+                    View PR <ExternalLink className="h-3 w-3" />
+                  </a>
+                </>
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="shrink-0 rounded-md p-0.5 text-green-600 hover:bg-green-100 dark:text-green-400 dark:hover:bg-green-900/40"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* One-time PR-model explainer (V2-cleanup-61.3, F1b) — shown the
+          first time an addon-add PR completes; dismissing it here also
+          hides it on the Clusters page (shared localStorage flag). */}
+      {toast && <PRModelExplainer />}
+
+      {/* Action bar — refresh + Add Addon */}
+      <div className="flex items-center justify-end gap-2">
+        <p className="mr-auto text-sm text-[#3a6a8a] dark:text-gray-500">
+          <span className="font-medium text-[#1a4a6a] dark:text-gray-300">Not deployed yet</span>{' '}
+          = in your catalog, not enabled on any cluster.{' '}
+          <span className="font-medium text-red-600 dark:text-red-400">Missing from ArgoCD</span>{' '}
+          = enabled, but ArgoCD has no matching app — needs a look.
+        </p>
+        <button
+          onClick={handleRefresh}
+          className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </button>
+        {/* The "Browse Marketplace" action-bar CTA was dropped (v4
+            walk-findings W2, item 1) — the always-visible Marketplace tab
+            above does exactly the same thing, so the CTA was a redundant
+            second door to the same place. "Add addon manually" stays as
+            the secondary path for charts not in the Marketplace. */}
+        <RoleGuard adminOnly>
+          <button
+            type="button"
+            onClick={openAddAddon}
+            title="Advanced: register a Helm chart that isn't in the Marketplace"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <Plus className="h-4 w-4" />
+            Add addon manually
+          </button>
+        </RoleGuard>
+      </div>
+
+      {/* Add Addon Dialog — manual flow for charts NOT in the curated
+          Marketplace. Form auto-validates the repo URL, then offers a
+          chart-name dropdown and a version dropdown. No sync-wave field;
+          operators set it on the addon page after creation. */}
+      <Dialog
+        open={addAddonOpen}
+        onOpenChange={(v) => {
+          if (!v) {
+            setAddAddonOpen(false)
+            resetAddonFormState()
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Add your own chart</DialogTitle>
+            <DialogDescription>
+              For Helm charts <strong>not in the Marketplace</strong>. For
+              curated addons, browse the{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setAddAddonOpen(false)
+                  resetAddonFormState()
+                  switchTab('marketplace')
+                }}
+                className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
+              >
+                Marketplace tab
+              </button>{' '}
+              instead.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {/* Display name + Namespace — simple text inputs. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="add-addon-name"
+                  className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+                >
+                  Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="add-addon-name"
+                  type="text"
+                  value={addonForm.name}
+                  onChange={(e) =>
+                    setAddonForm((prev) => ({ ...prev, name: e.target.value }))
+                  }
+                  placeholder="e.g. my-addon"
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="add-addon-namespace"
+                  className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+                >
+                  Namespace
+                </label>
+                <input
+                  id="add-addon-namespace"
+                  type="text"
+                  value={addonForm.namespace}
+                  onChange={(e) =>
+                    setAddonForm((prev) => ({ ...prev, namespace: e.target.value }))
+                  }
+                  placeholder="optional, defaults to addon name"
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                />
+              </div>
+            </div>
+
+            {/* Repo URL with auto-validation. */}
+            <div>
+              <label
+                htmlFor="add-addon-repo"
+                className="mb-1 flex items-center gap-2 text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+              >
+                Repo URL <span className="text-red-500">*</span>
+                {repoValidating && (
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin text-[#3a6a8a]"
+                    aria-label="Validating repo URL"
+                  />
+                )}
+                {repoValidState === 'valid' && !repoValidating && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    <CheckCircle className="h-3 w-3" aria-hidden="true" />
+                    Reachable · {repoCharts.length} chart{repoCharts.length === 1 ? '' : 's'}
+                  </span>
+                )}
+              </label>
+              <input
+                id="add-addon-repo"
+                type="url"
+                value={addonForm.repo_url}
+                onChange={(e) =>
+                  setAddonForm((prev) => ({ ...prev, repo_url: e.target.value }))
+                }
+                onBlur={() => void validateRepoUrl(addonForm.repo_url)}
+                placeholder="https://helm.example.com"
+                aria-invalid={repoValidState === 'invalid' || undefined}
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              />
+              {repoValidState === 'invalid' && repoValidError && (
+                <p
+                  role="alert"
+                  className="mt-1 flex items-center gap-1 text-sm text-red-600 dark:text-red-400"
+                >
+                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                  {repoValidError}
+                </p>
+              )}
+            </div>
+
+            {/* Chart name — dropdown of repo charts + free-text autocomplete. */}
+            <div>
+              <label
+                htmlFor="add-addon-chart"
+                className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+              >
+                Chart <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="add-addon-chart"
+                type="text"
+                list="add-addon-chart-list"
+                value={addonForm.chart}
+                onChange={(e) =>
+                  setAddonForm((prev) => ({ ...prev, chart: e.target.value }))
+                }
+                disabled={repoValidState !== 'valid'}
+                placeholder={
+                  repoValidState !== 'valid'
+                    ? 'Validate the repo URL first'
+                    : 'Pick or type a chart name'
+                }
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              />
+              <datalist id="add-addon-chart-list">
+                {repoCharts.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              {repoValidState === 'valid' && repoCharts.length > 0 && (
+                <ul
+                  role="listbox"
+                  aria-label="Available charts in this repo"
+                  className="mt-1 flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-md border border-dashed border-[#c0ddf0] bg-[#f7fbff] p-1.5 dark:border-gray-700 dark:bg-gray-900"
+                >
+                  {repoCharts.slice(0, 50).map((c) => {
+                    const selected = c === addonForm.chart.trim()
+                    return (
+                      <li key={c} className="contents">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() =>
+                            setAddonForm((prev) => ({ ...prev, chart: c }))
+                          }
+                          className={`rounded-full px-2 py-0.5 text-sm font-mono transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                            selected
+                              ? 'bg-teal-600 text-white hover:bg-teal-700'
+                              : 'bg-white text-[#0a3a5a] ring-1 ring-[#c0ddf0] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      </li>
+                    )
+                  })}
+                  {repoCharts.length > 50 && (
+                    <li className="px-2 py-0.5 text-xs italic text-[#3a6a8a] dark:text-gray-500">
+                      +{repoCharts.length - 50} more — type to filter
+                    </li>
+                  )}
+                </ul>
+              )}
+            </div>
+
+            {/* Version — shared VersionPicker so the UX matches the Marketplace
+                Configure modal exactly. */}
+            <div>
+              <label
+                htmlFor="add-addon-version"
+                className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+              >
+                Version <span className="text-red-500">*</span>
+              </label>
+              <VersionPicker
+                inputId="add-addon-version"
+                value={addonForm.version}
+                onChange={(v) =>
+                  setAddonForm((prev) => ({ ...prev, version: v }))
+                }
+                versionsResp={chartVersionsResp}
+                loading={chartVersionsLoading}
+                error={chartVersionsError}
+                showPrereleases={chartShowPrereleases}
+                onShowPrereleasesChange={setChartShowPrereleases}
+                placeholder={
+                  repoValidState !== 'valid'
+                    ? 'Validate the repo URL first'
+                    : !addonForm.chart.trim()
+                      ? 'Select a chart first'
+                      : 'e.g. 1.20.0'
+                }
+              />
+            </div>
+
+            {/* v4 walk-findings W2, item 4 — optional add+enable combo.
+                Default is always "Don't enable yet"; never pre-selected. */}
+            {!addAddonResult && (
+              <EnableOnClusterField
+                clusterNames={managedClusterNames}
+                value={addAddonEnableOnCluster}
+                onChange={setAddAddonEnableOnCluster}
+                addonName={addonForm.name.trim()}
+              />
+            )}
+
+            {/* Note: where to set advanced options after creation. */}
+            <div className="rounded-md bg-[#e8f4ff] p-3 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
+              After adding, advanced options like sync options, ignore
+              differences, and additional sources are available on the
+              addon&rsquo;s <strong>ApplicationSet</strong> tab.
+            </div>
+
+            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
+            {!addAddonResult && (
+              <p className="text-sm text-[#5a8aaa] dark:text-gray-500">
+                Auto-merge follows your{' '}
+                <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                  global GitOps setting
+                </a>
+                .
+              </p>
+            )}
+
+            {/* Dry-run preview (shared AddAddonFlow render) — the files the
+                real submit would write, no PR, no commit. */}
+            {addAddonDryRun && !addAddonResult && (
+              <DryRunPreview result={addAddonDryRun} />
+            )}
+
+            {/* PR lifecycle — init-style step list from submitting to terminal.
+                SubmitPhaseBanner upgrades to PRLifecycleProgress once the
+                POST resolves; SubmitResultBanner kept below as a fallback for
+                callers that haven't yet migrated to the lifecycle approach. */}
+            <SubmitPhaseBanner phase={addAddonPhase} result={addAddonResult} />
+
+            {addAddonError && (
+              <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            {addAddonResult ? (
+              // Terminal state (V2-cleanup-66.1) — keep the dialog open
+              // through both outcomes and hand the user an explicit button
+              // instead of an automatic jump.
+              addAddonPhase === 'merged' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                    }}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resetAddonFormState()}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Add another
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                      navigate(`/addons/${encodeURIComponent(addAddonSubmittedName)}`)
+                    }}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    View addon
+                  </button>
+                </>
+              ) : (
+                // PR opened for review, auto-merge off (or timed out). The
+                // catalog is NOT refreshed — the addon isn't in git yet.
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                    }}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddAddonOpen(false)
+                      resetAddonFormState()
+                      navigate('/dashboard?prs_state=pending')
+                    }}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <GitPullRequest className="h-4 w-4" />
+                    Track on Dashboard
+                  </button>
+                </>
+              )
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddAddonOpen(false)
+                    resetAddonFormState()
+                  }}
+                  disabled={addAddonSubmitting || addAddonPreviewing}
+                  className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePreviewAddon}
+                  disabled={
+                    !addAddonFormValid ||
+                    addAddonPreviewing ||
+                    addAddonSubmitting
+                  }
+                  title="Preview: show the PR title and the files that would be committed — without opening a PR."
+                  className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  {addAddonPreviewing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddAddon}
+                  disabled={!addAddonFormValid || addAddonSubmitting}
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Add to catalog
+                </button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Summary stat cards — click to filter. S1 (scale-walk day 7): this
+          page's job is inventory — what addons you have, where they're
+          deployed, what version — not health monitoring. The Healthy /
+          With issues / Broken split moved out; health still lives on the
+          Dashboard and Observability's addon groups. "Behind catalog
+          version" takes the third slot instead. */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          title="All addons"
+          value={catalogData.total_addons}
+          icon={<Package className="h-5 w-5" />}
+          onClick={() => handleStatFilter('all')}
+          selected={filterType === 'all'}
+        />
+        <StatCard
+          title="Not deployed yet"
+          value={catalogData.addons_only_in_git}
+          icon={<Boxes className="h-5 w-5" />}
+          color="default"
+          onClick={() => handleStatFilter('git-only')}
+          selected={filterType === 'git-only'}
+          subtitle="In your catalog, not enabled on any cluster yet"
+        />
+        <StatCard
+          title="Behind catalog version"
+          // Loads progressively — the page renders from the catalog data
+          // first, this fills in once GET /addons/version-matrix lands. A
+          // quiet "—" while it's in flight, never a spinner blocking the row.
+          value={behindCatalogAddonCount === null ? '—' : behindCatalogAddonCount}
+          icon={<ArrowUpCircle className="h-5 w-5" />}
+          color={behindCatalogAddonCount ? 'warning' : 'default'}
+          onClick={openBehindCatalogVersions}
+          subtitle="Addons running a version other than their catalog default"
+        />
+      </div>
+
+      {/* Search & filter controls */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1" style={{ minWidth: 220, maxWidth: 350 }}>
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
+          <input
+            type="text"
+            placeholder="Search addons by name, chart, or namespace..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-[#5a9dd0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
+          />
+        </div>
+
+        <div className="flex items-center gap-1">
+          <Filter className="h-4 w-4 text-[#3a6a8a]" />
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value as FilterType)}
+            className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+          >
+            <option value="all">All Addons</option>
+            <option value="unhealthy">Any issue</option>
+            <option value="git-only">Not deployed yet</option>
+            <option value="drifted">With version drift</option>
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1">
+          <ArrowUpDown className="h-4 w-4 text-[#3a6a8a]" />
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as SortBy)}
+            className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+          >
+            <option value="name">A-Z</option>
+            <option value="applications">Most Apps</option>
+          </select>
+        </div>
+
+        <select
+          value={pageSize}
+          onChange={(e) => setPageSize(Number(e.target.value) as PageSize)}
+          className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+        >
+          <option value={15}>15 per page</option>
+          <option value={30}>30 per page</option>
+          <option value={60}>60 per page</option>
+        </select>
+
+        {/* View mode toggle */}
+        <div className="ml-auto flex items-center rounded-lg border border-[#5a9dd0] dark:border-gray-600">
+          <button
+            type="button"
+            onClick={() => switchView('grid')}
+            className={`rounded-l-lg p-2 ${
+              viewMode === 'grid'
+                ? 'bg-teal-600 text-white'
+                : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+            }`}
+            aria-label="Grid view"
+            title="Grid view"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => switchView('list')}
+            className={`p-2 ${
+              viewMode === 'list'
+                ? 'bg-teal-600 text-white'
+                : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+            }`}
+            aria-label="List view"
+            title="List view"
+          >
+            <LayoutList className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => switchView('matrix')}
+            className={`rounded-r-lg p-2 ${
+              viewMode === 'matrix'
+                ? 'bg-teal-600 text-white'
+                : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+            }`}
+            aria-label="Versions view"
+            title="Versions — what every cluster runs, addon by addon"
+          >
+            <Table className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* S2 (scale-walk day 7) — the 50-column matrix grid is gone (the
+          maintainer's verdict on a real 50-cluster estate: "50 unreadable
+          columns"). One addon-first list now serves the plain view, the
+          "behind catalog" filter, and the "update available" filter —
+          'matrix' stays the view param's value (alias for this view) so
+          old deep links keep landing here. */}
+      {viewMode === 'matrix' && (
+        <AddonVersionList
+          data={matrixData}
+          loading={matrixLoading}
+          error={matrixError}
+          onRetry={fetchVersionMatrix}
+          initialBehindCatalogOnly={matrixBehindCatalogOnly}
+          initialOutdatedOnly={matrixOutdatedOnly}
+          onClearBehindCatalogFilter={clearMatrixBehindCatalogFilter}
+          onClearOutdatedFilter={clearMatrixOutdatedFilter}
+        />
+      )}
+
+      {viewMode !== 'matrix' && (
+      <>
+      {/* Results count + top pagination */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+          {search
+            ? `Showing ${filteredItems.length} of ${catalogData.total_addons} addons`
+            : `Showing ${filteredItems.length} addons`}
+          {totalPages > 1 && (
+            <span>
+              {' '}
+              &middot; Page {page} of {totalPages} (
+              {(page - 1) * pageSize + 1}-
+              {Math.min(page * pageSize, filteredItems.length)} of{' '}
+              {filteredItems.length})
+            </span>
+          )}
+        </p>
+        <PaginationControls
+          page={page}
+          totalPages={totalPages}
+          onPageChange={setPage}
+        />
+      </div>
+
+      {pendingAddonPRsError && (
+        <p className="text-sm italic text-[#5a8aaa] dark:text-gray-500">
+          Couldn&rsquo;t check for pending addons — a pending add-PR may be
+          missing from this grid.
+        </p>
+      )}
+
+      {/* Addon grid / list */}
+      {paginatedItems.length === 0 ? (
+        <div
+          data-testid="catalog-empty-state"
+          className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400"
+        >
+          {search || filterType !== 'all' ? (
+            search
+              ? `No addons found matching "${search}"`
+              : 'No addons match the current filter.'
+          ) : (
+            // v4 wave 2.5 (decision 3): day zero is a valid, empty catalog —
+            // not a dead end. Plain sentence + both doors in.
+            <div className="space-y-3">
+              <p>
+                Your catalog is empty. Nothing runs in your org that you
+                didn&rsquo;t put here.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => switchTab('marketplace')}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+                >
+                  <Store className="h-4 w-4" />
+                  Browse the Marketplace
+                </button>
+                <RoleGuard adminOnly>
+                  <button
+                    type="button"
+                    onClick={openAddAddon}
+                    className="inline-flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add your own chart
+                  </button>
+                </RoleGuard>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : viewMode === 'grid' ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {paginatedItems.map((item) =>
+            item.kind === 'real' ? (
+              <AddonCard key={item.addon.addon_name} addon={item.addon} />
+            ) : (
+              <PendingAddonCard key={`pending-${item.pr.pr_id}`} pr={item.pr} />
+            ),
+          )}
+        </div>
+      ) : (
+        <AddonListTable items={paginatedItems} />
+      )}
+
+      {/* Bottom pagination */}
+      {totalPages > 1 && (
+        <div className="flex justify-center">
+          <PaginationControls
+            page={page}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
+        </div>
+      )}
+      </>
+      )}
+    </div>
+  )
+}
+export default AddonCatalog

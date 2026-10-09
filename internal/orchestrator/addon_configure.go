@@ -1,0 +1,156 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitops"
+)
+
+// configureCatalogParser is package-level — config.Parser is stateless and
+// the ConfigureAddon hot path benefits from avoiding a per-call allocation.
+// Mirrors the catalogParser pattern in internal/gitops/yaml_mutator_catalog.go.
+var configureCatalogParser = config.NewParser()
+
+func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonRequest) (*GitResult, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+	// Every repository address this request could put into the catalog file,
+	// checked before Sharko touches Git.
+	if err := checkConfigureAddonRepoURLs(req); err != nil {
+		return nil, err
+	}
+
+	// Same v3-catalog-file write as AddAddon, same refusal on a v4 repo.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "changing an addon's catalog entry through this endpoint", V4CatalogWriteDoor); err != nil {
+		return nil, err
+	}
+
+	// Read the existing addons-catalog.yaml.
+	catalogPath := o.paths.Catalog
+	data, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("addon %q not found in catalog: %w", req.Name, err)
+	}
+
+	// If complex fields are provided, walk the typed catalog entries
+	// directly. Simple-only updates fall through to the gitops shared
+	// helper below.
+	//
+	// The reader/writer route preserves the envelope
+	// (apiVersion/kind/metadata/spec) and upgrades legacy bare-YAML
+	// inputs on the next emit — same contract as
+	// gitops.UpdateCatalogEntry, which the simple-fields branch already
+	// delegates to.
+	hasComplexFields := req.SyncOptions != nil || req.AdditionalSources != nil ||
+		req.IgnoreDifferences != nil || req.ExtraHelmValues != nil
+
+	if hasComplexFields {
+		entries, err := configureCatalogParser.ParseAddonsCatalog(data)
+		if err != nil {
+			return nil, fmt.Errorf("parsing catalog: %w", err)
+		}
+
+		found := false
+		for i := range entries {
+			if entries[i].Name != req.Name {
+				continue
+			}
+			if req.SyncOptions != nil {
+				entries[i].SyncOptions = req.SyncOptions
+			}
+			if req.AdditionalSources != nil {
+				entries[i].AdditionalSources = req.AdditionalSources
+			}
+			if req.IgnoreDifferences != nil {
+				entries[i].IgnoreDifferences = req.IgnoreDifferences
+			}
+			if req.ExtraHelmValues != nil {
+				entries[i].ExtraHelmValues = req.ExtraHelmValues
+			}
+			// Also apply simple fields.
+			if req.Version != "" {
+				entries[i].Version = req.Version
+			}
+			if req.SelfHeal != nil {
+				entries[i].SelfHeal = req.SelfHeal
+			}
+			found = true
+			break
+		}
+		if !found {
+			return nil, fmt.Errorf("addon %q not found in catalog", req.Name)
+		}
+
+		updatedData, err := config.MarshalAddonCatalog("", entries)
+		if err != nil {
+			return nil, fmt.Errorf("serializing catalog: %w", err)
+		}
+
+		// Dry-run exit point: return a preview of what would happen.
+		if req.DryRun {
+			action := o.fileAction(ctx, catalogPath)
+			oldCatalog, _ := o.readFileIfExists(ctx, catalogPath)
+			diff := o.buildFileDiff(catalogPath, oldCatalog, updatedData, action)
+			return &GitResult{
+				DryRun: &DryRunResult{
+					EffectiveAddons: []string{req.Name},
+					FilesToWrite:    []FilePreview{{Path: catalogPath, Action: action, Diff: diff}},
+					PRTitle:         fmt.Sprintf("%s configure addon %s", o.gitops.CommitPrefix, req.Name),
+					SecretsToCreate: []string{},
+				},
+			}, nil
+		}
+
+		files := map[string][]byte{catalogPath: updatedData}
+		return o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name),
+			o.prMeta(req.AutoMerge, "addon-configure", fmt.Sprintf("Configure addon %s", req.Name), "", req.Name))
+	}
+
+	// Simple fields only — delegate to the gitops envelope-aware mutator.
+	updates := make(map[string]string)
+	if req.Version != "" {
+		updates["version"] = req.Version
+	}
+	if req.SelfHeal != nil {
+		updates["selfHeal"] = fmt.Sprintf("%v", *req.SelfHeal)
+	}
+
+	if len(updates) == 0 {
+		return nil, fmt.Errorf("no updatable fields provided for addon %q", req.Name)
+	}
+
+	updatedData, err := gitops.UpdateCatalogEntry(data, req.Name, updates)
+	if err != nil {
+		return nil, fmt.Errorf("updating addon %q in catalog: %w", req.Name, err)
+	}
+
+	// Dry-run exit point: return a preview of what would happen.
+	if req.DryRun {
+		action := o.fileAction(ctx, catalogPath)
+		oldCatalog := data
+		diff := o.buildFileDiff(catalogPath, oldCatalog, updatedData, action)
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{req.Name},
+				FilesToWrite:    []FilePreview{{Path: catalogPath, Action: action, Diff: diff}},
+				PRTitle:         fmt.Sprintf("%s configure addon %s", o.gitops.CommitPrefix, req.Name),
+				SecretsToCreate: []string{},
+			},
+		}, nil
+	}
+
+	files := map[string][]byte{
+		catalogPath: updatedData,
+	}
+
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name),
+		o.prMeta(req.AutoMerge, "addon-configure", fmt.Sprintf("Configure addon %s", req.Name), "", req.Name))
+	if err != nil {
+		return nil, fmt.Errorf("committing addon %q configuration: %w", req.Name, err)
+	}
+
+	return gitResult, nil
+}

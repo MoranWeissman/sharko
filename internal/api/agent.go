@@ -1,0 +1,204 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
+)
+
+// callerRole derives the effective authorization role for the request from the
+// X-Sharko-Role header the auth middleware sets after authenticating. It
+// mirrors authz.Require's "auth not configured" behavior: when there are no
+// auth headers at all (no users configured), the caller is treated as admin so
+// the agent's write tools behave exactly like the direct REST endpoints, which
+// also allow through in that mode. An authenticated request with no role header
+// is treated as the minimum (viewer).
+func callerRole(r *http.Request) authz.Role {
+	roleStr := r.Header.Get("X-Sharko-Role")
+	if roleStr == "" {
+		if r.Header.Get("X-Sharko-User") == "" {
+			// Auth not configured — same allow-through stance as authz.Require.
+			return authz.RoleAdmin
+		}
+		roleStr = "viewer"
+	}
+	return authz.RoleFromString(roleStr)
+}
+
+// agentSession wraps an agent with creation time for cleanup.
+type agentSession struct {
+	agent     *ai.Agent
+	createdAt time.Time
+}
+
+const (
+	agentSessionMaxAge   = 1 * time.Hour
+	agentSessionMaxCount = 100
+)
+
+// agentSessions stores per-session agents (in-memory, simple approach).
+var (
+	agentSessions = make(map[string]*agentSession)
+	agentMu       sync.Mutex
+)
+
+// handleAgentChat godoc
+//
+// @Summary AI agent chat
+// @Description Sends a message to the AI agent and returns a response with tool-call capabilities
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Chat request with session_id, message, and optional page_context"
+// @Success 200 {object} map[string]interface{} "Agent response with session_id"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /agent/chat [post]
+func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID   string `json:"session_id"`
+		Message     string `json:"message"`
+		PageContext string `json:"page_context"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Message == "" {
+		writeError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+
+	// Prepend page context to help the agent understand where the user is
+	message := req.Message
+	if req.PageContext != "" {
+		message = fmt.Sprintf("[User is currently viewing %s]\n\n%s", req.PageContext, req.Message)
+	}
+
+	// Get or create agent session
+	agentMu.Lock()
+
+	// Prune expired sessions and enforce max count
+	pruneAgentSessions()
+
+	sess, exists := agentSessions[req.SessionID]
+	if !exists || req.SessionID == "" {
+		// Create new agent with active connection's providers
+		gp, err := s.connSvc.GetActiveGitProvider()
+		if err != nil {
+			agentMu.Unlock()
+			writeNoActiveGitConnectionUnavailable(w, r)
+			return
+		}
+		ac, err := s.connSvc.GetActiveArgocdClient()
+		if err != nil {
+			agentMu.Unlock()
+			writeNoActiveArgocdConnectionUnavailable(w, r)
+			return
+		}
+
+		executor := ai.NewToolExecutor(gp, ac, s.agentMemory, nil, s.repoPaths.ManagedClusters)
+		// Surface AI assistant write-tool PRs on the dashboard.
+		if s.prTracker != nil {
+			executor.SetPRTracker(&aiToolTrackerAdapter{t: s.prTracker})
+		}
+		// Read from / PR against the connection's configured base branch
+		// instead of a hardcoded "main" (v4-wave2 review H-3), same seam
+		// AddonService uses via SetBaseBranchFn.
+		executor.SetBaseBranchFn(s.GitopsBaseBranch)
+		agent := ai.NewAgent(s.aiClient, executor, s.agentMemory)
+
+		if req.SessionID == "" {
+			req.SessionID = fmt.Sprintf("session-%d", time.Now().UnixNano())
+		}
+		sess = &agentSession{agent: agent, createdAt: time.Now()}
+		agentSessions[req.SessionID] = sess
+	}
+	agentMu.Unlock()
+
+	response, err := sess.agent.Chat(r.Context(), message, callerRole(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"session_id": req.SessionID,
+		"response":   response,
+	})
+}
+
+// handleAgentReset godoc
+//
+// @Summary Reset agent session
+// @Description Clears the conversation history for the specified agent session
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Reset request with session_id"
+// @Success 200 {object} map[string]interface{} "Session reset"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Router /agent/reset [post]
+func (s *Server) handleAgentReset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	agentMu.Lock()
+	if sess, exists := agentSessions[req.SessionID]; exists {
+		sess.agent.Reset()
+	}
+	agentMu.Unlock()
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "ai_chat_reset",
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
+}
+
+// pruneAgentSessions removes expired sessions and evicts oldest if over cap.
+// Must be called with agentMu held.
+func pruneAgentSessions() {
+	now := time.Now()
+
+	// Remove expired sessions
+	for id, sess := range agentSessions {
+		if now.Sub(sess.createdAt) > agentSessionMaxAge {
+			delete(agentSessions, id)
+		}
+	}
+
+	// If still over cap, evict oldest
+	if len(agentSessions) > agentSessionMaxCount {
+		type entry struct {
+			id        string
+			createdAt time.Time
+		}
+		entries := make([]entry, 0, len(agentSessions))
+		for id, sess := range agentSessions {
+			entries = append(entries, entry{id: id, createdAt: sess.createdAt})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].createdAt.Before(entries[j].createdAt)
+		})
+		toRemove := len(agentSessions) - agentSessionMaxCount
+		for i := 0; i < toRemove; i++ {
+			delete(agentSessions, entries[i].id)
+		}
+	}
+}

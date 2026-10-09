@@ -1,0 +1,324 @@
+import { AlertCircle } from 'lucide-react'
+import type { DryRunResult } from '@/services/models'
+import type { AddAddonResponse } from '@/services/api'
+import {
+  PRLifecycleProgress,
+  PRResultBanner,
+  type PRPhase,
+} from '@/components/PRFeedback'
+
+/**
+ * AddAddonFlow — shared, presentational building blocks for the
+ * "add an addon to the catalog" flow. Extracted (V2-cleanup-15) from
+ * MarketplaceAddonDetail so the Marketplace detail page and the Addons
+ * Catalog "Add your own chart" dialog share ONE implementation and can't drift
+ * apart again (the twin-path gap that #397/#396 kept reopening).
+ *
+ * Each piece is a small, prop-driven component with no internal fetching —
+ * the parent owns all state (form, submit phase, results). That keeps the
+ * two outer flows (a full embedded page vs. a modal dialog) free to differ
+ * in their chrome while the inner parity surfaces stay identical:
+ *
+ *   - useAutoMergeGate()  — the admin-gated auto-merge decision + payload value
+ *   - <AutoMergeToggle>   — the checkbox + admin-only hint
+ *   - <DryRunPreview>     — renders DryRunResult.files_to_write (the dry-run)
+ *   - <SubmitPhaseBanner> — coarse branch→commit→PR→merge progress
+ *   - <SubmitResultBanner> — terminal success block with a clickable PR link
+ *
+ * The two PR-feedback banners (SubmitPhaseBanner + SubmitResultBanner) are now
+ * thin add-addon-specific wrappers around the flow-agnostic PRProgressBanner /
+ * PRResultBanner in PRFeedback.tsx (promoted in V2-cleanup-24). Behavior and
+ * copy for the two add-addon callers are unchanged — the wrappers exist so the
+ * Marketplace + Catalog screens keep their exact imports while every OTHER
+ * write flow shares the same components.
+ *
+ * Backend contract (v4 wave 2.5 review B-3: both callers now post to
+ * POST /api/v1/catalog/addons — addToCatalog — not the legacy /addons):
+ * the request carries dry_run + auto_merge at the top level; the response
+ * carries dry_run (DryRunResult), pr_url/pr_id, and merged. SubmitResultBanner
+ * branches strictly on `merged` so an open PR is never presented as
+ * already-cataloged. AddAddonResponse (the prop type below) still fits —
+ * AddToCatalogResult is a structurally compatible superset.
+ */
+
+/** The coarse submit phase shared by both add-addon callers. */
+export type SubmitPhase = PRPhase
+
+export interface DryRunPreviewProps {
+  result: DryRunResult
+}
+
+/**
+ * DryRunPreview — renders the files the dry-run call WOULD write/update/delete,
+ * with distinct markers: green `+` for create, amber `~` for update, red `-`
+ * for delete. Also surfaces secrets_to_create (names only) when present. No PR,
+ * no commit. Every array read is null-safe (`?? []`) because the Go DryRunResult
+ * serializes the slice as `files_to_write` while older fixtures may use `files`.
+ *
+ * FR31 (exact files AND content through every door): the server already
+ * computes a redacted diff for create and delete actions, not just update —
+ * see internal/orchestrator/preview_diff.go, buildFileDiff (create: all
+ * lines are additions against empty old content; delete: all lines are
+ * deletions against empty new content). This superseded the earlier V3-D4
+ * "no content dump for create/delete" choice: dropping content the server
+ * already sent left previews showing filenames only for exactly the two
+ * actions most worth checking before a merge (a brand-new file, or one
+ * about to disappear). All three actions now render the same diff body —
+ * inline, visible by default, no expand step — when `diff` is present.
+ */
+export function DryRunPreview({ result }: DryRunPreviewProps) {
+  const files = result.files_to_write ?? result.files ?? []
+  const secrets = result.secrets_to_create ?? []
+  const effectiveAddons = result.effective_addons ?? []
+
+  const renderDiffBody = (diff: string) => (
+    <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800 min-w-0">
+      <pre className="whitespace-pre text-xs">
+        {diff.split('\n').map((line, idx) => {
+          const lineColor = line.startsWith('+')
+            ? 'text-green-600 dark:text-green-400'
+            : line.startsWith('-')
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-[#2a5a7a] dark:text-gray-400'
+          return (
+            <div key={idx} className={lineColor}>
+              {line}
+            </div>
+          )
+        })}
+      </pre>
+    </div>
+  )
+
+  return (
+    <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700 min-w-0">
+      <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+        Preview
+      </h4>
+      <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400 min-w-0">
+        <div className="min-w-0">
+          <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+            PR Title:
+          </span>{' '}
+          {result.pr_title}
+        </div>
+        {effectiveAddons.length > 0 && (
+          <div className="min-w-0">
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+              Effective Addons:
+            </span>{' '}
+            {effectiveAddons.join(', ')}
+          </div>
+        )}
+        {files.length > 0 && (
+          <div className="min-w-0">
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+              Files:
+            </span>
+            <ul className="mt-1 space-y-1 font-mono min-w-0">
+              {files.map((f) => {
+                const hasDiff = f.diff && f.diff.trim().length > 0
+
+                if (f.action === 'create') {
+                  return (
+                    <li key={f.path} className="min-w-0">
+                      <div className="flex items-start gap-1 min-w-0">
+                        <span className="text-green-600 dark:text-green-400">+</span>{' '}
+                        <span className="break-all">{f.path}</span>
+                        <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
+                          (new file)
+                        </span>
+                      </div>
+                      {hasDiff && f.diff && renderDiffBody(f.diff)}
+                    </li>
+                  )
+                }
+
+                if (f.action === 'delete') {
+                  return (
+                    <li key={f.path} className="min-w-0">
+                      <div className="flex items-start gap-1 min-w-0">
+                        <span className="text-red-600 dark:text-red-400">-</span>{' '}
+                        <span className="break-all">{f.path}</span>
+                        <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">
+                          (removed)
+                        </span>
+                      </div>
+                      {hasDiff && f.diff && renderDiffBody(f.diff)}
+                    </li>
+                  )
+                }
+
+                // action === 'update'
+                return (
+                  <li key={f.path} className="min-w-0">
+                    <div className="flex items-start gap-1 min-w-0">
+                      <span className="text-amber-600 dark:text-amber-400">~</span>{' '}
+                      <span className="break-all">{f.path}</span>
+                    </div>
+                    {hasDiff && f.diff && renderDiffBody(f.diff)}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
+        {secrets.length > 0 && (
+          <div className="min-w-0">
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+              Secrets:
+            </span>{' '}
+            {secrets.join(', ')}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export interface SubmitPhaseBannerProps {
+  /** The coarse phase from the parent's state machine. */
+  phase: SubmitPhase
+  /**
+   * The PR result once the POST resolves. When present the banner upgrades
+   * to the init-style lifecycle step-list (PRLifecycleProgress) so the user
+   * sees PR created → merging → merged/open-for-review instead of a plain
+   * static "PR opened" message. While null (POST still in flight) a spinner
+   * is shown.
+   */
+  result?: AddAddonResponse | null
+}
+
+/**
+ * SubmitPhaseBanner — shows an init-style PR lifecycle progress when `result`
+ * is available, otherwise falls back to a spinner while the POST is in flight.
+ * The lifecycle window polls `refreshPR` automatically (bounded ~2 min) when
+ * the PR is not yet merged, so the user sees it move to "Merged ✓" without
+ * any manual refresh.
+ */
+export function SubmitPhaseBanner({ phase, result }: SubmitPhaseBannerProps) {
+  if (phase === 'idle') return null
+  if (result) {
+    return (
+      <PRLifecycleProgress
+        result={result}
+        autoMergeExpected={phase === 'merged'}
+        mergedLabel="PR merged — addon added to your catalog"
+        openLabel="PR open for review — merge it to catalog the addon"
+      />
+    )
+  }
+  // POST still in flight — show a simple spinner row.
+  return (
+    <div
+      role="status"
+      className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-300"
+    >
+      <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" aria-hidden="true" />
+      <span>Creating branch, committing, opening PR…</span>
+    </div>
+  )
+}
+
+export interface SubmitResultBannerProps {
+  result: AddAddonResponse
+}
+
+/**
+ * SubmitResultBanner — terminal success block with a clickable PR link.
+ * Branches STRICTLY on the response's `merged` flag (top-level or wrapped
+ * under `result` when an attribution warning fired) so an open PR is never
+ * presented as already-cataloged. Returns null when there's no PR URL to
+ * link — the caller surfaces a defensive fallback in that case.
+ *
+ * Note: when flows use SubmitPhaseBanner with `result=` this banner becomes
+ * redundant (the lifecycle step already shows the terminal state). It is kept
+ * so existing callers that render both are not broken.
+ */
+export function SubmitResultBanner({ result }: SubmitResultBannerProps) {
+  return (
+    <PRResultBanner
+      result={result}
+      mergedMessage="PR merged — addon added to your catalog"
+      openMessage="PR opened — merge it to apply"
+    />
+  )
+}
+
+export interface EnableOnClusterFieldProps {
+  /** Managed cluster names to offer. Empty renders nothing (no clusters to enable on yet). */
+  clusterNames: string[]
+  /** Currently selected cluster, or '' for "Don't enable yet" (the default — never pre-selected). */
+  value: string
+  onChange: (cluster: string) => void
+  /** The addon's display name, used in the "one PR does both" note. */
+  addonName: string
+  disabled?: boolean
+}
+
+/**
+ * EnableOnClusterField — the OPTIONAL "Also enable on a cluster" selector
+ * shared by both add-to-catalog doors (the Catalog "Add your own chart"
+ * dialog and the Marketplace detail page's "Add to catalog" panel). Wires
+ * to the same combo the cluster-side V4EnableAddonDialog already uses:
+ * POST /api/v1/catalog/addons with `enable_on_cluster` + `yes: true` opens
+ * ONE pull request touching both catalog.yaml and cluster-addons/<name>.yaml
+ * (v4 walk-findings W2, item 4). Default is always "Don't enable yet" —
+ * never pre-selected, so a plain catalog-only add stays the default path.
+ */
+export function EnableOnClusterField({
+  clusterNames,
+  value,
+  onChange,
+  addonName,
+  disabled,
+}: EnableOnClusterFieldProps) {
+  if (clusterNames.length === 0) return null
+  return (
+    <div>
+      <label
+        htmlFor="enable-on-cluster"
+        className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+      >
+        Also enable on a cluster (optional)
+      </label>
+      <select
+        id="enable-on-cluster"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+      >
+        <option value="">Don&rsquo;t enable yet</option>
+        {clusterNames.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+      {value && (
+        <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+          One pull request will add {addonName || 'this addon'} to your
+          catalog AND enable it on <strong>{value}</strong>.
+        </p>
+      )}
+    </div>
+  )
+}
+
+export interface SubmitErrorBannerProps {
+  message: string
+}
+
+/** SubmitErrorBanner — inline error block for a failed preview/submit. */
+export function SubmitErrorBanner({ message }: SubmitErrorBannerProps) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <p>{message}</p>
+    </div>
+  )
+}

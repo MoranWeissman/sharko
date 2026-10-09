@@ -1,0 +1,2297 @@
+// ProviderType is generated from the backend factory in
+// internal/providers/provider.go via cmd/gen-provider-types. Re-exported
+// here so non-UI consumers (api.ts, ConnectionResponse, etc.) can refer
+// to it without reaching across the @/generated/* path.
+export type { ProviderType } from '@/generated/provider-types'
+import type { ProviderType as _ProviderType } from '@/generated/provider-types'
+
+export interface Cluster {
+  name: string
+  labels: Record<string, string>
+  region?: string
+  secret_path?: string
+  server_version?: string
+  server_url?: string
+  connection_status?: string
+  managed?: boolean
+  adopted?: boolean
+  // Who owns this cluster's ArgoCD cluster secret (V2-cleanup-57.2):
+  // absent/'' or 'sharko' = Sharko writes and rotates it (default);
+  // 'user' = self-managed — the user created the secret by hand and
+  // Sharko only syncs addon labels onto it.
+  connection_managed_by?: string
+  // Connectivity check fields (V2-cleanup-29/30)
+  // connectivity_status values: 'verified_argocd' | 'verified_check' | 'check_pending' | 'check_failed' | ''
+  connectivity_status?: string
+  connectivity_detail?: string
+  // Auto-derived reachability verdict (V2-cleanup-85.4) — computed fresh on
+  // every read from live ArgoCD state, with NO manual "Test connection"
+  // click required. Values: 'healthy' | 'reachable' | 'unknown'. Prefer
+  // this over sharko_status below when answering "is this cluster OK".
+  derived_health_status?: string
+  // Sharko's auto-detected guess at whether THIS cluster looks like EKS
+  // (V2-cleanup-88.1, design L11) — distinct from Sharko's OWN AWS identity
+  // (see SystemCapabilitiesResponse below). One of 'eks' | 'unknown'.
+  target_platform?: string
+  // Whether Sharko currently has resolvable connection credentials for this
+  // cluster (V2-cleanup-88.3 — lazy credentials). Registration never
+  // requires credentials; this only matters once an addon that carries
+  // addon secrets is enabled — false means the two-layer dialog's Layer 2
+  // should show "add connection credentials" before that addon is picked,
+  // instead of letting the enable call round-trip into a 422.
+  addon_secrets_ready?: boolean
+  // Sharko observability fields (V2-cleanup-27 folded in)
+  sharko_status?: string
+  last_test_at?: string   // RFC3339
+  test_failing?: boolean
+  test_error_code?: string
+  // Most recent cluster-secret reconciler outcome for this cluster
+  // (V2-cleanup-89.4) — ArgoCD shows a failed apply; before this, Sharko
+  // showed nothing. Computed at read time from the reconciler's in-memory
+  // per-cluster record; absent when the reconciler hasn't processed this
+  // cluster on this server instance yet.
+  last_reconcile?: ClusterLastReconcile
+  // Where this cluster's credentials live, mirrored from the
+  // managed-clusters.yaml entry (V2-cleanup-60.4): 'inline-kubeconfig'
+  // (credentials were pasted at registration and live only in the ArgoCD
+  // cluster Secret), 'secret-kubeconfig' / 'eks-token' (a secrets backend
+  // holds them), or absent for records that predate the field. Used by the
+  // V2-cleanup-89.6 migrate-nudge on ClusterDetail.
+  creds_source?: string
+  // The real "namespace/name" of the ArgoCD cluster Secret this cluster's
+  // page is about (walk day 4 locks, S1) — e.g. "argocd/prod-eu". Absent
+  // when no cluster-secret reconciler is wired in this deployment mode.
+  managed_secret_name?: string
+  // True when the live ArgoCD cluster Secret already carries the
+  // app.kubernetes.io/managed-by=sharko label (walk day 4 locks, S2).
+  // Absent/false means either the Secret is foreign (a real "Take
+  // ownership" candidate) or Sharko could not check — the UI treats both
+  // the same way (show the button) rather than hide it on a guess.
+  already_managed_by_sharko?: boolean
+}
+
+// ClusterLastReconcileLabelDrift mirrors internal/models.ClusterLastReconcileLabelDrift
+// (V3 G1 — drift detection). Only populated for Sharko-managed clusters when
+// labels don't match; nil otherwise.
+export interface ClusterLastReconcileLabelDrift {
+  added?: string[]   // keys in git but not on cluster
+  removed?: string[] // keys on cluster but not in git
+  changed?: string[] // keys in both but values differ
+}
+
+// ClusterLastReconcile mirrors internal/models.ClusterLastReconcile
+// (V2-cleanup-89.4). message is always set on 'failed' and 'skipped'; it is
+// normally empty on 'succeeded' but CAN be set there too, when the
+// reconciler detects a label fight (something outside Sharko re-applying
+// conflicting labels) — do not assume a succeeded reconcile has no message.
+//
+// label_drift (V3 G1) carries the git-vs-live label comparison for
+// Sharko-managed clusters; absent when labels are in sync or for self-managed
+// connections.
+export interface ClusterLastReconcile {
+  time: string // RFC3339
+  outcome: 'succeeded' | 'failed' | 'skipped'
+  message?: string
+  label_drift?: ClusterLastReconcileLabelDrift
+}
+
+// ClusterResyncResponse mirrors internal/models.ClusterResyncResponse
+// (v4-8-5 — the drift view's "Re-sync now" action). Unlike reconcileCluster
+// (async 202, fleet-wide pass), this is a synchronous 200 response scoped to
+// one cluster: label_diff is the added/removed/changed/unchanged addon-label
+// diff THIS resync applied, and message always confirms the self-heal
+// setting was left alone.
+export interface ClusterResyncLabelDiff {
+  added?: string[]
+  removed?: string[]
+  changed?: string[]
+  unchanged?: string[]
+}
+
+export interface ClusterResyncResponse {
+  status: string
+  cluster: string
+  outcome: 'succeeded' | 'failed' | 'skipped'
+  message: string
+  label_diff: ClusterResyncLabelDiff
+}
+
+// SystemCapabilitiesResponse mirrors GET /api/v1/system/capabilities
+// (V2-cleanup-88.1) — what Sharko has auto-detected about its own runtime.
+// The two-layer registration dialog's Layer 1 (Identity) fetches this once
+// when it opens and never asks the user to self-report what Sharko can
+// already tell them.
+export interface AWSIdentity {
+  detected: boolean
+  // One of 'pod-identity' | 'irsa' | 'chain' | 'none'.
+  method: string
+  identity_arn?: string
+}
+
+export interface SystemCapabilitiesResponse {
+  aws: AWSIdentity
+  // One of 'eks' | 'unknown'.
+  hub_platform: string
+}
+
+/**
+ * The health words the server can put on a connection — ArgoCD's own answer,
+ * never Sharko's opinion of the git state beside it.
+ *
+ * ONE TYPE, BECAUSE TWO SURFACES RENDER IT. The fleet list and the connection
+ * page both map this word to display text. When the server grew a fourth
+ * value (B13 item 3), a per-surface inline union let one surface silently
+ * fall through to the wrong word. Declared once here, both surfaces now fail
+ * to compile until they handle a new value.
+ */
+export type ConnectionHealthWord = 'connected' | 'unavailable' | 'not_checked' | 'unknown'
+
+// ManagedSecretsResponse mirrors GET /api/v1/system/managed-secrets — every
+// secret Sharko manages, built server-side from data it already read (the
+// cluster list, the two reconcilers' own stats, the audit log). Visibility
+// only; nothing here writes anything.
+export interface ConnectionSecretRow {
+  cluster: string
+  secret_namespace?: string
+  secret_name?: string
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'foreign' | 'unknown'.
+  //
+  // B5: this is a PROJECTION of sync_state below, computed on the server —
+  // it is NOT a second answer the browser may re-derive from. It exists
+  // because the chips, the ?state= filter and the sort rank read it; since
+  // it is a projection, they cannot drift apart from the canonical answer.
+  // A FAILED check (P1-B) renders as 'unknown', never 'out_of_sync' —
+  // Sharko could not look, which is a different fact from "Sharko looked
+  // and it differs". See last_check_error below.
+  state: string
+  // ── The canonical reconciliation answer (B5) ──────────────────────────
+  // Produced by ONE server-side derivation (internal/api/
+  // connection_canonical.go) shared with the connection page, so the fleet
+  // and the detail page can never phrase the same connection differently.
+  // The browser renders these; it derives nothing from them.
+  //
+  // Absent on a server that predates B5 — every field below is optional for
+  // that reason alone, never because the browser may invent a fallback.
+  management_mode?: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  // What Sharko OWNS on this connection.
+  managed_scope?: 'full_connection' | 'addon_labels' | 'none'
+  // The canonical git state. 'synced' arrives ONLY with
+  // verification_scope 'full' — the server refuses any other combination.
+  sync_state?: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  // How much of what Sharko owns was successfully compared.
+  verification_scope?: 'full' | 'partial' | 'none'
+  // True exactly when the drift touches connection configuration or
+  // credential material.
+  approval_required?: boolean
+  // The display word for this row's git state — rendered VERBATIM. The
+  // browser has no headline table of its own.
+  headline?: string
+  // The sentence beside the headline when the verification is narrower than
+  // the whole connection, or the connection's data is managed outside
+  // Sharko. Absent when the state needs none.
+  qualifier?: string
+  // ArgoCD's OWN answer for this connection, INDEPENDENT of the git state
+  // above: "Connected" beside "Verification incomplete" is correct, not a
+  // contradiction.
+  //
+  // 'unknown' (B13 item 3) is the FOURTH word, and it is not a synonym for
+  // not_checked. not_checked means a probe has not arrived yet — a statement
+  // about a connection that exists, and ArgoCD's own sentence even explains
+  // the probe comes once an application is scheduled. On a self-managed
+  // connection whose Secret does not exist there is nothing to probe, so
+  // not_checked would invite somebody to wait for a check of nothing.
+  health?: ConnectionHealthWord
+  // source (S1) says, per row, which store this secret's content is
+  // compared against. Always 'git' for a connection secret — git holds
+  // the addon labels this secret is built from.
+  source: string
+  last_checked?: string // RFC3339, absent = unknown
+  last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
+  last_repaired_detail?: string
+  // last_check_error (P1-B) is a safe, pre-written sentence saying why the
+  // last check didn't finish — set only when state === 'unknown' because
+  // the last reconcile attempt for this cluster failed (not because it was
+  // never checked). Mirrors AddonValuesSecretRow.last_check_error exactly.
+  last_check_error?: string
+  // compared_revision (P2-C1) is the full branch head commit SHA the pass
+  // that produced this row's state read git at. Absent when the active git
+  // provider couldn't say — never a guessed or stale value. The panel
+  // shows the first 7 characters, full value on hover.
+  compared_revision?: string
+  // compared_path (P2-C1) is the exact managed-clusters file path this
+  // row's state was compared against.
+  compared_path?: string
+  // applied_revision (P2-C1) is the full commit SHA the last SUCCESSFUL
+  // write to this cluster's secret was built from — absent until this
+  // server instance has ever successfully written it.
+  applied_revision?: string
+  // self_heals (P2-C3) — will Sharko fix THIS row on its own, without a
+  // human clicking Sync.
+  self_heals: boolean
+  // drift_source (P2-C6) — which side moved for an out_of_sync row: 'git'
+  // (the intent commit changed since the last successful write) or
+  // 'cluster' (the revisions agree but the live secret still differs).
+  // Absent when the row isn't out_of_sync, or either revision is unknown.
+  drift_source?: 'git' | 'cluster'
+  // fight_count (P2-D) is how many consecutive checks something else has
+  // reverted Sharko's own write on this cluster's self-managed ArgoCD
+  // secret. Absent/0 for every cluster with no fight in progress. The panel
+  // shows a quiet warning at 3 or more.
+  fight_count?: number
+  // credential_check (W3-3) is the background loop's own read-only verdict
+  // on whether this connection's stored details still match its configured
+  // credentials source — separate from `state`, which is the git-labels
+  // comparison. One of 'drifted' | 'clear' | 'not_compared' | 'check_failed'.
+  // Absent on a server that predates the loop, or before its first pass.
+  credential_check?: 'drifted' | 'clear' | 'not_compared' | 'check_failed'
+  // credential_check_detail is a fixed, server-written sentence explaining
+  // credential_check — never a value, length, hash, or fragment.
+  credential_check_detail?: string
+  // credential_checked_at (RFC3339) is when the background loop (or the
+  // last manual Check-again click, which updates the same store) last ran
+  // this comparison. Absent before the first pass.
+  credential_checked_at?: string
+}
+
+export interface AddonValuesSecretRow {
+  cluster: string
+  addon: string
+  secret_name?: string
+  secret_namespace?: string
+  // One of 'in_sync' | 'out_of_sync' | 'missing' | 'unknown'. Compared
+  // against the vault (the secrets provider) — NOT git, which only holds a
+  // pointer to where the value actually lives (S3(a) honesty lock).
+  state: string
+  // source (S1) is the real backend this row's value comes from and is
+  // compared against — 'AWS Secrets Manager', 'a Kubernetes Secret', ...,
+  // or the honest 'secrets store' fallback. Per row, because the row is
+  // what a reader groups, filters and sorts by.
+  source: string
+  last_checked?: string // RFC3339, absent = unknown (never checked on this server instance)
+  last_repaired?: string // RFC3339, absent = never seen in the audit log's retained window
+  last_repaired_detail?: string
+  // last_check_error (S8) is a safe, pre-written sentence saying why the
+  // last check didn't finish — set only when the reconciler's per-item
+  // record carries an error. Distinct from state === 'out_of_sync', which
+  // claims Sharko actually compared the secret and found a mismatch: this
+  // field exists so the UI can say "the last check failed: …" instead of
+  // implying drift when the check itself never completed. Never the
+  // reconciler's raw error text — the server maps it before it ships.
+  last_check_error?: string
+  // self_heals (P2-C3) — true for every values row except a foreign one:
+  // the ownership gate means Sharko never touches (and so never heals) a
+  // secret it did not create.
+  self_heals: boolean
+  // consecutive_failures (P2-D) is how many passes in a row this item's
+  // check or write attempt itself failed — never for a legitimate finding
+  // like out_of_sync or missing. Absent/0 when the last attempt succeeded.
+  // The panel shows a quiet warning at 3 or more.
+  consecutive_failures?: number
+}
+
+// AddonValuesSecretActionResult mirrors the response body of both
+// POST /clusters/{name}/addons/{addon}/secret/refresh and .../secret/sync
+// (S4). outcome is one of "created" | "updated" | "unchanged" |
+// "out_of_sync" | "missing" — never the secret's own content (S3(b)
+// honesty lock: these endpoints report what happened, not what the secret
+// holds).
+export interface AddonValuesSecretActionResult {
+  status: string
+  cluster: string
+  addon: string
+  outcome: string
+  message: string
+}
+
+export interface ManagedSecretsEngineInfo {
+  // false = this reconciler isn't running on this server at all (every
+  // other field stays empty in that case — different from "wired, never run yet").
+  wired: boolean
+  interval_seconds?: number
+  last_run?: string // RFC3339
+  last_error?: string
+  // last_error_cluster names the cluster last_error is ABOUT. Cluster
+  // connection: the failing cluster's own record. Addon values (P1-B): the
+  // first failing cluster+addon pair from the most recent reconcile pass.
+  // Absent when there is no error, or when the failure was plan-level (the
+  // catalog or managed-clusters file itself couldn't be read) — no cluster
+  // to name in that case.
+  last_error_cluster?: string
+  // last_error_at is the RFC3339 timestamp of last_error — an error with no
+  // "since when" isn't actionable. Absent exactly when last_error is absent.
+  last_error_at?: string
+  // enabled (gitops-proud P4-I, D2) is false only when an admin has
+  // switched this engine off via its settings toggle — distinct from
+  // `wired` ("does this server have the reconciler at all"). The
+  // cluster-connection engine has no off switch on purpose and always
+  // reports true here.
+  enabled: boolean
+}
+
+export interface ManagedSecretsEngines {
+  cluster_connection: ManagedSecretsEngineInfo
+  addon_values: ManagedSecretsEngineInfo
+}
+
+// OrphanedSecretRow mirrors one entry in GET /api/v1/system/managed-secrets'
+// orphaned_secrets array (leftover-secrets S1.2) — a secret Sharko once
+// wrote to a cluster whose source definition someone later hand-deleted
+// from Sharko's git. Nothing asks for it anymore, but it still sits on the
+// cluster carrying Sharko's own labels. Sharko never deletes it on its
+// own — this is visibility only, until an operator confirms a delete via
+// DELETE /clusters/{name}/orphaned-secrets/{namespace}/{secret}.
+export interface OrphanedSecretRow {
+  cluster: string
+  secret_name: string
+  secret_namespace: string
+  // The addon name the secret's provenance annotation names — absent when
+  // Sharko can't resolve one.
+  addon?: string
+  // Always the literal "orphaned" — its own StatusMark state, distinct
+  // from the five states a connection/values row can carry.
+  state: 'orphaned'
+  source: string
+  last_checked?: string // RFC3339, absent = unknown
+}
+
+// OrphanedSecretDeleteResult mirrors the 200 body of DELETE
+// /clusters/{name}/orphaned-secrets/{namespace}/{secret} — the operator-only,
+// explicitly-confirmed delete of one orphaned leftover. Failures (404/409/
+// 422/503) carry `{error: "<plain sentence>"}` instead, surfaced through the
+// ApiError thrown by the shared fetch helpers.
+export interface OrphanedSecretDeleteResult {
+  status: string // "deleted"
+  cluster: string
+  namespace: string
+  name: string
+  message: string
+}
+
+/**
+ * (B13 item 6) Whether the background connection check is really running, and
+ * the server's own plain sentence when it is not.
+ *
+ * WHY IT EXISTS. Every connection row's headline comes from the last check.
+ * When the loop cannot run, no row has a check, so every row reads "Not
+ * checked yet" and the Synced count is zero — and until this field there was
+ * no sentence anywhere saying why. The worst case is an out-of-cluster
+ * server, which never schedules the loop at all: the whole page reads that
+ * way permanently and looks like a fleet Sharko has not got round to.
+ *
+ * `reason` is the SERVER'S sentence. The browser renders it verbatim and
+ * never composes one of its own — the server is the only thing that knows
+ * which of the several reasons applies.
+ *
+ * Optional because an older server does not send the field.
+ */
+export interface BackgroundConnectionChecks {
+  /** True only when the last attempted pass really checked the fleet. */
+  running: boolean
+  /** The plain sentence for why checks are not running. Empty exactly when running is true. */
+  reason?: string
+  /** The loop's cadence. 0/absent when no loop is scheduled on this server at all. */
+  interval_seconds?: number
+  /** RFC3339 of the last pass the loop tried. ABSENT when it has never tried one — never a zero time. */
+  last_attempt?: string
+}
+
+export interface ManagedSecretsResponse {
+  cluster_connection_secrets: ConnectionSecretRow[]
+  addon_values_secrets: AddonValuesSecretRow[]
+  // Orphaned leftovers (leftover-secrets S1.2) — additive; absent on an
+  // older server that predates this field.
+  orphaned_secrets?: OrphanedSecretRow[]
+  engines: ManagedSecretsEngines
+  // (B13 item 6) Absent on an older server that predates the field.
+  background_connection_checks?: BackgroundConnectionChecks
+  // addon_values_secret_source is the real, human-readable backend name
+  // addon-values secrets are compared against ("AWS Secrets Manager", "a
+  // Kubernetes Secret", ...), or the generic lowercase "secrets store"
+  // fallback when the server can't name a real product. Never "the vault"
+  // — that reads as HashiCorp Vault to every DevOps reader, misleading
+  // unless the configured backend genuinely is Vault.
+  addon_values_secret_source: string
+}
+
+// SecretResource mirrors GET /clusters/{name}/secret/resource and
+// GET /clusters/{name}/addons/{addon}/secret/resource — the live Secret as
+// it is on the cluster right now, rendered the way ArgoCD renders one.
+//
+// EVERY VALUE IS BLANKED BY THE SERVER. The browser never receives a
+// secret value: data_keys carries key NAMES paired with a fixed mask the
+// server put there, and the response has no field a value could travel in.
+// Do not add one, do not "hide" a value in CSS, and do not ask the server
+// for one — that is a new design decision, not a refactor.
+export interface SecretResourceKey {
+  key: string
+  /** Always the server's fixed mask. Never a real value, never a length. */
+  value: string
+  /**
+   * (P2-C2) The secrets-store pointer this key's value comes from — a
+   * location, not a value. Only ever present on the addon-values secret
+   * response (this endpoint is already behind the operator-gated
+   * secret.resource.read action); absent on the connection-secret
+   * response, which has no per-key pointer concept.
+   */
+  path?: string
+  /**
+   * (P3-F2) Whether this key is actually on the live Secret right now.
+   * false means the addon's definition DECLARES the key — it says where
+   * the value should come from — but the Secret on the cluster does not
+   * have it.
+   *
+   * This is the only per-key verdict the response carries, and it is about
+   * EXISTENCE, never content. There is no per-key "matches"/"differs" here
+   * and there must never be one: the engines compare whole secrets, so a
+   * per-key verdict would be a fact Sharko never established.
+   */
+  present?: boolean
+}
+
+export interface SecretResourceLabel {
+  key: string
+  value: string
+  /**
+   * true when the server replaced this value with the mask. Only ever set
+   * for an annotation whose value is a copy of the whole object (kubectl's
+   * last-applied-configuration), which on a Secret carries the data too.
+   */
+  blanked?: boolean
+}
+
+export interface SecretResource {
+  kind: string // "Secret"
+  api_version: string // "v1"
+  name: string
+  namespace: string
+  secret_type?: string // "Opaque", "kubernetes.io/tls", ...
+  created_at?: string // RFC3339 — the panel turns this into an age
+  labels: SecretResourceLabel[]
+  annotations: SecretResourceLabel[]
+  data_keys: SecretResourceKey[]
+  /** Plain sentence naming where this object was read from. */
+  read_from: string
+  /** Always true — the contract, stated in the body. */
+  values_blanked: boolean
+}
+
+// DoctorCheck / DoctorClusterResponse mirror POST
+// /api/v1/clusters/{name}/doctor (V2-cleanup-88.4, V2-cleanup-89.5's fifth
+// check, and the 'warn' status added by V2-cleanup-90.1) — the connection
+// doctor's five real-attempt checks, each with a plain-English fix on
+// failure or warning. Check IDs are stable — the UI keys copy/icons off
+// them. 'warn' (V2-cleanup-90.1) is additive: currently only
+// 'secret-ownership' ever returns it, for a soft-confidence foreign-owner
+// signal (e.g. a plain Helm release label) that isn't certain enough to
+// fail the connection outright.
+export interface DoctorCheck {
+  id: 'connection-credentials' | 'addon-secret-paths' | 'assume-role' | 'cluster-access' | 'secret-ownership'
+  status: 'pass' | 'fail' | 'not-applicable' | 'warn'
+  detail: string
+  fix?: string
+}
+
+export interface DoctorClusterResponse {
+  checks: DoctorCheck[]
+  overall: 'pass' | 'fail' | 'partial'
+}
+
+// ── Brownfield takeover (v4 Wave 2, Epic 6) ───────────────────────────────
+//
+// Taking over a cluster ArgoCD already manages. The preflight is a pure
+// read that can be run as often as you like; every write below refuses
+// without an explicit confirmation.
+
+export type TakeoverFindingStatus = 'ok' | 'warning' | 'blocked'
+
+export type TakeoverFindingID =
+  | 'secret-owner'
+  | 'appset-deletion-safety'
+  | 'cluster-applications'
+  | 'name-collision'
+
+// Every finding says what it means and what to do about it, in words a
+// person who is not a developer can act on. The UI renders these strings
+// verbatim — it never composes its own explanation from the status.
+export interface TakeoverFinding {
+  id: TakeoverFindingID
+  title: string
+  status: TakeoverFindingStatus
+  detail: string
+  what_it_means: string
+  what_to_do: string
+  application_sets?: string[]
+  applications?: string[]
+}
+
+export interface TakeoverReport {
+  cluster: string
+  // ready is false when something must be fixed first.
+  ready: boolean
+  // needs_acknowledgement is true when at least one check is a warning.
+  needs_acknowledgement: boolean
+  summary: string
+  findings: TakeoverFinding[]
+  server?: string
+  // legacy_labels are the previous owner's labels that will be carried
+  // over. This is the list shown to the user before they confirm.
+  legacy_labels?: Record<string, string>
+  // legacy_labels_selected_by maps each of those label keys to the
+  // ApplicationSets that pick clusters using it.
+  legacy_labels_selected_by?: Record<string, string[]>
+}
+
+export interface TakeoverRequestBody {
+  yes?: boolean
+  dry_run?: boolean
+  // acknowledged_findings names the warnings the user has read, by the
+  // finding id shown on screen. The server re-runs the checks on this call
+  // and 409s on any warning whose id is not in here — so a warning that
+  // appeared after the user looked can never be covered by accident.
+  acknowledged_findings?: string[]
+  preserve_legacy_labels?: boolean
+  region?: string
+  auto_merge?: boolean
+}
+
+export interface TakeoverResponse {
+  cluster: string
+  status: 'success' | 'partial' | 'planned'
+  server?: string
+  preserved_labels?: Record<string, string>
+  dropped_labels?: Record<string, string>
+  secret_swapped: boolean
+  already_owned?: boolean
+  protection_repaired?: boolean
+  git?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+  dry_run?: DryRunResult
+  preflight?: TakeoverReport
+  warnings?: string[]
+  message: string
+}
+
+export interface DropLegacyLabelsRequestBody {
+  yes?: boolean
+  dry_run?: boolean
+  labels?: string[]
+  // acknowledged_findings echoes back the warning_ids the dry run returned.
+  acknowledged_findings?: string[]
+}
+
+export interface DropLegacyLabelsResponse {
+  cluster: string
+  status: 'success' | 'planned'
+  removed?: string[]
+  remaining?: string[]
+  warnings?: string[]
+  // warning_ids are the stable ids of those warnings, same order, to send
+  // back in acknowledged_findings.
+  warning_ids?: string[]
+  message: string
+}
+
+export interface UnregisterConsequence {
+  id: string
+  title: string
+  detail: string
+  what_it_means: string
+  severity: 'info' | 'warning'
+}
+
+export interface UnregisterConsequencesResponse {
+  cluster: string
+  summary: string
+  confirmation_required: string
+  consequences: UnregisterConsequence[]
+}
+
+// Server-wide connectivity probe mode (V2-cleanup-85.4). Controls whether
+// Sharko deploys a transient connectivity-check ArgoCD app to newly
+// registered, zero-addon clusters.
+export type ProbeMode = 'check-app' | 'api-test'
+
+export interface ProbeModeResponse {
+  probe_mode: ProbeMode
+}
+
+// Server-wide admin kill switch for the "Paste a kubeconfig" registration
+// path (V2-cleanup-89.6). Defaults to true (today's behavior, unchanged).
+// When false, registration requests that actually supply inline kubeconfig
+// bytes are rejected server-side, and the UI hides the paste option from
+// the Register dialog's Connection source select.
+export interface AllowInlineCredentialsResponse {
+  allow_inline_credentials: boolean
+}
+
+// Server-wide admin off switch for the addon-values secrets engine
+// (gitops-proud P4-I, D2). Defaults to true (today's behavior, unchanged).
+// When false, internal/secrets.Reconciler runs no check or write passes —
+// rows keep rendering their last-known facts, and the Secret Sync page's
+// engine strip says so plainly.
+export interface AddonValuesEngineEnabledResponse {
+  addon_values_engine_enabled: boolean
+}
+
+export interface ClusterHealthStats {
+  total_in_git: number
+  connected: number
+  failed: number
+  missing_from_argocd: number
+  not_in_git: number
+}
+
+export interface PendingRegistration {
+  cluster_name: string
+  pr_url: string
+  branch: string
+  opened_at: string
+}
+
+// ArgoCD cluster Secret with no managed-clusters.yaml entry AND no open
+// registration PR — typically a leftover from a manual-mode register PR
+// that was closed without merging. Surfaced in its own "Cancelled / Orphan
+// Registrations" section. last_seen_at is the resolver-call time on the
+// BE (the ArgoCD cluster Secret API has no stable creation timestamp);
+// see internal/api/clusters_orphans.go for the contract.
+export interface OrphanRegistration {
+  cluster_name: string
+  server_url: string
+  last_seen_at: string
+}
+
+export interface ClustersResponse {
+  clusters: Cluster[]
+  health_stats?: ClusterHealthStats
+  // Open cluster-registration PRs whose values-file changes have NOT yet
+  // merged. Optional with `?` for defensive forward-compat — runtime code
+  // reads this with `?? []` at every callsite.
+  pending_registrations?: PendingRegistration[]
+  // ArgoCD cluster Secrets with no git entry and no open PR. Same
+  // forward-compat contract as pending_registrations.
+  orphan_registrations?: OrphanRegistration[]
+}
+
+export interface ClusterAddonInfo {
+  addon_name: string
+  chart: string
+  repo_url: string
+  current_version: string
+  enabled: boolean
+  namespace?: string
+  environment_version?: string
+  custom_version?: string
+  has_version_override: boolean
+  argocd_sync_status?: string
+  argocd_health_status?: string
+  argocd_version?: string
+}
+
+export interface ClusterDetailResponse {
+  cluster: Cluster
+  addons: ClusterAddonInfo[]
+}
+
+export interface AddonComparisonStatus {
+  addon_name: string
+  git_configured: boolean
+  git_chart?: string
+  git_repo_url?: string
+  git_version?: string
+  git_namespace?: string
+  git_enabled: boolean
+  environment_version?: string
+  custom_version?: string
+  has_version_override: boolean
+  argocd_deployed: boolean
+  argocd_application_name?: string
+  argocd_sync_status?: string
+  argocd_health_status?: string
+  argocd_deployed_version?: string
+  argocd_namespace?: string
+  argocd_operation_state?: string
+  /**
+   * Sharko's own explanation of a failing ArgoCD operation, plus the facts the
+   * server is willing to vouch for (phase, sync, health, and the repository
+   * address with any credential stripped out).
+   *
+   * It is NOT ArgoCD's operationState.message and must never be treated as
+   * such: that message quotes whatever ArgoCD was working on, including the
+   * repository address with its access token inside it, and this field is on
+   * an ordinary 200 response (B8). The server decides the wording; the browser
+   * renders it as-is.
+   */
+  argocd_operation_message?: string
+  status?: string
+  issues: string[]
+}
+
+export interface ClusterComparisonResponse {
+  cluster: Cluster
+  git_total_addons: number
+  git_enabled_addons: number
+  git_disabled_addons: number
+  argocd_total_applications: number
+  argocd_healthy_applications: number
+  argocd_synced_applications: number
+  argocd_degraded_applications: number
+  argocd_out_of_sync_applications: number
+  addon_comparisons: AddonComparisonStatus[]
+  total_healthy: number
+  total_with_issues: number
+  total_missing_in_argocd: number
+  total_untracked_in_argocd: number
+  total_disabled_in_git: number
+  cluster_connection_state?: string
+  argocd_connection_status?: string
+  argocd_connection_message?: string
+}
+
+// Credential source type constants — must match internal/models/credlookup.go
+// These are the legal values for entry.CredsSource (see models.Cluster.CredsSource
+// jsonschema enum at internal/models/cluster.go:72).
+export const CREDS_SOURCE_EKS_TOKEN = 'eks-token' // models.CredsSourceEKSToken
+export const CREDS_SOURCE_INLINE_KUBECONFIG = 'inline-kubeconfig' // models.CredsSourceInlineKubeconfig
+export const CREDS_SOURCE_SECRET_KUBECONFIG = 'secret-kubeconfig' // models.CredsSourceSecretKubeconfig
+
+// ConnectionComparisonView — the response from GET /clusters/{name}/connection-comparison.
+// Wire shape documented in internal/api/connection_comparison.go.
+export interface ConnectionComparisonView {
+  cluster: string
+  status: 'synced' | 'out_of_sync' | 'missing' | 'check_failed' | 'ownership_conflict' | 'limited'
+  scope: string
+  ownership_mode: string
+  limit_reason?: string
+  failure_reason?: string
+  checked_at: string // RFC3339
+  branch: string
+  compared_commit?: string
+  compared_path?: string
+  credential_source_type?: string
+  differences: ConnectionComparisonDifference[]
+  not_checked: ConnectionComparisonNotChecked[]
+  checked_field_count: number
+  repair_available: boolean
+  repair_scope: string
+  values_never_returned: boolean
+}
+
+// ConnectionComparisonDifference — one field that did not match.
+// For a sensitive field: path, status, sensitive:true, and NO expected/live properties.
+export interface ConnectionComparisonDifference {
+  path: string
+  status: 'same' | 'different' | 'missing' | 'unexpected'
+  sensitive?: boolean
+  expected?: string
+  live?: string
+}
+
+// ConnectionComparisonNotChecked — one field inside the nominal scope that
+// Sharko deliberately did not check, with the plain reason why.
+export interface ConnectionComparisonNotChecked {
+  path: string
+  reason: string
+}
+
+// ConnectionReconciliation — the response from
+// GET /clusters/{name}/connection-reconciliation.
+// Wire shape documented in internal/api/connection_reconciliation.go. The
+// synchronization invariant is enforced SERVER-SIDE: sync.state === 'synced'
+// only ever arrives with verification_scope === 'full' — the UI renders the
+// combination it is given and never repairs one.
+export interface ConnectionReconciliation {
+  cluster: string
+  management_mode: 'sharko_managed' | 'self_managed' | 'legacy_inline' | 'foreign_owned'
+  managed_scope: 'full_connection' | 'addon_labels' | 'none'
+  mode_statement: string
+  definition: ConnectionReconciliationDefinition
+  sync: ConnectionReconciliationSync
+  health: ConnectionReconciliationHealth
+  conditions: ConnectionReconciliationCondition[]
+  drift: ConnectionReconciliationDrift
+  plan: ConnectionReconciliationPlan
+  values_never_returned: boolean
+}
+
+export interface ConnectionReconciliationDefinition {
+  file?: string
+  branch?: string
+  desired_revision?: string
+  applied_revision?: string
+  credential_source_type?: string
+}
+
+export interface ConnectionReconciliationSync {
+  state: 'synced' | 'out_of_sync' | 'blocked' | 'unknown'
+  // Ruling (d), 2026-08-19: 'labels_only' is gone from the enum. It was
+  // declared server-side and never produced by any handler path, so
+  // publishing it advertised a wire value that could not arrive.
+  verification_scope: 'full' | 'partial' | 'none'
+  approval_required: boolean
+  /**
+   * The display word for this connection's git state, produced by the SAME
+   * server function that feeds the fleet row (B5). Rendered VERBATIM — the
+   * browser owns no headline table and derives nothing.
+   */
+  headline: string
+  /** The scope sentence beside the headline. Absent when the state needs none. */
+  qualifier?: string
+  reason?: string
+  /** RFC3339 — ABSENT when no check has run, never a zero time. */
+  checked_at?: string
+  /** RFC3339, from the live Secret's provenance annotation. ABSENT when unknown. */
+  last_successful_application?: string
+}
+
+export interface ConnectionReconciliationHealth {
+  /** The same four words the fleet row carries — see ConnectionHealthWord. */
+  state: ConnectionHealthWord
+  /** ArgoCD's own failure text — only ever set for a failed connection. */
+  message?: string
+}
+
+export interface ConnectionReconciliationCondition {
+  id: string
+  status: 'ok' | 'attention' | 'blocked'
+  detail: string
+}
+
+// One non-sensitive field that did not match.
+export interface ConnectionReconciliationDriftEntry {
+  path: string
+  status: string
+  expected?: string
+  live?: string
+}
+
+// One sensitive field that did not match. The wire type has NO expected and
+// NO live properties at all — there is nothing here to redact client-side.
+export interface ConnectionReconciliationSensitiveDriftEntry {
+  path: string
+  status: string
+  sensitive: boolean
+}
+
+export interface ConnectionReconciliationDrift {
+  connection_configuration: ConnectionReconciliationDriftEntry[]
+  credential_material: ConnectionReconciliationSensitiveDriftEntry[]
+  addon_labels: ConnectionReconciliationDriftEntry[]
+  not_checked: ConnectionComparisonNotChecked[]
+}
+
+export interface ConnectionReconciliationPlan {
+  /** Fixed server sentence for what happens by itself — rendered VERBATIM. */
+  automatic?: string
+  /** Fixed server sentence for the approval-gated half — rendered VERBATIM. */
+  requires_approval?: string
+  action: 'none' | 'repair_connection' | 'sync_addon_labels' | 'take_over' | 'migrate_credentials'
+  action_scopes: string[]
+  /** The commit a repair must echo back — set only when action is repair_connection. */
+  reviewed_commit?: string
+}
+
+// ConnectionRepairView — the response from POST /clusters/{name}/connection-repair.
+// Wire shape documented in internal/api/connection_repair.go.
+export interface ConnectionRepairView {
+  cluster: string
+  repaired: boolean
+  scope_applied: string
+  fields_repaired: string[]
+  label_diff?: {
+    added?: Record<string, string>
+    removed?: string[]
+    changed?: Record<string, string>
+  }
+  preserved_foreign_labels: number
+  preserved_foreign_data_keys: number
+  branch: string
+  repaired_at_commit?: string
+  repaired_at: string
+  message: string
+  comparison: ConnectionComparisonView
+  self_heal_unchanged: boolean
+  values_never_returned: boolean
+}
+
+export interface AddonDeploymentInfo {
+  cluster_name: string
+  cluster_environment?: string
+  enabled: boolean
+  configured_version?: string
+  deployed_version?: string
+  namespace?: string
+  sync_status?: string
+  health_status?: string
+  application_name?: string
+  status: string
+}
+
+export interface AddonSource {
+  repoURL?: string
+  path?: string
+  chart?: string
+  version?: string
+  parameters?: Record<string, string>
+  valueFiles?: string[]
+}
+
+export interface AddonCatalogItem {
+  addon_name: string
+  chart: string
+  repo_url: string
+  namespace?: string
+  version: string
+  total_clusters: number
+  enabled_clusters: number
+  healthy_applications: number
+  degraded_applications: number
+  missing_applications: number
+  /**
+   * Paired counts that drive the tile-level "Running on N/M clusters"
+   * badge. Both default to 0 when the backend doesn't supply them — the
+   * badge falls through to "Not deployed anywhere".
+   *
+   * deployed_cluster_count (N): clusters where the ArgoCD Application for
+   * this addon is BOTH Synced AND Healthy.
+   * total_target_cluster_count (M): clusters where the addon is labelled
+   * enabled in managed-clusters.yaml.
+   */
+  deployed_cluster_count?: number
+  total_target_cluster_count?: number
+  applications: AddonDeploymentInfo[]
+  selfHeal?: boolean
+  syncOptions?: string[]
+  additionalSources?: AddonSource[]
+  ignoreDifferences?: Record<string, unknown>[]
+  extraHelmValues?: Record<string, string>
+}
+
+export interface AddonCatalogResponse {
+  addons: AddonCatalogItem[]
+  total_addons: number
+  total_clusters: number
+  addons_only_in_git: number
+}
+
+export interface AddonDetailResponse {
+  addon: AddonCatalogItem
+}
+
+export interface ConnectionResponse {
+  name: string
+  description?: string
+  git_provider: string
+  git_repo_identifier: string
+  git_token_masked: string
+  argocd_server_url: string
+  argocd_token_masked: string
+  argocd_namespace: string
+  /** True when this connection skips TLS certificate verification toward
+   *  ArgoCD (explicit operator opt-in; verification is on by default). */
+  argocd_insecure?: boolean
+  is_default: boolean
+  is_active: boolean
+  provider?: {
+    // Generated union of accepted provider Type strings (mirrors
+    // providers.New()'s switch arms). Typed instead of `string` so a
+    // future hand-edit can't accidentally ship a value the backend factory
+    // rejects.
+    type: _ProviderType
+    region?: string
+    prefix?: string
+  }
+  addon_secret_provider?: {
+    type: _ProviderType
+    region?: string
+    prefix?: string
+  }
+  gitops?: {
+    base_branch?: string
+    branch_prefix?: string
+    commit_prefix?: string
+    pr_auto_merge?: boolean
+    host_cluster_name?: string
+    default_addons?: string
+  }
+}
+
+export interface ConnectionsListResponse {
+  connections: ConnectionResponse[]
+  active_connection?: string
+}
+
+export interface DashboardStats {
+  connections: { total: number; active: string }
+  // Five-state cluster breakdown — same vocabulary as
+  // ui/src/lib/clusterStatus.ts's ClusterConnectionKind (minus 'unmanaged',
+  // which doesn't apply to this Git-registered-clusters-only count).
+  // Replaces the old binary connected_to_argocd/disconnected_from_argocd
+  // pair (dashboard UX review 2026-08-01, blocker B1 — that pair called a
+  // brand-new, zero-addon cluster "disconnected" forever).
+  clusters: {
+    total: number
+    connected: number
+    pending: number
+    untested: number
+    missing: number
+    failed: number
+  }
+  applications: {
+    total: number
+    by_sync_status: { synced: number; out_of_sync: number; unknown: number }
+    by_health_status: { healthy: number; progressing: number; degraded: number; unknown: number }
+  }
+  // total_deployments (the old "N/N" fake ratio) is gone — enabled_deployments
+  // is a plain count now (dashboard UX review 2026-08-01, finding H5).
+  addons: { total_available: number; enabled_deployments: number }
+  bootstrap_app_health?: string
+  bootstrap_app_sync?: string
+}
+
+export interface PullRequest {
+  id: number
+  title: string
+  description?: string
+  author: string
+  status: string
+  source_branch: string
+  target_branch: string
+  url: string
+  created_at: string
+}
+
+export interface PullRequestsResponse {
+  active_prs: PullRequest[]
+  completed_prs: PullRequest[]
+}
+
+export interface VersionMatrixCell {
+  version: string
+  health: string
+  drift_from_catalog: boolean
+}
+
+export interface VersionMatrixRow {
+  addon_name: string
+  catalog_version: string
+  chart: string
+  cells: Record<string, VersionMatrixCell>
+  newest_available?: string
+  last_checked?: string
+}
+
+export interface VersionMatrixResponse {
+  clusters: string[]
+  addons: VersionMatrixRow[]
+}
+
+export interface ConfigDiffEntry {
+  addon_name: string
+  has_overrides: boolean
+  global_values: string
+  cluster_values: string
+}
+
+export interface ConfigDiffResponse {
+  cluster_name: string
+  global_values?: Record<string, unknown>
+  addon_diffs: ConfigDiffEntry[]
+}
+
+export interface ControlPlaneInfo {
+  argocd_version: string
+  helm_version: string
+  kubectl_version: string
+  total_apps: number
+  total_clusters: number
+  configured_clusters: number
+  configured_clusters_available: boolean
+  connected_clusters: number
+  total_appsets: number
+  health_summary: Record<string, number>
+}
+
+export interface SyncActivityEntry {
+  timestamp: string
+  duration: string
+  duration_secs: number
+  app_name: string
+  addon_name: string
+  cluster_name: string
+  revision?: string
+  status: string
+  // "installed" for an app's earliest history entry, "updated" for every
+  // later one (S3, walk day 5 ride-along). Absent on entries from before
+  // this field existed — the UI falls back to "deployed" in that case.
+  action?: string
+}
+
+// ClusterChange — one entry in the durable per-cluster change log
+// (GET /clusters/{name}/changes, V2-cleanup-84.1/84.2). One row per
+// completed (merged or closed) pull request touching this cluster, newest
+// first. `deploy_outcome` is computed fresh at read time from the addon's
+// current ArgoCD health — it is never persisted, so it always reflects the
+// live state, not the state at merge time.
+export interface ClusterChange {
+  operation: string
+  addon?: string
+  cluster: string
+  pr_id: number
+  pr_url: string
+  opened_at: string
+  completed_at: string
+  status: string // 'merged' | 'closed'
+  deploy_outcome: string // 'healthy' | 'failed' | 'unknown'
+}
+
+export interface AddonClusterHealth {
+  cluster_name: string
+  health: string
+  health_since?: string
+  reconciled_at?: string
+  last_deploy_time?: string
+  last_sync_duration?: string
+  resource_count: number
+  healthy_resources: number
+}
+
+export interface AddonHealthDetail {
+  addon_name: string
+  total_clusters: number
+  healthy_clusters: number
+  degraded_clusters: number
+  last_deploy_time?: string
+  avg_sync_duration?: string
+  avg_sync_secs: number
+  clusters: AddonClusterHealth[]
+}
+
+export interface ResourceSummary {
+  total_pods: number
+  running_pods: number
+  total_containers: number
+  has_missing_limits: boolean
+}
+
+export interface ChildAppHealth {
+  app_name: string
+  cluster_name: string
+  health: string
+  sync_status: string
+  reconciled_at?: string
+  resource_summary: ResourceSummary
+  missing_limits?: string[]
+}
+
+export interface AddonGroupHealth {
+  addon_name: string
+  total_apps: number
+  health_counts: Record<string, number>
+  child_apps: ChildAppHealth[]
+}
+
+export interface ResourceAlert {
+  app_name: string
+  cluster_name: string
+  addon_name: string
+  alert_type: string
+  details: string
+}
+
+export interface ObservabilityOverviewResponse {
+  control_plane: ControlPlaneInfo
+  recent_syncs: SyncActivityEntry[]
+  addon_health: AddonHealthDetail[]
+  addon_groups: AddonGroupHealth[]
+  resource_alerts: ResourceAlert[]
+}
+
+
+export interface AIProviderInfo {
+  id: string
+  name: string
+  configured: boolean
+  model: string
+}
+
+export interface AIConfigResponse {
+  current_provider: string
+  available_providers: AIProviderInfo[]
+  // Global Settings toggle for "Annotate values on generate". Reported
+  // false when AI is not configured. Default-true on first install when AI
+  // is configured; the Save handler stamps the explicit value going
+  // forward so subsequent reads are authoritative.
+  annotate_on_seed?: boolean
+}
+
+// Secret-leak guard match (redacted, never carries the raw secret value).
+export interface AISecretMatch {
+  pattern: string
+  field: string
+  line: number
+}
+
+// Response from POST /addons/{name}/values/annotate when the secret-leak
+// guard hard-blocks the LLM call. UI matches on `code` to render the
+// dedicated banner.
+export interface AIAnnotateBlockedResponse {
+  code: string // "secret_detected_blocked"
+  message: string
+  matches: AISecretMatch[]
+}
+
+// Success body for the manual annotate endpoint.
+export interface AnnotateAddonValuesResponse {
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged: boolean
+  commit_sha?: string
+  ai_skip_reason?: string
+}
+
+export interface AvailableVersion {
+  version: string
+  app_version?: string
+}
+
+export interface AvailableVersionsResponse {
+  addon_name: string
+  chart: string
+  repo_url: string
+  versions: AvailableVersion[]
+}
+
+// --- Curated catalog (Marketplace) ---
+//
+// Mirrors `internal/catalog.CatalogEntry` and the catalog handlers.
+// `security_score` may be the literal string `"unknown"` when ScoreValue.Known
+// is false on the backend; the UI handles both shapes.
+
+export type CatalogScore = number | 'unknown'
+
+export type CatalogCategory =
+  | 'security'
+  | 'observability'
+  | 'networking'
+  | 'autoscaling'
+  | 'gitops'
+  | 'storage'
+  | 'database'
+  | 'backup'
+  | 'chaos'
+  | 'developer-tools'
+
+export type CatalogCuratedBy =
+  | 'cncf-graduated'
+  | 'cncf-incubating'
+  | 'cncf-sandbox'
+  | 'aws-eks-blueprints'
+  | 'azure-aks-addon'
+  | 'gke-marketplace'
+  | 'artifacthub-verified'
+  | 'artifacthub-official'
+
+export type CatalogSecurityTier = 'Strong' | 'Moderate' | 'Weak' | ''
+
+/**
+ * Optional cosign-keyless signature pointer on a CatalogEntry (schema
+ * v1.1+). Verified at load time.
+ */
+export interface CatalogEntrySignature {
+  bundle: string  // https URL to a Sigstore bundle file
+}
+
+/**
+ * One Helm value a curated addon expects an operator to set, in plain
+ * English (v4 wave 1 Story 3.1, "extended entries"). Mirrors
+ * `internal/catalog.RequiredValue`.
+ */
+export interface CatalogRequiredValue {
+  key: string
+  description: string
+}
+
+/**
+ * One secret a curated addon needs to run, in plain English. Mirrors
+ * `internal/catalog.SecretRequirement`.
+ */
+export interface CatalogSecretRequirement {
+  name: string
+  description: string
+}
+
+export interface CatalogEntry {
+  name: string
+  description: string
+  chart: string
+  repo: string
+  default_namespace: string
+  docs_url?: string
+  homepage?: string
+  source_url?: string
+  maintainers: string[]
+  license: string
+  category: CatalogCategory
+  curated_by: CatalogCuratedBy[]
+  security_score?: CatalogScore
+  security_score_updated?: string
+  security_tier?: CatalogSecurityTier
+  github_stars?: number
+  min_kubernetes_version?: string
+  deprecated?: boolean
+  superseded_by?: string
+  /**
+   * The addon's operational knowledge (v4 wave 1 Story 3.1): what a person
+   * needs to know to actually run it. All three are optional — plenty of
+   * addons need none of them.
+   */
+  required_values?: CatalogRequiredValue[]
+  secrets?: CatalogSecretRequirement[]
+  quirks?: string[]
+  /**
+   * Origin of this entry — "embedded" for the binary-shipped catalog, or
+   * the full third-party catalog URL. Absent on older API responses —
+   * treat missing as embedded for backwards compat.
+   */
+  source?: string
+  /**
+   * Optional cosign-keyless attestation. Present only when the entry was
+   * signed; absent on older catalogs.
+   */
+  signature?: CatalogEntrySignature
+  /**
+   * Post-load cosign-verification outcome. True only when the entry had a
+   * valid `signature.bundle` whose Sigstore bundle verified against the
+   * configured trust policy AND whose OIDC subject matched a
+   * TrustPolicy.Identities regex. False for unsigned entries, fail-closed
+   * defaults, mismatches, untrusted identities, and infra failures.
+   * Computed on the backend; UI treats missing as `false` for forwards-compat.
+   */
+  verified?: boolean
+  /**
+   * OIDC subject (cert SAN) of the verified signer when `verified` is
+   * true. Used by VerifiedBadge for the "Verified — signed by <identity>"
+   * tooltip.
+   */
+  signature_identity?: string
+}
+
+/**
+ * Response shape of GET /api/v1/catalog/sources + POST
+ * /api/v1/catalog/sources/refresh. Mirrors internal/api.catalogSourceRecord
+ * from the Go side.
+ */
+export interface CatalogSourceRecord {
+  url: string // "embedded" sentinel OR full third-party URL
+  status: 'ok' | 'stale' | 'failed'
+  last_fetched: string | null // RFC3339 or null
+  entry_count: number
+  verified: boolean
+  issuer?: string
+}
+
+export interface CatalogListResponse {
+  addons: CatalogEntry[]
+  total: number
+}
+
+export interface CatalogVersionEntry {
+  version: string
+  app_version?: string
+  created?: string
+  prerelease: boolean
+}
+
+export interface CatalogVersionsResponse {
+  addon: string
+  chart: string
+  repo: string
+  versions: CatalogVersionEntry[]
+  latest_stable?: string
+  cached_at: string
+  /**
+   * True when Sharko could not determine any versions — today that's an
+   * oci:// registry needing credentials it doesn't have (v4 wave 1 Story
+   * 3.3: graceful degrade). `versions`/`latest_stable` are empty in that
+   * case. Render an "unknown" pill, never an error, when this is true.
+   */
+  version_check_unknown?: boolean
+  /**
+   * v4 wave 2.5 — a full plain-English sentence explaining why no version
+   * list could be produced for this source (e.g. an org-added chart repo
+   * the freshness scanner can't read). Empty/absent whenever a version
+   * list exists. Render this sentence verbatim — never a made-up
+   * "up to date" claim — wherever freshness/versions would otherwise show.
+   */
+  no_data_reason?: string
+  /** What this snapshot covers — e.g. "curated" vs "catalog". Optional;
+   *  only present on the wave-2.5 freshness-extended responses. */
+  scope?: string
+}
+
+/**
+ * v4 wave 1 Story 3.4 — catalog-wide version-freshness summary. Powers the
+ * Marketplace Browse tab's "Last checked" header line (when Sharko last
+ * ran its background freshness pass over the curated catalog), distinct
+ * from the per-addon `cached_at` on CatalogVersionsResponse above.
+ */
+export interface CatalogFreshnessResponse {
+  enabled: boolean
+  interval_seconds?: number
+  last_run?: string
+  next_run?: string
+  addons_checked: number
+  /**
+   * v4 wave 2.5 — how many of the org's OWN catalog.yaml entries the
+   * freshness scanner covered in the last pass (distinct from
+   * addons_checked, which counts the curated/Marketplace list). Extends
+   * freshness to org-added charts per the catalog-approved-model design
+   * (landmine 4) — absent on older backends.
+   */
+  catalog_addons_checked?: number
+  engine_pin?: {
+    last_checked?: string
+    v4_repo: boolean
+    upgrade_available: boolean
+    message?: string
+    error?: string
+  }
+}
+
+/**
+ * v4 wave 2.5 — "catalog = the approved list". `origin` distinguishes an
+ * entry the Marketplace also knows about ("curated") from one the org
+ * typed in by hand ("internal") — both are equally real, approved
+ * entries; origin only affects whether the knowledge fields below are
+ * filled in.
+ */
+export type CatalogOrigin = 'curated' | 'internal'
+
+/**
+ * One entry in the org's approved catalog (GET/POST /api/v1/catalog/addons
+ * — reads/writes catalog.yaml ONLY; a fresh repo returns zero of these).
+ * Distinct from `CatalogEntry` (the read-only Marketplace/curated
+ * knowledge) — this is what your org actually allows. The deployment
+ * fields (chart/repo_url/version/namespace/settings) are the full entry
+ * copied at approval time — the repo alone tells the whole story.
+ * Knowledge fields (description, docs_url, homepage, security_score,
+ * required_values, quirks) are filled in only when the Marketplace
+ * recognizes the name; leave them unrendered rather than inventing a
+ * placeholder when they're absent.
+ */
+export interface CatalogAddon {
+  name: string
+  origin: CatalogOrigin
+  chart?: string
+  repo_url?: string
+  version?: string
+  namespace?: string
+  settings?: Record<string, unknown>
+  /** False when this entry can't actually be deployed yet — see
+   *  `missing_fields` for what's needed (e.g. an internal entry someone
+   *  hand-edited into catalog.yaml without a version). */
+  deployable: boolean
+  missing_fields?: string[]
+  secrets?: CatalogSecretRequirement[]
+  // Knowledge fields — Marketplace-sourced, present only when known.
+  description?: string
+  docs_url?: string
+  homepage?: string
+  security_score?: CatalogScore
+  required_values?: CatalogRequiredValue[]
+  quirks?: string[]
+}
+
+export interface CatalogAddonListResponse {
+  addons: CatalogAddon[]
+  total: number
+}
+
+/**
+ * One addon to add in a POST /api/v1/catalog/addons request. `from_marketplace:
+ * true` tells the server to resolve chart/repo_url/version/namespace from
+ * the curated Marketplace entry — the caller only needs to supply `name`
+ * (and optionally `version` to pin something other than latest). When
+ * `from_marketplace` is false, chart/repo_url/version are required (the
+ * "add your own chart" door).
+ */
+export interface AddToCatalogAddonInput {
+  name: string
+  from_marketplace: boolean
+  version?: string
+  repo_url?: string
+  chart?: string
+  namespace?: string
+  settings?: Record<string, unknown>
+  secrets?: unknown[]
+}
+
+/**
+ * Request body for POST /api/v1/catalog/addons. One element in `addons` =
+ * a single add; N elements = ONE batch pull request, never N. Adding
+ * `enable_on_cluster` makes it the combo: one PR touching both
+ * catalog.yaml and cluster-addons/<name>.yaml — and REQUIRES `yes: true` (the
+ * same confirmation EnableAddonV4 asks for, because that half changes what
+ * runs on a real cluster). A catalog-only add needs no confirmation.
+ */
+export interface AddToCatalogRequest {
+  addons: AddToCatalogAddonInput[]
+  enable_on_cluster?: string
+  yes?: boolean
+  dry_run?: boolean
+  auto_merge?: boolean | null
+}
+
+/**
+ * 201 response from POST /api/v1/catalog/addons. When `dry_run` was set on
+ * the request, the server returns a preview under `dry_run` instead of
+ * opening anything (added/enabled/pr_url are then empty). PR fields mirror
+ * every other write endpoint (orchestrator.GitResult, embedded) — top-level
+ * when no attribution warning fired, wrapped under `result` when one did.
+ */
+export interface AddToCatalogResult {
+  added: string[]
+  enabled: string[]
+  cluster?: string
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  commit_sha?: string
+  attribution_warning?: 'no_per_user_pat'
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+  warnings?: string[]
+  dry_run?: DryRunResult
+  /**
+   * Maps each added addon name to the version that actually landed in
+   * catalog.yaml — the caller's own version, or the newest one Sharko
+   * filled in for a from_marketplace entry sent with no version. Absent on
+   * a dry-run response (nothing has been committed yet — see
+   * DryRunResult.files_to_write for the pin in the diff).
+   */
+  resolved_versions?: Record<string, string>
+}
+
+// Paste Helm URL validator. The handler returns 200 in both the happy and
+// structured-failure paths; UI keys off `valid` and `error_code`.
+export type CatalogValidateErrorCode =
+  | 'invalid_input'
+  | 'repo_unreachable'
+  | 'index_parse_error'
+  | 'chart_not_found'
+  | 'timeout'
+  | 'ssrf_blocked'
+
+export interface CatalogValidateResponse {
+  valid: boolean
+  chart: string
+  repo: string
+  description?: string
+  icon_url?: string
+  versions?: CatalogVersionEntry[]
+  latest_stable?: string
+  cached_at?: string
+  error_code?: CatalogValidateErrorCode
+  message?: string
+}
+
+/**
+ * Listing of all chart names in a Helm repo's index.yaml. Returned by
+ * `GET /api/v1/catalog/repo-charts`. Used by the manual "Add Addon" form
+ * to populate a chart-name dropdown after the operator validates a repo
+ * URL. Same `valid` + `error_code` envelope as /catalog/validate.
+ */
+export interface CatalogRepoChartsResponse {
+  valid: boolean
+  repo: string
+  charts?: string[]
+  cached_at?: string
+  error_code?: CatalogValidateErrorCode
+  message?: string
+}
+
+/** Filter shape used by the Marketplace Browse tab. AND semantics across keys. */
+export interface CatalogListFilters {
+  q?: string
+  category?: CatalogCategory[]
+  curated_by?: CatalogCuratedBy[]
+  license?: string[]
+  /**
+   * Coarse OpenSSF tier the user picked in the sidebar. The backend takes a
+   * numeric `min_score`; the UI maps tier → numeric here.
+   */
+  min_score?: number
+  /** When true, entries with `security_score: "unknown"` stay visible. */
+  include_unknown_score?: boolean
+}
+
+// --- ArtifactHub proxy (Search tab) ---
+//
+// Mirrors the slimmed shapes the backend returns. Types are deliberately
+// narrow — the proxy hands us only the fields the UI renders.
+
+export interface ArtifactHubRepo {
+  repository_id?: string
+  kind: number
+  name: string
+  display_name?: string
+  url?: string
+  organization_name?: string
+  user_alias?: string
+  verified_publisher?: boolean
+  official?: boolean
+}
+
+export interface ArtifactHubSearchResult {
+  package_id: string
+  name: string
+  normalized_name?: string
+  display_name?: string
+  description?: string
+  logo_image_id?: string
+  version?: string
+  app_version?: string
+  stars?: number
+  repository: ArtifactHubRepo
+}
+
+export interface ArtifactHubMaintainer {
+  name?: string
+  email?: string
+}
+
+export interface ArtifactHubLink {
+  name?: string
+  url?: string
+}
+
+export interface ArtifactHubVersionMeta {
+  version: string
+  ts?: number
+  prerelease?: boolean
+}
+
+export interface ArtifactHubPackage {
+  package_id: string
+  name: string
+  normalized_name?: string
+  display_name?: string
+  description?: string
+  home_url?: string
+  readme?: string
+  version?: string
+  app_version?: string
+  license?: string
+  stars?: number
+  maintainers?: ArtifactHubMaintainer[]
+  repository: ArtifactHubRepo
+  available_versions?: ArtifactHubVersionMeta[]
+  links?: ArtifactHubLink[]
+  keywords?: string[]
+}
+
+export interface CatalogSearchResponse {
+  query: string
+  curated: CatalogEntry[]
+  artifacthub: ArtifactHubSearchResult[]
+  /**
+   * Set when the upstream ArtifactHub call failed. Classification: rate_limited
+   * | server_error | timeout | not_found | malformed | invalid_input | unknown.
+   * Curated hits are still populated when this is set.
+   */
+  artifacthub_error?: string
+  /** True when ArtifactHub hits came from the stale window (upstream failed). */
+  stale?: boolean
+  cached_at?: string
+}
+
+export interface CatalogRemotePackageResponse {
+  package: ArtifactHubPackage | null
+  stale?: boolean
+  cached_at?: string
+}
+
+/**
+ * README payload for a curated catalog addon. The backend resolves the
+ * curated entry to an ArtifactHub package and returns the README
+ * markdown. `readme: ""` means the chart was located but doesn't ship a
+ * README — the UI renders an empty state, not an error.
+ */
+export interface CatalogReadmeResponse {
+  readme: string
+  /** Source of the README — "artifacthub" today; "fallback" reserved
+   *  for a direct chart-tarball extractor. */
+  source: string
+  ah_repo?: string
+  ah_chart?: string
+  stale?: boolean
+  cached_at?: string
+}
+
+export interface CatalogReprobeResponse {
+  reachable: boolean
+  last_error?: string
+  probed_at: string
+}
+
+export interface ValueDiffEntry {
+  path: string
+  type: 'added' | 'removed' | 'changed'
+  old_value?: string
+  new_value?: string
+}
+
+export interface ConflictCheckEntry {
+  path: string
+  configured_value: string
+  old_default: string
+  new_default: string
+  source: string
+}
+
+// --- Audit & Diagnostics (Story 1.9) ---
+
+export interface AuditEntry {
+  id: string
+  timestamp: string
+  level: string
+  event: string
+  user: string
+  action: string
+  resource: string
+  source: string
+  result: string
+  duration_ms: number
+  /**
+   * Whether this entry's operation ACTUALLY changed anything (ruling f).
+   * The truth travels on the entry now; before this the browser invented it
+   * from a static read-only flag in its own title table, so it could never
+   * agree with reality.
+   *
+   *  - 'not_applicable' — a read-only check. It neither changed anything
+   *    nor failed to, so a reader must render NOTHING, never "no changes".
+   *  - 'none'           — an action ran and deliberately wrote nothing.
+   *    This is the ONE case where "No changes made" is a true thing to say.
+   *  - 'applied'        — something really changed.
+   *  - absent           — a writer that predates the field. Render nothing.
+   */
+  changes?: 'not_applicable' | 'none' | 'applied'
+  error?: string
+  request_id?: string
+  detail?: string
+  /**
+   * Tier-aware attribution mode for the resulting Git commit:
+   *  - "service"   service token, no user identity attached
+   *  - "co_author" service token + Co-authored-by trailer for the user
+   *  - "per_user"  per-user PAT — the user IS the commit author
+   */
+  attribution_mode?: 'service' | 'co_author' | 'per_user' | ''
+  /**
+   * Tier of the originating endpoint:
+   *  - "tier1"     operational (cluster/addon/PR/connection ops)
+   *  - "tier2"     configuration (catalog metadata, values)
+   *  - "personal"  self-service on caller's own profile
+   *  - "auth"      login/logout/hash
+   *  - "webhook"   inbound webhook (no user identity)
+   */
+  tier?: 'tier1' | 'tier2' | 'personal' | 'auth' | 'webhook' | ''
+}
+
+/** Profile of the authenticated caller (GET /users/me). */
+export interface MeResponse {
+  username: string
+  role: string
+  has_github_token: boolean
+}
+
+/**
+ * Response for GET /addons/{name}/values-schema.
+ * `schema` is the parsed values.schema.json object when present (best-effort);
+ * the editor falls back to plain YAML mode when it's null/undefined.
+ */
+export interface AddonValuesSchemaResponse {
+  addon_name: string
+  current_values: string
+  schema?: Record<string, unknown> | null
+  /**
+   * Present when the chart version pinned in `addons-catalog.yaml` is
+   * ahead of the version stamped in the values file's smart-values header.
+   * The Values tab renders a yellow refresh banner. Absent on legacy files
+   * (no `# sharko: managed=true` header).
+   */
+  values_version_mismatch?: { catalog_version: string; values_version: string } | null
+  /**
+   * Header-derived AI annotation state. Both default-false on legacy
+   * files. The Values tab uses these (with the global AI config state) to
+   * render the "AI not configured" banner and the per-addon opt-out toggle.
+   */
+  ai_annotated?: boolean
+  ai_opt_out?: boolean
+  /**
+   * True when the current values file is wrapped under a legacy
+   * `<addonName>:` (or `<chartName>:`) root key. Helm receives this file
+   * directly via `valueFiles:` in the ApplicationSet template and silently
+   * ignores everything nested under that root. The Values tab renders a
+   * yellow migration banner with a "Migrate this file" button when set.
+   */
+  legacy_wrap_detected?: boolean
+}
+
+/** Response for GET /clusters/{cluster}/addons/{name}/values. */
+export interface ClusterAddonValuesResponse {
+  cluster_name: string
+  addon_name: string
+  current_overrides: string
+  schema?: Record<string, unknown> | null
+}
+
+/**
+ * Response for the two PUT endpoints (global values + per-cluster overrides).
+ * When `attribution_warning` is "no_per_user_pat", the UI should render the
+ * AttributionNudge banner — the action succeeded but used the service token.
+ */
+export interface ValuesEditResult {
+  // The orchestrator wraps results when there's an attribution warning, so the
+  // PR fields can either be top-level (no warning) or nested under `result`.
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  values_file?: string
+  attribution_warning?: 'no_per_user_pat'
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+    values_file?: string
+  }
+}
+
+/**
+ * Response for GET /addons/{name}/values/recent-prs and the per-cluster
+ * variant. Fed into the "Recent changes" panel beneath the values editor.
+ */
+export interface RecentPRsResponse {
+  entries: RecentPRsEntry[]
+  view_all_url?: string
+  values_file: string
+}
+
+export interface RecentPRsEntry {
+  pr_id: number
+  title: string
+  url: string
+  author: string
+  merged_at: string
+}
+
+/**
+ * Response for POST /addons/{name}/values/preview-merge. Returns a
+ * candidate values body that adds NEW upstream keys to the user's current
+ * file without touching keys the user already set. Submitting goes through
+ * the existing PUT /addons/{name}/values endpoint.
+ */
+export interface PreviewMergeResponse {
+  current: string
+  merged: string
+  diff_summary: PreviewMergeSummary
+  upstream_version: string
+}
+
+export interface PreviewMergeSummary {
+  new_keys: string[]
+  preserved_user_keys: string[]
+  no_op: boolean
+}
+
+export interface PermCheck {
+  permission: string
+  passed: boolean
+  error?: string
+}
+
+export interface Fix {
+  description: string
+  yaml: string
+}
+
+export interface DiagnosticReport {
+  identity: string
+  role_assumption: string
+  namespace_access: PermCheck[]
+  suggested_fixes: Fix[]
+}
+
+export interface VerifyStep {
+  name: string
+  status: 'pass' | 'fail' | 'skipped'
+  detail?: string
+}
+
+export interface VerifyResult {
+  success: boolean
+  stage: string
+  error_code?: string
+  error_message?: string
+  duration_ms: number
+  server_version?: string
+  steps?: VerifyStep[]
+}
+
+export interface APIToken {
+  name: string
+  role: string
+  created_at: string
+  /** Null for tokens stored before expiry dates existed. Those keep working. */
+  expires_at?: string | null
+  last_used_at?: string
+  /** 'active' | 'expired' | 'legacy-no-expiry' */
+  status?: string
+  expiring_soon?: boolean
+  expired?: boolean
+}
+
+export interface UpgradeCheckResponse {
+  addon_name: string
+  chart: string
+  current_version: string
+  target_version: string
+  total_changes: number
+  added: ValueDiffEntry[]
+  removed: ValueDiffEntry[]
+  changed: ValueDiffEntry[]
+  conflicts: ConflictCheckEntry[]
+  release_notes?: string
+  baseline_unavailable?: boolean
+  baseline_note?: string
+}
+
+export interface RecommendationCard {
+  label: string
+  version: string
+  has_security: boolean
+  has_breaking: boolean
+  cross_major: boolean
+  advisory_summary?: string
+  is_recommended: boolean
+  reason?: string
+}
+
+export interface UpgradeRecommendations {
+  current_version: string
+  // Legacy fields (kept — backend still sends them; new UI doesn't use them)
+  next_patch?: string
+  next_minor?: string
+  latest_stable?: string
+  // New
+  cards?: RecommendationCard[]
+  recommended?: string
+}
+
+// --- Cluster Adoption ---
+
+export interface AdoptResult {
+  name: string
+  status: 'success' | 'partial' | 'failed' | 'skipped'
+  error?: string
+  git?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+    commit_sha?: string
+    values_file?: string
+  }
+  verification?: VerifyResult
+  // Plain-English advisories that do NOT fail the adoption — e.g. this
+  // cluster's ArgoCD cluster secret turning out to be rendered by another
+  // ArgoCD Application (V2-cleanup-89.5).
+  warnings?: string[]
+  // Preview returned when dry_run is true
+  preview?: DryRunResult
+}
+
+export interface AdoptClustersResponse {
+  results: AdoptResult[]
+}
+
+// --- Tracked PRs ---
+
+export interface TrackedPR {
+  pr_id: number
+  pr_url: string
+  pr_branch: string
+  pr_title: string
+  cluster?: string
+  // Addon attribution surfaced for the per-row badge.
+  addon?: string
+  // Canonical operation enum — see internal/prtracker/types.go for the
+  // full list. The dashboard PR-panel filter chips bucket operations into
+  // Clusters / Addons / Init / AI on the FE side.
+  operation: string
+  user: string
+  source: string
+  created_at: string
+  last_status: string
+  last_polled_at: string
+}
+
+export interface TrackedPRsResponse {
+  prs: TrackedPR[]
+  // Server echoes the effective limit so the FE can render a "View all on
+  // GitHub →" escape hatch when the response is at the cap.
+  limit?: number
+}
+
+// --- Drift Alerts ---
+
+export interface DriftAlert {
+  id: string
+  timestamp: string
+  event: string // orphan_detected, orphan_deleted_after_grace_period, drift_detected
+  resource: string
+  status: 'pending' | 'resolved'
+}
+
+// 'kubeconfig' is the inline-kubeconfig provider path. 'gke' / 'aks' are
+// kept in the type union for backwards compatibility with persisted UI
+// state, but are not surfaced as selectable options anywhere in the UI —
+// no backend support exists for them. 'generic' is likewise kept for
+// backwards compatibility; the wizard no longer emits it.
+//
+// As of the creds-reframe (creds-reframe-2), the registration dialog no
+// longer asks "which platform?" first — it asks "how should Sharko get
+// this cluster's credentials?" (see CredsSource below). `provider` is kept
+// as optional cluster-type metadata and is sent alongside `creds_source`
+// so anything that still reads `provider` keeps working; the backend keys
+// on the effective creds source.
+export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic' | 'kubeconfig'
+
+// CredsSource is the primary question the Register New Cluster dialog asks:
+// "How should Sharko get this cluster's credentials?" It maps 1:1 to the
+// backend's `creds_source` field (locked in creds-reframe story 1). When
+// set, it WINS over the legacy `provider` field for edge-validation,
+// audit-event split, and PR-title hints.
+//
+//   - 'inline-kubeconfig'  → user pastes a kubeconfig YAML inline.
+//   - 'secret-kubeconfig'  → Sharko reads the kubeconfig from a named
+//                            secret in the configured backend.
+//   - 'eks-token'          → Sharko generates a token from cloud identity
+//                            (EKS / IRSA) using region + role ARN.
+export type CredsSource = 'inline-kubeconfig' | 'secret-kubeconfig' | 'eks-token'
+
+export interface DryRunFileEntry {
+  path: string
+  action: 'create' | 'update' | 'delete'
+  diff?: string
+}
+
+// The Go DryRunResult struct serializes its slice fields as
+// `effective_addons`, `files_to_write`, and `secrets_to_create`. All
+// three are `?: T[]` because some payloads return null/missing — the
+// preview panel handles that with `?? []` guards. The legacy `files`
+// alias is kept because the FE historically read the wrong key; both are
+// supported here so a backend roll-forward keeps the FE working without
+// a coordinated deploy.
+export interface DryRunResult {
+  effective_addons?: string[]
+  files_to_write?: DryRunFileEntry[]
+  /** Legacy alias kept only for backwards compatibility with stale clients;
+   * server emits `files_to_write`. The view component reads `files` via the
+   * post-processing layer below. */
+  files?: DryRunFileEntry[]
+  pr_title: string
+  secrets_to_create?: string[]
+  verification?: VerifyResult
+}
+
+export interface RegisterClusterResult {
+  status: string
+  pr_url?: string
+  pull_request_url?: string
+  merged?: boolean
+  git?: {
+    pr_url?: string
+    merged?: boolean
+  }
+  dry_run?: DryRunResult
+  errors?: string[]
+  partial?: boolean
+  // Plain-English advisories that do NOT fail the operation — e.g. a
+  // self-managed connection's ArgoCD cluster secret turning out to be
+  // rendered by another ArgoCD Application (V2-cleanup-89.5).
+  warnings?: string[]
+}
+
+/**
+ * V4GitResult — mirrors the Go orchestrator.GitResult struct returned by
+ * the v4-format addon endpoints (POST/DELETE
+ * /api/v1/v4/clusters/{name}/addons/{addon} — v4 Wave 1 Story 4.3). Same
+ * PR fields every write endpoint returns (pr_url/pr_id/merged/branch),
+ * so PRResultBanner/extractPR (PRFeedback.tsx) read it directly with no
+ * adapter — plus dry_run, which carries the SAME DryRunResult shape as
+ * every other preview-capable write, so DryRunPreview also reads it
+ * directly.
+ */
+export interface V4GitResult {
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  commit_sha?: string
+  dry_run?: DryRunResult
+  // Plain-English advisories that do NOT block the operation — e.g. a
+  // needed-at-runtime secret (v4 wave 2 w2-q4): the addon installs fine
+  // now, but will need the secret later. Present on both the dry-run
+  // preview response and the real (non-dry-run) response.
+  warnings?: string[]
+}
+
+/**
+ * V4AddonValidationErrorBody — the JSON body of a 422 from
+ * POST/DELETE /api/v1/v4/clusters/{name}/addons/{addon}. Two shapes share
+ * this type (v4 wave 2.5 review fix round, B-2):
+ *
+ *   - `*orchestrator.V4SemanticValidationError` (code `incomplete_entry` or
+ *     `validation_failed`) — `problems` is non-empty, plain English, one
+ *     sentence per missing thing, plus `cluster`/`addon`.
+ *   - a plain coded body (code `not_in_catalog` or `empty_catalog_file`) —
+ *     `error` + `code` only, no `problems`/`cluster`/`addon`.
+ *
+ * `code` is the machine-readable field callers branch on; the message text
+ * changes and must never be pattern-matched (that was review finding B-2 —
+ * the catalog-gate combo used to fire on the word "catalog" anywhere in the
+ * message, which caught the wrong 422s and missed the real one).
+ */
+export interface V4AddonValidationErrorBody {
+  error: string
+  code?: string
+  cluster?: string
+  addon?: string
+  problems?: string[]
+}
+
+// ─── v3 → v4 repo migration (v4 Wave 2, Epic 5 backend / migration-ui) ─────
+//
+// Three endpoints, in the order a person uses them:
+//   GET  /api/v1/migration/status   — is there anything to migrate?
+//   POST /api/v1/migration/preview  — show me every file it would touch
+//   POST /api/v1/migration/migrate  — do it, one pull request, all or nothing
+
+/** Response for GET /api/v1/migration/status. */
+export interface MigrationStatus {
+  /** "v3", "v4", or "empty". */
+  format: 'v3' | 'v4' | 'empty'
+  /** True only for "v3" — the one state with something to convert. */
+  migration_available: boolean
+  /** Plain-English sentence the UI can render as-is. */
+  message: string
+  /** Set (format "v3" only) when a previous migrate call already opened a
+   * pull request that is still open — server truth, so a remounted banner
+   * learns this from the next status poll instead of trusting component
+   * state that a remount would have wiped. */
+  migration_pr_url?: string
+  migration_pr_number?: number
+  /** Where the ArgoCD side of the migration has got to (v4 Wave 2 review
+   * finding B-1/H-2). The ApplicationSets that keep a fleet's addons
+   * running live in ArgoCD, not in the repo, so moving the files across is
+   * only half the job. Set on v4 repos. */
+  handoff?: RuntimeHandoffReport
+}
+
+/** What the ArgoCD half of a migration did, in plain words. */
+export interface RuntimeHandoffReport {
+  state: 'not_needed' | 'prepared' | 'pending' | 'complete' | 'skipped'
+  /** One sentence to render as-is. */
+  message: string
+  /** The old ApplicationSets this handoff prepared, or retired. */
+  application_sets?: string[]
+  /** Applications whose delete-everything marker was removed, so their
+   * workloads outlive the transition. */
+  released_applications?: string[]
+  /** Whether engine/application.yaml has been handed to ArgoCD. */
+  engine_applied: boolean
+}
+
+/** One file the migration pull request would add, convert, or remove. */
+export interface MigrationFileChange {
+  path: string
+  from_path?: string
+  action: 'add' | 'convert' | 'remove'
+  /** Rendered body for adds/conversions, redacted like every other preview. */
+  content?: string
+}
+
+/** Response for POST /api/v1/migration/preview, and the `plan` field on migrate. */
+export interface MigrationPlan {
+  format: string
+  add: MigrationFileChange[]
+  convert: MigrationFileChange[]
+  remove: MigrationFileChange[]
+  /** Plain-English notes about anything that could not be carried across
+   * (e.g. a v3 catalog `secrets:` block, which has no v4 home yet). */
+  notes: string[]
+  pr_title: string
+}
+
+/** Request body for POST /api/v1/migration/migrate. */
+export interface MigrationMigrateRequest {
+  dry_run?: boolean
+  yes: boolean
+  auto_merge?: boolean
+  /** Leave unset and Sharko decides whether the ArgoCD side is needed.
+   * "skip" migrates the files only — the escape hatch for a repo with
+   * nothing actually running. */
+  runtime_handoff?: 'skip'
+}
+
+/** Response for POST /api/v1/migration/migrate. */
+export interface MigrateResult {
+  /** "migrated", "preview", or "already_migrated". */
+  status: 'migrated' | 'preview' | 'already_migrated'
+  plan?: MigrationPlan
+  git?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+  /** What the ArgoCD half did before the pull request was opened. */
+  handoff?: RuntimeHandoffReport
+  /** Advisories that do NOT mean the migration failed — chiefly "the pull
+   * request is open and correct, but auto-merge could not merge it". */
+  warnings?: string[]
+}
+
+// One Kubernetes node, from GET /cluster/nodes (internal/api/nodes.go).
+// S4 (walk day 4) only needs name + status, but the wire shape carries more.
+export interface NodeInfo {
+  name: string
+  status: string // "Ready" or "NotReady"
+  instance_type?: string
+  architecture?: string
+  os?: string
+  capacity_cpu?: string
+  capacity_memory?: string
+  allocatable_cpu?: string
+  allocatable_memory?: string
+}
+
+export interface NodeInfoResponse {
+  nodes: NodeInfo[]
+  total: number
+  ready: number
+  not_ready: number
+  message?: string
+}

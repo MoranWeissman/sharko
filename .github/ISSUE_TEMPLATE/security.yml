@@ -1,0 +1,36 @@
+name: "Security Vulnerability (DO NOT USE — please follow SECURITY.md)"
+description: This template intentionally redirects you to our private security disclosure channel
+title: "[Security]: PLEASE DO NOT FILE — see SECURITY.md"
+labels: ["security:redirect"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # STOP — do not file security issues publicly
+
+        Filing a security vulnerability as a public GitHub issue gives attackers a head start before a fix is available. **Please close this form** and follow the responsible disclosure process instead.
+
+        ## How to report a security vulnerability
+
+        Read [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md) for the full process. In short:
+
+        1. Email the disclosure address listed in [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md) with the subject line `[Sharko Security]` followed by a brief summary.
+        2. Include a description, reproduction steps, affected versions, and any known mitigations.
+        3. The maintainers will acknowledge within **5 business days** and coordinate disclosure with you.
+
+        ## What if my report is not actually a vulnerability?
+
+        If you've thought about it and you're confident it's a regular bug (no security impact), please close this form and file a [bug report](https://github.com/MoranWeissman/sharko/issues/new?template=bug.yml) instead.
+
+        ## Why does this template exist if you don't want me to use it?
+
+        It exists so that this option shows up alongside "Bug" and "Feature" in the issue chooser — and routes you to the right channel before you accidentally publish sensitive details. The `security:redirect` label on this issue marks it as a misrouted submission so maintainers can close it quickly.
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Acknowledgement
+      description: Please confirm you've read and understood the redirect.
+      options:
+        - label: I understand I should follow the process in SECURITY.md instead of filing here. I am closing this form now.
+          required: true

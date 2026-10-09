@@ -1,0 +1,1193 @@
+package orchestrator
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"path"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/verify"
+)
+
+// supportedProviders enumerates the cluster-provider values RegisterCluster
+// accepts. "kubeconfig" is the inline-kubeconfig path used by the wizard's
+// "Generic K8s (kubeconfig)" option. GKE / AKS / exec-plugin auth are not
+// yet supported.
+var supportedProviders = map[string]bool{
+	"eks":        true,
+	"kubeconfig": true,
+}
+
+// ErrClusterAlreadyExists is returned when attempting to register a cluster
+// that already exists in ArgoCD.
+var ErrClusterAlreadyExists = errors.New("cluster already exists")
+
+var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+
+// RegisterCluster orchestrates cluster registration via the reconciler-
+// owned model:
+//
+//  1. Validate input
+//     1b. Merge default addons
+//  2. Check for duplicate cluster in ArgoCD (adopt if exists; never duplicate-register)
+//  3. Fetch credentials from provider (kubeconfig or AWS-SM/EKS path)
+//     3a. Verify connectivity via Stage 1 (UX win — fail fast on bad creds)
+//  4. Create addon secrets on remote cluster (if configured)
+//  5. Generate values file + commit via PR (create + auto-merge if configured)
+//  6. Trigger the reconciler so the ArgoCD cluster Secret is created/updated
+//     immediately post-merge rather than waiting for the 30s safety-net tick.
+//
+// The register flow never writes anything in the argocd namespace before
+// the managed-clusters.yaml PR merges — the reconciler owns the entire
+// ArgoCD cluster-Secret lifecycle, which closes the orphan-on-PR-close
+// bug class at the architectural level.
+//
+// Step 3 credentials are OPTIONAL (V2-cleanup-88.3 — lazy credentials):
+// registration succeeds with zero Sharko-side credentials for every
+// connection mode. Sharko only needs its own spoke-cluster credentials to
+// push addon secrets, and only asks for them at that moment — see
+// EnableAddon's pre-flight gate.
+func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterRequest) (*RegisterClusterResult, error) {
+	log := logging.LoggerFromContext(ctx)
+	// Step 1: Validate input.
+	if req.Name == "" {
+		return nil, fmt.Errorf("cluster name is required")
+	}
+	if !validClusterName.MatchString(req.Name) {
+		return nil, fmt.Errorf("invalid cluster name %q: must be alphanumeric with hyphens, starting with an alphanumeric character", req.Name)
+	}
+
+	// Step 1a: Validate provider against the supported set.
+	// "kubeconfig" and "eks" are accepted; empty provider is treated as
+	// the EKS path via credProvider for backward compat.
+	if req.Provider != "" && !supportedProviders[req.Provider] {
+		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks, kubeconfig", req.Provider)
+	}
+
+	// Step 1a': Resolve the effective creds source (creds-reframe-1).
+	//
+	// When req.CredsSource is empty it is DERIVED from Provider so existing
+	// requests are unaffected (kubeconfig→inline, anything-else→backend).
+	// When req.CredsSource is set it is authoritative and wins over Provider.
+	// An unknown value, or an inline source with no kubeconfig, is a caller
+	// error → *InvalidCredsSourceError → 400 at the handler.
+	credsSource, err := ResolveCredsSource(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 1a-gate: admin-level kill switch for inline credential paste
+	// (V2-cleanup-89.6; default flipped to FALSE in the reconciliation round,
+	// correction 5 — "Allow legacy inline credentials" is now an opt-in legacy
+	// escape hatch, because a pasted credential exists only in the live Secret
+	// and can never be restored from Git). While the setting is off, every
+	// registration whose EFFECTIVE creds source is
+	// inline-kubeconfig AND that actually supplied kubeconfig bytes is
+	// rejected. A connection-only registration (no kubeconfig at all, even
+	// with an inline creds source) is NOT blocked — the setting governs
+	// pasted credential bytes, not the inline-kubeconfig source label by
+	// itself. Checked before any addon/catalog/ArgoCD lookups so a rejected
+	// request fails fast and cheap. Applies identically to batch
+	// registration, which calls RegisterCluster per cluster.
+	if isInlineSource(credsSource) && strings.TrimSpace(req.Kubeconfig) != "" &&
+		o.allowInlineCredentialsFn != nil && !o.allowInlineCredentialsFn(ctx) {
+		return nil, &InlineCredentialsDisabledError{}
+	}
+
+	// Step 1a'': Validate + resolve the connection-ownership mode
+	// (V2-cleanup-57.2). "" / "sharko" → Sharko owns the ArgoCD cluster
+	// Secret (today's behavior, byte-for-byte). "user" → self-managed: the
+	// user creates the Secret by hand; Sharko NEVER writes it and only
+	// syncs addon labels onto it via the reconcilers.
+	if err := validateConnectionMode(req.ConnectionManagedBy); err != nil {
+		return nil, err
+	}
+	selfManaged := models.IsUserManagedConnection(req.ConnectionManagedBy)
+
+	if err := validateCredsSource(credsSource, req); err != nil {
+		// Credentials are OPTIONAL at registration, for EVERY connection
+		// mode (V2-cleanup-88.3 — lazy credentials generalizes what used to
+		// be a self-managed-only relaxation): Sharko's one ongoing need for
+		// its own spoke-cluster credentials is pushing addon secrets, and
+		// that need does not exist until a secret-bearing addon is actually
+		// enabled (see EnableAddon's pre-flight gate). Only the exact
+		// "inline source with no kubeconfig" case is relaxed, narrowed via
+		// the ErrMissingInlineKubeconfig sentinel (V2-cleanup-60 M3) — every
+		// OTHER validateCredsSource error (e.g. a contradictory secret_path
+		// set alongside an inline source) must still surface, regardless of
+		// connection mode.
+		if !errors.Is(err, ErrMissingInlineKubeconfig) {
+			return nil, err
+		}
+	}
+
+	// Step 1b: Merge default addons if no addons specified.
+	if len(req.Addons) == 0 && len(o.defaultAddons) > 0 {
+		req.Addons = make(map[string]bool)
+		for k, v := range o.defaultAddons {
+			req.Addons[k] = v
+		}
+	}
+
+	// Step 1c: Referential integrity (V2-cleanup-22, Part 2 / decision #3).
+	// Every addon named in req.Addons becomes a cluster label downstream; a
+	// label for an addon that has no catalog ApplicationSet entry produces
+	// config ArgoCD can never render. Validate the WHOLE request up-front and
+	// reject it listing every bad name, before any credentials fetch, secret
+	// write, or PR. We skip the catalog read entirely when no addons were
+	// requested (nothing to check) so a bare registration does not depend on
+	// the catalog being readable. A genuine catalog read failure surfaces
+	// (→ 502); an absent addon returns *AddonNotInCatalogError (→ 4xx).
+	if len(req.Addons) > 0 {
+		addonNames := make([]string, 0, len(req.Addons))
+		for name := range req.Addons {
+			addonNames = append(addonNames, name)
+		}
+		if _, err := o.requireAddonsInCatalog(ctx, addonNames); err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 2: Check whether the cluster already exists in ArgoCD.
+	// If it does, we adopt it (skip ArgoCD registration) instead of returning an error.
+	clusters, err := o.argocd.ListClusters(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking for existing cluster %q: %w", req.Name, err)
+	}
+	alreadyInArgoCD := false
+	for _, c := range clusters {
+		if c.Name == req.Name {
+			alreadyInArgoCD = true
+			break
+		}
+	}
+
+	result := &RegisterClusterResult{
+		Cluster: ClusterResult{
+			Name:   req.Name,
+			Addons: req.Addons,
+		},
+		Adopted: alreadyInArgoCD,
+	}
+
+	// V2-cleanup-89.5: warn (never fail) when a self-managed connection's
+	// ArgoCD cluster Secret already exists AND is itself rendered by
+	// another ArgoCD Application. Only meaningful for connectionManagedBy:
+	// user — a Sharko-managed connection's Secret is written by Sharko
+	// alone, so a foreign tracking marker there would be a different (and
+	// currently out of scope) problem.
+	if selfManaged {
+		if warnings, warnErr := o.detectForeignOwnerWarnings(ctx, req.Name); warnErr != nil {
+			log.Warn("could not check cluster secret for foreign ArgoCD ownership — proceeding with registration",
+				"cluster", req.Name, "error", warnErr)
+		} else if len(warnings) > 0 {
+			result.Warnings = append(result.Warnings, warnings...)
+		}
+	}
+
+	var steps []string
+
+	// Step 3: Acquire credentials.
+	// When the effective creds source is inline-kubeconfig the caller
+	// supplies the kubeconfig YAML inline on the request, so we parse it
+	// directly and skip o.credProvider.GetCredentials (the credProvider may
+	// legitimately be nil in this path — generic-K8s registration must not
+	// require an AWS-SM/k8s-secrets backend to be configured). For every
+	// backend source (secret-kubeconfig / eks-token) we keep the original
+	// credProvider lookup; v1 does not split the backend sniff, so both
+	// backend labels share this one route (the provider sniffs the payload).
+	//
+	// Credentials are OPTIONAL at registration, for EVERY connection mode
+	// (V2-cleanup-88.3 — lazy credentials): Sharko's one ongoing need for
+	// its own spoke-cluster credentials is pushing addon secrets, and that
+	// need does not exist until a secret-bearing addon is actually enabled
+	// (see EnableAddon's pre-flight gate). Registering a cluster is a Git +
+	// ArgoCD-connection concern, not a credentials concern. When
+	// credentials ARE supplied (inline kubeconfig pasted, or a backend
+	// lookup that succeeds) verification still runs exactly as before;
+	// when they are absent (or the backend lookup fails) registration logs
+	// the reason, skips verification + addon-secret creation, and proceeds
+	// straight to the Git record. creds == nil downstream means "no
+	// credentials available" and every consumer guards on it.
+	var creds *providers.Kubeconfig
+	credsSkippedReason := ""
+	if isInlineSource(credsSource) {
+		// TrimSpace (V2-cleanup-60 L5, generalized by V2-cleanup-88.3): a
+		// whitespace-only kubeconfig ("\n", spaces, ...) must be treated
+		// exactly like an absent one. Without this, ParseInlineKubeconfig
+		// below received the whitespace string, failed to parse it as YAML,
+		// and the registration errored (502) instead of cleanly skipping
+		// verification the way an empty Kubeconfig does.
+		if strings.TrimSpace(req.Kubeconfig) == "" {
+			credsSkippedReason = "no kubeconfig supplied"
+		} else {
+			var parseErr error
+			creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
+			if parseErr != nil {
+				// A pasted-but-broken kubeconfig is always a caller error —
+				// silently ignoring it would hide a typo the caller clearly
+				// wanted validated. Only a genuinely ABSENT kubeconfig is
+				// treated as "connection-only, no credentials".
+				return nil, fmt.Errorf("parsing inline kubeconfig for cluster %q: %w", req.Name, parseErr)
+			}
+			steps = append(steps, "parse_kubeconfig")
+		}
+	} else {
+		if o.credProvider == nil {
+			credsSkippedReason = "no credentials provider configured"
+		} else {
+			// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
+			credLookupName := req.Name
+			if req.SecretPath != "" {
+				credLookupName = req.SecretPath
+			}
+			// The entry is not in managed-clusters.yaml yet, so the stored-
+			// record resolver cannot supply the per-cluster role — pass the
+			// request's role_arn directly so the registration-time fetch
+			// (and the Stage-1 verification it feeds) mints with the same
+			// identity later fetches will use (V2-cleanup-62.2).
+			var fetchErr error
+			creds, fetchErr = providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupName, req.RoleARN)
+			if fetchErr != nil {
+				// V2-cleanup-88.3 — lazy credentials: a failed backend
+				// lookup is the NORMAL case for a connection-only
+				// registration (the backend routinely holds nothing for a
+				// cluster Sharko was never given credentials for). Skip
+				// verification instead of failing the whole registration;
+				// the reason is logged in the unified block below.
+				// credsSkippedReason only ever reaches a log line today, but it
+				// reads like a message and it is one edit away from a response
+				// body — so it carries the safe sentence for a
+				// credentials-backend failure like every other boundary here.
+				creds = nil
+				credsSkippedReason = "credentials lookup failed: " + credsafe.Sentence(fetchErr)
+			} else {
+				steps = append(steps, "fetch_credentials")
+			}
+		}
+	}
+	if creds != nil {
+		result.Cluster.Server = creds.Server
+	}
+	if credsSkippedReason != "" {
+		if selfManaged {
+			// Self-managed keeps its own step marker + message: the reason
+			// credentials are unnecessary is structural (Sharko never
+			// writes this connection's ArgoCD Secret), not just "not yet
+			// needed".
+			steps = append(steps, "skip_credentials_self_managed")
+			log.Info("self-managed registration: proceeding without credentials — Sharko never writes the ArgoCD cluster Secret for this cluster",
+				"cluster", req.Name, "reason", credsSkippedReason)
+		} else {
+			steps = append(steps, "skip_credentials")
+			log.Info("registering without Sharko-side credentials — connection-only registration; credentials will be required later if a secret-bearing addon is enabled (V2-cleanup-88.3)",
+				"cluster", req.Name, "reason", credsSkippedReason)
+		}
+	}
+
+	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).
+	// Only runs when the remote client factory is available (always in production,
+	// may be nil in legacy tests that don't call SetSecretManagement).
+	if o.remoteClientFn != nil && creds != nil && creds.Raw != nil {
+		remoteClient, clientErr := o.remoteClientFn(creds.Raw)
+		if clientErr != nil {
+			return nil, fmt.Errorf("building remote client for verification of cluster %q: %w", req.Name, clientErr)
+		}
+		verifyResult := verify.Stage1(ctx, remoteClient, verify.TestNamespace())
+		result.Verification = &verifyResult
+		if verifyResult.ServerVersion != "" {
+			result.Cluster.ServerVersion = verifyResult.ServerVersion
+		}
+		if !verifyResult.Success {
+			// This error becomes the API response body (handleRegisterCluster
+			// passes it to writeError), so it carries the catalog sentence for
+			// the classified code. The cluster's own words go to the server
+			// log and stop there.
+			log.Info("registration: connectivity verification failed",
+				"cluster", req.Name,
+				"code", verifyResult.ErrorCode,
+				"diagnostic", verifyResult.Diagnostic())
+			return nil, fmt.Errorf("cluster %q connectivity verification failed: %s",
+				req.Name, verify.FriendlyMessage(verifyResult.ErrorCode))
+		}
+		steps = append(steps, "verify_stage1")
+		log.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)
+	}
+
+	// Dry-run exit point: return a preview of what would happen, with zero
+	// side effects.
+	//
+	// All slice fields are initialized to non-nil empty slices when there
+	// is no data, so the JSON response carries `[]` (not `null`) for every
+	// field. The UI's ClustersOverview preview panel reads `.length` on
+	// these arrays — see TestRegisterCluster_DryRun_Kubeconfig_ShapeParity.
+	if req.DryRun {
+		// Compute effective addon names — start from a non-nil empty slice
+		// so a request with no enabled addons still serializes as `[]`.
+		addonNames := []string{}
+		for a, enabled := range req.Addons {
+			if enabled {
+				addonNames = append(addonNames, a)
+			}
+		}
+
+		// Lenient here on purpose: this is the dry-run branch, which writes
+		// nothing. A probe failure costs a preview that names the v3 paths
+		// instead of the v4 ones, never a wrong file on disk. The real
+		// registration below uses the fail-closed form.
+		v4Repo := o.isV4RepoLenient(ctx)
+		valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
+		clusterAddonsPath := V4ManagedClustersPath
+		if !v4Repo {
+			clusterAddonsPath = o.paths.ManagedClusters
+			if clusterAddonsPath == "" {
+				clusterAddonsPath = "configuration/managed-clusters.yaml"
+			}
+		}
+
+		// Build the file preview with diffs. The generation happens below
+		// (generateClusterValues + AddClusterEntry) — we need to hoist a minimal
+		// preview-only compute here for the dry-run diff.
+		var filePreviews []FilePreview
+
+		// Generate the cluster values content for preview. v4 repos never
+		// get a combined values file (Story 4.4 — mirrors the real write
+		// path below).
+		var previewValuesContent []byte
+		if !v4Repo {
+			var catalog []models.AddonCatalogEntry
+			catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+			if catalogErr == nil && catalogData != nil {
+				catalog, _ = parseAddonsCatalog(catalogData)
+			}
+			previewValuesContent = generateClusterValues(req.Name, req.Region, req.Addons, catalog)
+		}
+
+		// Generate the cluster registry update for preview
+		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if clusterAddonsErr != nil {
+			clusterAddonsData = []byte("clusters:\n")
+		}
+		clusterLabels := make(map[string]string, len(req.Addons))
+		if !v4Repo {
+			for addon, enabled := range req.Addons {
+				clusterLabels[addon] = models.AddonLabelValue(enabled)
+			}
+		}
+		connMode := ""
+		if selfManaged {
+			connMode = models.ConnectionManagedByUser
+		}
+		previewClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
+			Name:                req.Name,
+			Region:              req.Region,
+			SecretPath:          req.SecretPath,
+			Labels:              clusterLabels,
+			ConnectionManagedBy: connMode,
+			CredsSource:         string(credsSource),
+			RoleARN:             req.RoleARN,
+		})
+
+		// Build file previews with diffs. v4 repos skip the values-file
+		// preview entirely — there is no such file to write (Story 4.4).
+		if !v4Repo {
+			valuesAction := o.fileAction(ctx, valuesPath)
+			oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   valuesPath,
+				Action: valuesAction,
+				Diff:   o.buildFileDiff(valuesPath, oldValues, previewValuesContent, valuesAction),
+			})
+		}
+
+		if addEntryErr == nil && previewClusterAddons != nil {
+			clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: clusterAddonsAction,
+				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, previewClusterAddons, clusterAddonsAction),
+			})
+		}
+
+		// Provider-aware PR title:
+		//   - kubeconfig path:    "<commitPrefix> register cluster <name> (kubeconfig provider)"
+		//   - eks/legacy path:    "<commitPrefix> register cluster <name>"
+		// Mirrors the audit-event split (cluster_registered vs
+		// cluster_registered_kubeconfig) so the preview tells the operator
+		// which credentials path will be used.
+		prTitle := fmt.Sprintf("%s register cluster %s", o.gitops.CommitPrefix, req.Name)
+		if isInlineSource(credsSource) {
+			prTitle = fmt.Sprintf("%s register cluster %s (kubeconfig provider)", o.gitops.CommitPrefix, req.Name)
+		}
+
+		// listSecretsToCreate returns nil when no secret defs are configured
+		// (typical kubeconfig / kind path) or when no enabled addon matches
+		// a known def. Coalesce to [] so the JSON response is uniform.
+		secretsToCreate := o.listSecretsToCreate(req.Addons)
+		if secretsToCreate == nil {
+			secretsToCreate = []string{}
+		}
+
+		dryResult := &DryRunResult{
+			EffectiveAddons: addonNames,
+			FilesToWrite:    filePreviews,
+			PRTitle:         prTitle,
+			SecretsToCreate: secretsToCreate,
+		}
+		if result.Verification != nil {
+			dryResult.Verification = result.Verification
+		}
+
+		result.Status = "success"
+		result.DryRun = dryResult
+		result.CompletedSteps = steps
+		return result, nil
+	}
+
+	// For the EKS / backend path we write nothing in the argocd namespace
+	// before the managed-clusters.yaml PR merges; the reconciler picks the
+	// new cluster up via either the post-merge trigger or the periodic
+	// safety-net tick, reading credentials from the secrets backend.
+	//
+	// The kubeconfig path is different: the pasted credentials (bearer token
+	// or client-certificate pair, V2-cleanup-56.1) never reach any secrets
+	// backend, so the reconciler can NEVER create the
+	// ArgoCD cluster Secret for them — leaving the cluster permanently
+	// Unreachable (V2-cleanup-8.2). We therefore write the Secret directly
+	// here, right after Stage-1 verification, from the parsed credentials.
+	// The write uses the same Manager the reconciler uses (same labels + the
+	// bearerToken config shape), so a later reconcile tick adopts rather than
+	// fights it, and the managed-by=sharko label lets the reconciler's orphan
+	// sweep reclaim it should the registration PR never merge. The write is
+	// best-effort: a failure is logged and recorded but does not abort
+	// registration (the Git source of truth and reconciler can still
+	// converge). When no manager is wired (out-of-cluster), this is skipped.
+	// SELF-MANAGED GUARD (V2-cleanup-57.2): when the connection is managed by
+	// the user, Sharko NEVER writes the ArgoCD cluster Secret — not here at
+	// registration, not in the reconcilers. The user creates the Secret by
+	// hand (see the operator guide "Managing cluster connections yourself");
+	// the reconcilers only sync addon labels onto it.
+	hasInlineCertPair := creds != nil && len(creds.CertData) > 0 && len(creds.KeyData) > 0
+	if !selfManaged && isInlineSource(credsSource) && o.argoSecretManager != nil && creds != nil && (creds.Token != "" || hasInlineCertPair) {
+		// OWNERSHIP GUARD (secret-ownership hardening, task #150 lane A):
+		// before the direct Ensure write, check who owns the same-name
+		// ArgoCD cluster Secret. A rival ownership marker or a hard ArgoCD
+		// tracking owner fails the WHOLE registration — writing the Git
+		// record while skipping the Secret write would leave a cluster whose
+		// connection Sharko claims but does not hold, and stamping over the
+		// Secret would silently steal another tool's connection. The
+		// takeover door is the only path that changes a connection's owner.
+		// A missing Secret is the normal fresh-register case and costs one
+		// extra Get; an ownership read failure refuses too (doubt = refuse,
+		// same stance as remove.go's ownership gate).
+		if guardErr := o.refuseWhenSecretOwnedByAnotherTool(ctx, req.Name); guardErr != nil {
+			return nil, guardErr
+		}
+		// Addon labels in the canonical "enabled"/"disabled" vocabulary —
+		// the SAME value the reconciler writes when it later reconciles this
+		// cluster from managed-clusters.yaml (which we also write in this
+		// vocabulary below), so the direct-write is byte-identical and a
+		// later reconcile tick adopts rather than fights it. This is the
+		// value the ArgoCD ApplicationSet selector + GetEnabledAddons require
+		// for the addon to actually deploy (V2-cleanup-20).
+		secretLabels := make(map[string]string, len(req.Addons))
+		for addon, enabled := range req.Addons {
+			secretLabels[addon] = models.AddonLabelValue(enabled)
+		}
+		// Stamp the registration-pending marker so the cluster reconciler's
+		// orphan sweep does NOT delete this Secret before the registration PR
+		// (which adds the cluster to managed-clusters.yaml) merges. Until that
+		// PR merges the cluster is "in-argocd ∖ in-git" and would otherwise be
+		// reaped ~200ms later (V2-cleanup-11.1). The value is an RFC3339
+		// timestamp; the sweep computes grace-window expiry from it (restart-
+		// safe), and the reconciler strips the annotation once the cluster
+		// becomes managed. The annotation key + grace window are defined once
+		// in internal/models so this writer and the sweep can never disagree.
+		pendingAnnotations := map[string]string{
+			models.AnnotationRegistrationPending: models.RegistrationPendingTimestamp(time.Now()),
+		}
+		_, ensureErr := o.argoSecretManager.Ensure(ctx, ArgoSecretSpec{
+			Name:   req.Name,
+			Server: creds.Server,
+			CAData: base64.StdEncoding.EncodeToString(creds.CAData),
+			Token:  creds.Token,
+			// Client-certificate kubeconfigs (kind / kubeadm / on-prem) carry
+			// a cert pair instead of a token; the manager emits ArgoCD's
+			// plain-TLS shape for them (cert > token > exec precedence,
+			// V2-cleanup-56.1). EncodeToString(nil) == "" so token-based
+			// registrations leave these empty.
+			CertData:    base64.StdEncoding.EncodeToString(creds.CertData),
+			KeyData:     base64.StdEncoding.EncodeToString(creds.KeyData),
+			Labels:      secretLabels,
+			Annotations: pendingAnnotations,
+		})
+		if ensureErr != nil {
+			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)",
+				"cluster", req.Name, "error", ensureErr)
+		} else {
+			steps = append(steps, "write_argocd_secret")
+			log.Info("ArgoCD cluster Secret written directly from kubeconfig credentials",
+				"cluster", req.Name, "server", creds.Server)
+		}
+	}
+
+	// Step 4: Create addon secrets on remote cluster (if configured).
+	// Uses partial-success semantics: individual failures are tracked but don't stop the flow.
+	// Skipped entirely when no credentials are available (self-managed
+	// registration without creds) — Sharko cannot reach the cluster, and the
+	// operator guide covers creating addon secrets by hand in that case.
+	if creds != nil {
+		secretResult, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
+		if secretErr != nil {
+			// Fatal error (e.g. can't connect to remote cluster at all).
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "create_secrets"
+			result.Error = secretErr.Error()
+			result.Message = "Addon secret creation failed. ArgoCD registration and PR not started."
+			return result, nil
+		}
+		if len(secretResult.Created) > 0 || len(secretResult.Failed) > 0 {
+			steps = append(steps, "create_secrets")
+			result.Secrets = secretResult.Created
+			result.FailedSecrets = secretResult.Failed
+		}
+	}
+
+	// Step 5: Generate cluster values file and commit to Git via PR.
+	// Values file must exist before ArgoCD labels trigger ApplicationSet deployment.
+	//
+	// Idempotency (Story 6.3): check if an open PR already exists for this cluster.
+	// If so, skip PR creation and return the existing PR info.
+	existingPR, existingPRErr := o.findOpenPRForCluster(ctx, req.Name, "register")
+	if existingPRErr == nil && existingPR != nil {
+		log.Info("Found existing open PR for cluster registration — skipping PR creation",
+			"cluster", req.Name, "pr", existingPR.URL)
+		gitResult := &GitResult{
+			PRUrl:  existingPR.URL,
+			PRID:   existingPR.ID,
+			Branch: existingPR.SourceBranch,
+			Merged: false,
+		}
+		result.Status = "success"
+		result.CompletedSteps = steps
+		result.Git = gitResult
+		result.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+		return result, nil
+	}
+
+	// v4 Wave 1 Story 4.4: on a v4 repo, cluster registration writes ONLY
+	// the connection record (managed-clusters.yaml, design doc §2.4) — no
+	// combined per-cluster values file (that concept doesn't exist in v4;
+	// values live under values/global|clusters/, written by
+	// EnableAddonV4), and no addon on/off labels (those live in
+	// cluster-addons/<name>.yaml, design doc §2.4 "Sharko no longer authors
+	// addon keys here"). Any req.Addons supplied on a v4 registration
+	// request is intentionally ignored — enable each addon afterward via
+	// EnableAddonV4, which runs its own semantic validation.
+	// Fail closed. Everything from here writes, and getting this answer
+	// wrong in the "not v4" direction recreates the v3 registry on a v4
+	// repo — the second-registry hijack v4_guard.go describes.
+	v4Repo, v4ProbeErr := o.isV4Repo(ctx)
+	if v4ProbeErr != nil {
+		return nil, v4ProbeErr
+	}
+	if v4Repo && len(req.Addons) > 0 {
+		log.Info("v4 repo: ignoring addons on register-cluster — enable them via the v4 addon API after registration",
+			"cluster", req.Name, "addons", req.Addons)
+	}
+
+	// Idempotency: check if the values file already exists on the base branch.
+	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
+	var valuesContent []byte
+	if !v4Repo {
+		valuesExist := false
+		if _, valuesCheckErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch); valuesCheckErr == nil {
+			valuesExist = true
+			log.Info("Values file already exists — will update instead of create",
+				"cluster", req.Name, "path", valuesPath)
+		}
+		_ = valuesExist // Used for logging; file is always (re)generated to ensure correctness.
+
+		var catalog []models.AddonCatalogEntry
+		catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+		if catalogErr == nil && catalogData != nil {
+			catalog, _ = parseAddonsCatalog(catalogData)
+		}
+		valuesContent = generateClusterValues(req.Name, req.Region, req.Addons, catalog)
+	}
+
+	// Read the cluster registry and add this cluster's entry so the
+	// /api/v1/clusters endpoint recognises the cluster as managed after
+	// the PR merges. v4 repos use managed-clusters.yaml; v3 repos use
+	// the server-configured (or default) managed-clusters.yaml path.
+	clusterAddonsPath := V4ManagedClustersPath
+	if !v4Repo {
+		clusterAddonsPath = o.paths.ManagedClusters
+		if clusterAddonsPath == "" {
+			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		}
+	}
+	// Fail-closed: only a genuinely absent registry file is bootstrapped from
+	// an empty document. Any other read failure stops the registration — the
+	// entry is added to whatever this read returned and the whole file is
+	// written back, so a swallowed error would open a pull request that drops
+	// every other cluster out of the registry, and the orphan sweep would then
+	// delete their ArgoCD connections.
+	clusterAddonsData, clusterAddonsExists, clusterAddonsErr := o.readFileForRewrite(ctx, clusterAddonsPath)
+	if clusterAddonsErr != nil {
+		log.Error("RegisterCluster: could not read the cluster registry — refusing to rewrite it from scratch",
+			"cluster", req.Name, "path", clusterAddonsPath, "error", clusterAddonsErr)
+		result.Status = "partial"
+		result.CompletedSteps = steps
+		result.FailedStep = "read_cluster_registry"
+		result.Error = clusterAddonsErr.Error()
+		result.Message = "Sharko could not read the cluster registry from Git, so it stopped before opening a pull request — writing one built from an empty file would have dropped every other cluster out of the registry. Nothing was committed. Try again once Git is reachable."
+		return result, nil
+	}
+	if !clusterAddonsExists {
+		log.Info("cluster registry file not found, bootstrapping", "cluster", req.Name, "path", clusterAddonsPath)
+		clusterAddonsData = []byte("clusters:\n")
+	}
+
+	// Build labels in the canonical "enabled"/"disabled" vocabulary. This is
+	// the value the live ArgoCD ApplicationSet selector + GetEnabledAddons
+	// require; the legacy "true"/"false" form read as NOT-enabled downstream
+	// and the addon never deployed (V2-cleanup-20). v4 never authors addon
+	// keys on the connection record (design doc §2.4) — clusterLabels stays
+	// empty, so the resulting entry carries no addons: block at all.
+	clusterLabels := make(map[string]string, len(req.Addons))
+	if !v4Repo {
+		for addon, enabled := range req.Addons {
+			clusterLabels[addon] = models.AddonLabelValue(enabled)
+		}
+	}
+
+	// Record the connection-ownership mode on the managed-clusters entry.
+	// Only the non-default "user" mode is written; Sharko-managed entries
+	// omit the field so pre-57.2 files stay byte-identical (absent == sharko).
+	connMode := ""
+	if selfManaged {
+		connMode = models.ConnectionManagedByUser
+	}
+
+	// AddClusterEntry is itself idempotent — if the cluster already exists, it returns
+	// the data unchanged (no error). This makes retry-after-partial-failure safe.
+	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
+		Name:                req.Name,
+		Region:              req.Region,
+		SecretPath:          req.SecretPath,
+		Labels:              clusterLabels,
+		ConnectionManagedBy: connMode,
+		// Stamp the effective creds source so later credential fetches
+		// (Test / Diagnose / secrets / addon ops) route correctly per
+		// cluster — an inline-registered cluster must be read via the
+		// ArgoCD provider under ANY backend connection (V2-cleanup-60.4).
+		CredsSource: string(credsSource),
+		// Stamp the per-cluster role ARN so token minting keeps using the
+		// identity the caller registered with — before this, the field was
+		// silently dropped and a discovery-registered cross-account cluster
+		// minted tokens with the wrong identity (V2-cleanup-62.2). Empty
+		// omits the field (pre-field files stay byte-identical).
+		RoleARN: req.RoleARN,
+	})
+	if addEntryErr != nil {
+		log.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",
+			"cluster", req.Name, "error", addEntryErr,
+		)
+		// Non-fatal: fall back to values-file-only commit so registration still proceeds.
+		updatedClusterAddons = nil
+	}
+
+	files := map[string][]byte{}
+	if !v4Repo {
+		files[valuesPath] = valuesContent
+	}
+	if updatedClusterAddons != nil {
+		// v4 naming polish item 3: the first time Sharko creates
+		// managed-clusters.yaml for a repo, it opens with a plain-English
+		// header. !clusterAddonsExists here means the file was genuinely
+		// absent before this write — headers ride creation only.
+		if v4Repo && !clusterAddonsExists {
+			updatedClusterAddons = append([]byte(managedClustersFileHeader), updatedClusterAddons...)
+		}
+		files[clusterAddonsPath] = updatedClusterAddons
+	}
+
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name),
+		o.prMeta(req.AutoMerge, "register-cluster", fmt.Sprintf("Register cluster %s", req.Name), req.Name, ""))
+	if err != nil {
+		if gitResult != nil {
+			// PR created but merge failed — partial success with PR info.
+			log.Error("RegisterCluster: PR opened but auto-merge failed",
+				"cluster", req.Name, "pr_url", gitResult.PRUrl, "error", err)
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "pr_merge"
+			result.Error = err.Error()
+			result.Message = "Secrets created and PR opened, but auto-merge failed. Merge manually then ArgoCD registration will be needed: " + gitResult.PRUrl
+			result.Git = gitResult
+			return result, nil
+		}
+		// Complete Git failure (couldn't even create PR). Surface the
+		// underlying error so operators can distinguish branch-create /
+		// batch-write / PR-create failures without a debug build.
+		log.Error("RegisterCluster: git commit failed",
+			"cluster", req.Name, "error", err)
+		result.Status = "partial"
+		result.CompletedSteps = steps
+		result.FailedStep = "git_commit"
+		result.Error = err.Error()
+		result.Message = "Secrets created but values file commit failed. ArgoCD registration not started. Manual Git commit required."
+		return result, nil
+	}
+	steps = append(steps, "git_commit")
+	if !v4Repo {
+		gitResult.ValuesFile = valuesPath
+	}
+
+	if gitResult != nil && !gitResult.Merged {
+		log.Info("PR created but not auto-merged — cluster will appear as managed after PR is merged",
+			"cluster", req.Name, "pr", gitResult.PRUrl)
+	}
+
+	// The reconciler owns ArgoCD-side registration. The adoption
+	// short-circuit is preserved as a no-op log line — the cluster is
+	// already in ArgoCD; the reconciler will mark it managed-by sharko
+	// on its next tick via the adoption code path in
+	// argosecrets.Manager.Ensure.
+	if alreadyInArgoCD {
+		log.Info("cluster already in ArgoCD — reconciler will adopt on next tick", "cluster", req.Name)
+		steps = append(steps, "argocd_adopt")
+	} else {
+		steps = append(steps, "reconciler_handoff")
+	}
+
+	// Nudge the reconciler so post-merge convergence happens immediately
+	// rather than waiting for the 30s safety-net tick. When auto-merge is
+	// off the PR is still open — the nudge is harmless (the reconciler's
+	// poll will find no new managed-clusters.yaml entry until merge).
+	o.fireReconcilerTrigger()
+
+	result.CompletedSteps = steps
+	result.Git = gitResult
+
+	// Determine final status. With Step 6 retired the only partial-failure
+	// modes left are addon-secret failures (Step 4) and Git failures
+	// (already handled above with their own early returns).
+	if len(result.FailedSecrets) > 0 {
+		result.Status = "partial"
+		result.FailedStep = "create_secrets"
+		result.Message = fmt.Sprintf("Registration completed but %d addon secret(s) failed to create.", len(result.FailedSecrets))
+	} else {
+		result.Status = "success"
+	}
+	return result, nil
+}
+
+// DeregisterCluster removes a cluster from ArgoCD and deletes its values file.
+// The order is designed to drain ArgoCD-managed addons before hard-deleting the cluster:
+//
+//  1. Remove addon labels from ArgoCD (ApplicationSet prunes addon Applications)
+//  2. Brief wait to give ArgoCD time to react (simplified — no full prune polling)
+//  3. Delete Sharko-managed secrets from remote cluster (best-effort)
+//  4. Delete the ArgoCD cluster registration
+//  5. Delete values file via PR
+func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serverURL string) (*RegisterClusterResult, error) {
+	result := &RegisterClusterResult{
+		Cluster: ClusterResult{Name: name, Server: serverURL},
+	}
+
+	// Step 1: Disable all addon labels on the ArgoCD cluster so ApplicationSet
+	// stops managing addons (prunes the generated Applications).
+	// We set all known addon labels to disabled rather than removing them,
+	// because UpdateClusterLabels merges — an empty map would be a no-op.
+	disableLabels := make(map[string]string)
+	if o.secretDefs != nil {
+		for addonName := range o.secretDefs {
+			disableLabels[addonName] = models.LabelDisabled
+		}
+	}
+	// Also read the cluster's current labels from ArgoCD to catch addons not in secretDefs.
+	clusters, listErr := o.argocd.ListClusters(ctx)
+	if listErr == nil {
+		for _, c := range clusters {
+			if c.Name == name {
+				// Any label that looks like an addon (not a system label) gets disabled.
+				for k := range c.Labels {
+					if k != "name" && k != "server" && k != "env" && k != "region" {
+						disableLabels[k] = models.LabelDisabled
+					}
+				}
+				break
+			}
+		}
+	}
+	if len(disableLabels) > 0 {
+		if err := o.argocd.UpdateClusterLabels(ctx, serverURL, disableLabels); err != nil {
+			return nil, fmt.Errorf("disabling addon labels on cluster %q in ArgoCD: %w", name, err)
+		}
+	}
+
+	// Step 2: Brief wait to give ArgoCD time to react and begin pruning addon Applications.
+	// A full prune-poll (via GetClusterApplications) would be more correct but is left as
+	// a future improvement; this sleep is a deliberate simplification.
+	if o.drainSleep > 0 {
+		time.Sleep(o.drainSleep)
+	}
+
+	// Step 3: Delete Sharko-managed secrets from remote cluster (best-effort).
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
+	if o.credProvider != nil {
+		creds, credErr := o.fetchClusterCredentials(ctx, name)
+		if credErr == nil {
+			o.deleteAllAddonSecrets(ctx, name, creds.Raw) // best-effort, don't fail deregister for this
+		}
+	}
+
+	// Step 4: Delete cluster registration from ArgoCD.
+	if err := o.argocd.DeleteCluster(ctx, serverURL); err != nil {
+		return nil, fmt.Errorf("deleting cluster %q from ArgoCD: %w", name, err)
+	}
+
+	// Step 5: Delete values file from Git.
+	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
+	gitResult, err := o.commitChangesWithMeta(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name),
+		o.prMeta(nil, "remove-cluster", fmt.Sprintf("Deregister cluster %s", name), name, ""))
+	if err != nil {
+		if gitResult != nil {
+			// PR created but merge failed — partial success with PR info.
+			result.Status = "partial"
+			result.CompletedSteps = []string{"remove_argocd_labels", "delete_from_argocd"}
+			result.FailedStep = "pr_merge"
+			result.Error = err.Error()
+			result.Message = fmt.Sprintf("Cluster %s removed from ArgoCD and PR created, but auto-merge failed. Merge manually: %s", name, gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		// Complete Git failure (couldn't even create PR).
+		result.Status = "partial"
+		result.CompletedSteps = []string{"remove_argocd_labels", "delete_from_argocd"}
+		result.FailedStep = "git_commit"
+		result.Error = err.Error()
+		result.Message = fmt.Sprintf("Cluster %s removed from ArgoCD but values file deletion failed. The values file at %s may need manual cleanup.", name, valuesPath)
+		return result, nil
+	}
+
+	result.Status = "success"
+	result.Git = gitResult
+	return result, nil
+}
+
+// UpdateClusterAddons updates addon labels in ArgoCD and the values file in Git.
+// Secrets must exist for enabled addons before ArgoCD labels trigger deployment:
+//
+//  1. Fetch credentials (needed for secret operations on the remote cluster)
+//  2. Create secrets for newly enabled addons (non-best-effort: abort if fails)
+//  3. Delete secrets for disabled addons (best-effort: continue on failure)
+//  4. Update values file via PR
+//  5. Update ArgoCD labels (all at once — LAST, after secrets and values exist)
+//
+// autoMergeOverride is the per-request auto-merge decision (nil = fall
+// back to o.gitops.PRAutoMerge). Passed through to commitChangesWithMeta
+// via PRMetadata.AutoMergeOverride — never mutates o.gitops.PRAutoMerge.
+//
+// dryRun, when true, computes and returns the preview (DryRunResult) with NO
+// side effects — no secrets written, no Git PR, no ArgoCD label changes.
+func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, serverURL string, region string, addons map[string]bool, autoMergeOverride *bool, dryRun bool) (*RegisterClusterResult, error) {
+	result := &RegisterClusterResult{
+		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
+	}
+
+	// v4 repos record addon on/off in cluster-addons/<name>.yaml, not as
+	// labels in the cluster registry — writing the v3 registry on a v4
+	// repo would create a rival file and orphan the fleet (see
+	// ErrV4RepoUnsupported). Fail closed: everything below this line can
+	// write, and answering "not v4" wrongly recreates
+	// configuration/managed-clusters.yaml on a v4 repo. Same stance as
+	// AdoptClusters' / RegisterCluster's / UnadoptCluster's v4 probes.
+	v4Repo, v4ProbeErr := o.isV4Repo(ctx)
+	if v4ProbeErr != nil {
+		return nil, fmt.Errorf("Sharko stopped before changing a cluster's addons: %w", v4ProbeErr)
+	}
+	if v4Repo {
+		return o.updateClusterAddonsV4(ctx, name, addons, autoMergeOverride, dryRun, result)
+	}
+
+	// Referential-integrity guard (V2-cleanup-32): every addon name in the
+	// request must exist in the catalog before any write is attempted. An
+	// unknown name means the label would point at a non-existent
+	// ApplicationSet entry and leave the gitops repo in an inconsistent
+	// state. We reuse the same helper (and the same *AddonNotInCatalogError
+	// → 422) as EnableAddon / RegisterCluster / SetClusterAddonValues.
+	if len(addons) > 0 {
+		names := make([]string, 0, len(addons))
+		for a := range addons {
+			names = append(names, a)
+		}
+		if _, err := o.requireAddonsInCatalog(ctx, names); err != nil {
+			return nil, err
+		}
+	}
+
+	// Generate file content for both dry-run and real paths (same source of truth).
+	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
+
+	// Read catalog to generate cluster values
+	catalogPath := o.paths.Catalog
+	if catalogPath == "" {
+		catalogPath = "configuration/addons-catalog.yaml"
+	}
+	var catalog []models.AddonCatalogEntry
+	catalogData, catalogErr := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+	if catalogErr == nil && catalogData != nil {
+		catalog, _ = parseAddonsCatalog(catalogData)
+	}
+	valuesContent := generateClusterValues(name, region, addons, catalog)
+
+	// Read and mutate managed-clusters.yaml if addons are specified
+	var updatedMC []byte
+	if len(addons) > 0 {
+		clusterAddonsData, mcErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if mcErr != nil || clusterAddonsData == nil {
+			// For dry-run, report what would happen; for real path, abort below
+			if !dryRun {
+				result.Status = "failed"
+				result.CompletedSteps = []string{}
+				result.FailedStep = "update_addon_label"
+				result.Error = "managed-clusters.yaml not found"
+				result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+				return result, nil
+			}
+		} else {
+			updatedMC = clusterAddonsData
+			for addon, enabled := range addons {
+				var mutated []byte
+				var labelErr error
+				if enabled {
+					mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
+				} else {
+					mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
+				}
+				if labelErr != nil {
+					if !dryRun {
+						result.Status = "failed"
+						result.CompletedSteps = []string{}
+						result.FailedStep = "update_addon_label"
+						result.Error = labelErr.Error()
+						result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
+						return result, nil
+					}
+					// Dry-run: note the error but continue to show preview
+					updatedMC = nil
+					break
+				}
+				updatedMC = mutated
+			}
+		}
+	}
+
+	// Dry-run early exit: compute the file preview before any side effects.
+	if dryRun {
+		var filePreviews []FilePreview
+
+		// Values file preview
+		valuesAction := o.fileAction(ctx, valuesPath)
+		oldValues, _ := o.readFileIfExists(ctx, valuesPath)
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   valuesPath,
+			Action: valuesAction,
+			Diff:   o.buildFileDiff(valuesPath, oldValues, valuesContent, valuesAction),
+		})
+
+		// Managed-clusters preview (if addons are updated)
+		if len(addons) > 0 && updatedMC != nil {
+			oldMC, _ := o.readFileIfExists(ctx, clusterAddonsPath)
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, oldMC, updatedMC, "update"),
+			})
+		}
+
+		// Secrets to create: only enabled addons.
+		secretsToCreate := []string{}
+		if o.secretDefs != nil {
+			for addon, enabled := range addons {
+				if enabled {
+					for _, def := range o.secretDefs {
+						if def.AddonName == addon {
+							secretsToCreate = append(secretsToCreate, def.SecretName)
+						}
+					}
+				}
+			}
+		}
+
+		result.Status = "success"
+		result.DryRun = &DryRunResult{
+			EffectiveAddons: func() []string {
+				enabled := []string{}
+				for a, e := range addons {
+					if e {
+						enabled = append(enabled, a)
+					}
+				}
+				return enabled
+			}(),
+			FilesToWrite:    filePreviews,
+			PRTitle:         fmt.Sprintf("%s update addons for cluster %s", o.gitops.CommitPrefix, name),
+			SecretsToCreate: secretsToCreate,
+		}
+		return result, nil
+	}
+
+	// Step 1: Fetch credentials if provider is configured (needed for secret operations).
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
+	var rawKubeconfig []byte
+	if o.credProvider != nil {
+		creds, credErr := o.fetchClusterCredentials(ctx, name)
+		if credErr == nil {
+			rawKubeconfig = creds.Raw
+		}
+	}
+
+	// Step 2: Create secrets for enabled addons before ArgoCD sees them.
+	// Fatal errors (can't connect) abort; individual secret failures are recorded as partial.
+	if rawKubeconfig != nil {
+		enabledAddons := make(map[string]bool)
+		for a, e := range addons {
+			if e {
+				enabledAddons[a] = true
+			}
+		}
+		secretRes, secretErr := o.createAddonSecrets(ctx, rawKubeconfig, enabledAddons)
+		if secretErr != nil {
+			return nil, fmt.Errorf("creating secrets for enabled addons on cluster %q: %w", name, secretErr)
+		}
+		result.Secrets = secretRes.Created
+		result.FailedSecrets = secretRes.Failed
+	}
+
+	// Step 3: Delete secrets for disabled addons (best-effort — continue on failure).
+	if rawKubeconfig != nil {
+		disabledAddons := make(map[string]bool)
+		for a, e := range addons {
+			if !e {
+				disabledAddons[a] = false
+			}
+		}
+		o.deleteAddonSecrets(ctx, name, rawKubeconfig, disabledAddons) //nolint:errcheck // best-effort
+	}
+
+	// Step 4: Update values file in Git AND managed-clusters.yaml labels.
+	//
+	// The cluster reconciler reads managed-clusters.yaml as the source of
+	// truth. If we only write the per-cluster values file and leave the
+	// managed-clusters labels unchanged, the reconciler will re-enable any
+	// addon we just tried to disable on the next reconcile cycle. Both files
+	// must travel in the same PR so they never disagree (mirrors the
+	// no-half-write guard in DisableAddon / EnableAddon — V2-cleanup-44).
+	//
+	// Reuse the valuesContent + updatedMC already computed above for dry-run
+	// preview — single source of truth for both paths.
+	files := map[string][]byte{
+		valuesPath: valuesContent,
+	}
+
+	if len(addons) > 0 && updatedMC != nil {
+		files[clusterAddonsPath] = updatedMC
+	}
+
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name),
+		o.prMeta(autoMergeOverride, "update-cluster", fmt.Sprintf("Update addons for cluster %s", name), name, ""))
+	if err != nil {
+		if gitResult != nil {
+			// PR created but merge failed — partial success with PR info.
+			result.Status = "partial"
+			result.CompletedSteps = []string{"create_secrets", "delete_secrets"}
+			result.FailedStep = "pr_merge"
+			result.Error = err.Error()
+			result.Message = fmt.Sprintf("Secrets updated for cluster %s and PR created, but auto-merge failed. Merge manually then update ArgoCD labels: %s", name, gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		// Complete Git failure (couldn't even create PR).
+		result.Status = "partial"
+		result.CompletedSteps = []string{"create_secrets", "delete_secrets"}
+		result.FailedStep = "git_commit"
+		result.Error = err.Error()
+		result.Message = fmt.Sprintf("Secrets updated for cluster %s but Git commit failed. ArgoCD labels not updated. Values file at %s may be stale.", name, valuesPath)
+		return result, nil
+	}
+
+	gitResult.ValuesFile = valuesPath
+
+	// Step 5: Update ArgoCD cluster labels (LAST — secrets and values file exist by now).
+	labels := make(map[string]string)
+	for addon, enabled := range addons {
+		labels[addon] = models.AddonLabelValue(enabled)
+	}
+
+	if err := o.argocd.UpdateClusterLabels(ctx, serverURL, labels); err != nil {
+		result.Status = "partial"
+		result.CompletedSteps = append(result.CompletedSteps, "git_commit")
+		result.FailedStep = "update_argocd_labels"
+		result.Error = err.Error()
+		result.Message = fmt.Sprintf("Secrets updated and values PR merged for cluster %s, but ArgoCD label update failed. Labels may be stale.", name)
+		result.Git = gitResult
+		return result, nil
+	}
+
+	result.Status = "success"
+	result.CompletedSteps = append(result.CompletedSteps, "git_commit", "update_argocd_labels")
+	result.Git = gitResult
+	return result, nil
+}
+
+// RefreshClusterCredentials validates that fresh credentials are reachable
+// in the credentials provider and nudges the reconciler so the ArgoCD
+// cluster Secret is updated immediately rather than on the next 30s
+// safety-net tick. The reconciler owns the direct Secret write — this
+// probe is kept so the API endpoint can fail fast (404 / 401) without
+// dispatching a no-op reconcile.
+func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name string, _ string) error {
+	if o.credProvider == nil {
+		// No credProvider configured (e.g. kubeconfig-only deployment) —
+		// nothing to refresh; let the reconciler drive on its own cadence.
+		o.fireReconcilerTrigger()
+		return nil
+	}
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
+	if _, err := o.fetchClusterCredentials(ctx, name); err != nil {
+		return fmt.Errorf("fetching fresh credentials for cluster %q: %w", name, err)
+	}
+	// Probe succeeded — hand off to reconciler. Secret write happens
+	// inside reconciler.pollOnce, which re-reads the credentials and
+	// reconciles the Secret payload via argosecrets.Manager.Ensure.
+	o.fireReconcilerTrigger()
+	return nil
+}
+
+// parseAddonsCatalog delegates to the canonical config.Parser so that both
+// the enveloped shape (apiVersion: sharko.dev/v1 / kind: AddonCatalog) and the
+// legacy bare applicationsets: top-level shape parse identically everywhere.
+// The orchestrator already imports internal/config (addon.go, addon_configure.go)
+// so there is no import cycle — the previous duplicate was based on a false assumption.
+func parseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, error) {
+	return config.NewParser().ParseAddonsCatalog(data)
+}

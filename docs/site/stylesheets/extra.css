@@ -1,0 +1,11 @@
+/* Hide the long site_name at the top of the left nav sidebar --
+   it duplicates the header bar title and wraps awkwardly.
+   The header bar title stays intact (not affected by this rule). */
+.md-nav--primary > .md-nav__title {
+  display: none;
+}
+
+/* Bring the nav items closer to the top since we removed the title */
+.md-sidebar--primary .md-sidebar__scrollwrap {
+  padding-top: 0.5rem;
+}

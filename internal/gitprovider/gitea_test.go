@@ -1,0 +1,1435 @@
+package gitprovider
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestGiteaProviderInterfaceAssertion verifies that GiteaProvider implements GitProvider.
+func TestGiteaProviderInterfaceAssertion(t *testing.T) {
+	var _ GitProvider = (*GiteaProvider)(nil)
+}
+
+// TestGiteaProviderGetFileContent tests the GetFileContent method.
+func TestGiteaProviderGetFileContent(t *testing.T) {
+	tests := []struct {
+		name         string
+		statusCode   int
+		body         []byte
+		wantErr      bool
+		wantNotFound bool
+	}{
+		{
+			name:       "success",
+			statusCode: 200,
+			body:       []byte("file content here"),
+			wantErr:    false,
+		},
+		{
+			name:         "404_not_found",
+			statusCode:   404,
+			body:         []byte(`{"message":"Not Found"}`),
+			wantErr:      true,
+			wantNotFound: true,
+		},
+		{
+			name:         "500_server_error",
+			statusCode:   500,
+			body:         []byte(`{"message":"Internal Server Error"}`),
+			wantErr:      true,
+			wantNotFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a test server that mimics Gitea's /api/v1/repos/{owner}/{repo}/contents/{filepath}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The Gitea SDK calls /version during client construction
+				if r.URL.Path == "/api/v1/version" {
+					w.WriteHeader(200)
+					w.Write([]byte(`{"version":"1.20.0"}`))
+					return
+				}
+				// The Gitea SDK appends /api/v1 automatically
+				if r.URL.Path != "/api/v1/repos/testowner/testrepo/raw/testfile.txt" {
+					// For non-raw paths, handle the GetRepo call (used by TestConnection)
+					if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+						w.WriteHeader(200)
+						w.Write([]byte(`{"name":"testrepo"}`))
+						return
+					}
+					t.Errorf("unexpected path: %s", r.URL.Path)
+					w.WriteHeader(404)
+					return
+				}
+				w.WriteHeader(tt.statusCode)
+				w.Write(tt.body)
+			}))
+			defer server.Close()
+
+			provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+			if err != nil {
+				t.Fatalf("NewGiteaProvider failed: %v", err)
+			}
+
+			content, err := provider.GetFileContent(context.Background(), "testfile.txt", "main")
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				if tt.wantNotFound && !errors.Is(err, ErrFileNotFound) {
+					t.Errorf("expected ErrFileNotFound, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if string(content) != string(tt.body) {
+				t.Errorf("content mismatch: got %q, want %q", string(content), string(tt.body))
+			}
+		})
+	}
+}
+
+// TestGiteaProviderListDirectory tests the ListDirectory method.
+func TestGiteaProviderListDirectory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The Gitea SDK calls /version during client construction
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		// Handle GetRepo call (used by TestConnection)
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// ListContents path
+		if r.URL.Path != "/api/v1/repos/testowner/testrepo/contents/testdir" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+
+		// Return a JSON array of ContentsResponse objects
+		response := []map[string]interface{}{
+			{"name": "file1.txt", "path": "testdir/file1.txt", "type": "file"},
+			{"name": "file2.md", "path": "testdir/file2.md", "type": "file"},
+			{"name": "subdir", "path": "testdir/subdir", "type": "dir"},
+		}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	names, err := provider.ListDirectory(context.Background(), "testdir", "main")
+	if err != nil {
+		t.Fatalf("ListDirectory failed: %v", err)
+	}
+
+	// We expect basenames (consistent with GitHub and AzureDevOps providers)
+	expected := []string{"file1.txt", "file2.md", "subdir"}
+	if len(names) != len(expected) {
+		t.Fatalf("expected %d entries, got %d", len(expected), len(names))
+	}
+	for i, name := range names {
+		if name != expected[i] {
+			t.Errorf("entry %d: got %q, want %q", i, name, expected[i])
+		}
+	}
+}
+
+// TestGiteaProviderListDirectory_NotFound_404 — task #147 acceptance-walk
+// finding. A directory that genuinely does not exist (e.g. a cluster that
+// never had a values file written) must come back as
+// gitprovider.ErrFileNotFound, the same sentinel GetFileContent already
+// uses for a missing file, so fail-closed callers (unadopt_v4.go,
+// remove.go, catalog_delete.go, migration_v3v4.go) treat it as "nothing
+// there" rather than a genuine listing failure.
+func TestGiteaProviderListDirectory_NotFound_404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	_, err = provider.ListDirectory(context.Background(), "values/clusters/spoke-us", "main")
+	if err == nil {
+		t.Fatal("expected error for a missing directory, got nil")
+	}
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("expected errors.Is(err, ErrFileNotFound), got: %v", err)
+	}
+}
+
+// TestGiteaProviderListDirectory_ServerError_NotSentinel — only a definitive
+// 404 maps to the sentinel; a 500 must not, so fail-closed callers still
+// abort instead of treating the directory as empty.
+func TestGiteaProviderListDirectory_ServerError_NotSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"Internal Server Error"}`))
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	_, err = provider.ListDirectory(context.Background(), "values/clusters/spoke-us", "main")
+	if err == nil {
+		t.Fatal("expected error for a 500, got nil")
+	}
+	if errors.Is(err, ErrFileNotFound) {
+		t.Errorf("a genuine server error must not match ErrFileNotFound, got: %v", err)
+	}
+}
+
+// TestGiteaProviderListPullRequests tests the ListPullRequests method.
+func TestGiteaProviderListPullRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The Gitea SDK calls /version during client construction
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		// Handle GetRepo call (used by TestConnection)
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// ListRepoPullRequests path
+		if r.URL.Path != "/api/v1/repos/testowner/testrepo/pulls" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+
+		// Check state query parameter
+		state := r.URL.Query().Get("state")
+		if state == "" {
+			state = "all" // default
+		}
+
+		// Return a JSON array of PullRequest objects
+		now := time.Now()
+		response := []map[string]interface{}{
+			{
+				"id":       1,
+				"number":   42,
+				"title":    "Test PR",
+				"body":     "Test description",
+				"state":    state,
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/42",
+				"user": map[string]interface{}{
+					"login": "testuser", // Gitea User struct uses "login" as JSON tag
+				},
+				"base": map[string]interface{}{
+					"ref": "main",
+				},
+				"head": map[string]interface{}{
+					"ref": "feature-branch",
+				},
+				"created_at": now.Format(time.RFC3339),
+				"updated_at": now.Format(time.RFC3339),
+			},
+		}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	prs, err := provider.ListPullRequests(context.Background(), "open")
+	if err != nil {
+		t.Fatalf("ListPullRequests failed: %v", err)
+	}
+
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(prs))
+	}
+
+	pr := prs[0]
+	if pr.ID != 42 {
+		t.Errorf("expected ID 42, got %d", pr.ID)
+	}
+	if pr.Title != "Test PR" {
+		t.Errorf("expected title 'Test PR', got %q", pr.Title)
+	}
+	if pr.Author != "testuser" {
+		t.Errorf("expected author 'testuser', got %q", pr.Author)
+	}
+	if pr.SourceBranch != "feature-branch" {
+		t.Errorf("expected source branch 'feature-branch', got %q", pr.SourceBranch)
+	}
+	if pr.TargetBranch != "main" {
+		t.Errorf("expected target branch 'main', got %q", pr.TargetBranch)
+	}
+}
+
+// TestGiteaProviderListPullRequestsUnknownState tests that an unknown state defaults to "all".
+func TestGiteaProviderListPullRequestsUnknownState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The Gitea SDK calls /version during client construction
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		// Handle GetRepo call (used by TestConnection)
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// ListRepoPullRequests path
+		if r.URL.Path != "/api/v1/repos/testowner/testrepo/pulls" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+
+		// Check state query parameter — should be "all" since we're passing an unknown state
+		state := r.URL.Query().Get("state")
+		if state != "all" {
+			t.Errorf("expected state 'all', got %q", state)
+		}
+
+		// Return empty PR list
+		response := []map[string]interface{}{}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	// Call with an unrecognized state — should hit the default case and map to StateAll
+	prs, err := provider.ListPullRequests(context.Background(), "bogus")
+	if err != nil {
+		t.Fatalf("ListPullRequests failed: %v", err)
+	}
+
+	// Should succeed with empty list (the mock returns empty)
+	if len(prs) != 0 {
+		t.Errorf("expected 0 PRs, got %d", len(prs))
+	}
+}
+
+// TestGiteaProviderListPullRequestsMergedStatus tests that ListPullRequests
+// translates Gitea's closed+merged state to "merged" (walk finding: Gitea
+// reports merged PRs with state "closed" — merged-ness lives in the separate
+// merged/merged_at fields — so without this translation every merged PR on
+// Gitea was reported as "closed" and the Merged PRs panel stayed empty).
+func TestGiteaProviderListPullRequestsMergedStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.URL.Path != "/api/v1/repos/testowner/testrepo/pulls" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+
+		mergedAt := "2026-07-30T12:00:00Z"
+		response := []map[string]interface{}{
+			{
+				"number":    1,
+				"title":     "Closed and merged PR",
+				"state":     "closed",
+				"merged":    true,
+				"merged_at": mergedAt,
+				"html_url":  "https://gitea.example.com/testowner/testrepo/pulls/1",
+			},
+			{
+				"number":   2,
+				"title":    "Closed without merge",
+				"state":    "closed",
+				"merged":   false,
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/2",
+			},
+			{
+				"number":   3,
+				"title":    "Still open",
+				"state":    "open",
+				"merged":   false,
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/3",
+			},
+		}
+		w.WriteHeader(200)
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	prs, err := provider.ListPullRequests(context.Background(), "all")
+	if err != nil {
+		t.Fatalf("ListPullRequests failed: %v", err)
+	}
+	if len(prs) != 3 {
+		t.Fatalf("expected 3 PRs, got %d", len(prs))
+	}
+
+	byID := make(map[int]PullRequest, len(prs))
+	for _, pr := range prs {
+		byID[pr.ID] = pr
+	}
+
+	merged := byID[1]
+	if merged.Status != "merged" {
+		t.Errorf("expected PR #1 status 'merged', got %q", merged.Status)
+	}
+	if merged.ClosedAt == "" {
+		t.Errorf("expected PR #1 to have a merged/closed timestamp set, got empty string")
+	}
+
+	closedNoMerge := byID[2]
+	if closedNoMerge.Status != "closed" {
+		t.Errorf("expected PR #2 status 'closed', got %q", closedNoMerge.Status)
+	}
+
+	open := byID[3]
+	if open.Status != "open" {
+		t.Errorf("expected PR #3 status 'open', got %q", open.Status)
+	}
+}
+
+// TestGiteaProviderWritePath tests the full write cycle: CreateBranch, CreateOrUpdateFile,
+// BatchCreateFiles, CreatePullRequest, GetPullRequestStatus, MergePullRequest, DeleteBranch, DeleteFile.
+func TestGiteaProviderWritePath(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The Gitea SDK calls /version during client construction
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		// Handle GetRepo call for constructor
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// CreateBranch: POST /api/v1/repos/{owner}/{repo}/branches
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/branches" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"name":"feature-branch","commit":{"id":"abc123"}}`))
+			return
+		}
+
+		// GetContents (for checking file existence before create/update): GET /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			// First call (for CreateOrUpdateFile create path): file doesn't exist → 404
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			// Second call (for CreateOrUpdateFile update path): file exists
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "existingfile.txt",
+				"path": "existingfile.txt",
+				"sha":  "oldsha123",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			// For DeleteFile: file exists
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "deleteme.txt",
+				"path": "deleteme.txt",
+				"sha":  "deletesha",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" {
+			w.WriteHeader(404) // batch file doesn't exist yet
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt" {
+			w.WriteHeader(404)
+			return
+		}
+
+		// CreateFile: POST /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"newfile.txt","sha":"newsha"}}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch1.txt"}}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt" {
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch2.txt"}}`))
+			return
+		}
+
+		// UpdateFile: PUT /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "PUT" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"content":{"name":"existingfile.txt","sha":"newsha"}}`))
+			return
+		}
+
+		// DeleteFile: DELETE /api/v1/repos/{owner}/{repo}/contents/{filepath}
+		if r.Method == "DELETE" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			w.WriteHeader(204)
+			return
+		}
+
+		// CreatePullRequest: POST /api/v1/repos/{owner}/{repo}/pulls
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls" {
+			now := time.Now()
+			pr := map[string]interface{}{
+				"id":       1,
+				"number":   42,
+				"title":    "Test PR",
+				"body":     "Test body",
+				"state":    "open",
+				"html_url": "https://gitea.example.com/testowner/testrepo/pulls/42",
+				"user": map[string]interface{}{
+					"login": "testuser",
+				},
+				"base": map[string]interface{}{
+					"ref": "main",
+				},
+				"head": map[string]interface{}{
+					"ref": "feature-branch",
+				},
+				"created_at": now.Format(time.RFC3339),
+			}
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// GetPullRequest: GET /api/v1/repos/{owner}/{repo}/pulls/{index}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+				"mergeable":  true,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/999" {
+			// PR not found
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+
+		// MergePullRequest: POST /api/v1/repos/{owner}/{repo}/pulls/{index}/merge
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		// DeleteBranch: DELETE /api/v1/repos/{owner}/{repo}/branches/{branch}
+		if r.Method == "DELETE" && r.URL.Path == "/api/v1/repos/testowner/testrepo/branches/feature-branch" {
+			w.WriteHeader(204)
+			return
+		}
+
+		// Catch-all
+		t.Logf("unhandled request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. CreateBranch
+	if err := provider.CreateBranch(ctx, "feature-branch", "main"); err != nil {
+		t.Errorf("CreateBranch failed: %v", err)
+	}
+
+	// 2. CreateOrUpdateFile — create path (file doesn't exist)
+	if err := provider.CreateOrUpdateFile(ctx, "newfile.txt", []byte("new content"), "feature-branch", "Add new file"); err != nil {
+		t.Errorf("CreateOrUpdateFile (create) failed: %v", err)
+	}
+
+	// 3. CreateOrUpdateFile — update path (file exists)
+	if err := provider.CreateOrUpdateFile(ctx, "existingfile.txt", []byte("updated content"), "feature-branch", "Update file"); err != nil {
+		t.Errorf("CreateOrUpdateFile (update) failed: %v", err)
+	}
+
+	// 4. BatchCreateFiles
+	files := map[string][]byte{
+		"batch1.txt": []byte("batch content 1"),
+		"batch2.txt": []byte("batch content 2"),
+	}
+	if err := provider.BatchCreateFiles(ctx, files, "feature-branch", "Batch commit"); err != nil {
+		t.Errorf("BatchCreateFiles failed: %v", err)
+	}
+
+	// 5. CreatePullRequest
+	pr, err := provider.CreatePullRequest(ctx, "Test PR", "Test body", "feature-branch", "main")
+	if err != nil {
+		t.Fatalf("CreatePullRequest failed: %v", err)
+	}
+	if pr.ID != 42 {
+		t.Errorf("expected PR ID 42, got %d", pr.ID)
+	}
+	if pr.Status != "open" {
+		t.Errorf("expected PR status 'open', got %q", pr.Status)
+	}
+
+	// 6. GetPullRequestStatus
+	status, err := provider.GetPullRequestStatus(ctx, 42)
+	if err != nil {
+		t.Errorf("GetPullRequestStatus failed: %v", err)
+	}
+	if status != "open" {
+		t.Errorf("expected status 'open', got %q", status)
+	}
+
+	// 7. MergePullRequest
+	if err := provider.MergePullRequest(ctx, 42); err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	// 8. DeleteFile
+	if err := provider.DeleteFile(ctx, "deleteme.txt", "main", "Remove file"); err != nil {
+		t.Errorf("DeleteFile failed: %v", err)
+	}
+
+	// 9. DeleteBranch
+	if err := provider.DeleteBranch(ctx, "feature-branch"); err != nil {
+		t.Errorf("DeleteBranch failed: %v", err)
+	}
+}
+
+// giteaFileRequestBody mirrors the JSON shape the Gitea SDK sends for
+// create/update/delete file calls (gitea.FileOptions embedded, plus the
+// per-call fields) — used by the attribution tests below to inspect exactly
+// what the server received, the same way TestCreateOrUpdateFile_NewFile
+// (github_write_test.go) decodes the raw request body rather than trusting
+// the SDK's own round-trip.
+type giteaFileRequestBody struct {
+	Message   string `json:"message"`
+	Branch    string `json:"branch"`
+	Author    struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	} `json:"author"`
+	Committer struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	} `json:"committer"`
+}
+
+// TestGiteaProviderCreateFile_SetsAuthorAndCommitter is the create half of
+// task #67 / review finding M1: the Gitea write path did not set
+// FileOptions.Author/Committer at all, so a Tier 2 commit made with a
+// per-user PAT was still authored as whichever account the token belongs
+// to — the acting user's identity, resolved by
+// internal/api/tiered_git.go's GitProviderForTier and attached to ctx via
+// gitprovider.WithAttribution, never reached the Gitea SDK request body.
+func TestGiteaProviderCreateFile_SetsAuthorAndCommitter(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"newfile.txt","sha":"newsha"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	if err := provider.CreateOrUpdateFile(ctx, "newfile.txt", []byte("content"), "feature-branch", "Add new file"); err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+
+	if captured.Author.Name != "Jane Dev" || captured.Author.Email != "jane@example.com" {
+		t.Errorf("author = %+v, want Jane Dev <jane@example.com>", captured.Author)
+	}
+	if captured.Committer.Name != "Jane Dev" || captured.Committer.Email != "jane@example.com" {
+		t.Errorf("committer = %+v, want Jane Dev <jane@example.com>", captured.Committer)
+	}
+	if !strings.Contains(captured.Message, "Signed-off-by: Jane Dev <jane@example.com>") {
+		t.Errorf("message %q missing Signed-off-by trailer for the effective author", captured.Message)
+	}
+}
+
+// TestGiteaProviderUpdateFile_SetsAuthorAndCommitter is the update half of
+// the same fix: CreateOrUpdateFile routes to updateFile when the file
+// already exists, and that path had the identical gap.
+func TestGiteaProviderUpdateFile_SetsAuthorAndCommitter(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "existingfile.txt",
+				"path": "existingfile.txt",
+				"sha":  "oldsha123",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "PUT" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/existingfile.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"content":{"name":"existingfile.txt","sha":"newsha"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	if err := provider.CreateOrUpdateFile(ctx, "existingfile.txt", []byte("updated"), "feature-branch", "Update file"); err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+
+	if captured.Author.Name != "Jane Dev" || captured.Author.Email != "jane@example.com" {
+		t.Errorf("author = %+v, want Jane Dev <jane@example.com>", captured.Author)
+	}
+	if captured.Committer.Name != "Jane Dev" || captured.Committer.Email != "jane@example.com" {
+		t.Errorf("committer = %+v, want Jane Dev <jane@example.com>", captured.Committer)
+	}
+}
+
+// TestGiteaProviderDeleteFile_SetsAuthorAndCommitter covers the third write
+// method the story calls out: DeleteFile.
+func TestGiteaProviderDeleteFile_SetsAuthorAndCommitter(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"name": "deleteme.txt",
+				"path": "deleteme.txt",
+				"sha":  "deletesha",
+				"type": "file",
+			})
+			return
+		}
+		if r.Method == "DELETE" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/deleteme.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(200)
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	if err := provider.DeleteFile(ctx, "deleteme.txt", "main", "Remove file"); err != nil {
+		t.Fatalf("DeleteFile failed: %v", err)
+	}
+
+	if captured.Author.Name != "Jane Dev" || captured.Author.Email != "jane@example.com" {
+		t.Errorf("author = %+v, want Jane Dev <jane@example.com>", captured.Author)
+	}
+	if captured.Committer.Name != "Jane Dev" || captured.Committer.Email != "jane@example.com" {
+		t.Errorf("committer = %+v, want Jane Dev <jane@example.com>", captured.Committer)
+	}
+}
+
+// TestGiteaProviderBatchCreateFiles_SetsAuthorAndCommitter covers
+// BatchCreateFiles, which the doc comment on the Gitea provider says falls
+// back to sequential CreateOrUpdateFile calls (no native batch API) — so
+// the attribution fix has to reach every file in the batch, not just a
+// single-file call.
+func TestGiteaProviderBatchCreateFiles_SetsAuthorAndCommitter(t *testing.T) {
+	captured := map[string]giteaFileRequestBody{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && (r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" ||
+			r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt") {
+			w.WriteHeader(404)
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch1.txt" {
+			var body giteaFileRequestBody
+			json.NewDecoder(r.Body).Decode(&body)
+			captured["batch1.txt"] = body
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch1.txt"}}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/batch2.txt" {
+			var body giteaFileRequestBody
+			json.NewDecoder(r.Body).Decode(&body)
+			captured["batch2.txt"] = body
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"batch2.txt"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	ctx := WithAttribution(context.Background(), CommitAttribution{
+		AuthorName:  "Jane Dev",
+		AuthorEmail: "jane@example.com",
+	})
+	files := map[string][]byte{
+		"batch1.txt": []byte("one"),
+		"batch2.txt": []byte("two"),
+	}
+	if err := provider.BatchCreateFiles(ctx, files, "feature-branch", "Batch commit"); err != nil {
+		t.Fatalf("BatchCreateFiles failed: %v", err)
+	}
+
+	for _, name := range []string{"batch1.txt", "batch2.txt"} {
+		body, ok := captured[name]
+		if !ok {
+			t.Fatalf("%s: no request captured", name)
+		}
+		if body.Author.Name != "Jane Dev" || body.Author.Email != "jane@example.com" {
+			t.Errorf("%s: author = %+v, want Jane Dev <jane@example.com>", name, body.Author)
+		}
+		if body.Committer.Name != "Jane Dev" || body.Committer.Email != "jane@example.com" {
+			t.Errorf("%s: committer = %+v, want Jane Dev <jane@example.com>", name, body.Committer)
+		}
+	}
+}
+
+// TestGiteaProviderCreateFile_NoAttribution_FallsBackToServiceIdentity is
+// the no-PAT half of the tiered model: when ctx carries no
+// CommitAttribution at all (Tier 1, or a caller that never resolved a
+// per-user PAT), the commit must still carry an explicit identity — the
+// same "Sharko Bot" service identity commitAuthorFor falls back to on
+// GitHub — rather than silently defaulting to whatever account the
+// connection's own service PAT belongs to with no record of who triggered
+// the change.
+func TestGiteaProviderCreateFile_NoAttribution_FallsBackToServiceIdentity(t *testing.T) {
+	var captured giteaFileRequestBody
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/newfile.txt" {
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+			w.WriteHeader(201)
+			w.Write([]byte(`{"content":{"name":"newfile.txt","sha":"newsha"}}`))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	// No WithAttribution call — plain background context, exactly like a
+	// caller that never resolved a per-user PAT.
+	if err := provider.CreateOrUpdateFile(context.Background(), "newfile.txt", []byte("content"), "feature-branch", "Add new file"); err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+
+	if captured.Author.Name != DefaultAuthorName || captured.Author.Email != DefaultAuthorEmail {
+		t.Errorf("author = %+v, want the default service identity %s <%s>", captured.Author, DefaultAuthorName, DefaultAuthorEmail)
+	}
+	if captured.Committer.Name != DefaultAuthorName || captured.Committer.Email != DefaultAuthorEmail {
+		t.Errorf("committer = %+v, want the default service identity %s <%s>", captured.Committer, DefaultAuthorName, DefaultAuthorEmail)
+	}
+	if !strings.Contains(captured.Message, "Signed-off-by: "+DefaultAuthorName+" <"+DefaultAuthorEmail+">") {
+		t.Errorf("message %q missing Signed-off-by trailer for the default service identity", captured.Message)
+	}
+}
+
+// TestGiteaProviderGetPullRequestStatusNotFound tests that GetPullRequestStatus
+// wraps ErrPullRequestNotFound on 404.
+func TestGiteaProviderGetPullRequestStatusNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		// GetPullRequest returns 404
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/999" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	_, err = provider.GetPullRequestStatus(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected ErrPullRequestNotFound, got: %v", err)
+	}
+}
+
+// TestGiteaProviderGetPullRequestStatusMerged tests that GetPullRequestStatus
+// reports "merged" for a closed+merged PR, not "closed". Unlike ListPullRequests
+// (the walk finding fixed above), GetPullRequestStatus already checked
+// pr.HasMerged before falling back to state — this test locks that behavior in.
+func TestGiteaProviderGetPullRequestStatusMerged(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"number":     42,
+				"state":      "closed",
+				"merged":     true,
+				"has_merged": true,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	status, err := provider.GetPullRequestStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetPullRequestStatus failed: %v", err)
+	}
+	if status != "merged" {
+		t.Errorf("expected status 'merged', got %q", status)
+	}
+}
+
+// TestGiteaProviderDeleteFileMissing tests that DeleteFile errors when the file doesn't exist.
+func TestGiteaProviderDeleteFileMissing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+		// GetContents for missing file returns 404
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/contents/missing.txt" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+
+	err = provider.DeleteFile(context.Background(), "missing.txt", "main", "Delete missing")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, errors.New("file not found")) && err.Error() != `delete file: file "missing.txt" not found on branch "main"` {
+		t.Errorf("expected 'file not found' error, got: %v", err)
+	}
+}
+
+// TestGiteaProviderMergePullRequestRetryThenSucceed tests that MergePullRequest
+// retries when the PR is not yet mergeable, then succeeds when it becomes mergeable.
+func TestGiteaProviderMergePullRequestRetryThenSucceed(t *testing.T) {
+	attemptCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			attemptCount++
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+			}
+			// First 2 attempts: not yet mergeable
+			if attemptCount <= 2 {
+				pr["mergeable"] = false
+			} else {
+				pr["mergeable"] = true
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// MergePullRequest — only succeeds after GetPullRequest reports mergeable=true
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			// Should only be called after attempt 3+ when mergeable=true
+			if attemptCount < 3 {
+				// Should not reach here — GetPullRequest should have caused a retry
+				w.WriteHeader(405)
+				w.Write([]byte(`{"message":"Method Not Allowed"}`))
+				return
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	// Use zero delay for fast test
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	if attemptCount < 3 {
+		t.Errorf("expected at least 3 GetPullRequest attempts, got %d", attemptCount)
+	}
+}
+
+// TestGiteaProviderMergePullRequestAlreadyMerged tests that MergePullRequest
+// is idempotent — returns success if the PR is already merged.
+func TestGiteaProviderMergePullRequestAlreadyMerged(t *testing.T) {
+	mergeAttempted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — PR already merged
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "closed",
+				"merged":     true,
+				"has_merged": true,
+				"mergeable":  false, // irrelevant when already merged
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// MergePullRequest — should NOT be called if already merged
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			mergeAttempted = true
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	if mergeAttempted {
+		t.Error("merge should not have been attempted when PR already merged")
+	}
+}
+
+// TestGiteaProviderMergePullRequestExhaustion tests that MergePullRequest
+// returns an error after exhausting retry attempts when the PR never becomes mergeable.
+func TestGiteaProviderMergePullRequestExhaustion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — always returns not mergeable
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+				"mergeable":  false,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err == nil {
+		t.Fatal("expected error after exhausting attempts, got nil")
+	}
+
+	// Verify the error message mentions exhaustion
+	expectedMsg := "still not mergeable after 10 attempts"
+	if !errors.Is(err, errors.New(expectedMsg)) && err.Error() != "merge pull request #42: "+expectedMsg {
+		t.Errorf("expected exhaustion error, got: %v", err)
+	}
+}
+
+// TestGiteaProviderMergePullRequest404NotFound tests that MergePullRequest
+// wraps ErrPullRequestNotFound when GetPullRequest returns 404.
+func TestGiteaProviderMergePullRequest404NotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — 404 PR not found
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/999" {
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected ErrPullRequestNotFound, got: %v", err)
+	}
+}
+
+// TestGiteaProviderMergePullRequest405RetryThenSucceed tests that MergePullRequest
+// retries when the merge call itself returns 405, then succeeds.
+func TestGiteaProviderMergePullRequest405RetryThenSucceed(t *testing.T) {
+	mergeAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/version" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"version":"1.20.0"}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/repos/testowner/testrepo" {
+			w.WriteHeader(200)
+			w.Write([]byte(`{"name":"testrepo"}`))
+			return
+		}
+
+		// GetPullRequest — always mergeable
+		if r.Method == "GET" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42" {
+			pr := map[string]interface{}{
+				"id":         1,
+				"number":     42,
+				"title":      "Test PR",
+				"state":      "open",
+				"merged":     false,
+				"has_merged": false,
+				"mergeable":  true,
+			}
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		// MergePullRequest — first 2 attempts return 405, then succeed
+		if r.Method == "POST" && r.URL.Path == "/api/v1/repos/testowner/testrepo/pulls/42/merge" {
+			mergeAttempts++
+			if mergeAttempts <= 2 {
+				w.WriteHeader(405)
+				w.Write([]byte(`{"message":"Method Not Allowed"}`))
+				return
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"merged":true}`))
+			return
+		}
+
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	provider, err := NewGiteaProvider(server.URL, "testowner", "testrepo", "test-token")
+	if err != nil {
+		t.Fatalf("NewGiteaProvider failed: %v", err)
+	}
+	provider.mergePollDelay = 0
+
+	err = provider.MergePullRequest(context.Background(), 42)
+	if err != nil {
+		t.Errorf("MergePullRequest failed: %v", err)
+	}
+
+	if mergeAttempts < 3 {
+		t.Errorf("expected at least 3 merge attempts, got %d", mergeAttempts)
+	}
+}

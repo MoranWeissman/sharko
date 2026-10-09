@@ -1,0 +1,356 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+)
+
+// ---------- mock ArgoSecretManager ----------
+//
+// Ensure was reintroduced for V2-cleanup-8.2: the kubeconfig registration
+// path writes the ArgoCD cluster Secret directly (the reconciler can't —
+// kubeconfig creds never reach the secrets backend it reads from). The mock
+// captures the spec it is called with so the regression test can assert the
+// Server / Token / CAData / Labels passed to the manager. SetAnnotation,
+// GetAnnotation, GetManagedByLabel and Unadopt cover the adopt/unadopt
+// metadata paths that remain orchestrator responsibilities.
+
+type mockArgoSecretManager struct {
+	annotations    map[string]map[string]string // cluster -> key -> value
+	managedByLabel map[string]string            // cluster -> label value
+	unadopted      []string
+	ensured        []ArgoSecretSpec // specs captured by Ensure, in call order
+	annotationErr  error
+	labelErr       error
+	unadoptErr     error
+	ensureErr      error
+
+	// secretDetails / secretDetailErr / takeOverResults / takeOverErr back
+	// GetClusterSecretDetail / TakeOverClusterSecret — the v4 adopt/takeover
+	// preflight + ownership-swap primitives (v4-coherence-closure lane D).
+	secretDetails   map[string]ClusterSecretDetail
+	secretDetailErr error
+	takeOverResults map[string]TakeOverResult
+	takeOverErr     error
+	// takenOver records the names TakeOverClusterSecret was called with, in
+	// call order, so tests can assert the swap happened (or did not).
+	takenOver []string
+}
+
+func newMockArgoSecretManager() *mockArgoSecretManager {
+	return &mockArgoSecretManager{
+		annotations:    make(map[string]map[string]string),
+		managedByLabel: make(map[string]string),
+	}
+}
+
+func (m *mockArgoSecretManager) SetAnnotation(_ context.Context, name, key, value string) error {
+	if m.annotationErr != nil {
+		return m.annotationErr
+	}
+	if m.annotations[name] == nil {
+		m.annotations[name] = make(map[string]string)
+	}
+	m.annotations[name][key] = value
+	return nil
+}
+
+func (m *mockArgoSecretManager) GetAnnotation(_ context.Context, name, key string) (string, error) {
+	if m.annotationErr != nil {
+		return "", m.annotationErr
+	}
+	if m.annotations[name] == nil {
+		return "", nil
+	}
+	return m.annotations[name][key], nil
+}
+
+func (m *mockArgoSecretManager) GetManagedByLabel(_ context.Context, name string) (string, error) {
+	if m.labelErr != nil {
+		return "", m.labelErr
+	}
+	return m.managedByLabel[name], nil
+}
+
+func (m *mockArgoSecretManager) Unadopt(_ context.Context, name string) error {
+	if m.unadoptErr != nil {
+		return m.unadoptErr
+	}
+	m.unadopted = append(m.unadopted, name)
+	return nil
+}
+
+func (m *mockArgoSecretManager) Ensure(_ context.Context, spec ArgoSecretSpec) (bool, error) {
+	if m.ensureErr != nil {
+		return false, m.ensureErr
+	}
+	m.ensured = append(m.ensured, spec)
+	return true, nil
+}
+
+// GetClusterSecretDetail returns the seeded detail for name, or a
+// not-found detail when nothing was seeded — mirrors
+// argosecrets.Manager.GetClusterSecretDetail's "missing is not an error"
+// contract.
+func (m *mockArgoSecretManager) GetClusterSecretDetail(_ context.Context, name string) (ClusterSecretDetail, error) {
+	if m.secretDetailErr != nil {
+		return ClusterSecretDetail{}, m.secretDetailErr
+	}
+	if d, ok := m.secretDetails[name]; ok {
+		return d, nil
+	}
+	return ClusterSecretDetail{Found: false}, nil
+}
+
+// TakeOverClusterSecret returns the seeded result for name (defaulting to
+// Found:true, Changed:true — an ordinary successful swap) and records the
+// call.
+func (m *mockArgoSecretManager) TakeOverClusterSecret(_ context.Context, name string, _ bool, _ string, _ func(key string) bool) (TakeOverResult, error) {
+	if m.takeOverErr != nil {
+		return TakeOverResult{}, m.takeOverErr
+	}
+	m.takenOver = append(m.takenOver, name)
+	if res, ok := m.takeOverResults[name]; ok {
+		return res, nil
+	}
+	return TakeOverResult{Found: true, Changed: true}, nil
+}
+
+// ---------- adopt tests ----------
+
+func TestAdoptClusters_Success(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+		{Name: "cluster-b", Server: "https://b.example.com"},
+	}
+
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n")
+
+	asm := newMockArgoSecretManager()
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	autoMerge := true
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters:  []string{"cluster-a", "cluster-b"},
+		AutoMerge: &autoMerge,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result.Results))
+	}
+	for _, cr := range result.Results {
+		if cr.Status != "success" {
+			t.Errorf("cluster %s: expected success, got %s (error: %s)", cr.Name, cr.Status, cr.Error)
+		}
+		if cr.Git == nil {
+			t.Errorf("cluster %s: expected git result", cr.Name)
+		}
+	}
+
+	// Check that adopted annotation was set.
+	for _, name := range []string{"cluster-a", "cluster-b"} {
+		if asm.annotations[name][AnnotationAdopted] != "true" {
+			t.Errorf("expected adopted annotation on %s", name)
+		}
+	}
+}
+
+func TestAdoptClusters_ClusterNotInArgoCD(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a", "not-in-argocd"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result.Results))
+	}
+
+	// cluster-a should succeed, not-in-argocd should fail.
+	if result.Results[0].Status == "failed" && result.Results[0].Name == "cluster-a" {
+		t.Error("cluster-a should have succeeded")
+	}
+	var failedResult *AdoptClusterResult
+	for i := range result.Results {
+		if result.Results[i].Name == "not-in-argocd" {
+			failedResult = &result.Results[i]
+		}
+	}
+	if failedResult == nil || failedResult.Status != "failed" {
+		t.Error("expected not-in-argocd to fail")
+	}
+	if failedResult != nil && !strings.Contains(failedResult.Error, "not found in ArgoCD") {
+		t.Errorf("unexpected error: %s", failedResult.Error)
+	}
+}
+
+func TestAdoptClusters_RejectManagedByOther(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+
+	git := newMockGitProvider()
+
+	asm := newMockArgoSecretManager()
+	asm.managedByLabel["cluster-a"] = "other-tool"
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Results[0].Status != "failed" {
+		t.Errorf("expected failed, got %s", result.Results[0].Status)
+	}
+	if !strings.Contains(result.Results[0].Error, "managed by") {
+		t.Errorf("expected managed-by error, got: %s", result.Results[0].Error)
+	}
+}
+
+// TestAdoptClusters_ManagedByReadFailureRefuses pins the doubt=refuse flip
+// (task #150 lane A): when the ownership label cannot be read, the v3 adopt
+// door used to log and PROCEED — the wrong direction. It now fails that
+// cluster's adoption, mirroring remove.go's ownership-gate stance.
+func TestAdoptClusters_ManagedByReadFailureRefuses(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n")
+
+	asm := newMockArgoSecretManager()
+	asm.labelErr = fmt.Errorf("secrets \"cluster-a\" is forbidden")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	cr := result.Results[0]
+	if cr.Status != "failed" {
+		t.Fatalf("expected failed — doubt must refuse — got %s (error: %s)", cr.Status, cr.Error)
+	}
+	if !strings.Contains(cr.Error, "could not confirm who owns") {
+		t.Errorf("expected the could-not-confirm-owner error, got: %q", cr.Error)
+	}
+	// Nothing may be written or annotated for a refused cluster.
+	if len(git.prs) != 0 {
+		t.Errorf("a refused adoption still opened %d pull request(s)", len(git.prs))
+	}
+	if len(asm.annotations["cluster-a"]) != 0 {
+		t.Errorf("a refused adoption still set annotations: %v", asm.annotations["cluster-a"])
+	}
+}
+
+func TestAdoptClusters_DryRun(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+
+	git := newMockGitProvider()
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"},
+		DryRun:   true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Results[0].DryRun == nil {
+		t.Fatal("expected dry_run result")
+	}
+	if result.Results[0].DryRun.PRTitle == "" {
+		t.Error("expected PR title in dry run")
+	}
+	// No PRs should have been created.
+	if len(git.prs) > 0 {
+		t.Error("expected no PRs in dry-run mode")
+	}
+}
+
+func TestAdoptClusters_WithVerification(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"cluster-a": {
+				Server: "https://a.example.com",
+				CAData: []byte("fake-ca"),
+				Token:  "fake-token",
+				Raw:    []byte("fake-kubeconfig"),
+			},
+		},
+	}
+
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n")
+
+	fakeClientFn := func(_ []byte) (kubernetes.Interface, error) {
+		return fake.NewSimpleClientset(), nil
+	}
+
+	orch := New(nil, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetSecretManagement(nil, nil, fakeClientFn)
+
+	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	cr := result.Results[0]
+	if cr.Verification == nil {
+		t.Fatal("expected verification result")
+	}
+	if !cr.Verification.Success {
+		t.Errorf("expected verification to pass, got error: %s", cr.Verification.ErrorMessage)
+	}
+}
+
+func TestAdoptClusters_EmptyRequest(t *testing.T) {
+	orch := New(nil, nil, newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
+	_, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{})
+	if err == nil {
+		t.Fatal("expected error for empty clusters")
+	}
+}

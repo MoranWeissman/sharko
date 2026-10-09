@@ -1,0 +1,919 @@
+package auth
+
+import (
+	"context"
+	cryptoRand "crypto/rand"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"sync"
+
+	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+// Aliases to keep the bootstrap-secret helpers readable while letting
+// the import list stay narrow. corev1Secret is the K8s Secret type; the
+// Type field uses corev1.SecretTypeOpaque (label-free standard type).
+type (
+	corev1Secret = corev1.Secret
+)
+
+const corev1SecretTypeOpaque = corev1.SecretTypeOpaque
+
+// apierrorsIsNotFound and apierrorsIsAlreadyExists wrap the apierrors
+// helpers so call sites in this file don't need to import the package
+// directly. Tests in bootstrap_test.go also use these.
+func apierrorsIsNotFound(err error) bool      { return apierrors.IsNotFound(err) }
+func apierrorsIsAlreadyExists(err error) bool { return apierrors.IsAlreadyExists(err) }
+
+// EnvBootstrapAdminPassword is the environment variable that, when set,
+// supplies the bootstrap admin password from an operator (Helm value or an
+// existing Secret). When this variable is non-empty, Sharko adopts that
+// password as the bcrypt-hashed `admin.password` and MUST NOT log it
+// anywhere — operator-supplied secrets are never logged. This contract is
+// enforced by MaybeLogBootstrapCredential / SeedBootstrapAdminFromEnv.
+const EnvBootstrapAdminPassword = "SHARKO_BOOTSTRAP_ADMIN_PASSWORD"
+
+// EnvWriteInitialAdminSecret toggles whether Sharko writes a dedicated
+// `sharko-initial-admin-secret` Secret on the auto-generated bootstrap path.
+// Mirrors the ArgoCD `argocd-initial-admin-secret` pattern so operators can
+// retrieve the bootstrap password via kubectl after the log line scrolls
+// off — see docs/site/operator/installation.md.
+//
+// Values:
+//
+//	""        — default, write the secret (recommended)
+//	"true"    — explicit opt-in, write the secret
+//	"false"   — explicit opt-out, do NOT write the secret. Operators who
+//	            want the plaintext to live ONLY in transient pod logs
+//	            should set this in Helm via
+//	            `bootstrapAdmin.writeInitialSecret: false`.
+//
+// The toggle has NO effect on the operator-supplied paths (Helm value
+// `password` set, or `existingSecret.name` set) — Sharko NEVER writes the
+// initial-admin-secret in those cases.
+const EnvWriteInitialAdminSecret = "SHARKO_WRITE_INITIAL_ADMIN_SECRET"
+
+// InitialAdminSecretName is the canonical name of the dedicated
+// initial-admin-secret. Mirrors ArgoCD's naming.
+const InitialAdminSecretName = "sharko-initial-admin-secret"
+
+// Mode represents the auth backend mode.
+type Mode string
+
+const (
+	ModeK8s   Mode = "k8s"
+	ModeLocal Mode = "local"
+)
+
+// UserAccount represents a user account from the ConfigMap.
+type UserAccount struct {
+	Username string `json:"username"`
+	Enabled  bool   `json:"enabled" yaml:"enabled"`
+	Role     string `json:"role" yaml:"role"`
+}
+
+// Store manages user authentication backed by K8s resources or env vars.
+type Store struct {
+	mode       Mode
+	namespace  string
+	secretName string
+	clientset  kubernetes.Interface
+
+	// Local mode fallback
+	localUser string
+	localPass string
+
+	mu sync.RWMutex
+	// Cached data from K8s
+	users    map[string]*UserAccount
+	passHash map[string]string // username -> bcrypt hash
+
+	// Per-user GitHub PATs, encrypted at rest. See user_tokens.go.
+	// In K8s mode this mirrors the `<username>.github_token` keys in the auth Secret;
+	// in local mode it is in-memory only.
+	userTokens map[string]string // username -> AES-256-GCM ciphertext (base64)
+
+	// API tokens. Held in memory for authentication speed; persisted
+	// across restarts once InitTokenPersistence installs a persister
+	// (K8s: the sharko-api-tokens Secret; local: a 0600 file). A nil
+	// persister means pure in-memory — demo mode and unit tests.
+	// See token_persistence.go.
+	tokens         map[string]*APIToken // name -> token
+	tokenPersister tokenPersister       // nil until InitTokenPersistence
+}
+
+// NewStore creates an auth store with auto-detection of the backend mode.
+// It tries K8s in-cluster config first, then falls back to env vars.
+func NewStore() *Store {
+	s := &Store{
+		users:      make(map[string]*UserAccount),
+		passHash:   make(map[string]string),
+		userTokens: make(map[string]string),
+		tokens:     make(map[string]*APIToken),
+	}
+
+	// Try K8s mode first
+	config, err := rest.InClusterConfig()
+	if err == nil {
+		clientset, err := kubernetes.NewForConfig(config)
+		if err == nil {
+			s.mode = ModeK8s
+			s.clientset = clientset
+			s.namespace = detectNamespace()
+			s.secretName = getEnvDefault("SHARKO_SECRET_NAME", "sharko")
+			slog.Info("auth store initialized in K8s mode", "namespace", s.namespace, "secret", s.secretName)
+			// Load initial data
+			if err := s.reload(); err != nil {
+				slog.Warn("failed to load auth data from K8s, will retry on requests", "error", err)
+			}
+			return s
+		}
+	}
+
+	// Fall back to local mode (env vars)
+	s.mode = ModeLocal
+	s.localUser = os.Getenv("SHARKO_AUTH_USER")
+	s.localPass = os.Getenv("SHARKO_AUTH_PASSWORD")
+
+	if s.localUser != "" {
+		s.users[s.localUser] = &UserAccount{
+			Username: s.localUser,
+			Enabled:  true,
+			Role:     "admin",
+		}
+		s.passHash[s.localUser] = s.localPass
+	}
+
+	if s.localUser != "" {
+		slog.Info("auth store initialized in local mode", "user", s.localUser)
+	} else {
+		slog.Info("auth store initialized in local mode (no credentials configured, auth disabled)")
+	}
+
+	return s
+}
+
+// Mode returns the current auth backend mode.
+func (s *Store) Mode() Mode {
+	return s.mode
+}
+
+// HasUsers returns true if any user accounts are configured.
+func (s *Store) HasUsers() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.users) > 0
+}
+
+// ValidateCredentials checks if the given username/password combination is valid.
+func (s *Store) ValidateCredentials(username, password string) bool {
+	// Reload from K8s on each validation to pick up changes
+	if s.mode == ModeK8s {
+		if err := s.reload(); err != nil {
+			slog.Error("failed to reload auth data", "error", err)
+		}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	user, ok := s.users[username]
+	if !ok || !user.Enabled {
+		return false
+	}
+
+	hash, ok := s.passHash[username]
+	if !ok || hash == "" {
+		return false
+	}
+
+	// Check bcrypt hash first.
+	if strings.HasPrefix(hash, "$2") {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	}
+	// Plaintext fallback only in local dev mode. In K8s mode, passwords must be bcrypt-hashed.
+	if s.mode == ModeLocal {
+		return hash == password
+	}
+	slog.Warn("password for user is not bcrypt-hashed — rejecting in K8s mode", "username", username)
+	return false
+}
+
+// UpdatePassword changes a user's password. Verifies the current password first.
+// In K8s mode, persists the new bcrypt hash to the Secret.
+func (s *Store) UpdatePassword(username, currentPassword, newPassword string) error {
+	if !s.ValidateCredentials(username, currentPassword) {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	if len(newPassword) < 12 {
+		return fmt.Errorf("new password must be at least 12 characters")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	hashStr := string(hash)
+
+	if s.mode == ModeK8s {
+		// Update the K8s Secret
+		ctx := context.Background()
+		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to read secret: %w", err)
+		}
+
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		secret.Data[username+".password"] = []byte(hashStr)
+		// Remove initial password key if it exists (already changed)
+		delete(secret.Data, username+".initialPassword")
+
+		_, err = s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to update secret: %w", err)
+		}
+	} else {
+		// Local mode: update env var and in-memory
+		os.Setenv("SHARKO_AUTH_PASSWORD", hashStr)
+		s.localPass = hashStr
+	}
+
+	s.mu.Lock()
+	s.passHash[username] = hashStr
+	s.mu.Unlock()
+
+	slog.Info("password updated", "username", username)
+	return nil
+}
+
+// GetUser returns a user account by username, or nil if not found.
+func (s *Store) GetUser(username string) *UserAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u, ok := s.users[username]
+	if !ok {
+		return nil
+	}
+	// Return a copy
+	copy := *u
+	return &copy
+}
+
+// ListUsers returns all configured user accounts.
+func (s *Store) ListUsers() []UserAccount {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]UserAccount, 0, len(s.users))
+	for _, u := range s.users {
+		result = append(result, *u)
+	}
+	return result
+}
+
+// CreateUser adds a new user account with a temporary password.
+// Returns the generated password so the admin can share it.
+func (s *Store) CreateUser(username, role string) (string, error) {
+	if username == "" {
+		return "", fmt.Errorf("username is required")
+	}
+	if role == "" {
+		role = "viewer"
+	}
+	if role != "admin" && role != "operator" && role != "viewer" {
+		return "", fmt.Errorf("role must be admin, operator, or viewer")
+	}
+
+	// Check if user already exists
+	s.mu.RLock()
+	if _, exists := s.users[username]; exists {
+		s.mu.RUnlock()
+		return "", fmt.Errorf("user %q already exists", username)
+	}
+	s.mu.RUnlock()
+
+	// Generate a temporary password
+	tempPass := generateTempPassword()
+	hash, err := bcrypt.GenerateFromPassword([]byte(tempPass), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("hashing password: %w", err)
+	}
+
+	if s.mode == ModeK8s {
+		ctx := context.Background()
+
+		// Update ConfigMap with new user
+		cmName := s.secretName + "-users"
+		cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("reading ConfigMap: %w", err)
+		}
+
+		accounts := make(map[string]struct {
+			Enabled bool   `yaml:"enabled"`
+			Role    string `yaml:"role"`
+		})
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		if existing, ok := cm.Data["accounts"]; ok {
+			yaml.Unmarshal([]byte(existing), &accounts)
+		}
+		accounts[username] = struct {
+			Enabled bool   `yaml:"enabled"`
+			Role    string `yaml:"role"`
+		}{Enabled: true, Role: role}
+
+		data, _ := yaml.Marshal(accounts)
+		cm.Data["accounts"] = string(data)
+		if _, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			return "", fmt.Errorf("updating ConfigMap: %w", err)
+		}
+
+		// Update Secret with password hash
+		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("reading Secret: %w", err)
+		}
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		secret.Data[username+".password"] = hash
+		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			return "", fmt.Errorf("updating Secret: %w", err)
+		}
+	}
+
+	// Update in-memory
+	s.mu.Lock()
+	s.users[username] = &UserAccount{Username: username, Enabled: true, Role: role}
+	s.passHash[username] = string(hash)
+	s.mu.Unlock()
+
+	slog.Info("user created", "username", username, "role", role)
+	return tempPass, nil
+}
+
+// UpdateUser updates a user's role and enabled status.
+func (s *Store) UpdateUser(username string, enabled bool, role string) error {
+	s.mu.RLock()
+	user, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("user %q not found", username)
+	}
+
+	if role != "" && role != "admin" && role != "operator" && role != "viewer" {
+		return fmt.Errorf("role must be admin, operator, or viewer")
+	}
+	if role == "" {
+		role = user.Role
+	}
+
+	if s.mode == ModeK8s {
+		ctx := context.Background()
+		cmName := s.secretName + "-users"
+		cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("reading ConfigMap: %w", err)
+		}
+
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		accounts := make(map[string]struct {
+			Enabled bool   `yaml:"enabled"`
+			Role    string `yaml:"role"`
+		})
+		if existing, ok := cm.Data["accounts"]; ok {
+			yaml.Unmarshal([]byte(existing), &accounts)
+		}
+		accounts[username] = struct {
+			Enabled bool   `yaml:"enabled"`
+			Role    string `yaml:"role"`
+		}{Enabled: enabled, Role: role}
+
+		data, _ := yaml.Marshal(accounts)
+		cm.Data["accounts"] = string(data)
+		if _, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating ConfigMap: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	s.users[username] = &UserAccount{Username: username, Enabled: enabled, Role: role}
+	s.mu.Unlock()
+
+	slog.Info("user updated", "username", username, "role", role, "enabled", enabled)
+	return nil
+}
+
+// DeleteUser removes a user account.
+func (s *Store) DeleteUser(username string) error {
+	s.mu.RLock()
+	_, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("user %q not found", username)
+	}
+
+	if s.mode == ModeK8s {
+		ctx := context.Background()
+
+		// Remove from ConfigMap
+		cmName := s.secretName + "-users"
+		cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
+		if err == nil {
+			if cm.Data == nil {
+				cm.Data = make(map[string]string)
+			}
+			accounts := make(map[string]interface{})
+			if existing, ok := cm.Data["accounts"]; ok {
+				yaml.Unmarshal([]byte(existing), &accounts)
+			}
+			delete(accounts, username)
+			data, _ := yaml.Marshal(accounts)
+			cm.Data["accounts"] = string(data)
+			s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
+		}
+
+		// Remove from Secret
+		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+		if err == nil {
+			delete(secret.Data, username+".password")
+			delete(secret.Data, username+".initialPassword")
+			s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+		}
+	}
+
+	s.mu.Lock()
+	delete(s.users, username)
+	delete(s.passHash, username)
+	s.mu.Unlock()
+
+	slog.Info("user deleted", "username", username)
+	return nil
+}
+
+// ResetPassword generates a new temporary password for a user.
+func (s *Store) ResetPassword(username string) (string, error) {
+	s.mu.RLock()
+	_, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return "", fmt.Errorf("user %q not found", username)
+	}
+
+	tempPass := generateTempPassword()
+	hash, err := bcrypt.GenerateFromPassword([]byte(tempPass), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("hashing password: %w", err)
+	}
+
+	if s.mode == ModeK8s {
+		ctx := context.Background()
+		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("reading Secret: %w", err)
+		}
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		secret.Data[username+".password"] = hash
+		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			return "", fmt.Errorf("updating Secret: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	s.passHash[username] = string(hash)
+	s.mu.Unlock()
+
+	slog.Info("password reset", "username", username)
+	return tempPass, nil
+}
+
+func generateTempPassword() string {
+	const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, 12)
+	randBytes := make([]byte, 12)
+	cryptoRand.Read(randBytes)
+	for i := range b {
+		b[i] = chars[int(randBytes[i])%len(chars)]
+	}
+	return string(b)
+}
+
+// reload reads user accounts from ConfigMap and password hashes from Secret.
+func (s *Store) reload() error {
+	if s.mode != ModeK8s {
+		return nil
+	}
+
+	ctx := context.Background()
+	users := make(map[string]*UserAccount)
+	passHash := make(map[string]string)
+
+	// Read ConfigMap for user accounts
+	cmName := s.secretName + "-users"
+	cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to read ConfigMap %s: %w", cmName, err)
+	}
+
+	accountsYAML, ok := cm.Data["accounts"]
+	if ok {
+		var accounts map[string]struct {
+			Enabled bool   `yaml:"enabled"`
+			Role    string `yaml:"role"`
+		}
+		if err := yaml.Unmarshal([]byte(accountsYAML), &accounts); err != nil {
+			return fmt.Errorf("failed to parse accounts YAML: %w", err)
+		}
+		for name, acct := range accounts {
+			users[name] = &UserAccount{
+				Username: name,
+				Enabled:  acct.Enabled,
+				Role:     acct.Role,
+			}
+		}
+	}
+
+	// Read Secret for password hashes
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to read Secret %s: %w", s.secretName, err)
+	}
+
+	for key, val := range secret.Data {
+		if strings.HasSuffix(key, ".password") {
+			username := strings.TrimSuffix(key, ".password")
+			passHash[username] = string(val)
+		}
+	}
+
+	s.mu.Lock()
+	s.users = users
+	s.passHash = passHash
+	s.hydrateTokensFromSecretData(secret.Data)
+	s.mu.Unlock()
+
+	return nil
+}
+
+// detectNamespace returns the Kubernetes namespace the pod is running in.
+func detectNamespace() string {
+	// Try service account namespace file first
+	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err == nil && len(data) > 0 {
+		return strings.TrimSpace(string(data))
+	}
+
+	// Fall back to env var
+	if ns := os.Getenv("SHARKO_NAMESPACE"); ns != "" {
+		return ns
+	}
+
+	return "sharko"
+}
+
+func getEnvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// MaybeLogBootstrapCredential displays the auto-generated bootstrap admin
+// credential ONCE on stdout at first start, and mirrors it to the
+// `sharko-initial-admin-secret` Kubernetes Secret for later retrieval.
+//
+// It runs only when all of the following hold:
+//
+//   - The store is running in K8s mode.
+//   - The bootstrap admin password was NOT supplied by the operator
+//     (the SHARKO_BOOTSTRAP_ADMIN_PASSWORD env var is empty).
+//   - The Sharko Secret carries an `admin.initialPassword` key, which the
+//     Helm chart writes only on first install when no operator-supplied
+//     password is configured.
+//
+// The credential is INTENTIONALLY OMITTED from structured (slog) output to
+// prevent exfiltration via log scrapers. The banner is written to os.Stdout
+// via fmt.Fprintln, OUT of the structured-log shape, so a human watching
+// `kubectl logs` at first start still sees it. A separate audit event
+// ("bootstrap admin generated", username only) IS emitted via slog so log
+// scrapers can grep for the event timestamp without the password.
+//
+// Operators who miss the stdout window retrieve the credential from the
+// dedicated `sharko-initial-admin-secret` Secret (mirrors ArgoCD's
+// `argocd-initial-admin-secret` pattern):
+//
+//	kubectl -n <namespace> get secret sharko-initial-admin-secret \
+//	    -o jsonpath='{.data.password}' | base64 -d
+//
+// After display, the `admin.initialPassword` key is removed from the source
+// Secret so subsequent restarts do not re-emit the credential.
+//
+// SECURITY: this function MUST NOT emit anything (banner or audit event)
+// when the operator supplied a password (env var path). Operator-supplied
+// passwords are never logged anywhere — see SeedBootstrapAdminFromEnv.
+// This invariant is exercised by
+// TestMaybeLogBootstrapCredential_OperatorSuppliedNotLogged. The defense-
+// in-depth invariant that the password never appears in structured slog
+// output is exercised by
+// TestMaybeLogBootstrapCredential_PasswordNotInStructuredLog.
+func (s *Store) MaybeLogBootstrapCredential() {
+	if s.mode != ModeK8s || s.clientset == nil {
+		return
+	}
+	// CRITICAL: never log when operator supplied a password.
+	if os.Getenv(EnvBootstrapAdminPassword) != "" {
+		return
+	}
+
+	ctx := context.Background()
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		slog.Debug("bootstrap credential check skipped: cannot read secret", "error", err)
+		return
+	}
+
+	pwBytes, ok := secret.Data["admin.initialPassword"]
+	if !ok || len(pwBytes) == 0 {
+		return
+	}
+	password := string(pwBytes)
+
+	// Banner goes to stdout, NOT through slog. Operators watching
+	// `kubectl logs` at first start see the credential here; log scrapers
+	// (which key off structured slog lines) do not. The audit event below
+	// records that the bootstrap fired, without leaking the value.
+	fmt.Fprintln(os.Stdout, "=== BOOTSTRAP ADMIN CREDENTIAL ===")
+	fmt.Fprintln(os.Stdout, "username: admin")
+	fmt.Fprintln(os.Stdout, "password:", password)
+	fmt.Fprintln(os.Stdout, "This is the only time this credential will be shown. Store it securely.")
+	fmt.Fprintln(os.Stdout, "Retrieve later via: kubectl -n <ns> get secret sharko-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d")
+	fmt.Fprintln(os.Stdout, "=== END BOOTSTRAP ADMIN CREDENTIAL ===")
+
+	// Audit event: username only. NEVER include the password attr here —
+	// the V2-2.4 RedactHandler wrapper would catch it, but defense-in-depth
+	// requires the credential never enter the structured-log shape at all.
+	slog.Info("bootstrap admin generated", "username", "admin")
+
+	// Also write a dedicated `sharko-initial-admin-secret` for operator
+	// retrieval (mirrors ArgoCD's argocd-initial-admin-secret pattern).
+	// The log path remains the source of truth — the dedicated secret
+	// is convenience for operators who missed the log window.
+	//
+	// Skipped when SHARKO_WRITE_INITIAL_ADMIN_SECRET=false (Helm
+	// `bootstrapAdmin.writeInitialSecret: false`). NEVER written on the
+	// operator-supplied path (we already returned earlier in that case).
+	if writeInitialAdminSecretEnabled() {
+		if err := s.writeInitialAdminSecret(ctx, password); err != nil {
+			// Non-fatal: log path already emitted the credential. Operators
+			// without secret-create RBAC fall back to log scraping.
+			slog.Warn("could not write sharko-initial-admin-secret; fall back to logs",
+				"name", InitialAdminSecretName,
+				"namespace", s.namespace,
+				"error", err)
+		}
+	} else {
+		slog.Info("skipping sharko-initial-admin-secret write per SHARKO_WRITE_INITIAL_ADMIN_SECRET=false")
+	}
+
+	// Best-effort cleanup so the credential is not logged on every restart.
+	// A failure here is non-fatal — the next restart will simply re-emit.
+	delete(secret.Data, "admin.initialPassword")
+	if _, updateErr := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); updateErr != nil {
+		slog.Warn("failed to remove admin.initialPassword from secret after bootstrap log", "error", updateErr)
+	}
+}
+
+// writeInitialAdminSecretEnabled reads SHARKO_WRITE_INITIAL_ADMIN_SECRET and
+// returns whether the dedicated initial-admin-secret should be written.
+// Default (env unset or empty) is TRUE — the secret IS written, mirroring
+// ArgoCD's behavior. Only an explicit "false" value opts out.
+func writeInitialAdminSecretEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(EnvWriteInitialAdminSecret)))
+	if v == "false" || v == "0" || v == "no" {
+		return false
+	}
+	return true
+}
+
+// writeInitialAdminSecret creates (or updates idempotently) the
+// `sharko-initial-admin-secret` Secret in the release namespace, carrying the
+// admin username and the auto-generated plaintext password. Used by the
+// bootstrap-credential flow to give operators a kubectl-friendly retrieval
+// path equivalent to ArgoCD's `argocd-initial-admin-secret`.
+//
+// SECURITY: this function is ONLY called from MaybeLogBootstrapCredential's
+// auto-generated path, AFTER the early-return for the operator-supplied case.
+// Operator-supplied passwords MUST NEVER reach this function. The
+// `secrets["admin.initialPassword"]` key — present only on auto-gen — is the
+// signal we use.
+//
+// The created Secret carries:
+//
+//	metadata.labels:
+//	  app.kubernetes.io/managed-by: sharko
+//	  app.kubernetes.io/component:  bootstrap
+//	metadata.annotations:
+//	  sharko.dev/initial-secret: "rotated-on-reset-admin"
+//	data:
+//	  username: <base64('admin')>
+//	  password: <base64(plaintext)>
+//
+// The annotation value "rotated-on-reset-admin" reflects the actual
+// lifecycle: the secret persists across `sharko reset-admin`
+// invocations, each rotation rewriting `data.password` to the new
+// plaintext (operators can `kubectl delete` it manually).
+func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) error {
+	secret := &corev1Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      InitialAdminSecretName,
+			Namespace: s.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "sharko",
+				"app.kubernetes.io/component":  "bootstrap",
+			},
+			Annotations: map[string]string{
+				"sharko.dev/initial-secret": "rotated-on-reset-admin",
+			},
+		},
+		Type: corev1SecretTypeOpaque,
+		Data: map[string][]byte{
+			"username": []byte("admin"),
+			"password": []byte(password),
+		},
+	}
+
+	// Idempotent: try create, fall back to update on AlreadyExists.
+	if _, err := s.clientset.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		if !apierrorsIsAlreadyExists(err) {
+			return fmt.Errorf("create %s/%s: %w", s.namespace, InitialAdminSecretName, err)
+		}
+		// AlreadyExists — update to refresh password (e.g. after re-bootstrap).
+		existing, getErr := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, InitialAdminSecretName, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("get existing %s/%s for update: %w", s.namespace, InitialAdminSecretName, getErr)
+		}
+		if existing.Data == nil {
+			existing.Data = make(map[string][]byte)
+		}
+		existing.Data["username"] = []byte("admin")
+		existing.Data["password"] = []byte(password)
+		if existing.Labels == nil {
+			existing.Labels = make(map[string]string)
+		}
+		existing.Labels["app.kubernetes.io/managed-by"] = "sharko"
+		existing.Labels["app.kubernetes.io/component"] = "bootstrap"
+		if existing.Annotations == nil {
+			existing.Annotations = make(map[string]string)
+		}
+		existing.Annotations["sharko.dev/initial-secret"] = "rotated-on-reset-admin"
+		// Pre-rename secrets carry the old sharko.io key — drop it while we
+		// are updating anyway so exactly one marker remains (V2-cleanup-59).
+		delete(existing.Annotations, "sharko.io/initial-secret")
+		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update %s/%s: %w", s.namespace, InitialAdminSecretName, err)
+		}
+	}
+
+	slog.Info("wrote sharko-initial-admin-secret for operator retrieval",
+		"name", InitialAdminSecretName,
+		"namespace", s.namespace,
+		"hint", "kubectl get secret "+InitialAdminSecretName+" -n "+s.namespace+" -o jsonpath='{.data.password}' | base64 -d")
+	return nil
+}
+
+// DeleteInitialAdminSecret removes the `sharko-initial-admin-secret` if it
+// exists. Called from password-rotation flows (`sharko reset-admin`, future
+// UI password-change handlers) so the operator-friendly bootstrap secret is
+// cleaned up after the admin has rotated their password.
+//
+// Idempotent: returns nil if the secret does not exist (no error to log,
+// no error to return). If the secret exists but deletion fails for an
+// unexpected reason (RBAC, transient API error), returns the wrapped
+// error so the caller can decide whether to surface it.
+func (s *Store) DeleteInitialAdminSecret(ctx context.Context) error {
+	if s.mode != ModeK8s || s.clientset == nil {
+		return nil
+	}
+	err := s.clientset.CoreV1().Secrets(s.namespace).Delete(ctx, InitialAdminSecretName, metav1.DeleteOptions{})
+	if err == nil {
+		slog.Info("deleted sharko-initial-admin-secret after password rotation",
+			"name", InitialAdminSecretName,
+			"namespace", s.namespace)
+		return nil
+	}
+	if apierrorsIsNotFound(err) {
+		// Idempotent — no-op when the secret was never written or has
+		// already been deleted by the operator.
+		return nil
+	}
+	return fmt.Errorf("delete %s/%s: %w", s.namespace, InitialAdminSecretName, err)
+}
+
+// SeedBootstrapAdminFromEnv consumes the SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+// env var and writes its bcrypt hash into the Sharko Secret as
+// `admin.password`. This is the operator-supplied credential path, used
+// when the Helm value `bootstrapAdmin.password` is set or when
+// `bootstrapAdmin.existingSecret.name` is wired into the deployment as an
+// env var via `valueFrom.secretKeyRef`.
+//
+// On every startup the env var is authoritative — Sharko overwrites
+// admin.password with the bcrypt hash of the env value. Operators rotate
+// the password by updating the source (Helm value or existing Secret) and
+// restarting the pod.
+//
+// Also clears any stale `admin.initialPassword` key so that
+// MaybeLogBootstrapCredential never emits a stale credential.
+//
+// SECURITY: the plaintext env value is NEVER logged. The function emits a
+// single info log noting that an operator-supplied password was applied,
+// without the value. This invariant is exercised by
+// TestSeedBootstrapAdminFromEnv_DoesNotLogPassword.
+func (s *Store) SeedBootstrapAdminFromEnv() error {
+	password := os.Getenv(EnvBootstrapAdminPassword)
+	if password == "" {
+		return nil
+	}
+	if s.mode != ModeK8s || s.clientset == nil {
+		// Local-mode operator-supplied passwords flow through SHARKO_AUTH_*.
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash bootstrap admin password: %w", err)
+	}
+
+	ctx := context.Background()
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read sharko secret %s/%s: %w", s.namespace, s.secretName, err)
+	}
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
+	secret.Data["admin.password"] = hash
+	// Clear any stale initial-password marker so MaybeLogBootstrapCredential
+	// does not log a value that has been superseded by the operator.
+	delete(secret.Data, "admin.initialPassword")
+
+	if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update sharko secret with bootstrap password: %w", err)
+	}
+
+	// Refresh in-memory state so authentication works without waiting for
+	// the next reload tick.
+	s.mu.Lock()
+	if _, ok := s.users["admin"]; !ok {
+		s.users["admin"] = &UserAccount{Username: "admin", Enabled: true, Role: "admin"}
+	}
+	s.passHash["admin"] = string(hash)
+	s.mu.Unlock()
+
+	// SECURITY: do NOT log the password. Only log that an operator-supplied
+	// credential was applied.
+	slog.Info("operator-supplied bootstrap admin password applied (not logged)")
+	return nil
+}
+
+// SetClientForTest installs a fake K8s client for tests. Production code
+// must use NewStore(); this exists only so unit tests can exercise the
+// bootstrap-credential flows without a real in-cluster config.
+func (s *Store) SetClientForTest(clientset kubernetes.Interface, namespace, secretName string) {
+	s.mode = ModeK8s
+	s.clientset = clientset
+	s.namespace = namespace
+	s.secretName = secretName
+}
+
+// AddUser creates a user with a known plaintext password directly in the
+// in-memory store. This is intended for demo and test mode only — it does
+// NOT persist to K8s. If the user already exists it is a no-op.
+func (s *Store) AddUser(username, password, role string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.users[username]; exists {
+		return nil // already configured
+	}
+
+	s.users[username] = &UserAccount{Username: username, Enabled: true, Role: role}
+	s.passHash[username] = password // plaintext — validated by ValidateCredentials local fallback
+	return nil
+}

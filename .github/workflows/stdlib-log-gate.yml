@@ -1,0 +1,92 @@
+name: Stdlib log Gate
+
+# Fails any PR that re-introduces the stdlib `log` package in production code
+# paths. All Sharko Go code uses `log/slog` for structured logging — this
+# guardrail prevents drift. See V2-2.1 (logging hardening).
+#
+# Scope: internal/, cmd/, tests/ (and any future top-level Go directories).
+# Excludes: third-party vendored code, generated files.
+#
+# To intentionally allow a NEW stdlib-log call site, add the file path to the
+# ALLOWED list below with a one-line comment explaining why slog is unsuitable.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: stdlib-log-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stdlib-log-gate:
+    name: No stdlib log imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Scan for stdlib log imports
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Documented exception allow-list — paths that may import stdlib "log".
+          # Each entry must include a one-line justification.
+          #
+          # (currently empty — every production file uses log/slog)
+          ALLOWED=()
+
+          # Find any .go file that imports the stdlib `log` package (NOT
+          # log/slog, NOT log/syslog). We match the canonical import form
+          # used by `gofmt`/`goimports`: a bare `"log"` on its own line inside
+          # an import block.
+          #
+          # `git grep -nE` is fast and limits the search to tracked files
+          # under the requested pathspecs, skipping vendor/ automatically.
+          MATCHES=$(git grep -nE '^[[:space:]]+"log"$' -- \
+            'internal/**/*.go' \
+            'cmd/**/*.go' \
+            'tests/**/*.go' \
+            ':(exclude)**/vendor/**' \
+            || true)
+
+          if [[ -z "$MATCHES" ]]; then
+            echo "PASS: no stdlib log imports detected."
+            exit 0
+          fi
+
+          # Filter out allow-listed paths.
+          FILTERED="$MATCHES"
+          for ALLOW in "${ALLOWED[@]:-}"; do
+            [[ -z "$ALLOW" ]] && continue
+            FILTERED=$(echo "$FILTERED" | grep -v -F "$ALLOW:" || true)
+          done
+
+          if [[ -z "$FILTERED" ]]; then
+            echo "PASS: all stdlib log imports are explicitly allow-listed."
+            echo ""
+            echo "Allow-listed matches (informational):"
+            echo "$MATCHES"
+            exit 0
+          fi
+
+          echo "FAIL: stdlib \"log\" package imported in production code."
+          echo ""
+          echo "Sharko uses log/slog for structured logging across all code."
+          echo "Replace the import with \"log/slog\" and update call sites:"
+          echo ""
+          echo "  log.Printf(...)  -> slog.Info(... , \"key\", val)"
+          echo "  log.Fatalf(...)  -> slog.Error(... , \"error\", err) + os.Exit(1)"
+          echo ""
+          echo "If slog is genuinely unsuitable for a specific file, add the"
+          echo "path to the ALLOWED list in .github/workflows/stdlib-log-gate.yml"
+          echo "with a one-line comment explaining why."
+          echo ""
+          echo "Offending matches:"
+          echo "$FILTERED"
+          exit 1

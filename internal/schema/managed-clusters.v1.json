@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json",
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
+    },
+    "kind": {
+      "const": "ManagedClusters"
+    },
+    "clusters": {
+      "items": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "secretPath": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "connectionManagedBy": {
+            "type": "string",
+            "enum": [
+              "sharko",
+              "user"
+            ]
+          },
+          "credsSource": {
+            "type": "string",
+            "enum": [
+              "inline-kubeconfig",
+              "secret-kubeconfig",
+              "eks-token"
+            ]
+          },
+          "roleArn": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ]
+      },
+      "type": "array"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "clusters"
+  ],
+  "title": "Sharko ManagedClusters",
+  "description": "managed-clusters.yaml — the registry of clusters Sharko manages, including their credential paths and addon labels."
+}

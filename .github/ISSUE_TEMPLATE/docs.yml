@@ -1,0 +1,63 @@
+name: Documentation Issue
+description: Report a documentation problem (missing, outdated, unclear, or incorrect)
+title: "[Docs]: "
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve the docs! Documentation bugs are real bugs — please be as specific as possible.
+
+  - type: input
+    id: page-url
+    attributes:
+      label: Page URL or path
+      description: The URL of the docs page or the repository path of the file. For multi-page issues, list all affected pages.
+      placeholder: "https://github.com/MoranWeissman/sharko/blob/main/docs/site/operator/cluster-reconciler.md OR docs/site/user-guide/managing-clusters.md OR README.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's confusing, missing, or wrong?
+      description: Be specific. Quote the problematic text if applicable. If something is missing, describe what you tried to find.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: How would you reword, restructure, or extend the docs? A proposed wording / outline is ideal.
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Which audience is affected?
+      description: Helps us route the fix to the right section.
+      options:
+        - User Guide (CLI / UI users)
+        - Operator Manual (install / configure / upgrade)
+        - Developer Guide (contributors / architecture)
+        - API Reference (Swagger / endpoint behavior)
+        - Governance / Community (CONTRIBUTING, GOVERNANCE, etc.)
+        - README / project overview
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, links to related code, prior discussion, etc.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/MoranWeissman/sharko/blob/main/CODE_OF_CONDUCT.md).
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true

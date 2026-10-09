@@ -1,0 +1,364 @@
+package clusterreconciler
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/providers"
+)
+
+// V2-cleanup-89.4 — per-cluster reconcile visibility.
+//
+// Before this, a per-cluster reconcile failure (vault fetch, K8s API
+// rejection) was slog + audit-log only — an operator looking at ONE
+// cluster had no way to tell whether its last reconcile attempt succeeded,
+// failed, or was deliberately skipped. These tests pin the LastReconcile
+// contract: every managed cluster gets a record every tick it's touched,
+// the message is plain English (not a raw Go error dump), and a cluster
+// the reconciler has never seen reports ok=false rather than a zero value
+// that could be misread as "succeeded".
+
+// TestLastReconcile_UnknownCluster_NotOK asserts a fresh Reconciler (no
+// ticks run yet) reports ok=false for any cluster name — the API layer
+// relies on this to omit last_reconcile entirely rather than render a
+// misleading zero-value record.
+func TestLastReconcile_UnknownCluster_NotOK(t *testing.T) {
+	t.Parallel()
+	r := New(Deps{})
+	_, ok := r.LastReconcile("never-seen")
+	if ok {
+		t.Fatal("expected ok=false for a cluster the reconciler has never reconciled")
+	}
+}
+
+// TestLastError_ReturnsClusterName pins the fix behind the managed-secrets
+// page's red engine error: LastError used to return only a message + time,
+// throwing the cluster name away — a caller had a sentence with no subject.
+// This asserts the cluster name comes back too, and that with multiple
+// Failed records, the MOST RECENT one (by time) wins.
+func TestLastError_ReturnsClusterName(t *testing.T) {
+	t.Parallel()
+	r := New(Deps{})
+	// Deterministic clock — recordReconcile stamps r.now() on every call,
+	// so LastError's "most recent Failed record wins" behavior needs a
+	// clock under test control rather than relying on real-time.Now()
+	// calls happening to land in call order.
+	clockTick := 0
+	base := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	r.nowFn = func() time.Time {
+		clockTick++
+		return base.Add(time.Duration(clockTick) * time.Minute)
+	}
+
+	r.recordReconcile("older-fail", OutcomeFailed, "older failure", nil) // t+1m
+	r.recordReconcile("newer-fail", OutcomeFailed, "newer failure", nil) // t+2m
+	// A Succeeded record for a third cluster, stamped LATER than both
+	// failures, must still never win over a Failed one.
+	r.recordReconcile("healthy", OutcomeSucceeded, "", nil) // t+3m
+
+	cluster, message, _, ok := r.LastError()
+	if !ok {
+		t.Fatal("expected ok=true — a Failed record exists")
+	}
+	if cluster != "newer-fail" {
+		t.Errorf("cluster = %q, want %q (the most recent Failed record)", cluster, "newer-fail")
+	}
+	// P1-B B2: message is the MAPPED sentence, never the record's raw
+	// Message text — "newer failure" here stands in for whatever a real
+	// call site would have appended a wrapped error onto. See
+	// failure_sentence_test.go for the full raw != mapped pinning.
+	if message != FailureSentence("newer failure") {
+		t.Errorf("message = %q, want the FailureSentence mapping of %q", message, "newer failure")
+	}
+	if message == "newer failure" {
+		t.Error("message is the raw record text — LastError must never return it unmapped")
+	}
+}
+
+// TestLastError_NoFailedRecords_NotOK asserts a clean fleet (or a fleet
+// that's never reconciled) reports ok=false, not a zero-value cluster name
+// that could be misread as "cluster \"\" failed".
+func TestLastError_NoFailedRecords_NotOK(t *testing.T) {
+	t.Parallel()
+	r := New(Deps{})
+	r.recordReconcile("healthy", OutcomeSucceeded, "", nil)
+
+	cluster, _, _, ok := r.LastError()
+	if ok {
+		t.Fatalf("expected ok=false with no Failed records, got cluster=%q", cluster)
+	}
+}
+
+// TestPollOnce_LastReconcile_RecordsSucceededOnCreate — happy path: a
+// cluster created this tick gets a Succeeded record with no message.
+func TestPollOnce_LastReconcile_RecordsSucceededOnCreate(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("prod-eu")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"prod-eu": {Server: "https://prod-eu.example.com", CAData: []byte("ca"), Token: "tk"},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+	r.pollOnce(ctx)
+
+	rec, ok := r.LastReconcile("prod-eu")
+	if !ok {
+		t.Fatal("expected a LastReconcile record for prod-eu after the tick that created it")
+	}
+	if rec.Outcome != OutcomeSucceeded {
+		t.Fatalf("Outcome = %q, want %q", rec.Outcome, OutcomeSucceeded)
+	}
+	if rec.Message != "" {
+		t.Fatalf("Message = %q, want empty on success", rec.Message)
+	}
+	if rec.Time.IsZero() {
+		t.Fatal("Time must be set on a recorded outcome")
+	}
+}
+
+// TestPollOnce_LastReconcile_AlreadyInSyncStaysSucceeded — a cluster whose
+// Secret already exists and needs no write this tick must STILL get a
+// fresh Succeeded record (the read model would otherwise go stale between
+// the rare ticks that actually create or delete something).
+func TestPollOnce_LastReconcile_AlreadyInSyncStaysSucceeded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("c1")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"c1": {Server: "https://c1.example.com", CAData: []byte("ca"), Token: "tk"},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+
+	r.pollOnce(ctx) // tick 1: creates the Secret
+	first, ok := r.LastReconcile("c1")
+	if !ok || first.Outcome != OutcomeSucceeded {
+		t.Fatalf("tick 1: expected Succeeded record, got %+v (ok=%v)", first, ok)
+	}
+
+	r.pollOnce(ctx) // tick 2: no-op, Secret already in sync
+	second, ok := r.LastReconcile("c1")
+	if !ok {
+		t.Fatal("tick 2: expected a LastReconcile record to still be present")
+	}
+	if second.Outcome != OutcomeSucceeded {
+		t.Fatalf("tick 2: Outcome = %q, want %q (already-in-sync clusters still record success)", second.Outcome, OutcomeSucceeded)
+	}
+	if !second.Time.After(first.Time) && !second.Time.Equal(first.Time) {
+		t.Fatalf("tick 2 record's Time (%v) should not be before tick 1's (%v)", second.Time, first.Time)
+	}
+}
+
+// TestPollOnce_LastReconcile_RecordsFailedOnVaultError — a credentials fetch
+// failure for one cluster must record Failed with a plain-English message,
+// while leaving the other clusters unaffected.
+//
+// THIS TEST'S EXPECTATION CHANGED, on purpose. It used to require the recorded
+// Message to CONTAIN the underlying error's own text. That is the leak this
+// hotfix closes: a credentials backend's error text can carry credential
+// material, and this Message reaches the API (LastReconcile.Message and the
+// managed-secrets rows) where anyone who can read a cluster can see it.
+//
+// What is asserted instead: the message is Sharko's own fixed lead-in plus the
+// one fixed safe sentence, it does NOT carry the underlying text, and — this is
+// the part the old assertion was really protecting — the fixed prefix survives,
+// so FailureSentence still classifies it as a credentials failure instead of
+// collapsing to its generic fallback. The underlying error is not lost; it is
+// still what the function RETURNS to its internal callers.
+func TestPollOnce_LastReconcile_RecordsFailedOnVaultError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("c1", "c2")
+	underlying := errors.New("simulated vault outage for c2")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"c1": {Server: "https://c1.example.com", CAData: []byte("ca"), Token: "tk"},
+		},
+		errs: map[string]error{"c2": underlying},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+	r.pollOnce(ctx)
+
+	rec, ok := r.LastReconcile("c2")
+	if !ok {
+		t.Fatal("expected a LastReconcile record for c2 despite the vault error")
+	}
+	if rec.Outcome != OutcomeFailed {
+		t.Fatalf("Outcome = %q, want %q", rec.Outcome, OutcomeFailed)
+	}
+	if strings.Contains(rec.Message, underlying.Error()) {
+		t.Fatalf(`Message = %q — it carries the credentials backend's own error text.
+
+That text can hold credential material, and this Message reaches the API through LastReconcile.Message and the managed-secrets rows. It must be Sharko's own words.`, rec.Message)
+	}
+	if !strings.Contains(rec.Message, credsafe.Message) {
+		t.Fatalf("Message = %q, want it to carry the fixed safe sentence %q", rec.Message, credsafe.Message)
+	}
+	// The fixed English prefix must survive — it is what FailureSentence matches
+	// on, and losing it would collapse every credentials failure into the
+	// generic "the last check didn't finish" sentence on the page.
+	if !strings.Contains(FailureSentence(rec.Message), "credentials") {
+		t.Fatalf("FailureSentence(%q) no longer classifies this as a credentials failure (got %q)", rec.Message, FailureSentence(rec.Message))
+	}
+
+	// c1 must be unaffected — per-cluster error isolation.
+	other, ok := r.LastReconcile("c1")
+	if !ok || other.Outcome != OutcomeSucceeded {
+		t.Fatalf("c1 should have reconciled successfully despite c2's vault error; got %+v (ok=%v)", other, ok)
+	}
+}
+
+// TestPollOnce_LastReconcile_RecordsSkippedOnUnlabeledSecret — Adopt
+// territory: a same-name Secret exists without the sharko label, so the
+// reconciler skips (not fails) the cluster and records Skipped with an
+// explanatory message.
+func TestPollOnce_LastReconcile_RecordsSkippedOnUnlabeledSecret(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("foreign-cluster")
+	foreign := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foreign-cluster",
+			Namespace: DefaultArgoCDNamespace,
+			Labels:    map[string]string{"created-by": "human-operator"},
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+	k8sClient := fake.NewSimpleClientset(foreign)
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"foreign-cluster": {Server: "https://x.example.com", CAData: []byte("ca"), Token: "tk"},
+		},
+	}
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+	r.pollOnce(ctx)
+
+	rec, ok := r.LastReconcile("foreign-cluster")
+	if !ok {
+		t.Fatal("expected a LastReconcile record for foreign-cluster")
+	}
+	if rec.Outcome != OutcomeSkipped {
+		t.Fatalf("Outcome = %q, want %q", rec.Outcome, OutcomeSkipped)
+	}
+	if rec.Message == "" {
+		t.Fatal("expected a plain-English explanation on a skipped outcome")
+	}
+}
+
+// TestPollOnce_LastReconcile_SelfManagedPending — a self-managed
+// connection (connectionManagedBy: user) whose Secret the user hasn't
+// created yet records Skipped, not Failed — this is an expected wait
+// state, not an error.
+func TestPollOnce_LastReconcile_SelfManagedPending(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedWithModes(testClusterEntry{Name: "user-cluster", Mode: "user"})
+	k8sClient := fake.NewSimpleClientset() // no Secret created by the user yet
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
+	r.pollOnce(ctx)
+
+	rec, ok := r.LastReconcile("user-cluster")
+	if !ok {
+		t.Fatal("expected a LastReconcile record for the pending self-managed cluster")
+	}
+	if rec.Outcome != OutcomeSkipped {
+		t.Fatalf("Outcome = %q, want %q (waiting on the user is a skip, not a failure)", rec.Outcome, OutcomeSkipped)
+	}
+	if rec.Message == "" {
+		t.Fatal("expected a plain-English explanation telling the operator to create the Secret")
+	}
+}
+
+// TestPollOnce_LastReconcile_SelfManagedSynced — once the user's Secret
+// exists, a self-managed connection's label sync records Succeeded.
+func TestPollOnce_LastReconcile_SelfManagedSynced(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedWithModes(testClusterEntry{
+		Name:   "user-cluster",
+		Mode:   "user",
+		Labels: map[string]string{"addon-foo": "enabled"},
+	})
+	k8sClient := fake.NewSimpleClientset(userSecret("user-cluster", nil))
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
+	r.pollOnce(ctx)
+
+	rec, ok := r.LastReconcile("user-cluster")
+	if !ok {
+		t.Fatal("expected a LastReconcile record for the synced self-managed cluster")
+	}
+	if rec.Outcome != OutcomeSucceeded {
+		t.Fatalf("Outcome = %q, want %q", rec.Outcome, OutcomeSucceeded)
+	}
+	if rec.Message != "" {
+		t.Fatalf("Message = %q, want empty on success", rec.Message)
+	}
+}
+
+// TestPollOnce_LastReconcile_SelfManagedSyncFailure — a K8s API error
+// while syncing labels onto the user's Secret must record Failed with the
+// underlying error surfaced in plain English.
+func TestPollOnce_LastReconcile_SelfManagedSyncFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedWithModes(testClusterEntry{
+		Name:   "user-cluster",
+		Mode:   "user",
+		Labels: map[string]string{"addon-foo": "enabled"},
+	})
+	k8sClient := fake.NewSimpleClientset(userSecret("user-cluster", nil))
+	simulated := errors.New("simulated update conflict")
+	k8sClient.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, simulated
+	})
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
+	r.pollOnce(ctx)
+
+	rec, ok := r.LastReconcile("user-cluster")
+	if !ok {
+		t.Fatal("expected a LastReconcile record despite the update failure")
+	}
+	if rec.Outcome != OutcomeFailed {
+		t.Fatalf("Outcome = %q, want %q", rec.Outcome, OutcomeFailed)
+	}
+	if !strings.Contains(rec.Message, simulated.Error()) {
+		t.Fatalf("Message = %q, want it to contain the underlying error %q", rec.Message, simulated.Error())
+	}
+}

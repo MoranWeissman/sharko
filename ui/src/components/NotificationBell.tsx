@@ -1,0 +1,189 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Bell } from 'lucide-react'
+import { api } from '@/services/api'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+
+interface Notification {
+  id: string
+  type: 'upgrade' | 'security' | 'drift' | 'connection'
+  title: string
+  description: string
+  timestamp: string
+  read: boolean
+}
+
+// Where a connection-health alert (NotificationType `connection`, written by
+// the Story 1 backend poller) takes the user when clicked: Settings →
+// Connection, where the Git + ArgoCD connections are edited/tested. The
+// section param is verified against Settings.tsx (default + valid key).
+const CONNECTION_SETTINGS_ROUTE = '/settings?section=connections'
+
+export function NotificationBell() {
+  // V2-cleanup-61.4 (G2): this used to be a hand-rolled `absolute` div with
+  // a manual `mousedown` outside-click listener — no Escape handling, no
+  // focus trap, no ARIA. Swapped for the shadcn/Radix Popover primitive
+  // (already used elsewhere, e.g. ClusterStatusSummary): Escape closes it,
+  // outside click closes it, and focus returns to the bell on close, all
+  // for free from Radix.
+  const [open, setOpen] = useState(false)
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  // "Now" for the timeAgo() labels below, held in state instead of read
+  // via Date.now() during render (React disallows impure calls in render).
+  // Ticks on the same 60s cadence as the notification poll, which is
+  // frequent enough for "Xm/Xh/Xd ago" text.
+  const [now, setNow] = useState(() => Date.now())
+  const navigate = useNavigate()
+
+  // Fetch notifications from API
+  const fetchNotifications = useCallback(() => {
+    api.getNotifications()
+      .then(data => {
+        setNotifications((data.notifications ?? []) as Notification[])
+      })
+      .catch(() => {
+        // API not available — keep whatever we have
+      })
+  }, [])
+
+  useEffect(() => {
+    fetchNotifications()
+    const interval = setInterval(fetchNotifications, 60000) // poll every 60s
+    return () => clearInterval(interval)
+  }, [fetchNotifications])
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 60000) // keep timeAgo() fresh
+    return () => clearInterval(interval)
+  }, [])
+
+  const unreadCount = notifications.filter(n => !n.read).length
+
+  // S4 (maintainer's live finding): opening the bell IS reading it — the
+  // red counter and the unread styling clear the moment the popover opens,
+  // no extra "Mark all as read" click needed. Fires once per open, only
+  // when there's something unread to clear.
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (nextOpen && unreadCount > 0) {
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+      api.markAllNotificationsRead().catch(() => {
+        // Silent — if the backend call fails, the badge stays cleared for
+        // this view (no revert, no toast). If the next 60s poll still shows
+        // unread items because the write never landed, opening the bell
+        // again just retries the same mark-all-read call.
+      })
+    }
+  }
+
+  const timeAgo = (ts: string) => {
+    const secs = Math.floor((now - new Date(ts).getTime()) / 1000)
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+    if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`
+    return `${Math.floor(secs / 86400)}d ago`
+  }
+
+  const typeIcon = (type: string) => {
+    switch (type) {
+      case 'security': return '🔒'
+      case 'upgrade': return '⬆️'
+      case 'drift': return '⚠️'
+      case 'connection': return '🔌'
+      default: return 'ℹ️'
+    }
+  }
+
+  // S4: opening the bell already marks every notification read (see
+  // handleOpenChange above), so a row click no longer needs its own
+  // mark-read call — it only handles the connection-alert navigation, to
+  // Settings → Connection so the user can inspect/fix the Git or ArgoCD
+  // link. Other row types have nothing left to do on click.
+  const handleItemClick = (n: Notification) => {
+    if (n.type === 'connection') {
+      setOpen(false)
+      navigate(CONNECTION_SETTINGS_ROUTE)
+    }
+  }
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          className="relative flex items-center justify-center rounded-lg p-2 text-[#2a5a7a] hover:bg-[#d6eeff] transition-colors"
+          aria-label="Notifications"
+        >
+          <Bell className="h-5 w-5" />
+          {unreadCount > 0 && (
+            // V2-cleanup-65.1: kept at 9px deliberately — this is a
+            // superscript-style unread-count bubble in a fixed h-4 w-4
+            // (16px) circle overlaid on the bell icon; bumping to text-xs
+            // (12px) doesn't fit inside the circle for 2-digit counts and
+            // visually breaks the badge.
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        className="w-80 rounded-xl p-0 shadow-xl"
+      >
+        <div className="border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+            Notifications {unreadCount > 0 && `(${unreadCount})`}
+          </h3>
+        </div>
+
+        <div className="max-h-80 overflow-y-auto">
+          {notifications.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-[#3a6a8a]">
+              No notifications
+            </p>
+          ) : (
+            notifications.map(n => {
+              const actionable = n.type === 'connection'
+              return (
+              <div
+                key={n.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => handleItemClick(n)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleItemClick(n)
+                  }
+                }}
+                className={`cursor-pointer border-b border-[#d6eeff] px-4 py-3 last:border-0 hover:bg-[#d6eeff] dark:border-gray-800 dark:hover:bg-gray-700 ${
+                  !n.read ? 'bg-[#e0f0ff] dark:bg-gray-900/50' : ''
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 text-sm">{typeIcon(n.type)}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm ${!n.read ? 'font-semibold text-[#0a2a4a] dark:text-white' : 'text-[#1a4a6a] dark:text-gray-300'}`}>
+                      {n.title}
+                    </p>
+                    <p className="mt-0.5 text-sm text-[#3a6a8a] dark:text-gray-400">{n.description}</p>
+                    <p className="mt-1 text-sm text-[#5a8aaa] dark:text-gray-500">{timeAgo(n.timestamp)}</p>
+                    {actionable && (
+                      <p className="mt-1 text-xs font-medium text-teal-600 dark:text-teal-400">
+                        Open Settings → Connection
+                      </p>
+                    )}
+                  </div>
+                  {!n.read && (
+                    <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                  )}
+                </div>
+              </div>
+              )
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}

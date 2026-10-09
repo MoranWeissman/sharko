@@ -1,0 +1,2561 @@
+// Package clusterreconciler reconciles ArgoCD cluster Secret state from
+// configuration/managed-clusters.yaml in git. It mirrors the
+// internal/prtracker pattern: a single goroutine drives reconciliation, a
+// 30s safety-net tick catches drift, and a non-blocking Trigger() channel
+// provides low-latency post-merge convergence when prTracker observes a
+// Sharko-opened PR being merged.
+//
+// pollOnce:
+//
+//  1. Reads managed-clusters.yaml from git via models.LoadManagedClusters
+//     (envelope-aware + JSON-Schema-validated reader).
+//  2. Lists ArgoCD cluster Secrets in the argocd namespace filtered by
+//     app.kubernetes.io/managed-by=sharko (ownership label).
+//  3. Computes a set diff (in-git ∖ in-argocd → create; in-argocd ∖ in-git
+//     → delete; with-label-only on delete so foreign Secrets are never
+//     touched — Adopt territory).
+//  4. Per-cluster + per-secret error isolation: a vault failure on one
+//     cluster does NOT block reconciliation of the others.
+//
+// Single-writer reconciler:
+//
+// This reconciler is the SOLE writer of ArgoCD cluster Secrets driven by
+// managed-clusters.yaml. The legacy argosecrets.Reconciler loop (dual-writer
+// until V2-cleanup-28) was retired. Adoption-safety semantics remain:
+//
+//   - Orphan sweeps skip secrets that carry the sharko.sharko.dev/adopted
+//     annotation — those secrets are owned by the Adopt flow and can only be
+//     removed via an explicit Unadopt call.
+//   - internal/argosecrets.Manager.Ensure (still used for the kubeconfig
+//     direct-write path by adopt/remove/providers/API handlers) preserves
+//     the connection Data of adopted secrets and only converges their labels.
+//
+// See:
+//   - docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
+//     §7 (Option E), §8 (pattern), §9 (two-direction policy), §10 (REST
+//     git read; failure modes).
+//   - internal/prtracker/tracker.go (lifecycle pattern this package mirrors).
+//   - internal/argosecrets/manager.go (the Secret payload shape — execProvider
+//     config — that this reconciler writes via shared wrappers).
+package clusterreconciler
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sort"
+	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/lifecycleevents"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
+)
+
+// engineClusterConnection is this package's value for the "engine" metric
+// label (P2-D) — matches the "cluster_connection" key of GET
+// /system/managed-secrets' "engines" section, so a Grafana panel and the
+// page agree on what to call this engine. A direct import of
+// internal/metrics — not a hook interface — is the wiring choice for this
+// lane: internal/metrics is a leaf package (only prometheus + stdlib
+// imports, confirmed by grep before this lane started), so there is no
+// import-cycle risk, and the rest of the codebase already calls it directly
+// from non-test code (internal/api, internal/orchestrator,
+// internal/catalog) rather than through an interface — an AuditFn-style
+// hook exists here for audit specifically because audit entries need a
+// request-scoped sink a test can swap for a spy; a promauto counter has no
+// such need and is safe to touch directly in tests too (see
+// internal/metrics/metrics_test.go's own direct-call pattern).
+// Audit event names for this reconciler's cluster-Secret lifecycle.
+//
+// RULING (f), 2026-08-19: title, outcome and change result must never
+// contradict each other. Every event below in the past tense reports work
+// that actually happened; every *_failed event reports work that did not.
+// Before this, a create that threw wrote "Connection Secret created ·
+// failure" — a past-tense claim that no Secret existed to back up — and a
+// self-heal that wrote but did not converge wrote "Addon labels
+// self-healed · failure", where the title, the outcome and reality all
+// disagreed at once.
+//
+// The success names are UNCHANGED on purpose: internal/api's
+// connectionSecretRepairDetail keys off them to decide what counts as a
+// repair, and its doc comment already states the right rule — only
+// Result == "success" entries count. Renaming them would break that join
+// silently.
+//
+// THE VALUES MOVED, THE NAMES DID NOT. These ten used to spell out their own
+// wire values here. They are now the ones internal/lifecycleevents declares,
+// because the browser's activity feed renders these events by name and there
+// had to be one list a generator could read — see that package's doc comment
+// for what the two hand-typed browser copies cost. Every caller in this
+// package keeps referring to them by these names.
+const (
+	EventClusterSecretCreate          = lifecycleevents.ClusterSecretCreate
+	EventClusterSecretDelete          = lifecycleevents.ClusterSecretDelete
+	EventClusterSecretUserLabelSync   = lifecycleevents.ClusterSecretUserLabelSync
+	EventClusterSecretManagedSelfHeal = lifecycleevents.ClusterSecretManagedSelfHeal
+	EventClusterConnectionRepair      = lifecycleevents.ClusterConnectionRepair
+
+	EventClusterSecretCreateFailed          = lifecycleevents.ClusterSecretCreateFailed
+	EventClusterSecretDeleteFailed          = lifecycleevents.ClusterSecretDeleteFailed
+	EventClusterSecretUserLabelSyncFailed   = lifecycleevents.ClusterSecretUserLabelSyncFailed
+	EventClusterSecretManagedSelfHealFailed = lifecycleevents.ClusterSecretManagedSelfHealFailed
+	EventClusterConnectionRepairFailed      = lifecycleevents.ClusterConnectionRepairFailed
+)
+
+const engineClusterConnection = "cluster_connection"
+
+// syntheticTickID returns the canonical "recon-<unix_ts>" correlation ID
+// for a single reconciler tick. The unix timestamp is captured at the tick
+// boundary so every slog line emitted during the tick shares the same ID.
+// V2-2.2.
+func syntheticTickID() string {
+	return fmt.Sprintf("recon-%d", time.Now().Unix())
+}
+
+// syntheticFanoutID returns the canonical "recon-fanout-<unix_ts>"
+// correlation ID for the post-merge fanout triggered by prtracker observing
+// a Sharko-opened PR being merged. Distinguishes a low-latency nudge from
+// the routine 30s drift safety-net tick. V2-2.2.
+func syntheticFanoutID() string {
+	return fmt.Sprintf("recon-fanout-%d", time.Now().Unix())
+}
+
+// syntheticCheckID returns the correlation ID for a READ-ONLY check pass
+// (P1-A A2 — what the page's Refresh drives). Distinct from the two IDs
+// above so a log search can tell "somebody asked Sharko to look" apart from
+// "Sharko went and fixed things".
+func syntheticCheckID() string {
+	return fmt.Sprintf("recon-check-%d", time.Now().Unix())
+}
+
+const (
+	// DefaultTickInterval is the reconciler's safety-net poll cadence.
+	//
+	// Low-latency post-merge convergence is driven by prTracker.SetOnMergeFn
+	// calling Reconciler.Trigger() — see Story 8.4 wiring. The periodic tick
+	// catches drift that did NOT originate from a Sharko-opened PR (e.g. a
+	// human editing managed-clusters.yaml directly in the repo UI, or an
+	// ArgoCD cluster Secret being mutated out-of-band).
+	DefaultTickInterval = 30 * time.Second
+
+	// DefaultManagedClustersPath is the in-repo location of the source-of-truth
+	// managed clusters file. Overridable via Deps.ManagedClustersPath.
+	DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
+
+	// V4ManagedClustersPath is the v4 data-file format's equivalent of
+	// DefaultManagedClustersPath: the same shape the code already reads
+	// through models.LoadManagedClusters, just at a different place — a
+	// root file called managed-clusters.yaml. Unlike
+	// DefaultManagedClustersPath this is not server-configurable — the v4
+	// format fixes the path, the same way EnginePinPath / V4ClustersDir
+	// are fixed in internal/orchestrator. Tried as a fallback ONLY when
+	// the configured (v3) path is genuinely absent — see pollOnce.
+	//
+	// Keep the literal identical to orchestrator.V4ManagedClustersPath;
+	// declared here rather than imported to keep this package's dependency
+	// set narrow.
+	//
+	// EXPORTED so the copy cannot drift unnoticed (review finding H1). This
+	// is the most dangerous of the hand-copied v4 paths: if it fell behind,
+	// the reconciler would read nothing at all on a v4 repo, conclude the
+	// desired state is empty, and orphan-sweep every managed cluster's
+	// ArgoCD Secret. Nothing would error and nothing would log a problem —
+	// so orchestrator's lockstep_paths_test.go asserts this equals
+	// orchestrator.V4ManagedClustersPath and fails the build the moment the
+	// two disagree. Do not un-export it without moving that assertion
+	// somewhere it can still run.
+	V4ManagedClustersPath = "managed-clusters.yaml"
+
+	// DefaultArgoCDNamespace is the namespace the reconciler writes cluster
+	// Secrets into. Overridable via Deps.Namespace.
+	DefaultArgoCDNamespace = "argocd"
+
+	// DefaultBranch is the git ref the reconciler reads managed-clusters.yaml
+	// from when Deps.Branch is empty. Matches the design doc §10 default and
+	// the existing secrets reconciler's "main" fallback.
+	DefaultBranch = "main"
+)
+
+// ArgoClient is the kubernetes.Interface the reconciler uses to List, Get,
+// Create, and Delete ArgoCD cluster Secrets in the argocd namespace.
+//
+// Story 8.1 widens A0's empty-interface placeholder to kubernetes.Interface so
+// production wiring passes the same clientset that powers argosecrets.Manager
+// + the rest of Sharko's K8s access, and tests use k8s.io/client-go/kubernetes/
+// fake.NewSimpleClientset() without an adapter layer. A narrower Sharko-
+// specific interface was considered (cleaner method surface) but would have
+// required a fake adapter that re-implements list-by-selector semantics — the
+// fake clientset already gets that exactly right, so the broader interface
+// pays off in test simplicity.
+type ArgoClient = kubernetes.Interface
+
+// Vault is the providers.ClusterCredentialsProvider Sharko uses everywhere
+// else to fetch per-cluster credentials (server URL, CA, bearer token /
+// kubeconfig bytes). Widened from A0's empty-interface placeholder so the
+// reconciler can call GetCredentials directly and tests can substitute the
+// existing internal/demo.MockClusterCredentialsProvider (or a one-off mock).
+type Vault = providers.ClusterCredentialsProvider
+
+// vault resolves the currently-active cluster-credentials provider at USE
+// time — nil when no resolver is wired, or when the resolver says no backend
+// is configured right now. Every credential read in this package goes through
+// here; nothing may capture a provider value at construction time. That boot
+// snapshot is exactly how a backend configured through the connections API
+// stayed invisible to the background write and the repair until a restart,
+// while the check path already read the live snapshot (R2-1).
+func (r *Reconciler) vault() Vault {
+	if r.deps.Vault == nil {
+		return nil
+	}
+	return r.deps.Vault()
+}
+
+// Deps holds the reconciler's external dependencies. Constructor-injected so
+// tests can substitute fakes (k8s.io/client-go/kubernetes/fake, gitprovider
+// mocks, audit no-ops). Using a struct (rather than positional args) means
+// Story 8.1's added fields are non-breaking for the caller in serve.go.
+type Deps struct {
+	// CMStore persists reconciler state across restarts. Required.
+	CMStore *cmstore.Store
+
+	// GitProvider is a lazy accessor returning the currently-active provider
+	// (or nil when no connection is configured). Matches the prtracker idiom
+	// — reconciler must tolerate "no provider yet" without panicking.
+	GitProvider func() gitprovider.GitProvider
+
+	// ArgoClient is the ArgoCD cluster-Secret API. Required at Start time;
+	// nil-checked by pollOnce in Story 8.1. See ArgoClient interface above.
+	ArgoClient ArgoClient
+
+	// Vault is a lazy accessor returning the currently-active
+	// cluster-credentials provider, or nil when no backend is configured
+	// right now. Matches the GitProvider idiom above — the provider is
+	// resolved at USE time, never captured at construction, so a secrets
+	// backend configured or swapped through the connections API is seen by
+	// the very next background write and repair with no restart (R2-1; the
+	// old value field froze the boot generation while the check path read
+	// the live snapshot). A nil accessor and an accessor returning nil both
+	// mean "no backend": pollOnce skips the pass, and
+	// ConnectionCredentialSpecForWrite refuses instead of writing.
+	Vault func() Vault
+
+	// AuditFn is called to emit audit events for each reconcile action
+	// (create / update / delete of an ArgoCD cluster Secret). Must be
+	// non-nil; the constructor does not enforce this — callers are expected
+	// to wire audit.Log.Add or equivalent.
+	AuditFn func(audit.Entry)
+
+	// TickInterval overrides the periodic poll cadence. Zero (or negative)
+	// means DefaultTickInterval (30s).
+	TickInterval time.Duration
+
+	// ManagedClustersPath overrides the in-repo source-of-truth file.
+	// Empty string means DefaultManagedClustersPath.
+	ManagedClustersPath string
+
+	// Namespace is the K8s namespace the reconciler writes ArgoCD cluster
+	// Secrets into. Empty string means DefaultArgoCDNamespace ("argocd").
+	Namespace string
+
+	// Branch is the git ref the reconciler reads managed-clusters.yaml from.
+	// Empty string means DefaultBranch ("main").
+	Branch string
+
+	// DefaultRoleARN is the AWS IAM role ARN passed to argocd-k8s-auth via
+	// --role-arn for clusters whose entry does NOT specify one. Empty means
+	// "no --role-arn flag".
+	DefaultRoleARN string
+
+	// DisableConnectivityCheck opts out of the connectivity-check label
+	// (sharko.dev/connectivity-check: enabled) that Sharko applies to
+	// newly-created cluster Secrets for zero-addon clusters. When false
+	// (the zero value, i.e. the default), the feature is ON. Set to true
+	// to disable (wired from SHARKO_CONNECTIVITY_CHECK=false/0 in serve.go).
+	//
+	// This is the static escape hatch. ProbeModeFn (below) is the live,
+	// server-wide toggle (V2-cleanup-85.4) — either signal disabling the
+	// check wins; see effectiveDisableConnectivityCheck.
+	DisableConnectivityCheck bool
+
+	// ProbeModeFn, when non-nil, is consulted on every createOne call to
+	// decide whether the connectivity-check label should be applied
+	// (V2-cleanup-85.4's probe_mode server setting: "check-app" vs
+	// "api-test"). Returns true when probe_mode is "api-test" (no
+	// connectivity-check app should ever be deployed). nil means "no
+	// settings store wired" — DisableConnectivityCheck alone decides.
+	// Wired from settings.Store.IsAPITest in cmd/sharko/serve.go, which
+	// already swallows read errors and defaults to false (check-app) —
+	// this reconciler never blocks on a settings-store outage.
+	ProbeModeFn func(ctx context.Context) bool
+
+	// SelfHealFn, when non-nil, is consulted when drift is detected on a
+	// Sharko-managed cluster to decide whether to re-apply git-desired
+	// addon labels (V3 G3 — opt-in self-heal for managed clusters, default
+	// OFF). Returns true when the managed_cluster_self_heal setting is ON.
+	// nil means "no settings store wired" — defaults to false (drift
+	// detection only, no automatic re-apply). Wired from
+	// settings.Store.IsManagedClusterSelfHealEnabled in cmd/sharko/serve.go.
+	//
+	// It does NOT gate the v4 addons.sharko.dev/ labels. Those are derived
+	// from cluster-addons/<name>.yaml and are the only way an enabled addon ever
+	// reaches a cluster, so applying them is ordinary convergence and runs
+	// on every tick regardless of this setting — see reconcileDiff and
+	// applyV4AddonLabels. This setting still governs everything else,
+	// including every v3 repo, exactly as it did before.
+	SelfHealFn func(ctx context.Context) bool
+
+	// EventRecorder (V3 E1) emits Kubernetes events for reconciler-detected
+	// conditions an operator should see via `kubectl get events` — currently
+	// just the label-fight warning (see recordFightCheck). nil means "no
+	// in-cluster K8s client at boot" (local/dev mode); every emit call must
+	// tolerate nil the same way *events.EventRecorder's own methods do
+	// (nil-receiver-safe), so this field is never required to be set.
+	EventRecorder *events.EventRecorder
+}
+
+// Reconciler is a background reconciler that converges ArgoCD cluster Secret
+// state with managed-clusters.yaml. See package doc for behaviour.
+type Reconciler struct {
+	deps                Deps
+	tickInterval        time.Duration
+	managedClustersPath string
+	namespace           string
+	branch              string
+
+	triggerCh chan struct{} // buffered(1) — Trigger() never blocks
+	// checkCh carries the READ-ONLY check request (P1-A A2). Same
+	// single-slot, never-blocks shape as triggerCh, and deliberately a
+	// SEPARATE channel: a queued check must never be swallowed by a queued
+	// write pass, and a queued write must never be downgraded to a check.
+	// The two are different acts, so they get different slots.
+	checkCh chan struct{}
+	stopCh  chan struct{}
+
+	startOnce sync.Once
+	stopOnce  sync.Once
+
+	// pollFn is the per-instance test seam invoked by run() on every tick
+	// or trigger. Production initializes it to (*Reconciler).pollOnce in
+	// New(); tests may swap it before calling Start to observe ticks /
+	// triggers without depending on the stub pollOnce's slog output.
+	//
+	// Per-instance (rather than a package-level var) so parallel tests do
+	// not race on a shared seam.
+	pollFn func(context.Context)
+
+	// nowFn is the per-instance clock seam used when evaluating the
+	// registration-pending grace window (V2-cleanup-11.1). Production
+	// initializes it to time.Now in New(); tests override it to drive a
+	// within-window / expired Secret deterministically. Per-instance (not a
+	// package-level var) so parallel tests do not race on a shared seam.
+	nowFn func() time.Time
+
+	// checkFn is the per-instance test seam invoked by run() on every
+	// TriggerCheck. Production initializes it to (*Reconciler).checkOnce in
+	// New(); tests may swap it to observe that the check path — and not the
+	// write path — was the one that ran. Per-instance for the same
+	// no-shared-race reason as pollFn.
+	checkFn func(context.Context)
+
+	// lastReconcileMu guards lastReconcile. See reconcile_status.go
+	// (V2-cleanup-89.4 — per-cluster reconcile visibility).
+	lastReconcileMu sync.RWMutex
+	// lastReconcile holds the most recent reconcile outcome per cluster
+	// name, in memory only. Derived, self-healing state — the next tick
+	// recomputes every entry it touches — so it is never persisted, and a
+	// server restart simply starts blank (no history, matches the rest of
+	// the reconciler's stance on state).
+	lastReconcile map[string]ClusterReconcileRecord
+
+	// fightMu guards fightState. See reconcile_status.go (V2-cleanup-89.5
+	// — label-fight detection on self-managed connections). Separate from
+	// lastReconcileMu — the two are updated together on every
+	// syncSelfManaged call, but they protect conceptually distinct state
+	// and there is no reason to serialize them on one lock.
+	fightMu sync.Mutex
+	// fightState holds, per self-managed cluster, what Sharko itself last
+	// wanted written onto the user's Secret and how many consecutive ticks
+	// something else has reverted it. In memory only, same non-persisted
+	// stance as lastReconcile — a restart just resets the revert count to
+	// zero, which only delays (never prevents) the warning from
+	// resurfacing on a genuinely ongoing fight.
+	fightState map[string]clusterFightState
+
+	// passMu guards passCompared — the branch head SHA and file path THIS
+	// PASS read from git (P2-C1), set once per pass by setPassCompared and
+	// read by every recordReconcile call made during it. See revision.go.
+	passMu       sync.RWMutex
+	passCompared currentPassRevisionState
+
+	// driftNoticeMu guards driftNotice. See connection_drift_notice.go (R3-5 —
+	// so a person learns a connection drifted without opening a page).
+	driftNoticeMu sync.Mutex
+	// driftNotice holds, per cluster, whether a drift notice has already gone
+	// out for the CURRENT episode, so a connection that stays broken for hours
+	// produces one event rather than one every 30 seconds. In memory only,
+	// same non-persisted stance as lastReconcile and fightState: a restart
+	// just means the next pass re-notices.
+	driftNotice map[string]connectionDriftState
+
+	// appliedRevMu guards appliedRevision — the commit the last SUCCESSFUL
+	// WRITE to each cluster's secret was built from (P2-C1's
+	// generation/observedGeneration pair). In memory only, keyed by
+	// cluster name, updated ONLY at the moment a real Kubernetes write
+	// succeeds (see stampAppliedRevision) — a check pass never touches it.
+	// Pruned alongside lastReconcile/fightState in pruneStaleReconcileRecords.
+	appliedRevMu    sync.RWMutex
+	appliedRevision map[string]string
+
+	// eventRecorder (V3 E1) is promoted from deps.EventRecorder the same
+	// way tickInterval/namespace/branch are promoted from their Deps
+	// counterparts — a single field call sites reach for directly instead
+	// of going through r.deps. May be nil (local/dev mode, no in-cluster
+	// K8s client); every call site treats that the same as the recorder's
+	// own nil-receiver no-op methods do.
+	eventRecorder *events.EventRecorder
+}
+
+// New constructs a Reconciler with the given dependencies. It does NOT start
+// the background goroutine — call Start(ctx) for that. The two-step
+// New/Start split mirrors prtracker.NewTracker / (*Tracker).Start so wiring
+// in cmd/sharko/serve.go is symmetric.
+//
+// Defaults applied:
+//   - deps.TickInterval <= 0 → DefaultTickInterval (30s)
+//   - deps.ManagedClustersPath == "" → DefaultManagedClustersPath
+func New(deps Deps) *Reconciler {
+	tick := deps.TickInterval
+	if tick <= 0 {
+		tick = DefaultTickInterval
+	}
+	path := deps.ManagedClustersPath
+	if path == "" {
+		path = DefaultManagedClustersPath
+	}
+	ns := deps.Namespace
+	if ns == "" {
+		ns = DefaultArgoCDNamespace
+	}
+	branch := deps.Branch
+	if branch == "" {
+		branch = DefaultBranch
+	}
+	r := &Reconciler{
+		deps:                deps,
+		tickInterval:        tick,
+		managedClustersPath: path,
+		namespace:           ns,
+		branch:              branch,
+		triggerCh:           make(chan struct{}, 1),
+		checkCh:             make(chan struct{}, 1),
+		stopCh:              make(chan struct{}),
+		nowFn:               time.Now,
+		lastReconcile:       make(map[string]ClusterReconcileRecord),
+		eventRecorder:       deps.EventRecorder,
+	}
+	r.pollFn = r.pollOnce
+	r.checkFn = r.checkOnce
+	return r
+}
+
+// Start launches the reconcile goroutine. Calling Start more than once is a
+// no-op (sync.Once). Cancel via Stop() or by cancelling ctx.
+//
+// P2-D D5: runs one reconcile pass immediately, before entering the
+// tick/trigger/check select loop (see run()) — a server that restarts no
+// longer shows every cluster as "not checked yet" for up to
+// DefaultTickInterval (30s); it shows real rows within moments of startup.
+// Matches secrets.Reconciler.Start's existing shape (that engine already
+// ran its first pass immediately — its Story 8.1-era doc comment above is
+// now out of date and is corrected here).
+func (r *Reconciler) Start(ctx context.Context) {
+	r.startOnce.Do(func() {
+		// M7 (code review): this engine has no off switch, on purpose (see
+		// clusterConnectionEngineInfo's own comment in
+		// internal/api/system_managed_secrets.go) — it always reports
+		// enabled=1, written once here rather than every pass since the
+		// value never changes for this engine's whole lifetime. Read by
+		// charts/sharko/templates/prometheusrules.yaml's alert guards, which
+		// gate on sharko_reconciler_enabled for BOTH engines generically —
+		// this keeps the connection engine's alerts firing normally exactly
+		// as before M7, since a gauge that never exists reads as "unknown",
+		// not "off", to a PromQL `unless` clause.
+		metrics.ReconcilerEnabled.WithLabelValues(engineClusterConnection).Set(1)
+		go r.run(ctx)
+	})
+}
+
+// Stop signals the reconcile goroutine to exit. Idempotent — calling Stop
+// multiple times is safe and never causes a close-of-closed-channel panic.
+func (r *Reconciler) Stop() {
+	r.stopOnce.Do(func() {
+		close(r.stopCh)
+	})
+}
+
+// Trigger requests an immediate reconcile on top of the periodic tick.
+// Used by prTracker.SetOnMergeFn for low-latency post-merge convergence
+// (Story 8.4 wiring). Never blocks: if a trigger is already queued, the
+// call is a no-op (the pending tick will cover it).
+//
+// Safe to call before Start. The buffered channel will hold the request
+// until the goroutine starts and drains it.
+func (r *Reconciler) Trigger() {
+	select {
+	case r.triggerCh <- struct{}{}:
+	default:
+	}
+}
+
+// ClientAndNamespace exposes the reconciler's k8s client and target
+// namespace for external code that needs to check orphan-ownership labels.
+// Returns (nil, "") when the reconciler's ArgoClient dep is nil (e.g.
+// out-of-cluster mode, or tests without a fake clientset). Operator Phase 0
+// addition — the orphan-verification code needs a k8s client, and the
+// clusterRecon is now the canonical holder of the in-cluster client.
+func (r *Reconciler) ClientAndNamespace() (kubernetes.Interface, string) {
+	if r.deps.ArgoClient == nil {
+		return nil, ""
+	}
+	return r.deps.ArgoClient, r.namespace
+}
+
+// run is the reconcile loop. Internal — the only entry point is Start.
+//
+// Each tick (whether ticker-driven or trigger-driven) gets a fresh synthetic
+// correlation ID attached to the per-tick context. Ticker ticks use
+// `recon-<unix_ts>`, trigger ticks use `recon-fanout-<unix_ts>` so operators
+// can distinguish the routine drift safety-net from the low-latency post-
+// merge nudge in log queries. V2-2.2.
+//
+// P2-D D5: runs one pass immediately, before the ticker is even created, so
+// a server that just restarted shows real per-cluster rows within moments
+// rather than waiting up to a full DefaultTickInterval for the first tick.
+// Uses the same synthetic tick ID shape a ticker-driven pass gets — an
+// operator reading logs cannot tell a startup pass apart from an ordinary
+// 30s tick, which is the point: it behaves exactly like one, just fired
+// once, early.
+func (r *Reconciler) run(ctx context.Context) {
+	r.pollFn(logging.WithRequestID(ctx, syntheticTickID()))
+
+	ticker := time.NewTicker(r.tickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.stopCh:
+			return
+		case <-ticker.C:
+			r.pollFn(logging.WithRequestID(ctx, syntheticTickID()))
+		case <-r.triggerCh:
+			r.pollFn(logging.WithRequestID(ctx, syntheticFanoutID()))
+		case <-r.checkCh:
+			r.checkFn(logging.WithRequestID(ctx, syntheticCheckID()))
+		}
+	}
+}
+
+// reconcileStats holds the per-tick counters used in the summary audit
+// entry. Intentionally minimal — the design doc §10 calls for an
+// operational signal ("what happened this tick"), not a full metrics
+// surface. Counters that need to feed Prometheus / Grafana can ride on a
+// future MetricsFn dep without changing this struct.
+type reconcileStats struct {
+	Created          int
+	Deleted          int
+	SkippedUnlabeled int // existing same-name unlabeled Secret — Adopt territory
+	SkippedPending   int // orphan candidate skipped — registration-pending within grace (V2-cleanup-11.1)
+	SkippedAdopted   int // orphan candidate skipped — adopted annotation present (V2-cleanup-28)
+	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
+	UserLabelSynced  int // self-managed connection — addon labels merged onto the user's Secret (V2-cleanup-57.2)
+	UserPending      int // self-managed connection — user's Secret not created yet; visible wait, no write (V2-cleanup-57.2)
+	ConnCheckSynced  int // managed cluster — connectivity-check label converged from the live enabled-addon count (walk finding: bare spoke)
+	Errors           int
+}
+
+// pollOnce is the reconcile body — one tick of the git → ArgoCD diff
+// + act loop. Invoked via r.pollFn (per-instance test seam set up in
+// New) so tests can observe tick / trigger events without depending on
+// the production audit + slog output of this function.
+//
+// Failure isolation contract (design doc §10):
+//   - A git fetch error aborts the tick BEFORE any K8s mutation, logs +
+//     audits the failure, and leaves all live state intact.
+//   - A schema-validation error from models.LoadManagedClusters has the
+//     same shape — the reader already audits the violation list
+//     via slog; we add a single audit.Entry so the operator sees the
+//     rejection in /api/v1/audit alongside the slog spam.
+//   - A vault error on cluster X logs + audits + CONTINUES to cluster X+1.
+//   - A K8s create / delete error on Secret Y logs + audits + CONTINUES to
+//     the next item in the same set.
+//
+// The final summary entry fires unconditionally so an operator can tell
+// at a glance whether the tick was a no-op or did meaningful work.
+func (r *Reconciler) pollOnce(ctx context.Context) {
+	log := logging.LoggerFromContext(ctx)
+	stats := reconcileStats{}
+
+	// Step 0: dependency precondition. The reconciler is wired into the
+	// process at Start time but the git provider is resolved lazily (no
+	// active connection on first boot is normal — wait for the operator
+	// to configure one). This branch matches secrets.Reconciler's idiom.
+	if r.deps.GitProvider == nil {
+		log.Warn("[clusterreconciler] no GitProvider getter configured, skipping reconcile")
+		return
+	}
+	gp := r.deps.GitProvider()
+	if gp == nil {
+		log.Debug("[clusterreconciler] no active git provider, skipping reconcile",
+			"managed_clusters_path", r.managedClustersPath,
+		)
+		return
+	}
+	if r.deps.ArgoClient == nil {
+		log.Warn("[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile")
+		return
+	}
+	// Resolved at pass time, not boot time: a backend configured through the
+	// connections API after startup is seen by the very next pass. This gate
+	// only decides whether the pass runs at all — every per-cluster write
+	// re-resolves inside ConnectionCredentialSpecForWrite, which refuses
+	// (fail closed) if the backend disappears mid-pass.
+	if r.vault() == nil {
+		log.Warn("[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile")
+		return
+	}
+
+	// P2-D D1: metrics only start counting once every dependency precondition
+	// above has passed — a "not configured yet" skip is a setup state, not a
+	// completed (or even attempted) pass, the same distinction
+	// secrets.Reconciler's "no Git connection" branch already draws for its
+	// own engine.
+	start := r.now()
+
+	// Fetch the branch head SHA ONCE for this pass (P2-C1), best effort —
+	// before readDesiredState, so even a pass that fails to read the file
+	// still knows what it tried to compare against. setPassCompared below
+	// is what actually publishes it; a failed pass clears it again via
+	// stampAbortedTick.
+	revision := r.fetchComparedRevision(ctx, gp)
+
+	// Steps 1/2/2b — read + parse + validate the desired state from git.
+	// Extracted to readDesiredState so a one-time single-cluster resync
+	// (ResyncClusterLabels, v4-8-5's "Re-sync now") computes the identical
+	// desired-label set this tick would, from the SAME read path, instead
+	// of a second git-reading path that could drift out of sync with this
+	// one over time.
+	spec, v4, fileNonEmpty, readPath, err := r.readDesiredState(ctx, gp)
+	if err != nil {
+		var rdErr *desiredStateReadError
+		if !errors.As(err, &rdErr) {
+			// readDesiredState only ever returns *desiredStateReadError —
+			// fail safe rather than dereference a nil pointer if that
+			// contract is ever violated.
+			rdErr = &desiredStateReadError{Kind: desiredStateReadKindGit, Path: r.managedClustersPath, Err: err}
+		}
+		switch rdErr.Kind {
+		case desiredStateReadKindSchema:
+			// schema.LogValidationFailure already fired slog.Error with the
+			// full violation list inside LoadManagedClusters; mirror it onto
+			// the audit log so the rejection is visible alongside other
+			// reconciler events.
+			log.Error("[clusterreconciler] managed-clusters file rejected — aborting tick (no state mutated)",
+				"path", rdErr.Path, "error", rdErr.Err,
+			)
+			r.audit(audit.Entry{
+				Level:     "error",
+				Event:     "cluster_secret_reconcile",
+				User:      "sharko",
+				Action:    "schema_validation",
+				Resource:  fmt.Sprintf("file:%s", rdErr.Path),
+				Source:    "reconciler",
+				Result:    "failure",
+				Reason:    audit.ReasonInvalidData,
+				RequestID: logging.RequestID(ctx),
+			})
+			// M5a — see the git-read-failure branch below for the rationale.
+			r.stampAbortedTick("schema validation failed: " + rdErr.Err.Error())
+		default:
+			log.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
+				"path", rdErr.Path, "branch", r.branch, "error", rdErr.Err,
+			)
+			r.audit(audit.Entry{
+				Level:     "error",
+				Event:     "cluster_secret_reconcile",
+				User:      "sharko",
+				Action:    "git_read",
+				Resource:  fmt.Sprintf("file:%s ref:%s", rdErr.Path, r.branch),
+				Source:    "reconciler",
+				Result:    "failure",
+				Reason:    audit.Classify(rdErr.Err),
+				RequestID: logging.RequestID(ctx),
+			})
+			// M5a: this pass never reaches the per-cluster work below, so
+			// every cluster's last-known record would otherwise silently
+			// age. Stamp them all Failed so an operator watching one
+			// cluster sees the abort, not a stale success from an earlier
+			// tick.
+			r.stampAbortedTick("git read failed: " + rdErr.Err.Error())
+		}
+		r.recordRunMetrics(engineClusterConnection, start, "failure", 0)
+		r.recordStateGauges()
+		r.recordFightGauge()
+		return
+	}
+
+	// spec == nil, err == nil means the file was legitimately absent (a
+	// fresh repo before the first cluster registration) — treated as "zero
+	// clusters desired", same as before this was extracted. fileNonEmpty
+	// (V2-cleanup-60.2 orphan-sweep sanity guard) is false in that case too.
+	if spec == nil {
+		log.Info("[clusterreconciler] no managed-clusters file found in git at either the configured path or the v4 path — treating as empty desired state",
+			"v3_path", r.managedClustersPath, "v4_path", V4ManagedClustersPath, "branch", r.branch,
+		)
+	}
+
+	// The read succeeded (even an "empty desired state" read is a real,
+	// completed comparison) — publish this pass's compared revision + path
+	// so every recordReconcile call below carries them (P2-C1).
+	r.setPassCompared(revision, readPath)
+
+	r.reconcileDiff(ctx, spec, fileNonEmpty, v4, &stats)
+	r.emitSummaryAudit(ctx, stats)
+
+	// P2-D D1: itemsChecked is the count of cluster entries this pass read
+	// from git — the same set reconcileDiff diffed against the live ArgoCD
+	// secrets. outcome is "partial" when this pass recorded an error against
+	// ANY cluster (createOne/deleteOne/syncSelfManaged/etc, or the
+	// listManagedSecrets-abort branch inside reconcileDiff, which now also
+	// counts toward stats.Errors) and "success" otherwise — pollOnce reaching
+	// this line at all means it did NOT abort before per-cluster work, so
+	// "failure" (reserved for an abort) never applies here.
+	itemsChecked := 0
+	if spec != nil {
+		itemsChecked = len(spec.Clusters)
+	}
+	outcome := "success"
+	if stats.Errors > 0 {
+		outcome = "partial"
+	}
+	r.recordRunMetrics(engineClusterConnection, start, outcome, itemsChecked)
+	r.recordStateGauges()
+	r.recordFightGauge()
+}
+
+// desiredStateReadKind classifies why readDesiredState could not produce a
+// usable desired state, so callers can log / audit with the exact Action
+// value pollOnce has always used for each failure mode.
+type desiredStateReadKind string
+
+const (
+	desiredStateReadKindGit    desiredStateReadKind = "git_read"
+	desiredStateReadKindSchema desiredStateReadKind = "schema_validation"
+)
+
+// desiredStateReadError wraps a readDesiredState failure with enough
+// context (Kind + the path that failed) for the caller to reproduce the
+// exact audit.Entry / log line pollOnce has always written for that
+// failure mode.
+type desiredStateReadError struct {
+	Kind desiredStateReadKind
+	Path string
+	Err  error
+}
+
+func (e *desiredStateReadError) Error() string { return e.Err.Error() }
+func (e *desiredStateReadError) Unwrap() error { return e.Err }
+
+// readDesiredState performs pollOnce's Steps 1 (git read, with v3→v4 path
+// fallback), 2 (parse + schema validation) and 2b (v4 addon-label
+// derivation) — the read-only half of a reconcile pass. Extracted so
+// ResyncClusterLabels (v4-8-5's one-time single-cluster "Re-sync now")
+// computes the desired-label set for one cluster from the identical read
+// path the periodic tick uses, rather than a second git-reading path.
+//
+// spec == nil with err == nil means the file was legitimately absent (a
+// fresh repo before the first cluster registration) — callers should treat
+// that as "zero clusters desired". A non-nil error is always a
+// *desiredStateReadError.
+func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitProvider) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
+	return r.readDesiredStateAtRef(ctx, gp, r.branch)
+}
+
+// readDesiredStateAtRef is readDesiredState with the git ref spelled out.
+//
+// Every existing caller goes through readDesiredState and passes the
+// configured branch, so their behaviour is byte-identical. The read-only
+// connection comparison (P2 step 2) passes a resolved commit SHA instead, so
+// that every file it reads — the managed-clusters file AND each
+// cluster-addons/<name>.yaml — comes from the SAME commit. Reading them at a
+// branch name means a commit landing mid-read can give a mixed picture of two
+// different desired states, and a comparison is exactly the thing that must
+// not report a difference it invented itself. Every real git provider passes
+// the ref straight through to its file API, so a SHA works wherever a branch
+// name does.
+func (r *Reconciler) readDesiredStateAtRef(ctx context.Context, gp gitprovider.GitProvider, ref string) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
+	log := logging.LoggerFromContext(ctx)
+
+	// Step 1: read the managed-clusters file from git. Tries the configured
+	// (v3) path first; when that is genuinely absent, falls back to the
+	// fixed v4 path (managed-clusters.yaml, design doc §2.4 — "same shape,
+	// different location") before treating the desired state as empty. A
+	// connected repo is one format or the other, never both, so this is a
+	// single extra read only on the (common, cheap) not-found path — v3
+	// repos with a populated managed-clusters.yaml never take it.
+	//
+	// readPath is a NAMED RETURN (P2-C1) so every branch below — including
+	// the two error returns — reports the exact path this attempt used.
+	// That is what lets recordReconcile's ComparedPath field say "here is
+	// where Sharko looked" even when the read itself failed.
+	readPath = r.managedClustersPath
+	body, readErr := gp.GetFileContent(ctx, readPath, ref)
+	if readErr != nil && errors.Is(readErr, gitprovider.ErrFileNotFound) {
+		if v4Body, v4Err := gp.GetFileContent(ctx, V4ManagedClustersPath, ref); v4Err == nil {
+			body, readErr, readPath = v4Body, nil, V4ManagedClustersPath
+			log.Debug("[clusterreconciler] configured managed-clusters path absent — found the v4 managed-clusters.yaml instead",
+				"v3_path", r.managedClustersPath, "v4_path", V4ManagedClustersPath)
+		}
+	}
+	if readErr != nil {
+		// ErrFileNotFound is not exceptional — a freshly-bootstrapped repo
+		// has zero clusters in its managed-clusters file (whichever of the
+		// two paths it uses) until the first register-cluster PR merges.
+		// Treat it as "empty desired state" rather than an error — the
+		// caller diffs against argocd correctly either way (no creates,
+		// only the deletes that would have happened anyway).
+		if errors.Is(readErr, gitprovider.ErrFileNotFound) {
+			return nil, nil, false, readPath, nil
+		}
+		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
+	}
+
+	// Step 2: parse + schema-validate. Same kind (ManagedClusters), same
+	// reader, regardless of which path Step 1 actually read from.
+	parsedSpec, parseErr := models.LoadManagedClusters(body)
+	if parseErr != nil {
+		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
+	}
+
+	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
+	// cluster-addons/*.yaml. On a v4 repo the connection record's own labels
+	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
+	// the ClusterAddons files do — so without this read the desired
+	// label set would be empty and enabling an addon would deploy nothing.
+	// Gated on readPath so a v3 repo does not pay for a directory listing
+	// it can never use, and so the v3 desired-label computation stays
+	// byte-identical.
+	if readPath == V4ManagedClustersPath {
+		v4 = readV4AddonLabels(ctx, gp, ref)
+	}
+
+	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
+	// a file that EXISTS with content but parses to zero clusters is the
+	// signature of a version/format mismatch, not of an intentionally
+	// emptied fleet — see orphanSweepHeld.
+	return &parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, readPath, nil
+}
+
+// orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
+// V2-cleanup-60.2). It reports whether the reconciler must WITHHOLD every
+// orphan deletion this tick because the desired state looks like a silent
+// misread rather than a real "delete everything" instruction:
+//
+//   - desiredCount == 0    — the parsed managed-clusters.yaml declares zero
+//     clusters, and
+//   - fileNonEmpty         — yet the file EXISTS in git with content (a
+//     missing file or a genuinely empty body is a
+//     normal fresh-install state and never holds), and
+//   - observedManaged >= 1 — and at least one sharko-labeled ArgoCD cluster
+//     Secret is live.
+//
+// All three together mean "git suddenly says nothing while the live fleet
+// says something" — historically caused by a binary silently parsing a
+// newer-format file as empty (the v2.1.x-reads-sharko.dev/v1 incident).
+// Deleting every managed Secret on that signal is unrecoverable for
+// inline-registered clusters, so the guard fails safe: skip the sweep for
+// this tick, scream (Error log + orphan_sweep_held audit event), and let
+// the operator resolve the mismatch. An operator who really wants a
+// zero-cluster fleet removes the clusters through Sharko (which deletes
+// their Secrets as part of removal) or deletes the leftover Secrets by
+// hand — both make observedManaged reach zero and the guard disarm.
+func orphanSweepHeld(desiredCount int, fileNonEmpty bool, observedManaged int) bool {
+	return desiredCount == 0 && fileNonEmpty && observedManaged > 0
+}
+
+// reconcileDiff drives the create / delete decisions from the parsed
+// desired state and the live ArgoCD secret list. Extracted so the
+// "empty managed-clusters.yaml" branch in pollOnce can share the logic.
+// A nil spec is treated as "no clusters desired".
+//
+// fileNonEmpty reports whether managed-clusters.yaml existed in git with
+// non-whitespace content — one of the three inputs to the orphan-sweep
+// sanity guard (orphanSweepHeld, V2-cleanup-60.2).
+//
+// v4 is the per-cluster addon-enablement label set derived from
+// cluster-addons/*.yaml on a v4 repo (readV4AddonLabels), plus which clusters
+// this tick could not read. It is nil on a v3 repo, and every use of it
+// below is a no-op when nil — the v3 path computes its desired labels
+// exactly as it always did, from the connection record's own labels block,
+// and keeps every one of its old write rules.
+func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, v4 *v4Assignments, stats *reconcileStats) {
+	// Build the desired set (in-git names).
+	desired := make(map[string]models.ManagedClusterEntry)
+	if spec != nil {
+		for _, c := range spec.Clusters {
+			if c.Name == "" {
+				// Schema validation should have caught this; defensive
+				// skip so a stray "" entry doesn't try to create a Secret
+				// with an empty name.
+				continue
+			}
+			desired[c.Name] = c
+		}
+	}
+
+	// List the actual set (in-argocd, sharko-labeled only).
+	existing, err := r.listManagedSecrets(ctx)
+	if err != nil {
+		logging.LoggerFromContext(ctx).Error("[clusterreconciler] listing managed cluster Secrets failed — aborting tick",
+			"namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_reconcile",
+			User:      "sharko",
+			Action:    "list_secrets",
+			Resource:  fmt.Sprintf("namespace:%s", r.namespace),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
+		})
+		// P2-D: this abort was previously invisible to stats.Errors, which
+		// left emitSummaryAudit's level/result computation (and, now, this
+		// tick's outcome metric label) reading this as a clean "success" tick
+		// even though nothing after this point ran. One-line honesty fix,
+		// same spirit as M5a below.
+		stats.Errors++
+		// M5a — this pass never reaches the per-cluster work either; see
+		// the pollOnce git-read-failure branch for the full rationale.
+		r.stampAbortedTick("listing ArgoCD cluster secrets failed: " + err.Error())
+		return
+	}
+
+	// Compute set diffs in O(n+m) via map lookups.
+	//
+	// Self-managed connections (connectionManagedBy: user — V2-cleanup-57.2)
+	// are partitioned OUT of the create set: Sharko never creates (or
+	// rotates, or deletes) their ArgoCD cluster Secret. Instead each gets a
+	// label-only sync onto the user-created Secret every tick — see
+	// syncSelfManaged. They stay in `desired` so the orphan sweep below can
+	// never treat their Secret as an orphan while the cluster is in git.
+	toCreate := make([]models.ManagedClusterEntry, 0, len(desired))
+	selfManaged := make([]models.ManagedClusterEntry, 0)
+	// alreadyInSync holds cluster names present in both git and ArgoCD that
+	// need no create this tick — recorded as a succeeded reconcile below
+	// (V2-cleanup-89.4) so the read model doesn't go stale between the
+	// (rare) ticks that actually create or delete something.
+	alreadyInSync := make([]string, 0, len(desired))
+	for name, entry := range desired {
+		if entry.UserManagedConnection() {
+			selfManaged = append(selfManaged, entry)
+			continue
+		}
+		if _, present := existing[name]; !present {
+			toCreate = append(toCreate, entry)
+		} else {
+			alreadyInSync = append(alreadyInSync, name)
+		}
+	}
+	for _, name := range alreadyInSync {
+		// M5b / V3 G1: "succeeded" here was previously earned by Secret
+		// PRESENCE alone. We already have both sides of the comparison in
+		// hand from this pass (desired[name], and existing[name].Labels from
+		// the listManagedSecrets call above) — no extra API call needed — so
+		// state honestly what was verified: the addon labels too, if they
+		// match, or just presence if they don't. V3 G1 adds drift detection:
+		// when labels don't match, compute and store the concrete difference
+		// (which keys added/removed/changed) so the read model can expose
+		// OutOfSync state + the diff to the UI.
+		msg := "cluster Secret present"
+		var drift *LabelDrift
+		desiredLabels := desiredAddonLabels(desired[name], v4.labelsFor(name))
+
+		// Connectivity-check convergence (walk finding: bare spoke) is
+		// independent of addon-label drift and runs unconditionally on
+		// EVERY tick — it must not depend on some OTHER label also being
+		// out of sync this tick, and it must not wait on the opt-in
+		// managed_cluster_self_heal setting the block below is gated by.
+		// See syncConnectivityCheckLabel's doc comment.
+		if !r.syncConnectivityCheckLabel(ctx, name, desiredLabels, stats) {
+			continue
+		}
+		if secret := existing[name]; secret != nil {
+			// R3-5: notice a structurally broken or disowned connection while
+			// this pass already has the Secret in hand — no extra API call, no
+			// backend read. Reads only: it records the fact and emits at most
+			// one event per drift episode. The repair stays a separate action
+			// somebody asks for.
+			r.noticeConnectionShapeDrift(ctx, name, secret, false)
+
+			// v4 adds one extra question to "are we in sync?". labelsMatch
+			// is a SUBSET check, which is the right question for v3 (off is
+			// recorded as `<addon>: disabled`, a value change it catches)
+			// but not for v4, where off is recorded as the ABSENCE of the
+			// key — a stale `addons.sharko.dev/x: enabled` would satisfy a
+			// subset check while the addon kept deploying. Only consulted
+			// when v4 labels were actually derived, so v3's in-sync
+			// decision is unchanged.
+			inSync := labelsMatch(desiredLabels, secret.Labels)
+			if inSync && v4 != nil && hasStaleV4AddonLabels(desiredLabels, secret.Labels) {
+				inSync = false
+			}
+			if inSync {
+				msg = "cluster Secret present; labels verified"
+				// drift stays nil — labels are in sync
+			} else {
+				// Labels differ — compute concrete diff for G1 OutOfSync state
+				drift = computeLabelDrift(desiredLabels, secret.Labels, annotationsOf(secret))
+				// msg stays "cluster Secret present" — not claiming "verified"
+				// when they don't match (honest reporting, same as before G1)
+
+				// v4: stamping the addons.sharko.dev/ labels derived from
+				// cluster-addons/<name>.yaml is NORMAL CONVERGENCE, not self-heal.
+				// Git is the source of truth and this reconciler is the only
+				// thing that turns an assignment file into the label the
+				// engine's ApplicationSet generator selects on — so if it
+				// waits for an opt-in setting (default OFF), enabling an
+				// addon writes a file, merges a PR, and deploys absolutely
+				// nothing. Same in reverse for disable. So on a v4 repo, a
+				// disagreement in the addons.sharko.dev/ keys is applied on
+				// this tick, every tick, no setting consulted.
+				//
+				// Everything else about drift is untouched: a v3 repo has no
+				// v4 assignments at all (v4 == nil), and even on v4 a drift
+				// that does not involve an addons.sharko.dev/ key falls
+				// through to the opt-in setting below exactly as before.
+				if v4 != nil && driftTouchesV4AddonKeys(drift) {
+					if v4.desiredKnown(name) {
+						r.applyV4AddonLabels(ctx, name, desiredLabels, drift, stats)
+						// applyV4AddonLabels records the outcome itself.
+						continue
+					}
+					// Sharko could not read this cluster's assignment file
+					// this tick, so it does not know which addons should be
+					// on. Converging now would undeploy everything over a
+					// git hiccup or a YAML typo. Report the drift, write
+					// nothing.
+					logging.LoggerFromContext(ctx).Warn(
+						"[clusterreconciler] leaving this cluster's addon labels alone — Sharko could not read its addon assignment file this tick, so it does not know which addons should be running",
+						"cluster", name, "namespace", r.namespace,
+						"path", v4ClusterFilePath(name), "branch", r.branch,
+					)
+				}
+
+				// V3 G3: opt-in self-heal for managed clusters. When the
+				// managed_cluster_self_heal setting is ON, re-apply git-desired
+				// addon labels (enforcement-by-reconcile, same mechanism as
+				// syncSelfManaged). Default OFF — drift detection only.
+				if r.deps.SelfHealFn != nil && r.deps.SelfHealFn(ctx) {
+					r.selfHealManagedCluster(ctx, name, desiredLabels, stats)
+					// selfHealManagedCluster already called recordReconcile with
+					// the outcome (succeeded/failed), so skip the default record
+					// below that would overwrite it.
+					continue
+				}
+			}
+		}
+		r.recordReconcile(name, OutcomeSucceeded, msg, drift)
+	}
+
+	now := r.now()
+	toDelete := make([]string, 0)
+	for name := range existing {
+		if _, present := desired[name]; present {
+			continue // in both sets — handled by the clear-pending pass below.
+		}
+		// in-argocd ∖ in-git → orphan candidate.
+
+		secret := existing[name]
+
+		// V2-cleanup-28: adopted secrets are delete-proof from the automatic
+		// sweep. They can only be removed via an explicit Unadopt call.
+		// The full corev1.Secret is already cached in existing[name] — no
+		// extra Get required.
+		// argosecrets.IsAdopted recognises the pre-rename legacy annotation
+		// key too — a cluster adopted before V2-cleanup-59 must stay
+		// delete-proof (this is the annotation that protects it).
+		if argosecrets.IsAdopted(annotationsOf(secret)) {
+			stats.SkippedAdopted++
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] skipping orphan delete — Secret has adopted annotation; remove via Unadopt",
+				"cluster", name, "namespace", r.namespace,
+			)
+			r.audit(audit.Entry{
+				Level:     "warn",
+				Event:     "cluster_secret_skip_adopted",
+				User:      "sharko",
+				Action:    "skip",
+				Resource:  fmt.Sprintf("cluster:%s", name),
+				Source:    "reconciler",
+				Result:    "partial",
+				Detail:    "adopted secret not in git — left in place; remove via Unadopt",
+				RequestID: logging.RequestID(ctx),
+			})
+			continue
+		}
+
+		// BUT: a Secret that was direct-written during registration Stage 1
+		// carries the registration-pending annotation and is NOT yet in git
+		// because its registration PR has not merged. Skip it while the grace
+		// window is open so the orphan sweep does not race the PR merge
+		// (V2-cleanup-11.1). Once the window expires (PR never merged) it
+		// falls through and is reaped — no permanent leak.
+		pending, malformed := models.IsRegistrationPending(annotationsOf(secret), now)
+		if malformed {
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] registration-pending annotation is unparseable — treating Secret as a normal orphan candidate",
+				"cluster", name, "namespace", r.namespace,
+				"annotation", models.AnnotationRegistrationPending,
+				"value", func() string {
+					v, _ := models.RegistrationPendingValue(annotationsOf(secret))
+					return v
+				}(),
+			)
+		}
+		if pending {
+			stats.SkippedPending++
+			logging.LoggerFromContext(ctx).Info(
+				"[clusterreconciler] skipping orphan delete — Secret is registration-pending within grace window",
+				"cluster", name, "namespace", r.namespace,
+			)
+			continue
+		}
+		toDelete = append(toDelete, name)
+	}
+
+	// Create missing Secrets (in-git ∖ in-argocd). This reconciler is the
+	// SOLE writer of managed-cluster addon labels; register-time bootstrap
+	// (orchestrator Ensure) is a separate, unaffected path.
+	for _, entry := range toCreate {
+		r.createOne(ctx, entry, v4.labelsFor(entry.Name), stats)
+	}
+
+	// Orphan-sweep sanity guard (H2 forward guard, V2-cleanup-60.2): when
+	// the desired state reads as ZERO clusters even though the file exists
+	// non-empty in git AND sharko-labeled Secrets are live, the most likely
+	// explanation is a silent misread (version/format mismatch), not a real
+	// fleet-wide removal. Withhold every deletion this tick and scream. The
+	// per-candidate classification above (adopted / pending skips) already
+	// ran, so those operator signals still fire; only the destructive step
+	// is held. Fresh installs (file missing, or genuinely empty body) never
+	// trip this — fileNonEmpty is false there.
+	if len(toDelete) > 0 && orphanSweepHeld(len(desired), fileNonEmpty, len(existing)) {
+		stats.Errors++
+		logging.LoggerFromContext(ctx).Error(
+			"[clusterreconciler] orphan sweep HELD — managed-clusters.yaml is non-empty but parsed to zero clusters while sharko-labeled cluster Secrets exist; refusing to delete anything this tick. Check for a Sharko version/format mismatch on this repo (see operator guide: upgrade & rollback safety)",
+			"namespace", r.namespace,
+			"path", r.managedClustersPath,
+			"branch", r.branch,
+			"held_deletions", len(toDelete),
+			"observed_managed_secrets", len(existing),
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "orphan_sweep_held",
+			User:      "sharko",
+			Action:    "hold_orphan_sweep",
+			Resource:  fmt.Sprintf("namespace:%s held_deletions:%d observed_managed:%d", r.namespace, len(toDelete), len(existing)),
+			Source:    "reconciler",
+			Result:    "partial",
+			Detail:    "desired state parsed to zero clusters while the managed-clusters file exists non-empty and sharko-labeled cluster Secrets are live — orphan sweep withheld this tick; investigate a version/format mismatch before any Secret is deleted",
+			RequestID: logging.RequestID(ctx),
+		})
+		toDelete = nil
+	}
+
+	// Delete orphan Secrets (in-argocd ∖ in-git). Pass the cached corev1.Secret
+	// values so we can re-verify the ownership label as a defensive last check.
+	for _, name := range toDelete {
+		secret := existing[name]
+		r.deleteOne(ctx, name, secret, stats)
+	}
+
+	// Label-only sync for self-managed connections (V2-cleanup-57.2). Runs
+	// every tick so addon toggles converge onto the user's Secret with the
+	// same latency Sharko-managed clusters get.
+	//
+	// The one thing that holds it back is the same one that holds back the
+	// managed path above: on a v4 repo whose assignment file for this
+	// cluster could not be read this tick, Sharko does not know which addons
+	// should be on, and this write prunes stale addons.sharko.dev/ keys — so
+	// running it would undeploy the cluster's addons over an unreadable
+	// file. v3 repos have no v4 assignments (v4 == nil) and are unaffected.
+	for _, entry := range selfManaged {
+		if v4 != nil && !v4.desiredKnown(entry.Name) {
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] leaving this self-managed cluster's addon labels alone — Sharko could not read its addon assignment file this tick",
+				"cluster", entry.Name, "namespace", r.namespace,
+				"path", v4ClusterFilePath(entry.Name), "branch", r.branch,
+			)
+			r.recordReconcile(entry.Name, OutcomeSkipped,
+				AssignmentFileUnreadableTickMessage, nil)
+			continue
+		}
+		r.syncSelfManaged(ctx, entry, v4.labelsFor(entry.Name), stats)
+	}
+
+	// Convert pending → managed: any Secret that is now in BOTH git and
+	// argocd AND still carries the registration-pending annotation has had
+	// its registration PR merged — strip the annotation so it becomes a
+	// normal managed Secret (and is no longer immune to a future orphan
+	// sweep). Idempotent: Secrets without the annotation are untouched.
+	//
+	// Self-managed entries are EXCLUDED: their Secret is the user's, and the
+	// registration flow never direct-writes one for them — this pass has
+	// nothing to clear for a self-managed connection regardless of ordering.
+	// (clearRegistrationPending re-Gets fresh before writing, so it no
+	// longer matters that this pass runs after syncSelfManaged / the
+	// connectivity-check sync in tick order.)
+	for name := range desired {
+		if desired[name].UserManagedConnection() {
+			continue
+		}
+		secret, present := existing[name]
+		if !present {
+			continue // will be created above; nothing to clear.
+		}
+		if _, has := models.RegistrationPendingValue(annotationsOf(secret)); has {
+			r.clearRegistrationPending(ctx, name, stats)
+		}
+	}
+
+	// M3: prune reconcile records for clusters this pass no longer knows
+	// about — neither desired (in managed-clusters.yaml) nor observed live
+	// in ArgoCD. `existing` is a snapshot taken before any create/delete
+	// ran, so an orphan whose delete just succeeded or failed THIS pass is
+	// still a member of it — see pruneStaleReconcileRecords's doc comment
+	// for the full L10 interaction.
+	known := make(map[string]struct{}, len(desired)+len(existing))
+	for name := range desired {
+		known[name] = struct{}{}
+	}
+	for name := range existing {
+		known[name] = struct{}{}
+	}
+	r.pruneStaleReconcileRecords(known)
+}
+
+// desiredAddonLabels computes the addon-label set Sharko wants for a
+// managed-clusters.yaml entry, using the same normalization createOne
+// applies (raw labels coerced to map[string]string, legacy "true"/"false"
+// values upgraded to the canonical vocabulary). Deliberately excludes the
+// connectivity-check and managed-by labels — those are reconciler-derived
+// / ownership bookkeeping, not part of "what the operator asked for", and
+// including them would make an honest already-in-sync comparison (M5b)
+// depend on server settings (ProbeModeFn) that have nothing to do with
+// whether the cluster's OWN addon labels are correct.
+//
+// v4AddonLabels (v4 repos only, nil on v3) is the addon-enablement label
+// set derived from this cluster's cluster-addons/<name>.yaml — see
+// readV4AddonLabels. It is merged on top of the entry's own labels because
+// on a v4 repo the assignment file, not the connection record, is the
+// source of truth for which addons run here. nil means "nothing derived",
+// and the result is then byte-identical to the v3 computation.
+func desiredAddonLabels(entry models.ManagedClusterEntry, v4AddonLabels map[string]string) map[string]string {
+	labels := normalizeLabels(entry.Labels)
+	for k, v := range labels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			labels[k] = normalized
+		}
+	}
+	return mergeV4AddonLabels(labels, v4AddonLabels)
+}
+
+// labelsMatch reports whether every key/value in want is present with an
+// identical value in have. have may carry extra keys (e.g. the ownership
+// and secret-type labels) without failing the match — this only checks
+// that the wanted subset is satisfied.
+func labelsMatch(want, have map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// computeLabelDrift compares git-desired addon labels against live
+// cluster-secret labels and returns the concrete difference (V3 G1 — drift
+// detection for Sharko-managed clusters). Returns nil when labels are in sync.
+//
+// Only Sharko's addon-label keys are compared — the same scope as
+// desiredAddonLabels (excludes ownership bookkeeping labels like managed-by
+// and connectivity-check). The `have` map is the FULL secret.Labels from the
+// live Secret; this function extracts just the addon keys from it for the
+// comparison.
+//
+// desired: output of desiredAddonLabels(entry) — the addon labels Sharko
+//
+//	wants for this cluster per managed-clusters.yaml.
+//
+// have: the live Secret's full Labels map (includes ownership labels).
+// haveAnnotations: the live Secret's annotations, read for the takeover's
+//
+//	record of which label keys belong to the previous owner. Pass the
+//	Secret's real annotations — nil is fine and means "no such record".
+func computeLabelDrift(desired, have, haveAnnotations map[string]string) *LabelDrift {
+	drift := &LabelDrift{}
+
+	// Labels a takeover carried over from whoever owned the cluster before.
+	// They sit on the Secret unqualified (e.g. "env: prod"), which is the
+	// same shape as a v3 addon key — so without this list they would be read
+	// as Sharko's own, reported as drift that never goes away, and stripped
+	// by a self-heal run. The takeover wrote down the exact keys precisely so
+	// this comparison does not have to guess.
+	preserved := make(map[string]struct{})
+	for _, k := range argosecrets.PreservedLabelKeys(haveAnnotations) {
+		preserved[k] = struct{}{}
+	}
+
+	// Extract just Sharko's addon-enablement keys from the live Secret.
+	// argosecrets.IsAddonLabelKey is the precise boundary: an addon key is
+	// the BARE (unqualified) addon name, while every ownership / type /
+	// derived / foreign label is DNS-qualified (contains "/") and is excluded
+	// — managed-by, argocd.argoproj.io/secret-type, sharko.dev/connectivity-
+	// check, app.kubernetes.io/instance. This keeps drift detection (read
+	// model) and the self-heal write primitive on the SAME definition of
+	// "what Sharko owns", so a converged Secret shows no residual drift.
+	liveAddonLabels := make(map[string]string)
+	for k, v := range have {
+		if !argosecrets.IsAddonLabelKey(k) {
+			continue
+		}
+		if _, carried := preserved[k]; carried {
+			// Somebody else's label. Not Sharko's to report on, and
+			// certainly not Sharko's to remove.
+			continue
+		}
+		liveAddonLabels[k] = v
+	}
+
+	// Added: keys in desired but not in live
+	for k := range desired {
+		if _, present := liveAddonLabels[k]; !present {
+			drift.Added = append(drift.Added, k)
+		}
+	}
+
+	// Removed: keys in live but not in desired
+	for k := range liveAddonLabels {
+		if _, present := desired[k]; !present {
+			drift.Removed = append(drift.Removed, k)
+		}
+	}
+
+	// Changed: keys in both but with different values
+	for k, desiredVal := range desired {
+		if liveVal, present := liveAddonLabels[k]; present && liveVal != desiredVal {
+			drift.Changed = append(drift.Changed, k)
+		}
+	}
+
+	// Return nil when no diff (all slices empty)
+	if len(drift.Added) == 0 && len(drift.Removed) == 0 && len(drift.Changed) == 0 {
+		return nil
+	}
+
+	return drift
+}
+
+// syncSelfManaged converges ONLY the addon labels onto the user-created
+// ArgoCD cluster Secret of a self-managed connection (connectionManagedBy:
+// user — V2-cleanup-57.2). Delegates to argosecrets.Manager.SyncLabelsOnly
+// so both reconcilers share one label-only write primitive:
+//
+//   - Data / StringData / annotations are never touched (the connection
+//     credentials are the user's, verbatim).
+//   - No managed-by ownership label, no secret-type label, no
+//     connectivity-check label is ever stamped.
+//   - A leftover managed-by=sharko label from a Sharko-managed past is
+//     stripped (non-adopted Secrets only) so the orphan sweep can never
+//     reclaim the user's connection.
+//   - Secret missing → a VISIBLE pending state (Info log + audit entry +
+//     UserPending counter), not an error loop. The user creates the Secret
+//     per the operator guide; the next tick picks it up.
+//
+// Per-cluster error isolation matches createOne: failures log + audit +
+// count, and the next cluster still gets its turn.
+func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedClusterEntry, v4AddonLabels map[string]string, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+
+	// Addon labels in the canonical vocabulary, self-healing legacy
+	// "true"/"false" values exactly like the create path does — the label
+	// payload must be identical no matter who owns the connection. On a v4
+	// repo the derived addons.sharko.dev/ keys are merged on top; nil on v3.
+	clusterLabels := normalizeLabels(entry.Labels)
+	for k, v := range clusterLabels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			clusterLabels[k] = normalized
+		}
+	}
+	clusterLabels = mergeV4AddonLabels(clusterLabels, v4AddonLabels)
+	// NOTE: no ApplyConnectivityCheckLabel here — the check label is never
+	// stamped on a connection Sharko does not own (guest stance, same as
+	// adopted clusters). SyncLabelsOnly strips it defensively as well.
+
+	// Label-fight detection (V2-cleanup-89.5): snapshot the Secret's live
+	// labels BEFORE this tick's write, i.e. exactly what's there coming
+	// in — including anything another ArgoCD Application's sync reasserted
+	// since Sharko's last write. Best-effort: a read failure here only
+	// skips this tick's fight check (recordFightCheck treats a nil
+	// observedLive as "nothing to compare"); the label sync below still
+	// runs regardless.
+	var observedLive map[string]string
+	if liveSecret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{}); getErr == nil {
+		observedLive = liveSecret.Labels
+		if observedLive == nil {
+			// The Secret exists but currently carries NO labels at all — a
+			// real (possibly reverted-to-nothing) observation, not an
+			// unknown one. Use the empty map so recordFightCheck's
+			// `observedLive != nil` gate treats this as "compare against
+			// zero labels" instead of silently skipping the fight check —
+			// a Replace=true sync wiping every label would otherwise look
+			// identical to "read failed" and go undetected (L5).
+			observedLive = map[string]string{}
+		}
+	} else if !apierrors.IsNotFound(getErr) {
+		log.Warn("[clusterreconciler] label-fight pre-read failed — skipping this tick's fight check",
+			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
+		)
+	}
+	fightWarning := r.recordFightCheck(entry.Name, clusterLabels, observedLive)
+
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	changed, found, err := mgr.SyncLabelsOnly(ctx, entry.Name, clusterLabels)
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] self-managed label sync failed — continuing to next cluster",
+			"cluster", entry.Name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     EventClusterSecretUserLabelSyncFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "sync_labels",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
+		})
+		// M1: this tick's write never landed, so the fight-check baseline
+		// recordFightCheck just advanced (above) is a lie — clear it so the
+		// NEXT tick doesn't mistake Sharko's own failed write for another
+		// actor reverting it. See resetFightStreak's doc comment.
+		r.resetFightStreak(entry.Name)
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't sync addon labels onto this cluster's self-managed ArgoCD secret: "+err.Error(), nil)
+		return
+	}
+	if !found {
+		stats.UserPending++
+		log.Info("[clusterreconciler] self-managed connection: ArgoCD cluster Secret not created yet — waiting for the user (no write attempted)",
+			"cluster", entry.Name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     "cluster_secret_user_pending",
+			User:      "sharko",
+			Action:    "wait_user_secret",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "partial",
+			Detail:    "connection is managed by the user; create the ArgoCD cluster Secret by hand (see operator guide: self-managed connections)",
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(entry.Name, OutcomeSkipped, SelfManagedSecretNotCreatedMessage, nil)
+		return
+	}
+	if changed {
+		stats.UserLabelSynced++
+		recordWrite("updated")
+		log.Info("[clusterreconciler] self-managed connection: addon labels synced — connection data untouched",
+			"cluster", entry.Name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     EventClusterSecretUserLabelSync,
+			Changes:   audit.ChangesApplied,
+			User:      "sharko",
+			Action:    "sync_labels",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
+		// P2-C1: a real label write just landed on the user's Secret.
+		// AppliedRevision tracks every successful write this reconciler
+		// makes, self-managed included — NOT provenance annotations, which
+		// stay off self-managed/user-owned Secrets by design (see
+		// SyncLabelsOnly's own doc comment); this is a separate, in-memory
+		// fact, never written onto the Secret itself.
+		r.stampAppliedRevision(entry.Name)
+	}
+	// Whether this tick changed a label or found the Secret already
+	// converged, the self-managed connection is in sync as of now — the
+	// outcome stays Succeeded even when fightWarning is non-empty (Sharko
+	// IS successfully re-applying its labels every tick; the warning is
+	// visibility into a fight, not a sync failure).
+	r.recordReconcile(entry.Name, OutcomeSucceeded, fightWarning, nil)
+}
+
+// syncConnectivityCheckLabel converges the connectivity-check label on a
+// Sharko-MANAGED cluster's ArgoCD Secret (walk finding: bare spoke). Before
+// this, the label was only ever derived at Secret-CREATE time (createOne)
+// — a Secret created any other way, or one whose enabled-addon count
+// changed without any OTHER label also drifting that tick, could carry a
+// stale or entirely absent connectivity-check label forever. This makes the
+// label self-healing on every tick, exactly like the design doc promises
+// ("deterministic, self-healing" — internal/models/connectivity_check.go).
+//
+// Deliberately independent of the addon-label inSync/drift decision above:
+// it runs whether or not this cluster's addon labels are in sync, and
+// whether or not managed_cluster_self_heal is on — the connectivity-check
+// label is not an opt-in convergence, the same way applyV4AddonLabels's v4
+// keys are not. Self-managed (user-owned) connections never reach this
+// function — syncSelfManaged is their write path and deliberately never
+// touches this label (see its NOTE).
+//
+// desiredLabels is the SAME git-desired addon-label set this tick already
+// computed for this cluster, so the "zero enabled addons" count this label
+// is derived from is git's desired state, not a live snapshot mid-drift.
+//
+// Returns false when the cluster's outcome for this tick has already been
+// terminally recorded (a write error) so the caller skips its own
+// subsequent handling of this cluster; true otherwise, including the
+// overwhelmingly common no-op case.
+func (r *Reconciler) syncConnectivityCheckLabel(ctx context.Context, name string, desiredLabels map[string]string, stats *reconcileStats) bool {
+	log := logging.LoggerFromContext(ctx)
+
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	changed, found, err := mgr.SyncConnectivityCheckLabel(ctx, name, desiredLabels, !r.effectiveDisableConnectivityCheck(ctx))
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] connectivity-check label sync failed — continuing to next cluster",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_connectivity_check_sync",
+			User:      "sharko",
+			Action:    "sync_connectivity_check_label",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko couldn't converge the connectivity-check label on this cluster's ArgoCD secret: "+err.Error(), nil)
+		return false
+	}
+	if !found {
+		// The Secret disappeared between listManagedSecrets and this call —
+		// a race, not an error. The rest of this tick's per-cluster flow
+		// re-Gets the Secret itself and will report on it honestly.
+		return true
+	}
+	if changed {
+		stats.ConnCheckSynced++
+		recordWrite("updated")
+		log.Info("[clusterreconciler] connectivity-check label converged from the live enabled-addon count",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     "cluster_secret_connectivity_check_sync",
+			User:      "sharko",
+			Action:    "sync_connectivity_check_label",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
+	}
+	return true
+}
+
+// selfHealManagedCluster converges the git-desired addon labels onto a
+// drifted Sharko-MANAGED cluster Secret. It is the single write path for
+// those labels, and three callers use it — all of them ONLY for
+// Sharko-owned Secrets (self-managed / user-owned connections take the
+// syncSelfManaged branch; see reconcileDiff's UserManagedConnection
+// partition):
+//
+//   - applyV4AddonLabels, on every tick, whenever a v4 repo's
+//     addons.sharko.dev/ labels disagree with cluster-addons/<name>.yaml. No
+//     setting gates that — it is how enable and disable take effect.
+//   - the drift-detection section, for any OTHER label drift, and only
+//     when managed_cluster_self_heal is ON (V3 GF1 — opt-in, default OFF).
+//     This is the only rule a v3 repo ever meets.
+//   - ResyncClusterLabels, the one-time on-demand "Re-sync now".
+//
+// The write rules below are identical for all three; only the decision to
+// call it differs.
+//
+// It uses argosecrets.SyncManagedClusterLabels — NOT SyncLabelsOnly. That
+// distinction is the whole fix: SyncLabelsOnly is the guest primitive for
+// user-owned Secrets and STRIPS managed-by from a non-adopted Secret (its
+// handover branch). Running it against a Sharko-managed Secret deleted the
+// ownership label, dropped the cluster out of listManagedSecrets, and
+// de-managed it. SyncManagedClusterLabels instead PRESERVES + defensively
+// re-applies managed-by + secret-type (managed path), converges FULLY
+// (add/update/DELETE Sharko's own addon keys), and never touches foreign
+// labels / Data / annotations.
+//
+// Reporting is honest: after the write, the Secret is re-read and the residual
+// addon-label drift is recomputed. Only a genuinely converged Secret (no
+// residual drift AND — for the managed path — ownership label still present)
+// is recorded Succeeded with drift=nil. Anything else is recorded Failed with
+// the residual drift, never a false "corrected". Per-cluster error isolation
+// matches createOne — failures log + audit + record, next cluster continues.
+func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, desiredLabels map[string]string, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+
+	// Provenance (P2-C5): built from THIS pass's own compared facts, same
+	// as createOne, so a Secret's annotations always agree with what this
+	// same tick's ComparedRevision/ComparedPath report. Only actually
+	// written by SyncManagedClusterLabels when a real Update call happens
+	// (see that function — annotations are untouched on the "already
+	// converged, no write" no-op path).
+	revision, path := r.currentPassCompared()
+	provenance := connectionProvenanceAnnotations(path, revision, r.now())
+
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	res, err := mgr.SyncManagedClusterLabels(ctx, name, desiredLabels, provenance)
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] managed cluster self-heal failed — continuing to next cluster",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     EventClusterSecretManagedSelfHealFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "self_heal",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko couldn't converge Git-desired addon labels on this drifted managed-cluster Secret: "+err.Error(), nil)
+		return
+	}
+	if !res.Found {
+		// Should be impossible (we already verified the Secret exists in the
+		// drift-detection pass), but the primitive's contract allows
+		// NotFound. Treat as a skip rather than an error.
+		log.Warn("[clusterreconciler] managed cluster Secret disappeared between drift detection and self-heal — skipping",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.recordReconcile(name, OutcomeSkipped,
+			"cluster Secret disappeared between drift detection and self-heal attempt", nil)
+		return
+	}
+
+	// Honest verification: re-read the Secret and confirm what actually
+	// converged. With full convergence a successful heal leaves NO residual
+	// addon-label drift; for a managed (non-adopted) Secret the ownership
+	// label must also still be present (the exact regression this story
+	// guards). If either check fails we report the truth, never a false
+	// "corrected".
+	fresh, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] managed cluster self-heal post-write verify read failed",
+			"cluster", name, "namespace", r.namespace, "error", getErr,
+		)
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko wrote the self-heal but couldn't re-read the cluster Secret to confirm it converged: "+getErr.Error(), nil)
+		return
+	}
+	residual := computeLabelDrift(desiredLabels, fresh.Labels, fresh.Annotations)
+	ownershipLost := !res.Adopted && !IsManagedBySharko(fresh)
+	if residual != nil || ownershipLost {
+		stats.Errors++
+		msg := "self-heal did not fully converge this managed-cluster Secret's addon labels"
+		if ownershipLost {
+			msg = "self-heal left this managed-cluster Secret WITHOUT its Sharko ownership label — refusing to report it healed"
+		}
+		log.Error("[clusterreconciler] managed cluster self-heal incomplete — reporting honestly, not corrected",
+			"cluster", name, "namespace", r.namespace,
+			"residual_drift", residual, "ownership_lost", ownershipLost,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    EventClusterSecretManagedSelfHealFailed,
+			Changes:  audit.ChangesApplied,
+			User:     "sharko",
+			Action:   "self_heal",
+			Resource: fmt.Sprintf("cluster:%s", name),
+			Source:   "reconciler",
+			Result:   "failure",
+			// The 18th Error writer, and the one that set no flag at all —
+			// so the old sanitizer left its text alone by construction. msg
+			// is Sharko's own words, but "it happens to be safe today" is
+			// exactly the reasoning this story removes. The category is
+			// structured now and the two-way distinction msg carried moves
+			// to Detail, which is a literal here and touches no error.
+			Reason:    audit.ReasonNotConverged,
+			Detail:    msg,
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(name, OutcomeFailed, msg, residual)
+		return
+	}
+
+	if res.Changed {
+		recordWrite("updated")
+		log.Info("[clusterreconciler] managed cluster self-heal: git-desired addon labels converged — ownership preserved, drift corrected",
+			"cluster", name, "namespace", r.namespace, "adopted", res.Adopted,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     EventClusterSecretManagedSelfHeal,
+			Changes:   audit.ChangesApplied,
+			User:      "sharko",
+			Action:    "self_heal",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
+		// P2-C1: a real Update call just landed and verification confirmed
+		// it fully converged — stamp the applied revision before recording
+		// the outcome. Gated on res.Changed: when nothing changed (the
+		// no-op "already converged" path inside SyncManagedClusterLabels),
+		// no write happened this tick, so the PREVIOUS applied revision is
+		// still the honest answer and must not be overwritten.
+		r.stampAppliedRevision(name)
+	}
+	// Verified converged: addon labels exactly match git AND (managed path)
+	// the ownership label survives. drift is genuinely nil.
+	r.recordReconcile(name, OutcomeSucceeded, "drift corrected — Git-desired addon labels converged", nil)
+}
+
+// applyV4AddonLabels stamps the addon labels derived from
+// cluster-addons/<cluster>.yaml onto a Sharko-owned ArgoCD cluster Secret. On a v4
+// repo this is what "enable an addon" and "disable an addon" actually mean:
+// the PR changed the assignment file, and this is the moment the change
+// reaches the label the engine's ApplicationSet generator selects on. It
+// runs on the normal tick with no setting to switch it on.
+//
+// It writes through selfHealManagedCluster on purpose rather than issuing
+// its own Secret Update: that is the one converge path for Sharko-owned
+// cluster Secrets, and it carries every protection this write needs —
+// takeover-preserved label keys are never touched, non-addon ("/"-qualified
+// and not addons.sharko.dev/) keys are never touched, Data / StringData /
+// annotations are never touched, the ownership label is preserved and
+// re-applied for a managed Secret, an adopted Secret is treated as a guest,
+// and the result is verified by re-reading the Secret before anything is
+// reported as converged. Only the caller decides WHEN; the write rules are
+// the same no matter who calls.
+//
+// The Info line is deliberate: this is the step where a merged PR turns into
+// a running addon, so it belongs in the log at a level an operator reads.
+func (r *Reconciler) applyV4AddonLabels(ctx context.Context, name string, desiredLabels map[string]string, drift *LabelDrift, stats *reconcileStats) {
+	var added, removed, changed []string
+	if drift != nil {
+		added, removed, changed = drift.Added, drift.Removed, drift.Changed
+	}
+	logging.LoggerFromContext(ctx).Info(
+		"[clusterreconciler] applying addon labels from the cluster's assignment file — this is the step that makes enable and disable take effect",
+		"cluster", name, "namespace", r.namespace,
+		"path", v4ClusterFilePath(name), "branch", r.branch,
+		"adding", added, "removing", removed, "changing", changed,
+	)
+	r.selfHealManagedCluster(ctx, name, desiredLabels, stats)
+}
+
+// ErrClusterNotManaged is returned by ResyncClusterLabels when the named
+// cluster has no entry in the git-managed cluster list (whichever of the two
+// managed-clusters paths this repo uses) — e.g. a discovered-but-not-adopted
+// ArgoCD cluster. There is no git-desired label set to resync against.
+var ErrClusterNotManaged = errors.New("cluster has no entry in the git-managed cluster list — nothing to resync")
+
+// ResyncResult is the outcome of a one-time, single-cluster label resync
+// (v4-8-5 — the "Re-sync now" action on the drift view). Added/Removed/
+// Changed/Unchanged describe the addon-label diff this resync applied,
+// computed from the Secret's labels immediately BEFORE the write — the
+// same comparison the drift view already renders (computeLabelDrift).
+type ResyncResult struct {
+	Outcome ReconcileOutcome
+	Message string
+
+	Added     []string
+	Removed   []string
+	Changed   []string
+	Unchanged []string
+}
+
+// ResyncClusterLabels re-applies Sharko's own addon-label keys onto ONE
+// cluster's ArgoCD cluster Secret, ONCE, to match git — regardless of the
+// managed_cluster_self_heal setting (v4-8-5). It never reads or changes
+// that setting: this is a bounded, on-demand correction, not a toggle.
+//
+// Single-writer rule: this deliberately reuses the reconciler's EXISTING
+// write primitives rather than issuing its own Secret Update —
+// selfHealManagedCluster (reconciler.go, the same function the opt-in
+// self-heal tick calls when managed_cluster_self_heal is ON) for a
+// git-managed cluster, syncSelfManaged (reconciler.go, the same function
+// EVERY tick already calls unconditionally) for a self-managed (user-owned)
+// connection. There is exactly one code path that ever writes these
+// labels, whether it runs from the periodic tick, opt-in self-heal, or
+// this on-demand call.
+//
+// Touches nothing else: both write primitives only ever add/remove/update
+// Sharko's own addon-label keys — never foreign labels, Data, or
+// annotations (see their doc comments). Desired state is read via the
+// SAME git read path the tick uses (readDesiredState) so the label set
+// computed here is byte-identical to what the next tick would compute.
+func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (ResyncResult, error) {
+	if r.deps.GitProvider == nil {
+		return ResyncResult{}, errors.New("no GitProvider configured on this reconciler")
+	}
+	gp := r.deps.GitProvider()
+	if gp == nil {
+		return ResyncResult{}, errors.New("no active git provider configured")
+	}
+	if r.deps.ArgoClient == nil {
+		return ResyncResult{}, errors.New("no ArgoClient (k8s clientset) configured on this reconciler")
+	}
+
+	// P2-C1: a one-time resync is still a real read of git, so it publishes
+	// its own compared revision + path exactly like a periodic pass would
+	// — the write below (selfHealManagedCluster / syncSelfManaged) reads
+	// these same pass-compared facts to stamp its provenance/applied
+	// revision, so a Resync's write is attributed to the commit THIS call
+	// actually read, not whatever the last periodic tick happened to see.
+	revision := r.fetchComparedRevision(ctx, gp)
+	spec, v4, _, readPath, err := r.readDesiredState(ctx, gp)
+	if err != nil {
+		return ResyncResult{}, fmt.Errorf("reading desired cluster state from git: %w", err)
+	}
+	r.setPassCompared(revision, readPath)
+
+	var entry models.ManagedClusterEntry
+	found := false
+	if spec != nil {
+		for _, c := range spec.Clusters {
+			if c.Name == name {
+				entry, found = c, true
+				break
+			}
+		}
+	}
+	if !found {
+		return ResyncResult{}, ErrClusterNotManaged
+	}
+
+	// A v4 repo whose assignment file for this cluster could not be read
+	// this call is refused outright rather than "resynced" to a set Sharko
+	// does not actually know — the same rule the periodic tick follows.
+	if v4 != nil && !v4.desiredKnown(name) {
+		return ResyncResult{}, fmt.Errorf("couldn't read this cluster's addon assignment file (%s) in git, so Sharko doesn't know which addons should be on — fix or restore that file and try again", v4ClusterFilePath(name))
+	}
+
+	desired := desiredAddonLabels(entry, v4.labelsFor(name))
+
+	// Snapshot the live Secret's labels BEFORE the write, purely to report
+	// an honest "what this resync applied" diff — the write itself is done
+	// entirely by the reused primitive below, not by anything here.
+	var before, beforeAnnotations map[string]string
+	secretExists := false
+	if secret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{}); getErr == nil {
+		before = secret.Labels
+		beforeAnnotations = secret.Annotations
+		secretExists = true
+	} else if !apierrors.IsNotFound(getErr) {
+		return ResyncResult{}, fmt.Errorf("reading cluster secret: %w", getErr)
+	}
+
+	// Task #117: a Sharko-managed cluster whose secret has NEVER existed
+	// used to be told the secret "disappeared between drift detection and
+	// self-heal attempt" — a race that did not happen, describing a moment
+	// that never was. Nothing disappeared; there is simply nothing there
+	// yet. Say that, and don't attempt a write that has nothing to write
+	// onto. A self-managed connection keeps its own wording (the user is
+	// the one who creates that secret), so it falls through to
+	// syncSelfManaged below exactly as before.
+	if !secretExists && !entry.UserManagedConnection() {
+		r.recordReconcile(name, OutcomeSkipped, ManagedSecretNotCreatedMessage, nil)
+		return ResyncResult{
+			Outcome: OutcomeSkipped,
+			Message: ManagedSecretNotCreatedMessage,
+		}, nil
+	}
+
+	drift := computeLabelDrift(desired, before, beforeAnnotations)
+	unchanged := unchangedAddonLabelKeys(desired, before)
+
+	stats := reconcileStats{}
+	if entry.UserManagedConnection() {
+		r.syncSelfManaged(ctx, entry, v4.labelsFor(name), &stats)
+	} else {
+		r.selfHealManagedCluster(ctx, name, desired, &stats)
+	}
+
+	rec, _ := r.LastReconcile(name)
+	result := ResyncResult{
+		Outcome:   rec.Outcome,
+		Message:   rec.Message,
+		Unchanged: unchanged,
+	}
+	if drift != nil {
+		result.Added = drift.Added
+		result.Removed = drift.Removed
+		result.Changed = drift.Changed
+	}
+	return result, nil
+}
+
+// unchangedAddonLabelKeys returns the (sorted) desired addon-label keys
+// that already matched the live Secret's value before the write — the
+// "nothing to do here" half of the diff ResyncClusterLabels reports
+// alongside computeLabelDrift's added/removed/changed.
+func unchangedAddonLabelKeys(desired, have map[string]string) []string {
+	var keys []string
+	for k, v := range desired {
+		if hv, ok := have[k]; ok && hv == v {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// effectiveDisableConnectivityCheck resolves whether the connectivity-check
+// label should be suppressed for the cluster Secret about to be built,
+// combining the static Deps.DisableConnectivityCheck escape hatch
+// (SHARKO_CONNECTIVITY_CHECK env var) with the live, server-wide probe_mode
+// setting (V2-cleanup-85.4, api-test mode). Either signal disabling the
+// check wins (OR) — conservative by design: an operator with EITHER knob
+// set to "no app" gets no app, regardless of the other knob's state.
+func (r *Reconciler) effectiveDisableConnectivityCheck(ctx context.Context) bool {
+	if r.deps.DisableConnectivityCheck {
+		return true
+	}
+	if r.deps.ProbeModeFn != nil {
+		return r.deps.ProbeModeFn(ctx)
+	}
+	return false
+}
+
+// now returns the current time via the per-instance clock seam. Defaulted to
+// time.Now in New(); overridable in tests for deterministic grace-window
+// evaluation.
+func (r *Reconciler) now() time.Time {
+	if r.nowFn == nil {
+		return time.Now()
+	}
+	return r.nowFn()
+}
+
+// annotationsOf is a nil-safe accessor for a Secret's annotations.
+func annotationsOf(secret *corev1.Secret) map[string]string {
+	if secret == nil {
+		return nil
+	}
+	return secret.Annotations
+}
+
+// clearRegistrationPending removes the registration-pending annotation from a
+// now-managed cluster Secret. Best-effort + isolated: a failure is logged +
+// audited but does not abort the tick. Re-applies the ownership label
+// defensively (the annotation strip must never drop the managed-by label).
+//
+// Re-Gets the Secret fresh rather than working from the pre-tick
+// listManagedSecrets snapshot: this pass runs LAST among this tick's
+// per-cluster label writes (after the connectivity-check sync and any
+// addon-label self-heal), and a stale DeepCopy-then-Update here would
+// silently clobber whatever those earlier writes just landed with a full
+// Update from the OLD object — connectivity-check convergence found this
+// the hard way (a freshly-stamped label was reverted by this pass one
+// mutation later in the very same tick).
+func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+	fresh, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	if getErr != nil {
+		if apierrors.IsNotFound(getErr) {
+			log.Info("[clusterreconciler] registration-pending Secret already gone before annotation clear — nothing to do",
+				"cluster", name, "namespace", r.namespace,
+			)
+			return
+		}
+		stats.Errors++
+		log.Error("[clusterreconciler] re-reading registration-pending Secret before annotation clear failed — continuing",
+			"cluster", name, "namespace", r.namespace, "error", getErr,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_clear_pending",
+			User:      "sharko",
+			Action:    "clear_registration_pending",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(getErr),
+			RequestID: logging.RequestID(ctx),
+		})
+		return
+	}
+	// L11 (code review): should be impossible — this cluster reached
+	// clearRegistrationPending because the pre-tick snapshot considered it
+	// Sharko-managed — but the invariant is too important to trust a
+	// snapshot that can be stale by the time this pass re-Gets the Secret
+	// (the exact race deleteOne already guards against for delete; this is
+	// the same guard for the write below, which would otherwise re-stamp
+	// the ownership label onto a Secret that lost it between listing and
+	// this write).
+	if !IsManagedBySharko(fresh) {
+		log.Warn("[clusterreconciler] fresh secret missing sharko label before annotation clear — skipping (invariant guard)",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.recordReconcile(name, OutcomeSkipped,
+			"This cluster's ArgoCD secret unexpectedly lost Sharko's ownership label before Sharko could clear its registration-pending annotation — left in place as a safety measure.", nil)
+		return
+	}
+
+	// Deliberately NOT argosecrets.BuildClusterSecret: this is a
+	// metadata-only write (clear two annotations, re-apply the ownership
+	// label) on a DeepCopy of the live object — Data/StringData and every
+	// other field must come through untouched, which a from-scratch build
+	// cannot guarantee.
+	updated := fresh.DeepCopy()
+	delete(updated.Annotations, models.AnnotationRegistrationPending)
+	// A registration that was in flight across the V2-cleanup-59 upgrade
+	// carries the legacy key — clear it too so the Secret cannot stay
+	// sweep-immune under the old spelling.
+	delete(updated.Annotations, models.AnnotationRegistrationPendingLegacy)
+	// Strip the K8s-managed Data/StringData mismatch concern: we only mutate
+	// metadata here, so keep Data as-is (DeepCopy preserved it).
+	ApplyManagedBySharkoLabel(updated)
+	if _, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("[clusterreconciler] registration-pending Secret already gone before annotation clear — nothing to do",
+				"cluster", name, "namespace", r.namespace,
+			)
+			return
+		}
+		stats.Errors++
+		log.Error("[clusterreconciler] clearing registration-pending annotation failed — continuing",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_clear_pending",
+			User:      "sharko",
+			Action:    "clear_registration_pending",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
+		})
+		return
+	}
+	stats.ClearedPending++
+	recordWrite("updated")
+	log.Info("[clusterreconciler] registration-pending annotation cleared — cluster is now managed",
+		"cluster", name, "namespace", r.namespace,
+	)
+	r.audit(audit.Entry{
+		Level:     "info",
+		Event:     "cluster_secret_clear_pending",
+		User:      "sharko",
+		Action:    "clear_registration_pending",
+		Resource:  fmt.Sprintf("cluster:%s", name),
+		Source:    "reconciler",
+		Result:    "success",
+		RequestID: logging.RequestID(ctx),
+	})
+}
+
+// listManagedSecrets fetches all sharko-labeled cluster Secrets from the
+// argocd namespace as a name→Secret map. Filtered by
+// app.kubernetes.io/managed-by=sharko so externally-owned Secrets are
+// invisible to the reconciler — the cornerstone of the ownership model
+// (design doc §9: "without sharko label → never touched").
+func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1.Secret, error) {
+	list, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=" + LabelValueSharko,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing secrets in namespace %q: %w", r.namespace, err)
+	}
+	out := make(map[string]*corev1.Secret, len(list.Items))
+	for i := range list.Items {
+		s := &list.Items[i]
+		out[s.Name] = s
+	}
+	return out, nil
+}
+
+// createOne builds and writes a single ArgoCD cluster Secret. Per-cluster
+// errors (vault fetch, K8s create) are logged + audited but NEVER bubble
+// up — the next cluster in the toCreate list still gets its turn.
+//
+// The "skip if same-name unlabeled Secret exists" branch implements
+// design doc §9: an unlabeled Secret is Adopt territory; this
+// reconciler must not silently overwrite it.
+func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, v4AddonLabels map[string]string, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+	// Defensive: a same-name Secret may already exist without our label
+	// (operator-created, or adopted-by-another-tool). The list step
+	// filtered those out, so we re-check via Get before we Create.
+	existing, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{})
+	if getErr != nil && !apierrors.IsNotFound(getErr) {
+		stats.Errors++
+		log.Error("[clusterreconciler] pre-create Get failed — skipping cluster",
+			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     EventClusterSecretCreateFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "get_secret",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(getErr),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't check whether an ArgoCD cluster secret already exists for this cluster: "+getErr.Error(), nil)
+		return
+	}
+	if getErr == nil && !IsManagedBySharko(existing) {
+		// R3-10: Notice if this connection lost its ownership label. The Get
+		// already happened, the Secret is in hand, and this is about to refuse
+		// — no extra cost, no backend read. The notice does not change whether
+		// the write is refused; this adds awareness, it does not add a repair.
+		//
+		// R3-10 criterion 4: distinguish genuinely-foreign Secrets (another tool
+		// stamped managed-by) from Sharko Secrets that lost the label (no managed-by
+		// or empty). Only notice the latter — reporting another tool's correct Secret
+		// as Sharko's fault would be wrong.
+		managedByValue := existing.Labels[argosecrets.LabelManagedBy]
+		if managedByValue != "" && managedByValue != argosecrets.ManagedByValue {
+			// Another tool owns this — genuinely foreign, not Sharko's drift.
+			// Skip the notice; the Adopt-territory refusal below is correct.
+		} else {
+			// No managed-by label, or managed-by is empty/corrupted. This is a Secret
+			// that SHOULD be Sharko's (it's in managed-clusters.yaml) but lacks the
+			// label. Pass selfManaged=false because this is NOT a deliberately-unlabeled
+			// guest connection — it's a Sharko connection in trouble.
+			r.noticeConnectionShapeDrift(ctx, entry.Name, existing, false)
+		}
+
+		// Adopt territory — do not touch.
+		stats.SkippedUnlabeled++
+		log.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (Adopt territory)",
+			"cluster", entry.Name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "warn",
+			Event:     "cluster_secret_skip_unlabeled",
+			User:      "sharko",
+			Action:    "skip",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "partial",
+			Detail:    "unlabeled Secret exists in argocd namespace; defer to Adopt flow",
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(entry.Name, OutcomeSkipped,
+			"An ArgoCD cluster secret already exists for this cluster without Sharko's ownership label — Sharko will not overwrite it. Use Adopt to bring it under Sharko's management.", nil)
+		return
+	}
+
+	// Resolve credentials, through the ONE route a write takes — the same
+	// function an asked-for repair calls (repair_credentials.go). It forwards the
+	// entry's per-cluster roleArn so EKS token minting for a cross-account
+	// cluster assumes the cluster's own role, applies the per-cluster role
+	// precedence, and returns the whole credential half of the spec so both
+	// writers hand buildSecretConfig the same evidence and get the same
+	// connection shape.
+	credKey := entry.CredentialLookupKey()
+	credSpec, vaultErr := r.ConnectionCredentialSpecForWrite(entry)
+	if vaultErr != nil {
+		stats.Errors++
+		// The credentials error's own value is not logged. A credentials
+		// backend's error text can carry credential material, and this is the
+		// line that used to write it into the pod log verbatim. The cluster,
+		// the lookup key (Git/config metadata) and the step are what a person
+		// needs to find this.
+		log.Error("[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)",
+			"cluster", entry.Name, "cred_key", credKey, "step", "get-credentials",
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    EventClusterSecretCreateFailed,
+			Changes:  audit.ChangesNone,
+			User:     "sharko",
+			Action:   "get_credentials",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "failure",
+			// The CATEGORY travels, and nothing else. Classify runs HERE,
+			// where vaultErr is still a live typed error, and audit.Add turns
+			// the answer into the fixed safe sentence. Detail is deliberately
+			// not set: one answer, one field — and for a credentials reason
+			// the sink drops Detail anyway.
+			Reason:    audit.Classify(vaultErr),
+			RequestID: logging.RequestID(ctx),
+		})
+		// The reconcile record's message is read by the API (it becomes
+		// LastReconcile.Message and the managed-secrets rows), so it gets
+		// Sharko's own words too. The fixed prefix is unchanged, so
+		// FailureSentence's "credentials" branch still classifies it and
+		// classifyFailureReason still buckets the metric the same way.
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't fetch this cluster's credentials from the secrets backend. "+credsafe.Message, nil)
+		return
+	}
+
+	// Build the Secret. We reuse argosecrets.ClusterSecretSpec + the
+	// package's payload builders so the Secret shape is byte-identical
+	// to what argosecrets.Manager.Ensure writes — ArgoCD's auth code
+	// path is unchanged regardless of which writer mutated the Secret.
+	clusterLabels := normalizeLabels(entry.Labels)
+	// Self-heal legacy addon labels: clusters registered before V2-cleanup-20
+	// carry "true"/"false" addon labels in managed-clusters.yaml, which the
+	// ArgoCD ApplicationSet selector reads as NOT-enabled — so their addons
+	// never deploy. Upgrade those values to the canonical "enabled"/"disabled"
+	// on this write so an already-registered cluster converges with no manual
+	// re-register. Values that are already canonical (or non-addon labels) are
+	// left untouched. (V2-cleanup-20, decision #4.)
+	for k, v := range clusterLabels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			clusterLabels[k] = normalized
+		}
+	}
+	// v4 repos: the addon on/off keys come from cluster-addons/<name>.yaml, not
+	// from the connection record. nil on v3, where this is a no-op.
+	clusterLabels = mergeV4AddonLabels(clusterLabels, v4AddonLabels)
+	// Apply the connectivity-check label (V2-cleanup-29). The label is DERIVED
+	// here — never stored in managed-clusters.yaml — so no schema regen needed.
+	// effectiveDisableConnectivityCheck combines the static
+	// Deps.DisableConnectivityCheck escape hatch with the live probe_mode
+	// server setting (V2-cleanup-85.4) — either signal disabling the check
+	// wins.
+	models.ApplyConnectivityCheckLabel(clusterLabels, !r.effectiveDisableConnectivityCheck(ctx))
+	// The credential half — server, region, role and every piece of credential
+	// material — came from ConnectionCredentialSpecForWrite above, so the
+	// precedence buildSecretConfig applies (cert pair > token > exec) sees the
+	// same evidence here as it does on a repair. The labels are this pass's own.
+	spec := credSpec
+	spec.Labels = clusterLabels
+
+	// The canonical builder in internal/argosecrets is the ONE place a full
+	// connection Secret is assembled from a spec — the same function
+	// Manager.Ensure's create/update paths use, so the Secret shape is
+	// byte-identical regardless of which writer mutated it (we still avoid
+	// Ensure itself: its adoption path is deliberately not for this
+	// reconciler per the §9 ownership policy).
+	secret, buildErr := argosecrets.BuildClusterSecret(spec, r.namespace)
+	if buildErr != nil {
+		// Re-word, don't just relay: BuildClusterSecret's own error already
+		// says "building secret config for cluster %q" (Ensure's original
+		// wording — correct there, must not change). Before this reconciler
+		// called the canonical builder, its own local buildClusterSecret said
+		// "building exec-provider config for cluster %q" for the same
+		// failure. Re-wrapping here keeps that original sentence intact for
+		// this package's own callers/logs, so the refactor stays a pure
+		// internal-plumbing change with no visible wording change. Don't
+		// simplify this away — it's the only thing standing between "no
+		// behaviour change" being true and being a lie.
+		buildErr = fmt.Errorf("building exec-provider config for cluster %q: %w", spec.Name, buildErr)
+		stats.Errors++
+		log.Error("[clusterreconciler] building Secret payload failed — skipping cluster",
+			"cluster", entry.Name, "error", buildErr,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     EventClusterSecretCreateFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "build_payload",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(buildErr),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't build the ArgoCD cluster secret for this cluster: "+buildErr.Error(), nil)
+		return
+	}
+
+	// Defense-in-depth: re-apply the label even though the canonical builder
+	// already set it. Cheap, idempotent, and lock-in for the invariant
+	// "every Secret this reconciler writes carries the sharko label".
+	ApplyManagedBySharkoLabel(secret)
+
+	// Provenance (P2-C5): stamp WHERE this write's desired state came from
+	// and WHEN, before the Create call — never a value, never a hash,
+	// never a store path. revision/path come from THIS pass's own
+	// compared facts, so the annotation always agrees with what
+	// ComparedRevision/ComparedPath report for this same tick.
+	revision, path := r.currentPassCompared()
+	if secret.Annotations == nil {
+		secret.Annotations = make(map[string]string, 3)
+	}
+	for k, v := range connectionProvenanceAnnotations(path, revision, r.now()) {
+		secret.Annotations[k] = v
+	}
+
+	if _, createErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{}); createErr != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] Secret Create failed — skipping cluster",
+			"cluster", entry.Name, "namespace", r.namespace, "error", createErr,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     EventClusterSecretCreateFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "create",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(createErr),
+			RequestID: logging.RequestID(ctx),
+		})
+		r.recordReconcile(entry.Name, OutcomeFailed,
+			"Sharko couldn't create the ArgoCD cluster secret for this cluster: "+createErr.Error(), nil)
+		return
+	}
+
+	stats.Created++
+	recordWrite("created")
+	log.Info("[clusterreconciler] cluster Secret created",
+		"cluster", entry.Name, "namespace", r.namespace, "server", credSpec.Server,
+	)
+	r.audit(audit.Entry{
+		Level:     "info",
+		Event:     EventClusterSecretCreate,
+		Changes:   audit.ChangesApplied,
+		User:      "sharko",
+		Action:    "create",
+		Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+		Source:    "reconciler",
+		Result:    "success",
+		RequestID: logging.RequestID(ctx),
+	})
+	// P2-C1: a Create is unambiguously a real write — stamp the applied
+	// revision before recording the outcome, so this SAME record's
+	// AppliedRevision field (read inside recordReconcile) already reflects
+	// it rather than needing a second pass to catch up.
+	r.stampAppliedRevision(entry.Name)
+	r.recordReconcile(entry.Name, OutcomeSucceeded, "", nil)
+}
+
+// deleteOne removes a single orphan ArgoCD cluster Secret. The list step
+// already filtered by the sharko label, but we re-verify defensively in
+// case of a label race (operator stripped the label between list and
+// delete) — paranoia is cheap and the design doc §9 invariant is
+// "Sharko never touches what it doesn't own."
+func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.Secret, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+	if !IsManagedBySharko(cached) {
+		// Should be impossible (LabelSelector pre-filtered), but the
+		// invariant is too important to trust the pre-filter. Skip + log.
+		log.Warn("[clusterreconciler] cached secret missing sharko label between list and delete — skipping (invariant guard)",
+			"cluster", name, "namespace", r.namespace,
+		)
+		r.recordReconcile(name, OutcomeSkipped,
+			"This cluster's ArgoCD secret unexpectedly lost Sharko's ownership label between listing and delete — left in place as a safety measure.", nil)
+		return
+	}
+
+	if err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Already gone (concurrent delete by an operator). Idempotent.
+			log.Info("[clusterreconciler] orphan Secret already deleted",
+				"cluster", name, "namespace", r.namespace,
+			)
+			r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret already removed", nil)
+			return
+		}
+		stats.Errors++
+		log.Error("[clusterreconciler] orphan Secret delete failed — continuing to next",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     EventClusterSecretDeleteFailed,
+			Changes:   audit.ChangesNone,
+			User:      "sharko",
+			Action:    "delete",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Reason:    audit.Classify(err),
+			RequestID: logging.RequestID(ctx),
+		})
+		// L10: without this, an orphan Sharko repeatedly fails to delete
+		// would silently keep whatever stale record it had (or none at
+		// all) — the operator has no way to see the delete itself is
+		// failing, only that the Secret is still there. The pruning
+		// interaction that keeps this record visible for as long as the
+		// orphan exists is documented on pruneStaleReconcileRecords.
+		r.recordReconcile(name, OutcomeFailed,
+			"Sharko couldn't remove this orphaned ArgoCD cluster secret: "+err.Error(), nil)
+		return
+	}
+
+	stats.Deleted++
+	recordWrite("deleted")
+	log.Info("[clusterreconciler] orphan Secret deleted",
+		"cluster", name, "namespace", r.namespace,
+	)
+	r.audit(audit.Entry{
+		Level:     "info",
+		Event:     EventClusterSecretDelete,
+		Changes:   audit.ChangesApplied,
+		User:      "sharko",
+		Action:    "delete",
+		Resource:  fmt.Sprintf("cluster:%s", name),
+		Source:    "reconciler",
+		Result:    "success",
+		RequestID: logging.RequestID(ctx),
+	})
+	r.recordReconcile(name, OutcomeSucceeded, "orphaned Secret removed", nil)
+}
+
+// emitSummaryAudit fires one audit entry per tick describing the net
+// effect (counts of created / deleted / skipped / errors) — but ONLY when
+// the tick actually changed something (Created, Deleted, SkippedAdopted, or
+// Errors > 0). A no-op tick (the common case, every 30s) does NOT go into
+// the audit log: the audit ring is a fixed 1000-entry buffer, and a
+// heartbeat entry on every tick evicted real events (registrations,
+// removals, adoptions) in under 8 hours — which is also why the UI's "last
+// 24h/7d" filters returned almost nothing (V2-cleanup-85.2). The "reconciler
+// is alive" signal for a no-op tick is a slog line instead; add a metrics
+// counter here if/when a metrics surface exists for this package.
+func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats) {
+	if stats.Created == 0 && stats.Deleted == 0 && stats.SkippedAdopted == 0 && stats.Errors == 0 {
+		log := logging.LoggerFromContext(ctx)
+		log.Debug("[clusterreconciler] tick complete, no changes",
+			"created", stats.Created, "deleted", stats.Deleted,
+			"skipped_unlabeled", stats.SkippedUnlabeled, "skipped_pending", stats.SkippedPending,
+			"skipped_adopted", stats.SkippedAdopted, "cleared_pending", stats.ClearedPending,
+			"user_label_synced", stats.UserLabelSynced, "user_pending", stats.UserPending,
+			"connectivity_check_synced", stats.ConnCheckSynced,
+		)
+		return
+	}
+
+	level := "info"
+	result := "success"
+	if stats.Errors > 0 {
+		level = "warn"
+		result = "partial"
+	}
+	r.audit(audit.Entry{
+		Level:  level,
+		Event:  "cluster_secret_reconcile_tick",
+		User:   "sharko",
+		Action: "reconcile",
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d user_label_synced:%d user_pending:%d connectivity_check_synced:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.UserLabelSynced, stats.UserPending, stats.ConnCheckSynced, stats.Errors),
+		Source:    "reconciler",
+		Result:    result,
+		RequestID: logging.RequestID(ctx),
+	})
+}
+
+// audit is a nil-safe wrapper around deps.AuditFn. The constructor does
+// not enforce AuditFn != nil (callers are expected to wire it) but a
+// missing wire-up should NOT panic the reconciler loop — log a warning
+// and continue.
+func (r *Reconciler) audit(entry audit.Entry) {
+	if r.deps.AuditFn == nil {
+		slog.Warn("[clusterreconciler] AuditFn not wired — dropping audit entry",
+			"event", entry.Event, "action", entry.Action,
+		)
+		return
+	}
+	r.deps.AuditFn(entry)
+}
+
+// normalizeLabels coerces the interface{} Labels field of a
+// ManagedClusterEntry into the map[string]string shape argosecrets
+// expects. Mirrors config.parseLabels: a yaml map becomes a string map;
+// the legacy `labels: []` empty-list sentinel becomes the empty map;
+// anything else (including nil) becomes the empty map.
+//
+// We intentionally do NOT depend on internal/config here (which would
+// pull a much bigger graph just for the helper) — the logic is small
+// and the duplication cost is low.
+func normalizeLabels(raw interface{}) map[string]string {
+	if raw == nil {
+		return map[string]string{}
+	}
+	switch v := raw.(type) {
+	case models.ClusterLabels:
+		// V2-cleanup-22: ManagedClusterEntry.Labels is now the named
+		// models.ClusterLabels (underlying map[string]string); a type switch
+		// does not match it against the unnamed map case.
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			out[k] = val
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			out[k] = val
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			out[k] = fmt.Sprintf("%v", val)
+		}
+		return out
+	default:
+		return map[string]string{}
+	}
+}
+
+// The local buildClusterSecret helper that used to live here was the one
+// genuinely duplicated piece of the connection-Secret writers: it assembled
+// its own corev1.Secret literal from the shared BuildSecretConfigJSON /
+// BuildClusterSecretLabels wrappers. createOne now calls
+// argosecrets.BuildClusterSecret — the ONE canonical builder — directly, so
+// there is a single place the finished Secret object comes from.

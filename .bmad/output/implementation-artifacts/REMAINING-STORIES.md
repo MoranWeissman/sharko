@@ -1,0 +1,91 @@
+---
+generated: 2026-04-21
+scope: v1.23 catalog extensibility
+source_epic_file: .bmad/output/planning-artifacts/epics-v1.23.md
+source_sprint_status: .bmad/output/implementation-artifacts/sprint-status.yaml
+---
+
+# Remaining stories — v1.23 Catalog Extensibility
+
+Authoritative backlog lives in `epics-v1.23.md` + `sprint-status.yaml`.
+This file is a fast punch-list for dispatch order.
+
+**Sequencing rule** (per v1.22+v1.23 code-review report):
+Epic V123-1 → V123-2 → V123-3 → V123-4.
+
+**Story cadence:** one story → one branch off `main` → one PR → merge (no tag).
+Each story ships with a retrospective record at
+`.bmad/output/implementation-artifacts/V123-N-M-<slug>.md`.
+
+---
+
+## Done ✅
+
+- **V123-1.1** env parser + SSRF guard — PR #267 → `bf6186a`
+- **V123-1.2** fetch loop + snapshots + SidecarVerifier interface — PR #268 → `324ec8b`
+- **V123-1.3** merger + embedded-wins conflict rule — PR #270 → `836b26c`
+- **V123-1.4** Source attribution on API entries + ListFrom helper — PR #272 → `8887674`
+- **V123-1.5** GET /api/v1/catalog/sources endpoint + swagger — PR #274 → `b4f1d76`
+- **V123-1.6** POST /api/v1/catalog/sources/refresh Tier-2 force-refresh — PR #276 → `eea0abb`
+- **V123-1.7** UI source badge on Browse tiles + AddonDetail — PR #278 → `f3c4cdf`
+- **V123-1.8** Settings → Catalog Sources admin section (read-only env-only) — PR #280 → `c54ab95`
+- **V123-1.9** fetcher gaps + merger coverage + full-loop integration test — PR #282 → `4e87d6e`
+
+**Epic V123-1 (Third-party private catalogs) — CLOSED (9/9 done).**
+
+- **V123-2.1** schema v1.1 — optional per-entry signature field — PR #284 → `b06eee1`
+- **V123-2.2** cosign keyless verifier (sigstore-go) + OQ §7.2 resolution — PR #286 → `8bb8074`
+- **V123-2.3** SHARKO_CATALOG_TRUSTED_IDENTITIES env parser + operator docs — PR #288 → `ccdd27a`
+- **V123-2.4** UI verified badge + Signed-only filter (binary chip; warning variants → V123-2.6) — PR #290 → `8b1481a`
+- **V123-2.5** release pipeline signs embedded catalog entries (cmd/catalog-sign + workflow restructure) — PR #292 → `8408478`
+- **V123-2.6** verification outcome matrix + loader integration (closes Epic V123-2) — PR pending merge on `dev/v1.23-verification-tests`
+
+**Epic V123-2 (Per-entry cosign signing) — CLOSED on V123-2.6 merge (6/6 done).**
+
+---
+
+## Epic V123-3 — Trusted-source scanning bot — CLOSED (5/5 done)
+
+### Done ✅
+
+- **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR #296 → `3eb97d0`
+- **V123-3.2** — CNCF Landscape scanner plugin — PR #299 → `99341ef`
+- **V123-3.3** — AWS EKS Blueprints scanner plugin — PR #301 → `1572406`
+- **V123-3.4** — PR-opening logic + GitHub workflow + OQ §7.3 resolution — PR #303 → `e924ed1`. Workflow run #24996135521 opened the bot's first real PR (#305), closed as the close-without-merge smoke test.
+- **V123-3.5** — Reviewer runbook (`docs/site/developer-guide/catalog-scan-runbook.md` + mkdocs nav) — PR pending merge on `dev/v1.23-runbook`.
+
+**Epic V123-3 (Trusted-source scanning bot) — CLOSED on V123-3.5 merge (5/5 done).** End-to-end pipeline: skeleton (3.1) + 2 scanners (3.2, 3.3) + PR-opener + workflow (3.4) + reviewer runbook (3.5).
+
+---
+
+## Epic V123-4 — Documentation + release cut (5 stories, all backlog)
+
+### V123-4.1 — User-guide docs
+- `docs/site/user-guide/catalog-sources.md`
+- `docs/site/user-guide/verified-signatures.md`
+- Update `mkdocs.yml` nav.
+
+### V123-4.2 — Operator docs
+- `docs/site/operator/catalog-trust-policy.md` (already seeded in V123-2.3).
+- Update `docs/site/operator/supply-chain.md` with catalog-signing section.
+
+### V123-4.3 — Developer docs
+- `docs/site/developer-guide/catalog-scan-plugins.md`
+- Update `CONTRIBUTING-catalog.md` (how to contribute a new embedded entry).
+
+### V123-4.4 — `bmad-code-review` + `security-auditor` sweep
+- Full review of v1.23 landed code against design doc.
+- Artifact: `.bmad/output/reviews/v1.23-code-review.md`.
+
+### V123-4.5 — Changelog + merge `design/v1.23-extensibility` → main + tag v1.23.0
+- Only cut tag when user explicitly asks (per `feedback_release_cadence.md`).
+- CHANGELOG entry covers all 4 epics.
+
+---
+
+## Beyond v1.23
+
+- **V2 hardening epic** (task #82): SSO/OIDC, scoped RBAC, external vault, HA
+  multi-replica, encryption key rotation, written threat model, governance files,
+  API stability commitments, E2E scale tests. See
+  `~/.claude/projects/.../memory/project_sharko_roadmap.md` + `project_attribution_design.md`.

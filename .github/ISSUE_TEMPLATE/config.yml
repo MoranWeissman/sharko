@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and design discussion
+    url: https://github.com/MoranWeissman/sharko/issues/new/choose
+    about: GitHub Discussions is not enabled on this repo yet. For now, Q&A, design discussion, and roadmap input go through the issue tracker like everything else.
+  - name: Security disclosure (SECURITY.md)
+    url: https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md
+    about: Found a security vulnerability? Please do NOT file a public issue. Follow the responsible disclosure process in SECURITY.md instead.
+  - name: Code of Conduct
+    url: https://github.com/MoranWeissman/sharko/blob/main/CODE_OF_CONDUCT.md
+    about: Read our community standards. Code of Conduct reports go to the contact in CODE_OF_CONDUCT.md, not the issue tracker.
+  - name: Contributing guide
+    url: https://github.com/MoranWeissman/sharko/blob/main/CONTRIBUTING.md
+    about: How to file issues, open PRs, run tests, and sign your commits (DCO).

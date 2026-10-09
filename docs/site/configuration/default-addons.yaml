@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/default-addons.v1.json
+apiVersion: sharko.dev/v1
+kind: DefaultAddons
+metadata:
+  name: default-addons
+spec:
+  addons:
+    - cert-manager
+    - external-dns

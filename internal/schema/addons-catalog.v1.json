@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json",
+  "properties": {
+    "apiVersion": {
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
+    },
+    "kind": {
+      "const": "AddonCatalog"
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "applicationsets": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "repoURL": {
+                "type": "string"
+              },
+              "chart": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "namespace": {
+                "type": "string"
+              },
+              "selfHeal": {
+                "type": "boolean"
+              },
+              "syncOptions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "additionalSources": {
+                "items": {
+                  "properties": {
+                    "repoURL": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "chart": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "parameters": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    "valueFiles": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "ignoreDifferences": {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "extraHelmValues": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "secrets": {
+                "items": {
+                  "properties": {
+                    "secretName": {
+                      "type": "string"
+                    },
+                    "namespace": {
+                      "type": "string"
+                    },
+                    "keys": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "secretName",
+                    "namespace",
+                    "keys"
+                  ]
+                },
+                "type": "array"
+              }
+            },
+            "additionalProperties": true,
+            "type": "object",
+            "required": [
+              "name",
+              "repoURL",
+              "chart",
+              "version"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "applicationsets"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "Sharko AddonCatalog",
+  "description": "addons-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters."
+}

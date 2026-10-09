@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/catalog.v1.json
+apiVersion: sharko.dev/v1
+kind: AddonCatalog
+addons:
+  cert-manager:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    namespace: cert-manager
+    version: "1.14.5"
+  metrics-server:
+    repoURL: https://kubernetes-sigs.github.io/metrics-server/
+    chart: metrics-server
+    namespace: kube-system
+    version: "3.12.1"
+  billing-api:
+    repoURL: oci://registry.example.com/charts
+    chart: billing-api
+    namespace: billing
+    version: "2.4.0"

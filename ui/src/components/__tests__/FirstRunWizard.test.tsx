@@ -1,0 +1,1938 @@
+// FirstRunWizard.test.tsx — V124-6.4 / BUG-024 regression coverage.
+//
+// When the wizard is mounted with `initialStep={4}` (resume mode triggered
+// by App.tsx detecting an existing connection but un-initialized repo), the
+// header MUST drop the "Step N of M" counter. Showing "Step 4 of 4 —
+// Initialize" makes it look like steps 1-3 vanished, which the maintainer's
+// 2026-05-08 walkthrough flagged as confusing.
+//
+// V124-14 / BUG-032 also adds: when the backend marks an init op `failed`
+// with a descriptive error (e.g. "argocd application 'cluster-addons-bootstrap'
+// did not reach synced state: timeout: ..."), the wizard MUST render that
+// error string verbatim instead of "Repository initialized successfully."
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router-dom'
+import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
+import * as apiModule from '@/services/api'
+
+// V124-16: per-test override for the connections mock so the resume-mode
+// tests (BUG-037 / BUG-038) can simulate "an existing connection is loaded"
+// without rewriting the whole mock graph. vi.hoisted runs before vi.mock
+// hoisting, so the holder is safe to reference inside the mock factory.
+const mockState = vi.hoisted(() => ({
+  connections: [] as Array<Record<string, unknown>>,
+  refreshConnectionsSpy: undefined as ReturnType<typeof vi.fn> | undefined,
+}))
+
+vi.mock('@/hooks/useConnections', () => ({
+  useConnections: () => ({
+    connections: mockState.connections,
+    activeConnection: null,
+    setActiveConnection: vi.fn(),
+    loading: false,
+    error: null,
+    // Recreate the spy on first read of each test so per-test refresh-call
+    // assertions don't bleed across tests.
+    refreshConnections:
+      mockState.refreshConnectionsSpy ??
+      (mockState.refreshConnectionsSpy = vi.fn()),
+  }),
+  // PRLink names the Git host via useConnectionsOptional (v4.0.4 U2).
+  // No host here, so the link reads neutrally ("View PR #7").
+  useConnectionsOptional: () => null,
+}))
+
+vi.mock('@/services/api', () => {
+  // V124-15 / BUG-033: re-declare the typed error class inside the mock so
+  // tests that throw a 401-shaped error from `getOperation` exercise the
+  // real `isUnauthorizedError` path. Vitest hoists vi.mock; importing the
+  // real class would create a circular reference.
+  class OperationApiError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.name = 'OperationApiError'
+      this.status = status
+    }
+  }
+  return {
+    api: {
+      // V124-16 / BUG-037+038: full surface of wizard-relevant connection
+      // calls. testCredentials drives StepGit/StepArgoCD test buttons,
+      // createConnection / updateConnection are the save paths, and
+      // deleteConnection is what the new "Clear all configuration" link
+      // hits. discoverArgocd is touched on step-3 entry.
+      testCredentials: vi.fn().mockResolvedValue({
+        git: { status: 'ok' },
+        argocd: { status: 'ok' },
+      }),
+      createConnection: vi.fn().mockResolvedValue({ status: 'created' }),
+      updateConnection: vi.fn().mockResolvedValue({ status: 'updated' }),
+      deleteConnection: vi.fn().mockResolvedValue({ status: 'deleted' }),
+      discoverArgocd: vi
+        .fn()
+        .mockResolvedValue({ server_url: '', has_env_token: false, namespace: 'argocd' }),
+      // Legacy shims kept for older tests that may still reference them.
+      testGitConnection: vi.fn().mockResolvedValue({ ok: true }),
+      testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
+      saveConnection: vi.fn().mockResolvedValue({ ok: true }),
+      // migration-ui: step 4 renders <MigrationBanner/>, which probes
+      // migration status on mount. "empty" keeps it a no-op for every
+      // existing wizard test (no active connection to migrate yet).
+      getMigrationStatus: vi.fn().mockResolvedValue({ format: 'empty', migration_available: false, message: '' }),
+      // v4 wave 2.5 — step 5 (Catalog). Default to an empty Marketplace so
+      // existing tests that never reach step 5 are unaffected; the
+      // dedicated step-5 tests below override per-test.
+      listCuratedCatalog: vi.fn().mockResolvedValue({ addons: [], total: 0 }),
+      addToCatalog: vi.fn().mockResolvedValue({ added: [], enabled: [] }),
+      listRepoCharts: vi.fn().mockResolvedValue({ valid: false, repo: '' }),
+    },
+    // V2-cleanup-9: Step 4 probes repo state on mount. Default to "empty" so
+    // existing resume-mode / init tests still see the Initialize offer; the
+    // dedicated state tests below override per-test.
+    getInitStatus: vi.fn().mockResolvedValue({ state: 'empty', detail: '' }),
+    initRepo: vi.fn().mockResolvedValue({ operation_id: 'op-1' }),
+    getOperation: vi.fn().mockResolvedValue({
+      id: 'op-1',
+      status: 'pending',
+      steps: [],
+    }),
+    operationHeartbeat: vi.fn().mockResolvedValue({}),
+    OperationApiError,
+    // Mirror the real isUnauthorizedError predicate so the wizard's catch
+    // block treats the mocked OperationApiError(401) as fatal.
+    isUnauthorizedError: (err: unknown) => {
+      if (err instanceof OperationApiError) return err.status === 401
+      if (err instanceof Error) {
+        return /\b401\b|unauthorized|unauthenticated|session expired/i.test(
+          err.message,
+        )
+      }
+      return false
+    },
+  }
+})
+
+// V124-16: wipe the dismiss-flag and reset the configurable connections
+// mock between tests so resume-mode setup can't leak into fresh-mode tests.
+beforeEach(() => {
+  sessionStorage.clear()
+  mockState.connections = []
+  mockState.refreshConnectionsSpy?.mockClear()
+})
+
+afterEach(() => {
+  sessionStorage.clear()
+})
+
+function renderWizard(
+  initialStep?: number,
+  opts?: { isRepair?: boolean; onExit?: () => void },
+) {
+  return render(
+    <MemoryRouter>
+      {initialStep !== undefined ? (
+        <FirstRunWizard
+          initialStep={initialStep}
+          isRepair={opts?.isRepair}
+          onExit={opts?.onExit}
+        />
+      ) : (
+        <FirstRunWizard />
+      )}
+    </MemoryRouter>,
+  )
+}
+
+// H2 (review findings r1) — a small location probe so tests can assert
+// WHERE navigate() actually landed, not just that a button with the right
+// label exists. Rendered alongside the wizard inside the same MemoryRouter.
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="test-location">{location.pathname + location.search}</div>
+}
+
+function renderWizardWithLocationProbe(
+  initialStep?: number,
+  opts?: { isRepair?: boolean; onExit?: () => void },
+) {
+  return render(
+    <MemoryRouter>
+      {initialStep !== undefined ? (
+        <FirstRunWizard
+          initialStep={initialStep}
+          isRepair={opts?.isRepair}
+          onExit={opts?.onExit}
+        />
+      ) : (
+        <FirstRunWizard />
+      )}
+      <LocationProbe />
+    </MemoryRouter>,
+  )
+}
+
+// V124-10 / BUG-028 — detectGitProvider unit tests.
+//
+// The wizard's `buildPayload` calls detectGitProvider(form.git_url) and the
+// resulting value flows into the JSON body sent to POST /api/v1/connections/.
+// `undefined` is dropped by JSON.stringify and the backend's auto-derive
+// takes over; recognized hosts populate `git.provider` so the wizard's
+// "Test Connection" round-trip carries the value verbatim.
+describe('detectGitProvider', () => {
+  it('returns "github" for github.com', () => {
+    expect(detectGitProvider('https://github.com/foo/bar')).toBe('github')
+  })
+
+  it('returns "github" for *.github.com (e.g. api.github.com)', () => {
+    expect(detectGitProvider('https://api.github.com/foo/bar')).toBe('github')
+  })
+
+  it('returns "azuredevops" for dev.azure.com', () => {
+    expect(
+      detectGitProvider('https://dev.azure.com/myorg/myproj/_git/myrepo'),
+    ).toBe('azuredevops')
+  })
+
+  it('returns "azuredevops" for legacy *.visualstudio.com', () => {
+    expect(
+      detectGitProvider('https://myorg.visualstudio.com/myproj/_git/myrepo'),
+    ).toBe('azuredevops')
+  })
+
+  it('returns undefined for unsupported hosts (gitlab.com)', () => {
+    expect(detectGitProvider('https://gitlab.com/foo/bar')).toBeUndefined()
+  })
+
+  it('returns undefined for unsupported hosts (bitbucket.org)', () => {
+    expect(detectGitProvider('https://bitbucket.org/foo/bar')).toBeUndefined()
+  })
+
+  it('returns undefined for malformed URLs (URL constructor throws)', () => {
+    expect(detectGitProvider('not-a-url')).toBeUndefined()
+  })
+
+  it('returns undefined for empty input', () => {
+    expect(detectGitProvider('')).toBeUndefined()
+  })
+
+  it('is case-insensitive on the host portion', () => {
+    expect(detectGitProvider('https://GitHub.COM/foo/bar')).toBe('github')
+    expect(detectGitProvider('https://DEV.AZURE.COM/o/p/_git/r')).toBe(
+      'azuredevops',
+    )
+  })
+})
+
+describe('FirstRunWizard step header', () => {
+  it('shows "Step 1 of 5 — Welcome" when started fresh from step 1', () => {
+    renderWizard(1)
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Step 1 of 5 — Welcome')
+  })
+
+  it('shows "Step 1 of 5 — Welcome" with no initialStep prop (default = 1)', () => {
+    renderWizard()
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Step 1 of 5 — Welcome')
+  })
+
+  it('drops the "Step N of M" counter when resumed at step 4', () => {
+    // V124-6.4: resume-mode header reads "Resuming setup — Repository"
+    // because steps 1-3 were completed in a prior session. The "Step 4 of 4"
+    // counter would imply the user just clicked through 1-3 in this session,
+    // which they did not. (Step label renamed from "Initialize" to
+    // "Repository" in the wizard copy pass, error review package 1.)
+    renderWizard(4)
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Resuming setup — Repository')
+    // Defensive: explicitly assert the counter substring is absent.
+    expect(label.textContent).not.toContain('Step 4 of 4')
+    expect(label.textContent).not.toContain('Step 4 of 5')
+  })
+})
+
+// v4 wave 2.5 — the new Catalog step (5): two doors in (Marketplace picks +
+// add-your-own-chart), skippable, never pre-ticked, N picks = one POST.
+describe('FirstRunWizard step 5 — Catalog (v4 wave 2.5)', () => {
+  it('reaching step 5 shows the Catalog picker with nothing pre-ticked, and picking N addons sends ONE POST', async () => {
+    const listCuratedCatalogMock = apiModule.api.listCuratedCatalog as ReturnType<typeof vi.fn>
+    const addToCatalogMock = apiModule.api.addToCatalog as ReturnType<typeof vi.fn>
+    listCuratedCatalogMock.mockResolvedValue({
+      addons: [
+        { name: 'cert-manager', description: 'TLS certs', chart: 'cert-manager', repo: 'https://charts.jetstack.io', default_namespace: 'cert-manager', maintainers: [], license: 'Apache-2.0', category: 'security', curated_by: [] },
+        { name: 'ingress-nginx', description: 'Ingress controller', chart: 'ingress-nginx', repo: 'https://kubernetes.github.io/ingress-nginx', default_namespace: 'ingress-nginx', maintainers: [], license: 'Apache-2.0', category: 'networking', curated_by: [] },
+        { name: 'some-other-addon', description: 'Something else', chart: 'some-other-addon', repo: 'https://example.com', default_namespace: 'some-other-addon', maintainers: [], license: 'MIT', category: 'developer-tools', curated_by: [] },
+      ],
+      total: 3,
+    })
+    addToCatalogMock.mockResolvedValue({
+      added: ['cert-manager', 'ingress-nginx'],
+      enabled: [],
+      pr_url: 'https://github.com/demo/sharko-addons/pull/7',
+      pr_id: 7,
+      branch: 'sharko/catalog-batch',
+      merged: true,
+    })
+
+    renderWizard(5)
+
+    // Common picks are highlighted...
+    const commonBadges = await screen.findAllByTestId('wizard-catalog-common-badge')
+    expect(commonBadges.length).toBeGreaterThan(0)
+
+    // ...but NOTHING starts checked, including the common picks.
+    const certCheckbox = (await screen.findByTestId(
+      'wizard-catalog-pick-cert-manager',
+    )) as HTMLInputElement
+    const ingressCheckbox = screen.getByTestId(
+      'wizard-catalog-pick-ingress-nginx',
+    ) as HTMLInputElement
+    const otherCheckbox = screen.getByTestId(
+      'wizard-catalog-pick-some-other-addon',
+    ) as HTMLInputElement
+    expect(certCheckbox.checked).toBe(false)
+    expect(ingressCheckbox.checked).toBe(false)
+    expect(otherCheckbox.checked).toBe(false)
+
+    fireEvent.click(certCheckbox)
+    fireEvent.click(ingressCheckbox)
+    expect(certCheckbox.checked).toBe(true)
+    expect(ingressCheckbox.checked).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /add 2 addons to catalog/i }))
+
+    await waitFor(() => {
+      expect(addToCatalogMock).toHaveBeenCalledTimes(1)
+    })
+    expect(addToCatalogMock).toHaveBeenCalledWith({
+      addons: [
+        { name: 'cert-manager', from_marketplace: true },
+        { name: 'ingress-nginx', from_marketplace: true },
+      ],
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/2 addons added to your catalog/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/PR merged/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view pr/i })).toHaveAttribute(
+      'href',
+      'https://github.com/demo/sharko-addons/pull/7',
+    )
+  })
+
+  // v4 wave 2.5 review fix round, M-6 — the success message used to say
+  // "added" unconditionally, even when the PR was only opened (not yet
+  // merged). It must say "PR opened" and not overclaim the addon already
+  // landed in the catalog.
+  it('says "PR opened" (not "added") when the batch PR has not merged yet', async () => {
+    const listCuratedCatalogMock = apiModule.api.listCuratedCatalog as ReturnType<typeof vi.fn>
+    const addToCatalogMock = apiModule.api.addToCatalog as ReturnType<typeof vi.fn>
+    listCuratedCatalogMock.mockResolvedValue({
+      addons: [
+        { name: 'cert-manager', description: 'TLS certs', chart: 'cert-manager', repo: 'https://charts.jetstack.io', default_namespace: 'cert-manager', maintainers: [], license: 'Apache-2.0', category: 'security', curated_by: [] },
+      ],
+      total: 1,
+    })
+    addToCatalogMock.mockResolvedValue({
+      added: ['cert-manager'],
+      enabled: [],
+      pr_url: 'https://github.com/demo/sharko-addons/pull/8',
+      pr_id: 8,
+      branch: 'sharko/catalog-cert-manager',
+      merged: false,
+    })
+
+    renderWizard(5)
+    const certCheckbox = (await screen.findByTestId('wizard-catalog-pick-cert-manager')) as HTMLInputElement
+    fireEvent.click(certCheckbox)
+    fireEvent.click(screen.getByRole('button', { name: /add 1 addon to catalog/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 addon submitted — merge the pull request below/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/PR opened/i)).toBeInTheDocument()
+    expect(screen.queryByText(/added to your catalog\./i)).not.toBeInTheDocument()
+  })
+
+  it('the Catalog step is skippable — day zero with an empty catalog is a valid choice', async () => {
+    const listCuratedCatalogMock = apiModule.api.listCuratedCatalog as ReturnType<typeof vi.fn>
+    listCuratedCatalogMock.mockResolvedValue({ addons: [], total: 0 })
+
+    renderWizard(5)
+    const skip = await screen.findByRole('button', { name: /skip for now/i })
+    expect(skip).toBeInTheDocument()
+  })
+})
+
+// V124-14 / BUG-032 — wizard surfaces operation `failed` errors verbatim.
+//
+// When the backend's runInitOperation Fail()s the session because the
+// ArgoCD root app never reaches Synced, the operation polling endpoint
+// returns `{ status: 'failed', error: 'argocd application "cluster-addons-bootstrap"
+// did not reach synced state: timeout: sync verification timed out after 2m0s' }`.
+//
+// The wizard MUST display that error string verbatim — anything more
+// generic (or worse, "Repository initialized successfully") would put the
+// user back into the silent-failure trap that BUG-032 created.
+describe('FirstRunWizard step 4 — sync-failure surfacing (V124-14 / BUG-032)', () => {
+  it('renders the backend failure error string when operation status=failed', async () => {
+    const failureError =
+      'argocd application "cluster-addons-bootstrap" did not reach synced state: timeout: sync verification timed out after 2m0s'
+
+    // Drive the polling effect: first poll returns running, second returns failed.
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-failure-1' })
+    getOperationMock.mockResolvedValue({
+      id: 'op-failure-1',
+      status: 'failed',
+      error: failureError,
+      steps: [],
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // V2-cleanup-9: Step 4 probes repo state on mount; the Initialize offer
+      // renders only after that probe (mocked "empty") resolves. Flush it.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // Click "Initialize & Auto-merge" to kick off init.
+      const initBtn = await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+      fireEvent.click(initBtn)
+
+      // Let the initRepo promise resolve (microtasks).
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // Advance past the 2s polling interval so the polled getOperation runs.
+      await act(async () => {
+        vi.advanceTimersByTime(2100)
+        await Promise.resolve()
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText(failureError)).toBeInTheDocument()
+      })
+
+      // Belt-and-suspenders: success message must NOT be shown.
+      expect(
+        screen.queryByText(/Repository initialized successfully/i),
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      // Reset the default mock so it doesn't leak into other tests.
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+})
+
+// w2-q2 — the error-state "Skip, go to Dashboard" button must escape the
+// same way the header's X button does.
+//
+// THE BUG: StepInit's error-state skip button called `onDone` (navigate
+// only). The X button correctly calls `handleEscape`, which sets the
+// `sharko:dismiss-wizard` sessionStorage flag before navigating — without
+// that flag, App.tsx's wizard gate re-renders the wizard the instant it
+// lands on /dashboard (the repo is still un-initialized after a failed
+// init), so clicking "Skip" looked like it did nothing.
+describe('FirstRunWizard step 4 — error-state skip escapes properly (w2-q2)', () => {
+  it('clicking "Skip, go to Dashboard" after a failed init sets the dismiss-wizard flag', async () => {
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-skip-1' })
+    getOperationMock.mockResolvedValue({
+      id: 'op-skip-1',
+      status: 'failed',
+      error: 'ArgoCD bootstrap failed: some error',
+      steps: [],
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // Flush the on-mount repo-state probe so the Initialize offer renders.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const initBtn = await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+      fireEvent.click(initBtn)
+
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // Advance past the 2s polling interval so the failed status lands.
+      await act(async () => {
+        vi.advanceTimersByTime(2100)
+        await Promise.resolve()
+      })
+
+      const skipBtn = await screen.findByRole('button', { name: /Skip, go to Dashboard/i })
+
+      expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBeNull()
+      fireEvent.click(skipBtn)
+      expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBe('1')
+    } finally {
+      vi.useRealTimers()
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+})
+
+// V124-15 / BUG-033 — wizard surfaces 401 (session expired) during polling.
+//
+// Pre-V124-15, the wizard's polling useEffect had a blanket `catch {}` that
+// swallowed every error including 401s. When the user's auth token expired
+// mid-init (real reproducer: 5-minute disk-full recovery window), every poll
+// silently 401'd while the wizard kept rendering the last-known step list,
+// looking frozen with no way out. The fix:
+//   1. `getOperation` now throws an OperationApiError with status=401.
+//   2. The wizard's catch block detects 401 via `isUnauthorizedError`,
+//      stops both polling and heartbeat intervals, sets state=error, and
+//      renders "Session expired — please log in again." plus a Log in
+//      again button.
+//   3. Other transients (network blips, 5xx) keep the swallow-and-retry
+//      behavior — only 401 is fatal.
+describe('FirstRunWizard step 4 — 401 during polling (V124-15 / BUG-033)', () => {
+  it('surfaces a 401 as "Session expired", stops polling, and shows Log in again', async () => {
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-401' })
+
+    // The mock's OperationApiError is exposed on the mocked module so we
+    // can throw the real shape the wizard expects.
+    const ErrCtor = (apiModule as unknown as {
+      OperationApiError: new (msg: string, status: number) => Error & { status: number }
+    }).OperationApiError
+    getOperationMock.mockImplementation(async () => {
+      throw new ErrCtor('Unauthorized: session expired', 401)
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // V2-cleanup-9: flush the on-mount repo-state probe so the Initialize
+      // offer renders.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const initBtn = await screen.findByRole('button', {
+        name: /Set Up.*Auto-merge/i,
+      })
+      fireEvent.click(initBtn)
+
+      // Resolve the initRepo promise.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // First poll tick — getOperation throws 401.
+      await act(async () => {
+        vi.advanceTimersByTime(2100)
+        await Promise.resolve()
+      })
+
+      // The wizard should now show the session-expired message + button.
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Session expired — please log in again\./i),
+        ).toBeInTheDocument()
+      })
+      expect(
+        screen.getByRole('button', { name: /Log in again/i }),
+      ).toBeInTheDocument()
+
+      // Polling MUST be stopped — record the call count, advance time
+      // well past several poll intervals, and verify it didn't grow.
+      const callsAfterFirst401 = getOperationMock.mock.calls.length
+      await act(async () => {
+        vi.advanceTimersByTime(10_000)
+        await Promise.resolve()
+      })
+      expect(getOperationMock.mock.calls.length).toBe(callsAfterFirst401)
+
+      // Belt-and-suspenders: the success message must NOT appear.
+      expect(
+        screen.queryByText(/Repository initialized successfully/i),
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      // Reset mocks so this test doesn't leak its 401-throwing behavior.
+      getOperationMock.mockReset()
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+})
+
+// V124-16 / BUG-035..038 — escape hatches + back-navigation in resume mode.
+//
+// Resume mode is when App.tsx mounts <FirstRunWizard initialStep={4} />
+// because at least one connection exists but the repo is not yet
+// initialized. Pre-V124-16 the wizard had three coupled issues that turned
+// resume mode into a soft-lock:
+//   - X button navigated, but App.tsx re-rendered the wizard immediately
+//   - StepInit had no Back button (no way to revisit Git/ArgoCD config)
+//   - No way to clear Sharko state and start from scratch
+//   - The footer copy lied ("Settings" — but Settings is route-gated away)
+//
+// Each test below covers one bug.
+
+// Helper — a representative resume-mode connection. Mirrors the shape that
+// `useConnections` returns from the real ConnectionProvider.
+const resumeConnection = {
+  name: 'github-foo-bar',
+  description: '',
+  git_provider: 'github',
+  git_repo_identifier: 'foo/bar',
+  git_token_masked: '****',
+  argocd_server_url: 'https://argocd.example.com',
+  argocd_token_masked: '****',
+  argocd_namespace: 'argocd',
+  is_default: true,
+  is_active: true,
+  provider: { type: 'k8s-secrets', region: '', prefix: '' },
+}
+
+describe('FirstRunWizard — V124-16 escape hatches (BUG-035 / 036 / 037 / 038)', () => {
+  it('BUG-035: X button writes the dismiss flag so App.tsx skips the resume gate', () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBeNull()
+
+    // The X button uses title="Skip to Dashboard" and an icon child; query
+    // it by its accessible title attribute.
+    const xButton = screen.getByTitle('Skip to Dashboard')
+    fireEvent.click(xButton)
+
+    // Flag is set so App.tsx's wizard gate (which reads
+    // sessionStorage.getItem('sharko:dismiss-wizard') === '1') skips
+    // re-rendering the wizard for the rest of the session. A fresh tab
+    // clears it automatically — the dismiss is "for now", not forever.
+    expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBe('1')
+  })
+
+  it('BUG-036: footer copy in resume mode points at in-wizard controls (not Settings)', () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Wizard copy pass (error review package 1): the old copy claimed
+    // "controls above to edit or reset" — but no edit/reset control is
+    // actually visible on this screen, only Back. The rewritten copy names
+    // what's really there.
+    expect(
+      screen.getByText(
+        /Finish setting up the repository, or go back to change your connection details\./i,
+      ),
+    ).toBeInTheDocument()
+    // The fresh-mode copy must NOT appear in resume mode — Settings is
+    // hard-gated by App.tsx so claiming "later in Settings" is misleading.
+    expect(
+      screen.queryByText(/update connections later in Settings/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('BUG-036: footer copy in fresh mode keeps the Settings hint', () => {
+    mockState.connections = []
+    renderWizard(1)
+
+    expect(
+      screen.getByText(/You can always update connections later in Settings\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('BUG-038: StepInit shows a Back button in resume mode that walks back through step 3 → step 2', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // The wizard should render StepInit. Use the "Initialize Repository"
+    // heading inside StepInit as a step-4 sentinel — multiple "Resuming
+    // setup" strings render in resume mode (header label + StepInit
+    // banner) so a generic match is ambiguous.
+    expect(
+      screen.getByRole('heading', { name: /Set Up Repository/i }),
+    ).toBeInTheDocument()
+
+    // The Back button is the only "Back" button in StepInit's idle state.
+    const backFromStep4 = screen.getByRole('button', { name: /^Back$/ })
+    fireEvent.click(backFromStep4)
+
+    // Now on step 3 (StepArgoCD). The "Save & Continue" button is unique
+    // to StepArgoCD so use it as a step-3 sentinel.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+
+    // StepArgoCD has its own Back button → walk back to step 2.
+    const backFromStep3 = screen.getByRole('button', { name: /^Back$/ })
+    fireEvent.click(backFromStep3)
+
+    // On step 2 (StepGit), the form should be pre-populated with the
+    // existing connection's git URL — verify by reading the input value.
+    await waitFor(() => {
+      const gitUrlInput = screen.getByPlaceholderText(
+        /https:\/\/github\.com\/your-org\/your-repo/i,
+      ) as HTMLInputElement
+      expect(gitUrlInput.value).toBe('https://github.com/foo/bar')
+    })
+  })
+
+  it('BUG-037: step 2 in resume mode shows "Clear all configuration" and DELETEs on confirm', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back from step 4 → step 3 → step 2.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // The clear-config link is rendered only when an existing connection
+    // is loaded — assert visibility.
+    const clearBtn = await screen.findByRole('button', {
+      name: /Clear all configuration and start over/i,
+    })
+    expect(clearBtn).toBeInTheDocument()
+
+    // Confirm dialog: stub window.confirm to return true and verify the
+    // DELETE call goes out for the loaded connection.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const deleteMock = (apiModule.api as unknown as {
+      deleteConnection: ReturnType<typeof vi.fn>
+    }).deleteConnection
+    deleteMock.mockClear()
+
+    fireEvent.click(clearBtn)
+
+    await waitFor(() => {
+      expect(deleteMock).toHaveBeenCalledWith('github-foo-bar')
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+
+    confirmSpy.mockRestore()
+  })
+
+  it('BUG-037: step 2 in resume mode does NOT delete when user cancels the confirm', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back to step 2.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    const clearBtn = await screen.findByRole('button', {
+      name: /Clear all configuration and start over/i,
+    })
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const deleteMock = (apiModule.api as unknown as {
+      deleteConnection: ReturnType<typeof vi.fn>
+    }).deleteConnection
+    deleteMock.mockClear()
+
+    fireEvent.click(clearBtn)
+
+    // Cancellation: confirm fires, but DELETE never goes out.
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(deleteMock).not.toHaveBeenCalled()
+
+    confirmSpy.mockRestore()
+  })
+})
+
+// V124-17 / BUG-039 + BUG-040 + BUG-042 — wizard polish for resume mode.
+//
+// Three issues from the V124-16 maintainer validation:
+//   - BUG-039: Back button on StepInit was visible during the 'running'
+//     state. Clicking it mid-flight rewound the wizard chrome but the init
+//     operation kept running on the backend; a later Initialize click then
+//     hit an already-init check and could orphan the session.
+//   - BUG-040: in resume mode, the password/token inputs render empty by
+//     design (security: never re-display saved secrets). The previous
+//     placeholder ("Personal access token (PAT)") read as "my saved
+//     credential just got wiped" — the backend's PUT /connections/{name}
+//     actually preserves saved tokens when the request omits them, so the
+//     data is safe but the UX is misleading.
+//   - BUG-042: StepInit's Back button uses the same secondary-button
+//     classes as StepGit/StepArgoCD's Back so the affordance looks the
+//     same on every step.
+describe('FirstRunWizard — V124-17 wizard polish (BUG-039 / 040 / 042)', () => {
+  it('BUG-039: Back button is hidden in StepInit while state is running', async () => {
+    mockState.connections = [resumeConnection]
+
+    // initRepo resolves with operation_id so the polling effect kicks in
+    // and state stays in 'running' until getOperation returns a terminal
+    // status. We never advance getOperation past 'running' here so we
+    // can assert the running-state UI.
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-running-1' })
+    getOperationMock.mockResolvedValue({
+      id: 'op-running-1',
+      status: 'running',
+      steps: [{ name: 'Creating bootstrap files', status: 'running' }],
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // V2-cleanup-9: flush the on-mount repo-state probe so the Initialize
+      // offer renders.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // Idle state — Back IS present (V124-16 behaviour, baseline).
+      expect(screen.getByRole('button', { name: /^Back$/ })).toBeInTheDocument()
+
+      // Click Initialize — wizard transitions to 'running'.
+      fireEvent.click(
+        await screen.findByRole('button', { name: /Set Up.*Auto-merge/i }),
+      )
+
+      // Resolve the initRepo promise so setOperationId fires and the
+      // polling effect kicks in.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // While the operation is running, Back must NOT be in the document.
+      // BUG-039 root cause: the V124-16 conditional was `{resumed && onBack
+      // && (<button>Back</button>)}` — no state guard.
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('button', { name: /^Back$/ }),
+        ).not.toBeInTheDocument()
+      })
+
+      // Belt-and-suspenders: the running indicator IS visible.
+      expect(
+        screen.getByText(/Setting up…|Creating bootstrap files/i),
+      ).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+
+  it('BUG-040: in resume mode, the GitHub token input shows the saved-credential placeholder + helper text', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back to step 2 (StepGit).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // The placeholder MUST advertise the saved-credential semantic. We
+    // grep on the bullet+saved phrase rather than the legacy "Personal
+    // access token (PAT)" string.
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(
+          /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+        ),
+      ).toBeInTheDocument()
+    })
+
+    // The helper text below the input also explains the merge semantic.
+    expect(
+      screen.getByText(
+        /Submitting blank keeps your saved credential\. Enter a new value to replace it\./,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('BUG-040: in resume mode, the ArgoCD token input shows the saved-credential placeholder + helper text', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back to step 3 (StepArgoCD).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    await waitFor(() => {
+      // ArgoCD token field has the same saved-credential placeholder.
+      const inputs = screen.getAllByPlaceholderText(
+        /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+      )
+      // At least the ArgoCD token input is present on step 3.
+      expect(inputs.length).toBeGreaterThanOrEqual(1)
+    })
+
+    // Helper text appears for the ArgoCD token (one or both inputs may
+    // render this on step 3, depending on how the test reaches step 3 —
+    // we walked back from step 4 → step 3, so only StepArgoCD is mounted
+    // and exactly one helper-text occurrence is expected).
+    expect(
+      screen.getByText(
+        /Submitting blank keeps your saved credential\. Enter a new value to replace it\./,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('BUG-040: blank-submit in resume mode sends an empty token (server-side PUT preserves saved value)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to step 3 (StepArgoCD), where Save & Continue lives.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+
+    // Test the ArgoCD connection so canSave gates open.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+
+    // Save without typing a token — should hit updateConnection (PUT) with
+    // an empty/undefined token field. The wizard's buildPayload coerces
+    // empty strings to undefined, which JSON.stringify drops.
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledTimes(1)
+    })
+
+    // First arg is the connection name, second is the payload object.
+    const [name, payload] = updateMock.mock.calls[0]
+    expect(name).toBe('github-foo-bar')
+
+    // Both tokens must be undefined-or-absent so the backend's
+    // token-preserving merge keeps the saved values.
+    expect(payload.git.token).toBeUndefined()
+    expect(payload.argocd.token).toBeUndefined()
+  })
+
+  it('BUG-040: typing a new token in resume mode sends it through to the PUT body', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to step 2 (StepGit) so we can type into the Git token field.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // Find the GitHub token field by its saved-credential placeholder
+    // and type a new value into it.
+    const tokenInput = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+    fireEvent.change(tokenInput, { target: { value: 'new-pat-12345' } })
+
+    // Test git, advance to step 3, save.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledTimes(1)
+    })
+
+    const [, payload] = updateMock.mock.calls[0]
+    expect(payload.git.token).toBe('new-pat-12345')
+  })
+
+  it('BUG-042: StepInit Back button uses the same secondary-button classes as StepGit/StepArgoCD Back', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Capture StepInit's Back classes (idle state).
+    const stepInitBack = screen.getByRole('button', { name: /^Back$/ })
+    const stepInitClasses = stepInitBack.className
+
+    // Walk back to step 3 and capture StepArgoCD's Back classes.
+    fireEvent.click(stepInitBack)
+    const stepArgoCDBack = await screen.findByRole('button', { name: /^Back$/ })
+    expect(stepArgoCDBack.className).toBe(stepInitClasses)
+
+    // Walk back to step 2 and capture StepGit's Back classes.
+    fireEvent.click(stepArgoCDBack)
+    const stepGitBack = await screen.findByRole('button', { name: /^Back$/ })
+    expect(stepGitBack.className).toBe(stepInitClasses)
+  })
+})
+
+// V124-19 / BUG-044 — Test Connection must honor use_saved for blank-keep.
+//
+// V124-17 surfaced the saved-credential placeholder ("leave blank to keep,
+// or enter new value to replace") on Step 2 + Step 3. V124-19 closes the
+// matching backend contract gap: the wizard now sends `use_saved: true`
+// (with the loaded connection name) whenever the user clicks Test
+// Connection in resume mode WITHOUT typing a fresh token. The backend
+// fetches the saved credentials server-side and tests with those, so the
+// Next gate enables on a successful test against saved creds — no
+// "argocd token not configured" rejection.
+describe('FirstRunWizard — V124-19 use_saved test-credential contract (BUG-044)', () => {
+  it('sends use_saved=true on Test Connection when in resume mode with blank git token', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back from step 4 → step 3 → step 2 (StepGit).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // Sanity: the saved-credential placeholder is showing (StepGit's git
+    // token field renders empty in resume mode by design).
+    await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+
+    const testCredsMock = (apiModule.api as unknown as {
+      testCredentials: ReturnType<typeof vi.fn>
+    }).testCredentials
+    testCredsMock.mockClear()
+
+    // Click Test Connection without typing anything into the token field.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+
+    await waitFor(() => {
+      expect(testCredsMock).toHaveBeenCalledTimes(1)
+    })
+
+    // The body sent to the backend MUST carry `use_saved: true` AND the
+    // loaded connection name so the backend can look it up. The git.token
+    // field in the body is omitted (undefined) — that's the contract:
+    // we don't ship the (empty) form value, we tell the backend to use
+    // its own.
+    const [body] = testCredsMock.mock.calls[0]
+    expect(body.use_saved).toBe(true)
+    expect(body.name).toBe('github-foo-bar')
+    expect(body.git?.token).toBeUndefined()
+  })
+
+  it('Next button enables after a successful use_saved test (no fresh-credential entry needed)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to StepGit.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+
+    // Pre-test: Next is disabled (testStatus.git === 'idle').
+    const nextBtn = screen.getByRole('button', { name: /Next/i })
+    expect(nextBtn).toBeDisabled()
+
+    // Mock returns ok for both services (the default mock).
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+
+    // After the use_saved test resolves, the Connected indicator + an
+    // enabled Next button confirm the gate opened on saved creds alone.
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Next/i })).toBeEnabled()
+  })
+
+  it('does NOT send use_saved when the user has typed a fresh git token (replace path)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to StepGit.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    const tokenInput = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+    // User types a replacement value.
+    fireEvent.change(tokenInput, { target: { value: 'ghp_new_value' } })
+
+    const testCredsMock = (apiModule.api as unknown as {
+      testCredentials: ReturnType<typeof vi.fn>
+    }).testCredentials
+    testCredsMock.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+
+    await waitFor(() => {
+      expect(testCredsMock).toHaveBeenCalledTimes(1)
+    })
+
+    // Replace path: the new token MUST go through to the backend, and
+    // use_saved MUST NOT be set (we want the backend to test the new
+    // candidate, not the saved record).
+    const [body] = testCredsMock.mock.calls[0]
+    expect(body.use_saved).toBeUndefined()
+    expect(body.git?.token).toBe('ghp_new_value')
+    // The connection name is still passed through so the auto-fill path
+    // can back-fill ArgoCD token if that field was left blank — that
+    // pre-V124-19 behavior is preserved.
+    expect(body.name).toBe('github-foo-bar')
+  })
+
+  it('typing into the token field after a successful use_saved test invalidates the test status (Next disables)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to StepGit.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    const tokenInput = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+
+    // Run a use_saved test → Next becomes enabled.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Next/i })).toBeEnabled()
+    })
+
+    // Now the user starts typing a replacement. patchForm clears
+    // testStatus on every change → Next disables until they re-test.
+    fireEvent.change(tokenInput, { target: { value: 'ghp_partial' } })
+    expect(screen.getByRole('button', { name: /Next/i })).toBeDisabled()
+  })
+})
+
+// V2-cleanup-9.2 — repo-clarity copy on Steps 1-2.
+//
+// The maintainer reviewed first-run as a newcomer and couldn't tell which repo
+// to connect, whether it needed to exist first, or why write access was asked
+// for. These assert the locked copy answers all three up front.
+describe('FirstRunWizard — repo-clarity copy (V2-cleanup-9.2)', () => {
+  it('Step 1 explains the GitOps config repo and that an empty repo is fine', () => {
+    renderWizard()
+    expect(
+      screen.getByText(
+        /Sharko stores your addon setup as files in a Git repo/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Use a new empty repo \(Sharko sets it up\)/i),
+    ).toBeInTheDocument()
+  })
+
+  it('Step 2 says this is a dedicated config repo and the token needs write to open PRs', async () => {
+    renderWizard()
+    // Walk from Welcome to the Git step.
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+
+    expect(
+      await screen.findByText(
+        /This is a dedicated config repo for Sharko — not your application's code/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /Needs read and write access so Sharko can open pull requests\./i,
+      ),
+    ).toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-9.2 — Step 4 renders by the probed repo state.
+//
+// Before this, StepInit hardcoded "Your repository appears to be empty",
+// alarming users who pointed the wizard at a populated Sharko repo. Step 4 now
+// probes GET /api/v1/init/status on mount and renders empty / initialized /
+// partial / loading / fallback accordingly.
+describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup-9.2)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    // Restore the default "empty" probe so it never leaks into other tests.
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('empty → shows the honest Initialize offer (probe-backed, not "appears to be")', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /This repository is empty — Sharko will set up the GitOps structure and open a PR for your review\./i,
+      ),
+    ).toBeInTheDocument()
+    // The Initialize buttons are present for an empty repo.
+    expect(
+      screen.getByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).toBeInTheDocument()
+    // The old hardcoded alarming copy is gone.
+    expect(
+      screen.queryByText(/Your repository appears to be empty/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('initialized → shows a success panel + Go to Dashboard, no Initialize buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'initialized', detail: '' })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/This repository is already set up for Sharko\./i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Go to Dashboard/i }),
+    ).toBeInTheDocument()
+    // No clobber offer when the repo is already initialized.
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  // w2-q2: partial now splits on `repairable`. A degraded (but existing) app
+  // is NOT repairable — re-running Initialize can't fix a live application,
+  // so the wizard must not promise a repair or show the Initialize buttons.
+  it('partial + not repairable (degraded app) → shows the "cannot fix a live app" copy, no Initialize buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+      repairable: false,
+      // The TYPED fact the panel is chosen by. The wizard used to work this
+      // out by asking whether `detail` contained the substring "sync=", so
+      // this fixture used to say "the app exists" only by accident of how the
+      // diagnostic happens to be phrased.
+      bootstrap_app_resolved: true,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /Sharko engine application already exists but is not healthy/i,
+      ),
+    ).toBeInTheDocument()
+    // The backend detail is surfaced verbatim.
+    expect(
+      screen.getByText(/sync=OutOfSync health=Degraded/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Running setup again will not fix a live application/i),
+    ).toBeInTheDocument()
+    // No repair CTA — just a way back to the dashboard.
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Repair now/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Back to Dashboard/i }),
+    ).toBeInTheDocument()
+  })
+
+  // w2-q2: partial + repairable (the app was simply never created) IS an
+  // honest repair offer — a single "Repair now" button, no PR-vs-auto-merge
+  // choice since the repair never touches git.
+  it('partial + repairable (app never created) → shows the honest repair copy + a Repair now button', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /the ArgoCD app hasn't been created yet/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/no PR needed, this only creates the ArgoCD app/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Repair now/i }),
+    ).toBeInTheDocument()
+    // The old two-button PR-vs-auto-merge choice does not apply to a repair.
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('loading → shows a "Checking repository…" spinner before the probe resolves', async () => {
+    // Never-resolving probe so the loading state stays on screen.
+    getInitStatusMock().mockReturnValueOnce(new Promise(() => {}))
+    renderWizard(4)
+
+    expect(screen.getByText(/Checking repository…/i)).toBeInTheDocument()
+    // No Initialize offer while the probe is in flight.
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  // Review findings r1, M11: a genuine probe failure (network/5xx) used to
+  // fall back to the Set Up offer — but Sharko never actually checked the
+  // repo in that case, so offering to set it up risked writing the v4
+  // folder tree on top of a live, already-set-up repo the probe just
+  // couldn't reach. The honest fallback is the same couldn't-check surface
+  // the server's own "unknown" state renders — never the empty/set-up offer.
+  it('probe failure → shows the honest could-not-check state, never the Set Up offer', async () => {
+    getInitStatusMock().mockRejectedValueOnce(new Error('network down'))
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/This repository is empty/i),
+    ).not.toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-51 — Step 4 renders connection-problem guidance for the new
+// `unreachable` state, and does NOT offer to re-initialize.
+//
+// THE BUG: ArgoCD can't reach the Git repo (a connection/network problem, e.g.
+// a corporate Zscaler proxy), so the bootstrap app sits sync=Unknown
+// health=Error. The old "partial" copy told the user to "re-run initialize to
+// repair it" — but re-initializing CAN'T fix a connection problem. The backend
+// now distinguishes this as state="unreachable"; the wizard must show honest
+// connection-problem guidance and point at Settings → Connections instead.
+describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('unreachable → shows connection-problem copy + a Settings → Connections link, and does NOT show the Initialize buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unreachable',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=Unknown health=Error',
+    })
+    renderWizard(4)
+
+    // Connection-problem guidance, not re-init advice.
+    expect(
+      await screen.findByText(
+        /ArgoCD can't reach your Git repo right now — this is usually a connection or network problem, not a setup problem\./i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Running setup again won't fix it/i),
+    ).toBeInTheDocument()
+
+    // The ArgoCD detail is surfaced verbatim as secondary text.
+    expect(
+      screen.getByText(/sync=Unknown health=Error/i),
+    ).toBeInTheDocument()
+
+    // A link/button to Settings → Connections is present.
+    expect(
+      screen.getByRole('button', { name: /Go to Settings → Connections/i }),
+    ).toBeInTheDocument()
+
+    // CRITICAL: the Initialize buttons must NOT be shown — re-init can't fix a
+    // connection problem.
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up \(Manual PR Review\)/i }),
+    ).not.toBeInTheDocument()
+
+    // The old re-init repair copy must NOT appear for the unreachable state.
+    expect(
+      screen.queryByText(/Run setup again to repair it/i),
+    ).not.toBeInTheDocument()
+  })
+
+  // w2-q2: a genuinely degraded (but existing) bootstrap app is
+  // repairable=false — re-init cannot fix a live application, so it must
+  // NOT show the old "Re-run initialize to repair it" promise or the
+  // Initialize buttons. It still must not show the connection-problem copy
+  // either — that's the distinct `unreachable` state.
+  it('partial + not repairable → does NOT promise a repair, and the connection-problem copy does not leak in', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+      repairable: false,
+      // The TYPED fact the panel is chosen by. The wizard used to work this
+      // out by asking whether `detail` contained the substring "sync=", so
+      // this fixture used to say "the app exists" only by accident of how the
+      // diagnostic happens to be phrased.
+      bootstrap_app_resolved: true,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /Sharko engine application already exists but is not healthy/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Run setup again to repair it/i),
+    ).not.toBeInTheDocument()
+    // No repair CTA for a genuinely degraded (existing) app.
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    // And the connection-problem copy must NOT leak into the partial branch.
+    expect(
+      screen.queryByText(/ArgoCD can't reach your Git repo right now/i),
+    ).not.toBeInTheDocument()
+  })
+
+  // ── The panel is chosen by the TYPED FIELD, and by nothing else ────────
+  //
+  // Two tests, one either side of the line the old substring test drew. Each
+  // carries the `detail` text the OTHER outcome would have needed, so neither
+  // can pass while the wizard is still reading the sentence.
+  //
+  // What was at stake: the "already exists" panel sends an operator to ArgoCD
+  // to look at an Application. Saying that when the probe never found one
+  // wastes their time on a thing that is not there — and the only thing
+  // standing between the right panel and the wrong one was the exact wording
+  // of a server diagnostic whose own comment asks readers not to reorder it.
+
+  it('says the app EXISTS when the probe resolved it, even though the detail carries no "sync=" wording', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'the bootstrap application is Degraded',
+      repairable: false,
+      bootstrap_app_resolved: true,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko engine application already exists but is not healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does NOT claim the app exists when the probe never resolved one, however much the detail reads like it did', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      // The exact shape the old substring test looked for. It proves nothing
+      // about whether an Application was found.
+      detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+      repairable: false,
+      bootstrap_app_resolved: false,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Sharko engine application already exists but is not healthy/i),
+    ).not.toBeInTheDocument()
+  })
+
+  // Error review package 1 — a genuinely UNRESOLVED probe (the ArgoCD LIST
+  // call itself failed, so Sharko never got as far as finding the app) must
+  // NOT claim the engine app "already exists" — that assumes a fact Sharko
+  // never observed. The typed field says so, mirroring the same answer in
+  // internal/api/init.go's unhealthyRepairRefusalMessage.
+  it('partial + not repairable, with an unresolved probe → shows the honest could-not-check copy', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'listing argocd applications failed: dial tcp: i/o timeout',
+      repairable: false,
+      bootstrap_app_resolved: false,
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /Sharko couldn't check whether the engine application is healthy/i,
+      ),
+    ).toBeInTheDocument()
+    // The raw detail is still surfaced, just without the false "already
+    // exists" claim.
+    expect(
+      screen.getByText(/listing argocd applications failed/i),
+    ).toBeInTheDocument()
+    // The false "already exists but is not healthy" claim must NOT render.
+    expect(
+      screen.queryByText(/Sharko engine application already exists but is not healthy/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Back to Dashboard/i }),
+    ).toBeInTheDocument()
+  })
+})
+
+// Error review package 1 — a rejected (401) or genuinely unclassifiable
+// ArgoCD probe must render an honest state, never the false "already exists
+// but is not healthy" claim. Before these branches existed, both statuses
+// rendered blank space (forbidden) or fell through to the misleading
+// degraded-app copy (auth_failed folded into a generic "unhealthy" bucket).
+describe('FirstRunWizard — Step 4 auth_failed / forbidden states (error review package 1)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('auth_failed → shows the invalid-token copy + a Settings → Connections button, no Set Up buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'auth_failed',
+      detail: 'invalid ArgoCD token — check that the token is correct and not expired',
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/ArgoCD rejected Sharko's token/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/invalid ArgoCD token — check that the token is correct and not expired/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Go to Settings → Connections/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    // Must not claim anything about the engine app's health — Sharko never
+    // got past the token check.
+    expect(
+      screen.queryByText(/already exists but is not healthy/i),
+    ).not.toBeInTheDocument()
+  })
+
+  // V2-cleanup-10: the forbidden branch previously did not exist at all, so
+  // the wizard rendered blank space instead of the server's RBAC message.
+  it('forbidden → shows the server\'s RBAC message, not blank space', async () => {
+    const rbacMessage =
+      "ArgoCD rejected Sharko's token (permission denied) — the token needs permission to read applications. Check your ArgoCD RBAC: the account needs role:admin (or at least applications:get)."
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'forbidden',
+      detail: rbacMessage,
+    })
+    renderWizard(4)
+
+    // M8: match the auth_failed sibling's phrasing and the server detail
+    // below it ("ArgoCD refused Sharko's token permission...").
+    expect(
+      await screen.findByText(/ArgoCD refused Sharko's token permission to read applications/i),
+    ).toBeInTheDocument()
+    // The exact RBAC message from the server must render verbatim.
+    expect(screen.getByText(rbacMessage)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Go to Settings → Connections/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  // The dedicated "unknown" state (probe failed entirely, or no ArgoCD
+  // client configured) — the honest couldn't-check surface at the top
+  // level, distinct from the partial+no-sync= guard covered above.
+  it('unknown → shows the honest could-not-check copy, no Set Up buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unknown',
+      detail: 'listing argocd applications failed: dial tcp: connection refused',
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/Sharko couldn't check whether the engine application is healthy/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/listing argocd applications failed/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Set Up.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+})
+
+// Review findings r1, H2 — "Go to Settings → Connections" must actually land
+// on Settings, not the Dashboard. Root cause: the click handler called
+// `navigate('/settings?...')` immediately followed by `onDone()`, and
+// onDone's own `navigate('/dashboard')` always won the race — the button
+// silently redirected to the Dashboard every time. One test per affected
+// repoState branch (unreachable was named explicitly as a pre-existing
+// instance; forbidden/auth_failed/unknown share the same fixed code path).
+describe('FirstRunWizard — Step 4 "Go to Settings → Connections" actually navigates to Settings (H2)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('unreachable state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unreachable',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=Unknown health=Error',
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+
+  it('forbidden state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'forbidden',
+      detail: "ArgoCD rejected Sharko's token (permission denied)",
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+
+  it('auth_failed state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'auth_failed',
+      detail: 'invalid ArgoCD token',
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+
+  it('unknown state: clicking the button ends on /settings?section=connections, not /dashboard', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unknown',
+      detail: 'listing argocd applications failed: dial tcp: connection refused',
+    })
+    renderWizardWithLocationProbe(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Go to Settings → Connections/i }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('test-location').textContent).toBe(
+        '/settings?section=connections',
+      )
+    })
+  })
+})
+
+// Review findings r1, M7 — a user-invited repair on an already-initialized
+// install must say "Repair", never "Resuming setup" (that install was never
+// mid-setup). Both the day-zero resume and the invited-repair screen land on
+// initialStep=4, so isRepair is the only signal the component has to tell
+// them apart.
+describe('FirstRunWizard — Step 4 repair vs day-zero-resume framing (M7)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('isRepair=true renders "Repair — Repository" in the step label, not "Resuming setup"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    renderWizard(4, { isRepair: true })
+
+    await screen.findByRole('button', { name: /Repair now/i })
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Repair — Repository')
+    expect(label.textContent).not.toContain('Resuming setup')
+  })
+
+  it('isRepair=false (day-zero resume) keeps "Resuming setup — Repository"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    renderWizard(4)
+
+    await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+    const label = screen.getByTestId('wizard-step-label')
+    expect(label.textContent).toBe('Resuming setup — Repository')
+  })
+
+  it('isRepair=true shows repair framing in the banner, not "Pick up the repository below"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    renderWizard(4, { isRepair: true })
+
+    await screen.findByRole('button', { name: /Repair now/i })
+    expect(
+      screen.getByText(/Sharko will check the engine app below and offer a repair/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Pick up the repository below/i),
+    ).not.toBeInTheDocument()
+  })
+})
+
+// Review findings r1, M5 — the footer's "…or go back to change your
+// connection details." must only render when the Back control is actually
+// on screen. hasOwnExitAction hides Back for
+// unreachable/forbidden/auth_failed/unknown/partial-not-repairable, each of
+// which renders its own exit button instead — the footer used to promise a
+// "go back" that didn't exist on any of those screens.
+describe('FirstRunWizard — Step 4 footer only mentions "go back" when Back is actually rendered (M5)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('empty state (Back IS rendered): footer keeps the "or go back" mention', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    renderWizard(4)
+
+    await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+    expect(screen.getByRole('button', { name: /^Back$/ })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /Finish setting up the repository, or go back to change your connection details\./i,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it.each([
+    ['unreachable', { state: 'unreachable', detail: 'sync=Unknown health=Error' }],
+    ['forbidden', { state: 'forbidden', detail: "ArgoCD rejected Sharko's token (permission denied)" }],
+    ['auth_failed', { state: 'auth_failed', detail: 'invalid ArgoCD token' }],
+    ['unknown', { state: 'unknown', detail: 'listing argocd applications failed: dial tcp: connection refused' }],
+    [
+      'partial-not-repairable',
+      {
+        state: 'partial',
+        detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+        repairable: false,
+      },
+    ],
+  ] as const)(
+    'repoState=%s (Back is HIDDEN, own exit action shown): footer drops "or go back"',
+    async (_name, mockStatus) => {
+      getInitStatusMock().mockResolvedValueOnce(mockStatus)
+      renderWizard(4)
+
+      // The generic Back button must be absent — that's exactly what makes
+      // the "or go back" footer mention false for this state. Each of these
+      // repoStates instead renders its own exit action (Settings and/or
+      // "Back to Dashboard"), never the plain "Back" control.
+      //
+      // The footer's "canGoBackInStep4" flag is reported up from StepInit to
+      // FirstRunWizard via a child→parent effect (onExitAvailabilityChange),
+      // which lands one render pass after the probe resolves — so the whole
+      // settled assertion (not just the loading spinner going away) needs to
+      // be inside waitFor.
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /^Back$/ })).not.toBeInTheDocument()
+        expect(
+          screen.queryByText(/or go back to change your connection details/i),
+        ).not.toBeInTheDocument()
+        // It still finishes the sentence with the no-back variant.
+        expect(
+          screen.getByText(/^Finish setting up the repository below\.$/i),
+        ).toBeInTheDocument()
+      })
+    },
+  )
+
+  it('initialized state (Back is HIDDEN via L16, own exit action shown): footer drops "or go back"', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'initialized', detail: '' })
+    renderWizard(4)
+
+    await screen.findByRole('button', { name: /Go to Dashboard/i })
+    // Same child→parent effect timing note as above.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^Back$/ })).not.toBeInTheDocument()
+      expect(
+        screen.queryByText(/or go back to change your connection details/i),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/^Finish setting up the repository below\.$/i),
+      ).toBeInTheDocument()
+    })
+  })
+})
+
+// Ride-along (review findings r1, end note) — a successful REPAIR on an
+// already-initialized install must return to the app, never hand off to the
+// day-zero catalog-seeding step (Step 5). Day-zero setup (isRepair=false)
+// keeps seeding — only the repair path skips it.
+describe('FirstRunWizard — repair completion skips catalog seeding (ride-along)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+  const initRepoMock = () => apiModule.initRepo as ReturnType<typeof vi.fn>
+  const getOperationMock = () => apiModule.getOperation as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+    getOperationMock().mockResolvedValue({ id: 'op-1', status: 'pending', steps: [] })
+    initRepoMock().mockResolvedValue({ operation_id: 'op-1' })
+  })
+
+  it('isRepair=true: a successful repair goes straight to onExit/onDone, never shows the Catalog step', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "sharko-engine" is not created on this cluster yet',
+      repairable: true,
+    })
+    initRepoMock().mockResolvedValueOnce({
+      operation_id: undefined,
+      pr_url: null,
+    })
+
+    const onExit = vi.fn()
+    renderWizardWithLocationProbe(4, { isRepair: true, onExit })
+
+    fireEvent.click(await screen.findByRole('button', { name: /Repair now/i }))
+
+    // Synchronous-response fallback path (no operation_id) lands directly on
+    // state 'done'. Click Continue and confirm it exits the wizard (onExit
+    // fires, location lands on /dashboard) instead of rendering Step 5.
+    fireEvent.click(await screen.findByRole('button', { name: /Continue/i }))
+
+    await waitFor(() => {
+      expect(onExit).toHaveBeenCalled()
+    })
+    expect(screen.getByTestId('test-location').textContent).toBe('/dashboard')
+    // The Catalog step's distinctive "skip for now" control must never render.
+    expect(
+      screen.queryByRole('button', { name: /skip for now/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('isRepair=false (day-zero): a successful init still moves on to the Catalog step', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    initRepoMock().mockResolvedValueOnce({
+      operation_id: undefined,
+      pr_url: null,
+    })
+
+    renderWizard(4)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Set Up.*Auto-merge/i }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /Continue/i }))
+
+    // Day-zero setup still lands on the Catalog step (Step 5).
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
+    })
+  })
+})

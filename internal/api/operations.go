@@ -1,0 +1,87 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
+)
+
+// handleGetOperation godoc
+//
+// @Summary Get operation status
+// @Description Returns the current status and step progress of a long-running operation
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Operation session ID"
+// @Success 200 {object} map[string]interface{} "Operation session"
+// @Failure 404 {object} map[string]interface{} "Operation not found"
+// @Router /operations/{id} [get]
+func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	session, ok := s.opsStore.Get(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "operation not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
+// handleOperationHeartbeat godoc
+//
+// @Summary Send operation heartbeat
+// @Description Records a client heartbeat so the server knows the client is still polling.
+// @Description Without heartbeats, a waiting operation may be abandoned.
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Operation session ID"
+// @Success 200 {object} map[string]interface{} "Heartbeat recorded"
+// @Failure 404 {object} map[string]interface{} "Operation not found"
+// @Router /operations/{id}/heartbeat [post]
+func (s *Server) handleOperationHeartbeat(w http.ResponseWriter, r *http.Request) {
+	// Async operations are created only by the operator-level init flow
+	// (opsStore.Create("init", ...)). Gate heartbeat with the same "init"
+	// action so a viewer cannot keep an operator's operation alive.
+	if !authz.RequireWithResponse(w, r, "init") {
+		return
+	}
+	id := r.PathValue("id")
+	if !s.opsStore.Heartbeat(id) {
+		writeError(w, http.StatusNotFound, "operation not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleCancelOperation godoc
+//
+// @Summary Cancel an operation
+// @Description Cancels a pending or waiting operation. Running operations may not stop immediately.
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Operation session ID"
+// @Success 200 {object} map[string]interface{} "Operation cancelled"
+// @Failure 404 {object} map[string]interface{} "Operation not found"
+// @Router /operations/{id}/cancel [post]
+func (s *Server) handleCancelOperation(w http.ResponseWriter, r *http.Request) {
+	// Async operations are created only by the operator-level init flow
+	// (opsStore.Create("init", ...)). Gate cancel with the same "init" action
+	// so a viewer cannot cancel an operator's operation.
+	if !authz.RequireWithResponse(w, r, "init") {
+		return
+	}
+	id := r.PathValue("id")
+	if !s.opsStore.Cancel(id) {
+		writeError(w, http.StatusNotFound, "operation not found")
+		return
+	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "operation_cancelled",
+		Resource: fmt.Sprintf("operation:%s", id),
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}

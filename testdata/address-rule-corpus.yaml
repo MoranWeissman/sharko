@@ -1,0 +1,666 @@
+# address-rule-corpus.yaml — the written-down list of addresses, and what the
+# address rule says about each one.
+#
+# # Why this file is not Go code, and not under a package's testdata
+#
+# Sharko decides whether an operator-supplied network address may be used. Two
+# separate places implement that decision: the Go classifier and the Helm
+# chart. Twice now, both were changed together, both were tested, every gate
+# went green — and an address carrying a password still went straight into a
+# Kubernetes Deployment, because the list of addresses the tests tried was
+# written by the same person who wrote the fix, so it only held the shapes that
+# person had already thought of.
+#
+# So this list is written from the RULE, on its own, before either side is
+# touched again. It is data, not code, so neither implementation can quietly
+# generate its own expectations. It sits at the repository root rather than
+# inside internal/credsafe/testdata or tests/serverrender/testdata, because the
+# moment it lives under one of them it starts to look like that side's property.
+#
+# # The rule this file encodes
+#
+# Exactly two ways of writing an address are acceptable:
+#
+#   Form 1 — a hierarchical URL whose valid scheme starts at the very first
+#            byte and is followed by "://". A scheme is one letter followed by
+#            any number of letters, digits, "+", "-" or ".".
+#
+#   Form 2 — no scheme at all: a network reference that becomes a valid
+#            authority, plus an optional path, when it is read with a single
+#            leading "//".
+#
+# For either form, EVERY one of these has to hold, or the address is refused:
+#
+#   * a valid, non-empty host;
+#   * no user information;
+#   * no query string;
+#   * no fragment;
+#   * no leading or trailing whitespace, and no raw control character anywhere;
+#   * no malformed, ambiguous or opaque reading;
+#   * no port that is empty, not a number, or outside 0-65535;
+#   * an address written with no scheme and no leading "//" of its own must
+#     not have a second "//" straight after its first segment. An address
+#     written that way is a host, an optional port and an optional path, and
+#     a path there never opens a second authority — what has been written is
+#     a scheme with its colon left out, and the first segment is the scheme
+#     rather than the host somebody meant to reach.
+#
+# Percent signs are handled by where they sit, never by what they spell:
+#
+#   * a percent escape must not be able to carry user information through an
+#     unbracketed authority or hostname;
+#   * "%" is not banned outright — a bracketed IPv6 zone identifier needs one;
+#   * a well-formed percent escape inside an ordinary path stays path data.
+#
+# # How to read a row
+#
+#   address — exactly what an operator would type, with control characters
+#             written as YAML escapes so they survive being stored in a file.
+#   verdict — "refused" or "accepted". No third value is allowed.
+#   reason  — ONE sentence saying why THE RULE gives that verdict. A reason
+#             that names a function, a return value or a template is wrong by
+#             construction: this file must stay readable by someone who has
+#             never opened either implementation.
+#
+# # How to add a row
+#
+# Write the reason sentence FIRST, from the rule above, and let the sentence
+# tell you the verdict. If you cannot write the sentence without looking at the
+# code, you do not understand the case well enough to add it, and the honest
+# thing is to leave it out and say so.
+#
+# Every credential in this file is obviously fake on purpose.
+
+rows:
+  # ---------------------------------------------------------------------
+  # The two accepted forms, written as plainly as they can be. Most of the
+  # refusals below are one property away from one of these two.
+  # ---------------------------------------------------------------------
+
+  - address: "https://git.example/o/r"
+    verdict: accepted
+    reason: >-
+      The scheme https starts at the first byte and is followed by "://", so
+      this is form 1, and it has a valid host with no user information, no
+      query, no fragment, no whitespace, no control character and no port.
+
+  - address: "git.example/o/r"
+    verdict: accepted
+    reason: >-
+      There is no scheme, and read with a single leading "//" this becomes the
+      authority git.example plus the path /o/r, which is exactly form 2.
+
+  - address: "git.example"
+    verdict: accepted
+    reason: >-
+      Read with a single leading "//" this is the authority git.example with no
+      path, and form 2 says the path is optional.
+
+  # ---------------------------------------------------------------------
+  # User information written out in the open.
+  # ---------------------------------------------------------------------
+
+  - address: "https://synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      This is form 1, but the part of the authority in front of the "@" is user
+      information, and the rule refuses user information.
+
+  - address: "https://synthetic-user@git.example/o/r"
+    verdict: refused
+    reason: >-
+      A user name with no password is still user information in the authority,
+      so it is refused for the same reason as the name-and-password form.
+
+  - address: "https://@git.example/o/r"
+    verdict: refused
+    reason: >-
+      The "@" in the authority marks off a user information section, and the
+      rule refuses that section being present at all, whether or not anything
+      is written inside it.
+
+  - address: "synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      There is no scheme, and read with a single leading "//" the authority
+      becomes synthetic-user:synthetic-pw-not-real@git.example, which carries
+      user information.
+
+  - address: "https://a@b@git.example/o/r"
+    verdict: refused
+    reason: >-
+      The user information section runs up to the last "@" that comes before
+      the first "/", so a@b is user information however many "@" characters
+      are written.
+
+  - address: "https://git.example:8443@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      The "@" comes before the first "/", so everything in front of it is user
+      information and the real host is evil.example, and user information is
+      refused.
+
+  - address: "github.com@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      Read with a single leading "//" the authority is github.com@evil.example,
+      so github.com is user information rather than the host.
+
+  - address: "github.com/org/repo@v1"
+    verdict: accepted
+    reason: >-
+      The "@" comes after the first "/", so it sits inside the path and is not
+      user information, and the authority is just github.com.
+
+  # ---------------------------------------------------------------------
+  # User information hidden behind percent escapes. The pairing to watch is
+  # "where does the escape sit": inside an unbracketed authority it can carry
+  # user information, inside an ordinary path it cannot.
+  # ---------------------------------------------------------------------
+
+  - address: "https://synthetic-user%3Asynthetic-pw-not-real%40git.example/o/r"
+    verdict: refused
+    reason: >-
+      The authority is not bracketed, so a percent escape in it is not host
+      syntax, and %3A and %40 are an encoded ":" and "@" that put user
+      information in front of the host.
+
+  - address: "https://synthetic-pw-not-real%40git.example/o/r"
+    verdict: refused
+    reason: >-
+      The same shape with a single token: %40 is an encoded "@" inside an
+      unbracketed authority, so the escape would carry user information through
+      the hostname.
+
+  - address: "https://synthetic-user%253Asynthetic-pw-not-real%2540git.example/o/r"
+    verdict: refused
+    reason: >-
+      The escapes here are written twice over: %25 spells the "%" itself, so
+      %253A and %2540 spell "%3A" and "%40", and reading those once more puts
+      an encoded ":" and "@" in front of the host. The authority is not
+      bracketed, so a percent escape in it is not host syntax, and this one
+      carries user information through the hostname.
+
+  - address: "https://git.example/o/r%2Fsub"
+    verdict: accepted
+    reason: >-
+      The percent escape is in an ordinary path rather than in the authority,
+      and %2F is well formed, so it stays path data.
+
+  - address: "git.example/o/r%20with%20space"
+    verdict: accepted
+    reason: >-
+      Read with a single leading "//" the authority is git.example and the
+      escapes are well-formed ones inside an ordinary path, so they stay path
+      data.
+
+  - address: "git.example/o/r%zz"
+    verdict: refused
+    reason: >-
+      "%zz" is not a percent escape, because "zz" is not two hexadecimal
+      digits, so the address has no well-formed reading at all.
+
+  - address: "https://git.example/o/r%0Asynthetic-user:synthetic-pw-not-real@evil.example"
+    verdict: accepted
+    reason: >-
+      %0A is a well-formed percent escape inside an ordinary path and not a raw
+      control character, and the "@" after it also comes after the first "/",
+      so both are path data and nothing in the rule refuses this.
+
+  # ---------------------------------------------------------------------
+  # Brackets and IPv6. This is the one place a "%" belongs in an authority.
+  # ---------------------------------------------------------------------
+
+  - address: "[::1]:8080"
+    verdict: accepted
+    reason: >-
+      Read with a single leading "//" this is the bracketed IPv6 literal ::1 as
+      the host with the numeric in-range port 8080, which is form 2.
+
+  - address: "https://[::1]/o/r"
+    verdict: accepted
+    reason: >-
+      This is form 1 with a bracketed IPv6 literal as the host, no user
+      information, no query and no fragment.
+
+  - address: "[fe80::1%25eth0]:8080"
+    verdict: accepted
+    reason: >-
+      Inside brackets, %25 is the required way to write the "%" of an IPv6 zone
+      identifier, so it is host syntax rather than a way to put user
+      information into the authority, and the port is numeric and in range.
+
+  - address: "[fe80::1%eth0]:8080"
+    verdict: refused
+    reason: >-
+      A bare "%" is only an escape when two hexadecimal digits follow it, and
+      "et" is not hexadecimal, so the zone identifier is malformed and the
+      address has no valid reading.
+
+  - address: "https://[::1/o/r"
+    verdict: refused
+    reason: >-
+      The opening bracket is never closed, so the authority cannot be read as
+      an IPv6 literal and there is no valid host.
+
+  - address: "[::1]"
+    verdict: accepted
+    reason: >-
+      Read with a single leading "//" this is the bracketed IPv6 literal ::1 as
+      the host, with no port written at all, and form 2 says the path is
+      optional, so there is nothing here for the rule to refuse.
+
+  - address: "https://[fe80::1%25eth0]:8443/o/r"
+    verdict: accepted
+    reason: >-
+      This is form 1 with a bracketed IPv6 literal as the host, the zone
+      identifier written the one way it may be written with %25, and a port
+      that is numeric and in range, and it carries no user information, no
+      query and no fragment.
+
+  - address: "[synthetic-user:synthetic-pw-not-real@::1]"
+    verdict: refused
+    reason: >-
+      The "@" marks off a user information section wherever in the authority it
+      is written, so brackets around it shelter nothing, and what the brackets
+      hold is not something that can be read as an IPv6 address either, so
+      there is no valid host.
+
+  - address: "[synthetic-user:synthetic-pw-not-real@::1]:8443"
+    verdict: refused
+    reason: >-
+      Writing a numeric port after the closing bracket changes nothing: the "@"
+      inside the authority still marks off user information, and what the
+      brackets hold still cannot be read as an IPv6 address.
+
+  - address: "https://[synthetic-user:synthetic-pw-not-real@::1]:8443/o/r"
+    verdict: refused
+    reason: >-
+      Putting a valid scheme in front makes this form 1 rather than form 2, and
+      that changes nothing either: the "@" inside the authority still marks off
+      user information, and the brackets still hold something that is not an
+      IPv6 address.
+
+  # ---------------------------------------------------------------------
+  # Schemes. Each malformed scheme appears twice: once carrying a credential
+  # and once without, so it is visible that the malformed scheme alone is
+  # enough to refuse.
+  # ---------------------------------------------------------------------
+
+  - address: "HTTPS://git.example/o/r"
+    verdict: accepted
+    reason: >-
+      A scheme is a letter followed by letters, digits, "+", "-" or ".", and
+      nothing in that makes the case of the letters matter, so this is form 1
+      with a valid host.
+
+  - address: "HtTpS://git.example/o/r"
+    verdict: accepted
+    reason: >-
+      Mixed case is still just letters, so the scheme is valid, it is followed
+      by "://", and the rest of the address has none of the refused parts.
+
+  - address: "https:/synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      The scheme is followed by only one slash, so this is not form 1, and read
+      as form 2 with a single leading "//" the authority becomes "https:",
+      which is a host with an empty port.
+
+  - address: "https:/git.example/o/r"
+    verdict: refused
+    reason: >-
+      The same single-slash shape with no credential in it is refused just the
+      same: not form 1, and as form 2 the authority is "https:", whose port is
+      empty.
+
+  - address: "1https://synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      A scheme has to begin with a letter, so 1https is not a valid scheme and
+      this is not form 1, and read as form 2 the authority runs to the first
+      "/" and becomes "1https:", whose port is empty.
+
+  - address: "1https://git.example/o/r"
+    verdict: refused
+    reason: >-
+      The same digit-first shape with no credential in it is refused just the
+      same: 1https is not a valid scheme, and as form 2 the authority "1https:"
+      has an empty port.
+
+  - address: "ht_tps://synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      An underscore is not one of the characters a scheme may contain, so
+      ht_tps is not a valid scheme and this is not form 1, and read as form 2
+      the authority becomes "ht_tps:", whose port is empty.
+
+  - address: "ht_tps://git.example/o/r"
+    verdict: refused
+    reason: >-
+      The same underscore shape with no credential in it is refused just the
+      same: ht_tps is not a valid scheme, and as form 2 the authority
+      "ht_tps:" has an empty port.
+
+  - address: "https//synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      The colon after the scheme is missing, so there is no "://" anywhere and
+      this is not form 1. Read as form 2 the first segment "https" becomes the
+      authority and everything after it is a path that itself begins with a
+      second "//", and an address written without a scheme is a host, an
+      optional port and an optional path, where a path never opens a second
+      authority.
+
+  - address: "https//git.example/o/r"
+    verdict: refused
+    reason: >-
+      The same missing-colon shape with no credential in it is refused just the
+      same: not form 1, and as form 2 the authority is "https" with a path
+      after it that begins with a second "//".
+
+  - address: "https//synthetic-user:synthetic-pw-not-real@git.example/o/r?ref=main"
+    verdict: refused
+    reason: >-
+      The same missing-colon shape with a query written on the end, and either
+      half refuses it on its own: the path after the authority begins with a
+      second "//", and the "?" starts a query.
+
+  - address: "localhost//synthetic-user:synthetic-pw-not-real@evil.example/x"
+    verdict: refused
+    reason: >-
+      The first segment does not have to look like a scheme for the shape to be
+      the same one. There is no scheme here, so as form 2 the authority is
+      "localhost" and the path after it begins with a second "//", which is not
+      a path an address without a scheme may have, and the name written after
+      that second "//" is the host somebody would actually be sent to.
+
+  - address: "git.example//synthetic-user:synthetic-pw-not-real@evil.example/x"
+    verdict: refused
+    reason: >-
+      The same shape again with an ordinary looking host name in front: no
+      scheme, so as form 2 the authority is "git.example" and the path after it
+      begins with a second "//".
+
+  - address: "git.example//o/r"
+    verdict: refused
+    reason: >-
+      The same doubled-slash shape with no credential in it is refused just the
+      same: there is no scheme, and the path after the authority begins with a
+      second "//".
+
+  - address: "https://"
+    verdict: refused
+    reason: >-
+      The scheme is followed by "://" and then nothing, so the authority is
+      empty and there is no host.
+
+  - address: "https:///o/r"
+    verdict: refused
+    reason: >-
+      The "://" is followed straight away by "/", so the authority is empty and
+      there is no host.
+
+  # ---------------------------------------------------------------------
+  # Raw control characters, each one with the credential placed AFTER it.
+  # This is the shape that gets through when a reader stops at the first line.
+  # ---------------------------------------------------------------------
+
+  - address: "https://git.example/o/r\nhttps://synthetic-user:synthetic-pw-not-real@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      A raw newline is a control character, and the rule refuses a raw control
+      character anywhere in the address, so what comes after it is never read
+      as a separate safe value.
+
+  - address: "https://git.example/o/r\rhttps://synthetic-user:synthetic-pw-not-real@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      A raw carriage return is a control character, and the rule refuses a raw
+      control character anywhere in the address.
+
+  - address: "https://git.example/o/r\thttps://synthetic-user:synthetic-pw-not-real@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      A raw tab is a control character, and the rule refuses a raw control
+      character anywhere in the address.
+
+  - address: "https://git.example/o/r\x00https://synthetic-user:synthetic-pw-not-real@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      A raw NUL is a control character, and the rule refuses a raw control
+      character anywhere in the address.
+
+  - address: "https://git.example/o/r\n"
+    verdict: refused
+    reason: >-
+      A trailing newline is both trailing whitespace and a raw control
+      character, and the rule refuses each of those on its own.
+
+  - address: "git.exa\x85mple/o/r"
+    verdict: refused
+    reason: >-
+      A control character does not have to be one of the familiar ones. U+0085
+      is a control character too, it is sitting in the middle of the host here,
+      and the rule refuses a raw control character anywhere in the address.
+
+  - address: "https://git.example/o/r\x9fhttps://synthetic-user:synthetic-pw-not-real@evil.example/o/r"
+    verdict: refused
+    reason: >-
+      U+009F is a control character at the top of the same range, and the rule
+      refuses a raw control character anywhere in the address, so what is
+      written after one is never read as a separate safe value.
+
+  # ---------------------------------------------------------------------
+  # Whitespace around, or instead of, an address.
+  # ---------------------------------------------------------------------
+
+  - address: " https://git.example/o/r"
+    verdict: refused
+    reason: >-
+      There is a space before the address, and the rule refuses leading
+      whitespace.
+
+  - address: "https://git.example/o/r "
+    verdict: refused
+    reason: >-
+      There is a space after the address, and the rule refuses trailing
+      whitespace.
+
+  - address: "   "
+    verdict: refused
+    reason: >-
+      This is nothing but whitespace, so it has both leading and trailing
+      whitespace and there is no host in it at all.
+
+  - address: ""
+    verdict: refused
+    reason: >-
+      There is nothing here to read, so there is no host, and an address
+      without a host is refused.
+
+  # ---------------------------------------------------------------------
+  # Ports. The 65535/65536 pair is the exact edge of the allowed range.
+  # ---------------------------------------------------------------------
+
+  - address: "https://git.example:8443/o/r"
+    verdict: accepted
+    reason: >-
+      This is form 1 with a valid host and a port that is a number inside the
+      allowed range, and none of the refused parts.
+
+  - address: "https://git.example:65535/o/r"
+    verdict: accepted
+    reason: >-
+      65535 is the largest port number there is, so the port is numeric and
+      still in range.
+
+  - address: "https://git.example:65536/o/r"
+    verdict: refused
+    reason: >-
+      65536 is one past the largest port number there is, so the port is out of
+      range.
+
+  - address: "https://git.example:70000/o/r"
+    verdict: refused
+    reason: >-
+      70000 is well past the largest port number there is, so the port is out
+      of range.
+
+  - address: "https://git.example:/o/r"
+    verdict: refused
+    reason: >-
+      The ":" is written but no port number follows it, so the port is empty.
+
+  - address: "https://git.example:notaport/o/r"
+    verdict: refused
+    reason: >-
+      The port is not made of digits, so it is not a number.
+
+  - address: "git.example:"
+    verdict: refused
+    reason: >-
+      Read with a single leading "//" the authority is "git.example:", where
+      the ":" is written but nothing follows it, so the port is empty.
+
+  - address: ":"
+    verdict: refused
+    reason: >-
+      Read with a single leading "//" the whole authority is just ":", which
+      names no host and has an empty port.
+
+  - address: "localhost:8080"
+    verdict: accepted
+    reason: >-
+      Read with a single leading "//" this is the host localhost with the
+      numeric in-range port 8080, which is form 2.
+
+  - address: "https://localhost:8080"
+    verdict: accepted
+    reason: >-
+      The same host and port written as form 1, with a valid scheme followed by
+      "://" and none of the refused parts.
+
+  # ---------------------------------------------------------------------
+  # Query strings and fragments. Both are refused by where they start, never
+  # by what they say, because reading what is inside them would mean guessing
+  # which text is secret.
+  # ---------------------------------------------------------------------
+
+  - address: "https://git.example/o/r?ref=main"
+    verdict: refused
+    reason: >-
+      The "?" starts a query, and the rule refuses any query whatever it
+      contains, even one as ordinary looking as this.
+
+  - address: "https://git.example/o/r?"
+    verdict: refused
+    reason: >-
+      A "?" with nothing after it still starts a query, so the address has a
+      query.
+
+  - address: "https://git.example/o/r?x=1@2"
+    verdict: refused
+    reason: >-
+      The "?" starts a query, which is refused, and the "@" after it sits
+      inside that query rather than being user information.
+
+  - address: "https://git.example/o/r#main"
+    verdict: refused
+    reason: >-
+      The "#" starts a fragment, and the rule refuses any fragment.
+
+  - address: "https://git.example/o/r#a@b"
+    verdict: refused
+    reason: >-
+      The "#" starts a fragment, which is refused, and the "@" after it sits
+      inside that fragment rather than being user information.
+
+  - address: "git.example#x"
+    verdict: refused
+    reason: >-
+      Read with a single leading "//" the authority is git.example, and the "#"
+      after it starts a fragment, which is refused.
+
+  # ---------------------------------------------------------------------
+  # Addresses already written as a network reference, with their own "//".
+  # ---------------------------------------------------------------------
+
+  - address: "//git.example/o/r"
+    verdict: accepted
+    reason: >-
+      This is already written as a network reference carrying its single
+      leading "//", so the authority is git.example and the path is /o/r,
+      which is form 2.
+
+  - address: "//synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      Read as the network reference it already is, the authority is
+      synthetic-user:synthetic-pw-not-real@git.example, which carries user
+      information.
+
+  - address: "////synthetic-user:synthetic-pw-not-real@git.example/o/r"
+    verdict: refused
+    reason: >-
+      The first "//" opens the authority and the very next character is "/", so
+      the authority is empty and there is no host, and the user information
+      ends up buried in the path where nothing treats it as user information.
+
+  - address: "//git.example//o/r"
+    verdict: accepted
+    reason: >-
+      The leading "//" is the operator's own, so the authority is git.example
+      and everything after it is path, and nothing in the rule refuses a
+      doubled slash inside a path. The doubled-slash refusal is only about an
+      address that had no "//" of its own, where a second one means the first
+      segment was a scheme with its colon left out.
+
+  - address: "//"
+    verdict: refused
+    reason: >-
+      The "//" opens an authority and there is nothing inside it, so there is
+      no host.
+
+  # ---------------------------------------------------------------------
+  # The scp-style Git remote. Sharko has never supported this shape and must
+  # not start now.
+  # ---------------------------------------------------------------------
+
+  - address: "git@github.com:org/repo.git"
+    verdict: refused
+    reason: >-
+      There is no "://" so this is not form 1, and read with a single leading
+      "//" the authority becomes git@github.com:org, which both carries user
+      information and has a port that is not a number.
+
+  - address: "github.com/org/repo.git"
+    verdict: accepted
+    reason: >-
+      The same host and path written as form 2, without the "git@" and with a
+      "/" where the ":" was, so the authority is just github.com.
+
+  # ---------------------------------------------------------------------
+  # Paths, and length.
+  # ---------------------------------------------------------------------
+
+  - address: "https://git.example//o/r"
+    verdict: accepted
+    reason: >-
+      This is form 1, so the scheme's own "://" says where the authority starts
+      and the first "/" after it says where the authority ends, leaving the
+      host git.example and an ordinary path, and nothing in the rule refuses a
+      doubled slash inside a path.
+
+  - address: "https://git.example/./o/../o/r"
+    verdict: accepted
+    reason: >-
+      Dot segments are ordinary path syntax that add no user information, no
+      query and no fragment, and the host is still git.example.
+
+  - address: "https://git.example/o/aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjjkkkkkkkkkkllllllllllmmmmmmmmmmnnnnnnnnnnooooooooooppppppppppqqqqqqqqqqrrrrrrrrrrssssssssssttttttttttuuuuuuuuuuvvvvvvvvvvwwwwwwwwwwxxxxxxxxxxyyyyyyyyyyzzzzzzzzzz/r"
+    verdict: accepted
+    reason: >-
+      The rule sets no limit on how long an address may be, and this one is
+      form 1 with a valid host and none of the refused parts, so its length on
+      its own does not refuse it.

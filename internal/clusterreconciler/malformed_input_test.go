@@ -1,0 +1,119 @@
+package clusterreconciler
+
+import (
+	"context"
+	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/testutil/malformed"
+)
+
+// Story 8.6 (v4 Wave 2) — the all-or-nothing audit for readV4AddonLabels,
+// the reader behind cluster-addons/*.yaml on the reconciler's poll path.
+//
+// This reader's contract is deliberately DIFFERENT from every other
+// reader in this audit: it is a per-tick CONVERGENCE loop, not a batch
+// write, so "all-or-nothing" here does not mean "one bad file blocks
+// everything" — it means the OPPOSITE: one malformed cluster-addons/<name>.yaml
+// must be skipped (logged, not applied) while every OTHER cluster in the
+// same tick still converges normally. See the doc comment on
+// readV4AddonLabels in v4_assignments.go for the reasoning ("the other
+// clusters still converge, and the affected cluster keeps whatever labels
+// it already has rather than having them all wiped by a 'successfully
+// read zero addons' lie").
+//
+// So this suite proves two things per malformed case, mixed into a single
+// tick alongside one known-good cluster:
+//  1. readV4AddonLabels never panics on the malformed file.
+//  2. The known-good cluster in the SAME tick still gets its labels — the
+//     malformed sibling file does not take the whole tick down.
+func TestMalformedInput_ReadV4AddonLabels_SkipsBadFilesKeepsGoodOnes(t *testing.T) {
+	t.Parallel()
+
+	goodClusterYAML := []byte(`apiVersion: sharko.dev/v1
+kind: ClusterAddons
+cluster: prod-eu
+addons:
+  cert-manager:
+    enabled: true
+`)
+
+	cases := map[string][]byte{
+		"empty":                      malformed.Empty(),
+		"whitespace_only":            malformed.Whitespace(),
+		"binary_junk":                malformed.BinaryJunk(),
+		"null_bytes":                 malformed.NullBytes(),
+		"truncated_block_mapping":    malformed.TruncatedBlockMapping(),
+		"truncated_flow_sequence":    malformed.TruncatedFlowSequence(),
+		"wrong_top_level_type":       malformed.WrongTopLevelType(),
+		"deep_nesting_200":           malformed.DeepNesting(200),
+		"tab_indentation":            malformed.TabIndentation(),
+		"not_enveloped":              []byte("cluster: broken-cluster\naddons: {}\n"),
+		"wrong_kind":                 []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nclusters: []\n"),
+		"unknown_sharko_api_version": []byte("apiVersion: sharko.dev/v99\nkind: ClusterAddons\ncluster: broken-cluster\naddons: {}\n"),
+		"addons_wrong_type":          []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\ncluster: broken-cluster\naddons:\n  - cert-manager\n"),
+		"missing_cluster_field":      []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\naddons: {}\n"),
+		"empty_cluster_field":        []byte("apiVersion: sharko.dev/v1\nkind: ClusterAddons\ncluster: \"\"\naddons: {}\n"),
+	}
+
+	for name, badBody := range cases {
+		badBody := badBody
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			gp := &fakeGit{files: map[string][]byte{
+				"cluster-addons/prod-eu.yaml":        goodClusterYAML,
+				"cluster-addons/broken-cluster.yaml": badBody,
+			}}
+
+			var got *v4Assignments
+			malformed.AssertNoPanic(t, name, func() {
+				got = readV4AddonLabels(context.Background(), gp, "main")
+			})
+
+			if _, ok := got.labels["broken-cluster"]; ok {
+				t.Errorf("readV4AddonLabels(%s): expected broken-cluster to be skipped (no entry), got %v", name, got.labels["broken-cluster"])
+			}
+			// ...and skipped is not the same as "runs no addons": the broken
+			// cluster's desired set is UNKNOWN this tick, so the write paths
+			// must leave its live labels alone instead of pruning them.
+			if got.desiredKnown("broken-cluster") {
+				t.Errorf("readV4AddonLabels(%s): broken-cluster's unreadable file was reported as a known desired state — its live addon labels would be wiped", name)
+			}
+			if !got.desiredKnown("prod-eu") {
+				t.Errorf("readV4AddonLabels(%s): prod-eu read fine but was held back by its broken sibling", name)
+			}
+			goodLabels, ok := got.labels["prod-eu"]
+			if !ok {
+				t.Fatalf("readV4AddonLabels(%s): expected prod-eu to still converge despite the sibling malformed file, got no entry at all (labels=%v)", name, got.labels)
+			}
+			const wantKey = "addons.sharko.dev/cert-manager"
+			if goodLabels[wantKey] != "enabled" {
+				t.Errorf("readV4AddonLabels(%s): expected prod-eu[%q]=enabled, got %v", name, wantKey, goodLabels)
+			}
+		})
+	}
+}
+
+// TestMalformedInput_ReadV4AddonLabels_AllFilesMalformed proves the
+// degenerate case — every file in cluster-addons/ is broken — comes back as an
+// empty map, never a panic and never a partial/garbled result.
+func TestMalformedInput_ReadV4AddonLabels_AllFilesMalformed(t *testing.T) {
+	t.Parallel()
+	gp := &fakeGit{files: map[string][]byte{
+		"cluster-addons/a.yaml": malformed.BinaryJunk(),
+		"cluster-addons/b.yaml": malformed.TruncatedBlockMapping(),
+		"cluster-addons/c.yaml": []byte("not: enveloped\n"),
+	}}
+
+	var got *v4Assignments
+	malformed.AssertNoPanic(t, "all_malformed", func() {
+		got = readV4AddonLabels(context.Background(), gp, "main")
+	})
+	if len(got.labels) != 0 {
+		t.Errorf("readV4AddonLabels(all malformed): expected an empty map, got %v", got.labels)
+	}
+	for _, cluster := range []string{"a", "b", "c"} {
+		if got.desiredKnown(cluster) {
+			t.Errorf("readV4AddonLabels(all malformed): %q was reported as a known desired state — its live addon labels would be wiped", cluster)
+		}
+	}
+}

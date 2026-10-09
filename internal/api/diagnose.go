@@ -1,0 +1,85 @@
+package api
+
+import (
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/diagnose"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	"github.com/MoranWeissman/sharko/internal/verify"
+)
+
+// handleDiagnoseCluster godoc
+//
+// @Summary Diagnose cluster permissions
+// @Description Runs a series of permission checks against a cluster and returns
+// @Description a diagnostic report with pass/fail results and suggested RBAC fixes.
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Success 200 {object} diagnose.DiagnosticReport "Diagnostic report"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 503 {object} map[string]interface{} "No credentials provider configured"
+// @Router /clusters/{name}/diagnose [post]
+// handleDiagnoseCluster handles POST /api/v1/clusters/{name}/diagnose — run IAM diagnostics.
+func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "cluster.diagnose") {
+		return
+	}
+
+	name := r.PathValue("name")
+	slog.Info("[cluster-diagnose] starting diagnostics", "name", name)
+
+	if s.credProvider() == nil {
+		writeError(w, http.StatusServiceUnavailable, "no credentials provider configured")
+		return
+	}
+
+	// Routed fetch (V2-cleanup-60.4): resolves the stored secretPath
+	// override (V2-cleanup-55.1) AND routes by the cluster's stored
+	// creds_source — an inline-registered cluster is read from the ArgoCD
+	// cluster Secret regardless of the configured backend type.
+	// PUBLIC BOUNDARY. Neither the log line nor the response carries a
+	// credentials-backend error's own text any more.
+	creds, err := s.fetchClusterCredentials(r.Context(), name)
+	if err != nil {
+		safeMsg := credsafe.Sentence(err)
+		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "step", "fetch-credentials", "error", safeMsg)
+		writeError(w, http.StatusBadGateway, "failed to fetch credentials: "+safeMsg)
+		return
+	}
+
+	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
+	if err != nil {
+		// PUBLIC BOUNDARY. Safe only because every return in
+		// NewClientFromKubeconfig happens to be credsafe.Mark'd — a property
+		// of that function, not of this call site, and one unmarked return
+		// away from leaking. Made explicit, and note the log line was
+		// asymmetric too: nine lines up it logs the safe sentence, here it
+		// logged the raw error value.
+		safeMsg := credsafe.Sentence(err)
+		slog.Error("[cluster-diagnose] failed to build client", "name", name, "step", "build-client", "error", safeMsg)
+		writeError(w, http.StatusBadGateway, "failed to build k8s client: "+safeMsg)
+		return
+	}
+
+	// The caller ARN and role ARN are not available from the credential provider;
+	// pass the cluster name as identity context and mark role as N/A.
+	callerARN := name
+	roleARN := "N/A"
+
+	namespace := verify.TestNamespace()
+	report := diagnose.DiagnoseCluster(r.Context(), client, namespace, callerARN, roleARN)
+
+	slog.Info("[cluster-diagnose] completed", "name", name, "checks", len(report.NamespaceAccess), "fixes", len(report.SuggestedFixes))
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_diagnosed",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	})
+	writeJSON(w, http.StatusOK, report)
+}

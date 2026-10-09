@@ -1,0 +1,546 @@
+package gitprovider
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// newTestAzureProvider creates an AzureDevOpsProvider backed by the given httptest server.
+func newTestAzureProvider(t *testing.T, server *httptest.Server) *AzureDevOpsProvider {
+	t.Helper()
+	return &AzureDevOpsProvider{
+		client:       server.Client(),
+		organisation: "test-org",
+		project:      "test-project",
+		repository:   "test-repo",
+		pat:          "test-pat",
+		baseURL:      server.URL,
+	}
+}
+
+func TestAzure_TestConnection_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			t.Error("expected Authorization header")
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"repo-id","name":"test-repo"}`))
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	err := provider.TestConnection(context.Background())
+	if err != nil {
+		t.Fatalf("TestConnection failed: %v", err)
+	}
+}
+
+func TestAzure_TestConnection_Unauthorized(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	err := provider.TestConnection(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 401, got nil")
+	}
+}
+
+func TestAzure_GetFileContent_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Query().Get("path")
+		version := r.URL.Query().Get("versionDescriptor.version")
+		if path != "charts/values.yaml" {
+			t.Errorf("expected path charts/values.yaml, got %s", path)
+		}
+		if version != "main" {
+			t.Errorf("expected version main, got %s", version)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("key: value\n"))
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	content, err := provider.GetFileContent(context.Background(), "charts/values.yaml", "main")
+	if err != nil {
+		t.Fatalf("GetFileContent failed: %v", err)
+	}
+	if string(content) != "key: value\n" {
+		t.Errorf("expected 'key: value\\n', got %q", string(content))
+	}
+}
+
+func TestAzure_ListDirectory_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"value": []map[string]interface{}{
+				{"path": "/charts", "isFolder": true},
+				{"path": "/charts/Chart.yaml", "isFolder": false},
+				{"path": "/charts/values.yaml", "isFolder": false},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	entries, err := provider.ListDirectory(context.Background(), "/charts", "main")
+	if err != nil {
+		t.Fatalf("ListDirectory failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(entries), entries)
+	}
+	if entries[0] != "Chart.yaml" {
+		t.Errorf("expected Chart.yaml, got %s", entries[0])
+	}
+	if entries[1] != "values.yaml" {
+		t.Errorf("expected values.yaml, got %s", entries[1])
+	}
+}
+
+// TestAzure_ListDirectory_NotFound_404 — task #147 acceptance-walk finding.
+// A directory that genuinely does not exist (e.g. a cluster that never had
+// a values file written) must come back as gitprovider.ErrFileNotFound, the
+// same sentinel GetFileContent already uses for a missing file, so
+// fail-closed callers treat it as "nothing there" rather than a genuine
+// listing failure.
+func TestAzure_ListDirectory_NotFound_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "not found"})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	_, err := provider.ListDirectory(context.Background(), "/charts/missing", "main")
+	if err == nil {
+		t.Fatal("expected error for a missing directory, got nil")
+	}
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("expected errors.Is(err, ErrFileNotFound), got: %v", err)
+	}
+}
+
+// TestAzure_ListDirectory_ServerError_NotSentinel — only a definitive 404
+// maps to the sentinel; a 500 must not, so fail-closed callers still abort
+// instead of treating the directory as empty.
+func TestAzure_ListDirectory_ServerError_NotSentinel(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "internal error"})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	_, err := provider.ListDirectory(context.Background(), "/charts/missing", "main")
+	if err == nil {
+		t.Fatal("expected error for a 500, got nil")
+	}
+	if errors.Is(err, ErrFileNotFound) {
+		t.Errorf("a genuine server error must not match ErrFileNotFound, got: %v", err)
+	}
+}
+
+func TestAzure_ListPullRequests_MapsStatus(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pullrequests", func(w http.ResponseWriter, r *http.Request) {
+		status := r.URL.Query().Get("searchCriteria.status")
+		if status != "active" {
+			t.Errorf("expected status 'active', got %s", status)
+		}
+		resp := map[string]interface{}{
+			"value": []map[string]interface{}{
+				{
+					"pullRequestId": 10,
+					"title":         "Add feature",
+					"description":   "A new feature",
+					"status":        "active",
+					"createdBy":     map[string]string{"displayName": "dev-user"},
+					"sourceRefName": "refs/heads/feature",
+					"targetRefName": "refs/heads/main",
+					"creationDate":  "2025-01-15T10:00:00Z",
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	prs, err := provider.ListPullRequests(context.Background(), "open")
+	if err != nil {
+		t.Fatalf("ListPullRequests failed: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(prs))
+	}
+	if prs[0].Status != "open" {
+		t.Errorf("expected status 'open', got %q", prs[0].Status)
+	}
+	if prs[0].SourceBranch != "feature" {
+		t.Errorf("expected source branch 'feature', got %q", prs[0].SourceBranch)
+	}
+	if prs[0].Author != "dev-user" {
+		t.Errorf("expected author 'dev-user', got %q", prs[0].Author)
+	}
+}
+
+func TestAzure_CreateBranch_Success(t *testing.T) {
+	mux := http.NewServeMux()
+
+	// GET refs to resolve source SHA
+	mux.HandleFunc("GET /refs", func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"value": []map[string]string{
+				{"objectId": "abc123def456", "name": "refs/heads/main"},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	// POST refs to create branch
+	mux.HandleFunc("POST /refs", func(w http.ResponseWriter, r *http.Request) {
+		var body []map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if len(body) != 1 {
+			t.Fatalf("expected 1 ref update, got %d", len(body))
+		}
+		if body[0]["name"] != "refs/heads/feature-branch" {
+			t.Errorf("expected refs/heads/feature-branch, got %s", body[0]["name"])
+		}
+		if body[0]["newObjectId"] != "abc123def456" {
+			t.Errorf("expected newObjectId abc123def456, got %s", body[0]["newObjectId"])
+		}
+		if body[0]["oldObjectId"] != "0000000000000000000000000000000000000000" {
+			t.Errorf("expected oldObjectId all zeros, got %s", body[0]["oldObjectId"])
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"value": []map[string]string{
+				{"name": "refs/heads/feature-branch", "newObjectId": "abc123def456"},
+			},
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	err := provider.CreateBranch(context.Background(), "feature-branch", "main")
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+}
+
+func TestAzure_CreateOrUpdateFile_Success(t *testing.T) {
+	mux := http.NewServeMux()
+
+	// GET refs to get current SHA
+	mux.HandleFunc("GET /refs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"value": []map[string]string{
+				{"objectId": "sha-current", "name": "refs/heads/feature"},
+			},
+		})
+	})
+
+	// GET items to check file existence (return 404 = new file)
+	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	// POST pushes to create the file
+	mux.HandleFunc("POST /pushes", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+
+		refUpdates := body["refUpdates"].([]interface{})
+		if len(refUpdates) != 1 {
+			t.Fatalf("expected 1 refUpdate, got %d", len(refUpdates))
+		}
+
+		commits := body["commits"].([]interface{})
+		commit := commits[0].(map[string]interface{})
+		changes := commit["changes"].([]interface{})
+		change := changes[0].(map[string]interface{})
+
+		if change["changeType"] != "add" {
+			t.Errorf("expected changeType 'add', got %v", change["changeType"])
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"pushId": 1,
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	err := provider.CreateOrUpdateFile(
+		context.Background(),
+		"charts/values.yaml",
+		[]byte("key: value\n"),
+		"feature",
+		"add values",
+	)
+	if err != nil {
+		t.Fatalf("CreateOrUpdateFile failed: %v", err)
+	}
+}
+
+func TestAzure_DeleteFile_Success(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /refs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"value": []map[string]string{
+				{"objectId": "sha-current", "name": "refs/heads/main"},
+			},
+		})
+	})
+
+	mux.HandleFunc("POST /pushes", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+
+		commits := body["commits"].([]interface{})
+		commit := commits[0].(map[string]interface{})
+		changes := commit["changes"].([]interface{})
+		change := changes[0].(map[string]interface{})
+
+		if change["changeType"] != "delete" {
+			t.Errorf("expected changeType 'delete', got %v", change["changeType"])
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{"pushId": 2})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	err := provider.DeleteFile(context.Background(), "old-file.yaml", "main", "remove old file")
+	if err != nil {
+		t.Fatalf("DeleteFile failed: %v", err)
+	}
+}
+
+func TestAzure_CreatePullRequest_Success(t *testing.T) {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /pullrequests", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+
+		if body["sourceRefName"] != "refs/heads/feature" {
+			t.Errorf("expected sourceRefName refs/heads/feature, got %s", body["sourceRefName"])
+		}
+		if body["targetRefName"] != "refs/heads/main" {
+			t.Errorf("expected targetRefName refs/heads/main, got %s", body["targetRefName"])
+		}
+		if body["title"] != "Add feature" {
+			t.Errorf("expected title 'Add feature', got %q", body["title"])
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"pullRequestId": 42,
+			"title":         body["title"],
+			"description":   body["description"],
+			"status":        "active",
+			"createdBy":     map[string]string{"displayName": "dev-user"},
+			"sourceRefName": body["sourceRefName"],
+			"targetRefName": body["targetRefName"],
+			"creationDate":  "2025-01-15T10:00:00Z",
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	pr, err := provider.CreatePullRequest(
+		context.Background(),
+		"Add feature",
+		"This PR adds a feature",
+		"feature",
+		"main",
+	)
+	if err != nil {
+		t.Fatalf("CreatePullRequest failed: %v", err)
+	}
+	if pr.ID != 42 {
+		t.Errorf("expected PR ID 42, got %d", pr.ID)
+	}
+	if pr.Title != "Add feature" {
+		t.Errorf("expected title 'Add feature', got %q", pr.Title)
+	}
+	if pr.Status != "open" {
+		t.Errorf("expected status 'open', got %q", pr.Status)
+	}
+	expectedURL := "https://dev.azure.com/test-org/test-project/_git/test-repo/pullrequest/42"
+	if pr.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, pr.URL)
+	}
+	if pr.SourceBranch != "feature" {
+		t.Errorf("expected source branch 'feature', got %q", pr.SourceBranch)
+	}
+	if pr.TargetBranch != "main" {
+		t.Errorf("expected target branch 'main', got %q", pr.TargetBranch)
+	}
+}
+
+// TestAzure_GetPullRequestStatus_NotFound_404 — V2-cleanup-18. A 404 from the
+// pull-request endpoint (PR deleted, or repo recreated) must return an error
+// that errors.Is-matches gitprovider.ErrPullRequestNotFound so the PR tracker
+// can drop the stale entry.
+func TestAzure_GetPullRequestStatus_NotFound_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pullrequests/8", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"TF401174: The requested pull request was not found."}`))
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	_, err := provider.GetPullRequestStatus(context.Background(), 8)
+	if err == nil {
+		t.Fatal("expected error for 404, got nil")
+	}
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected errors.Is(err, ErrPullRequestNotFound), got: %v", err)
+	}
+}
+
+// TestAzure_GetPullRequestStatus_TransientError_NotSentinel — V2-cleanup-18.
+// Only a definitive 404 maps to the sentinel. Any other non-2xx (401/403/5xx)
+// must NOT match ErrPullRequestNotFound so the tracker keeps retrying.
+func TestAzure_GetPullRequestStatus_TransientError_NotSentinel(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"unauthorized_401", http.StatusUnauthorized},
+		{"forbidden_403", http.StatusForbidden},
+		{"server_error_500", http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /pullrequests/9", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				w.Write([]byte(`{"message":"error"}`))
+			})
+
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			provider := newTestAzureProvider(t, server)
+			_, err := provider.GetPullRequestStatus(context.Background(), 9)
+			if err == nil {
+				t.Fatalf("%s: expected error, got nil", tc.name)
+			}
+			if errors.Is(err, ErrPullRequestNotFound) {
+				t.Errorf("%s: error must NOT match ErrPullRequestNotFound (transient), got: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestAzure_GetPullRequestStatus_Completed — V2-cleanup-18 regression guard: a
+// 200 with status "completed" still resolves to "merged" (happy path unchanged).
+func TestAzure_GetPullRequestStatus_Completed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pullrequests/42", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"completed"}`))
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	status, err := provider.GetPullRequestStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetPullRequestStatus: %v", err)
+	}
+	if status != "merged" {
+		t.Errorf("expected status merged, got %q", status)
+	}
+}
+
+// v4.0.4 review fix: Azure DevOps answers a wrong or expired PAT with 203
+// and an HTML sign-in page. That is not a working token.
+func TestAzure_TestConnection_203SignInPage_IsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusNonAuthoritativeInfo)
+		_, _ = w.Write([]byte(`<html><body>Sign in to your account</body></html>`))
+	}))
+	defer server.Close()
+
+	if err := newTestAzureProvider(t, server).TestConnection(context.Background()); err == nil {
+		t.Fatal("a 203 sign-in page must not count as a working connection")
+	}
+}
+
+func TestAzure_TestConnection_200ButNotARepository_IsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body>Sign in to your account</body></html>`))
+	}))
+	defer server.Close()
+
+	if err := newTestAzureProvider(t, server).TestConnection(context.Background()); err == nil {
+		t.Fatal("a 200 reply that is not a repository must not count as a working connection")
+	}
+}
+
+// The status check on its own: even a repository-shaped body does not
+// make a 203 a success.
+func TestAzure_TestConnection_203WithRepoBody_IsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNonAuthoritativeInfo)
+		_, _ = w.Write([]byte(`{"id":"repo-id","name":"test-repo"}`))
+	}))
+	defer server.Close()
+
+	if err := newTestAzureProvider(t, server).TestConnection(context.Background()); err == nil {
+		t.Fatal("only exactly 200 counts as a working connection")
+	}
+}

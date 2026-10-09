@@ -1,0 +1,487 @@
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"path"
+
+	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/models"
+)
+
+// DisableAddon disables a specific addon on a cluster with configurable cleanup.
+//
+// Cleanup scopes:
+//   - "all" (default): update values file (set addon=false) + update managed-clusters.yaml
+//     (set label to disabled) via PR; after merge, delete addon secrets from remote.
+//   - "labels": same Git changes, but skip remote addon secret deletion.
+//   - "none": only update the values file (labels and secrets unchanged).
+//
+// Steps:
+//  1. Validate input and confirmation.
+//  2. Update values file (set addon to false).
+//  3. Update managed-clusters.yaml (set addon label to disabled) — unless cleanup=none.
+//  4. Create single PR with both changes.
+//  5. If cleanup=all, delete addon secrets from remote cluster.
+func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest) (*DisableAddonResult, error) {
+	log := logging.LoggerFromContext(ctx)
+	if req.Cluster == "" {
+		return nil, fmt.Errorf("cluster name is required")
+	}
+	if req.Addon == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+
+	// This writes the addon on/off labels in the v3 cluster registry, which
+	// on a v4 repo means CREATING a second registry the reconciler then
+	// prefers — see refuseV3ShapedWriteOnV4Repo. Until now it failed on a
+	// v4 repo only because the file it reads happens to be missing; that is
+	// an accident, so here is the explicit gate. Refuse before any read.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "switching an addon off through this endpoint", V4EnableDoor); err != nil {
+		return nil, err
+	}
+
+	// Normalize cleanup scope.
+	cleanup := req.Cleanup
+	if cleanup == "" {
+		cleanup = "all"
+	}
+	if cleanup != "all" && cleanup != "labels" && cleanup != "none" {
+		return nil, fmt.Errorf("invalid cleanup scope %q: must be all, labels, or none", cleanup)
+	}
+
+	result := &DisableAddonResult{
+		Cluster: req.Cluster,
+		Addon:   req.Addon,
+		Cleanup: cleanup,
+	}
+
+	valuesPath := path.Join(o.paths.ClusterValues, req.Cluster+".yaml")
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
+
+	// Generate file content (shared between dry-run and real path).
+	existingValues, valuesErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch)
+	if valuesErr != nil {
+		return nil, fmt.Errorf("reading values file for cluster %q: %w", req.Cluster, valuesErr)
+	}
+
+	clusterAddonsData, _ := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+
+	addons := o.extractAddonsFromValues(existingValues, req.Addon)
+
+	var catalog []models.AddonCatalogEntry
+	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+	if catalogErr == nil && catalogData != nil {
+		catalog, _ = parseAddonsCatalog(catalogData)
+	}
+
+	updatedValues := generateClusterValues(req.Cluster, "", addons, catalog)
+
+	var updatedClusterAddons []byte
+	if cleanup != "none" && clusterAddonsData != nil {
+		var labelErr error
+		updatedClusterAddons, labelErr = gitops.DisableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
+		if labelErr != nil && !req.DryRun {
+			log.Error("failed to disable addon label in managed-clusters.yaml — aborting before PR (no half-write)",
+				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
+			result.Status = "failed"
+			result.FailedStep = "update_addon_label"
+			result.Error = labelErr.Error()
+			result.Message = fmt.Sprintf("Could not clear the addon label for %s on cluster %s; no change was committed. Retry with cleanup=none to update only the values file, or make sure the cluster is in managed-clusters.yaml.", req.Addon, req.Cluster)
+			return result, nil
+		}
+	}
+
+	// Dry-run exit point.
+	if req.DryRun {
+		var filePreviews []FilePreview
+
+		valuesAction := "update"
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   valuesPath,
+			Action: valuesAction,
+			Diff:   o.buildFileDiff(valuesPath, existingValues, updatedValues, valuesAction),
+		})
+
+		if cleanup != "none" && updatedClusterAddons != nil {
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, updatedClusterAddons, "update"),
+			})
+		}
+
+		prTitle := fmt.Sprintf("%s disable addon %s on cluster %s", o.gitops.CommitPrefix, req.Addon, req.Cluster)
+
+		var secretsToDelete []string
+		if cleanup == "all" {
+			if def, ok := o.secretDefs[req.Addon]; ok {
+				secretsToDelete = []string{def.SecretName}
+			}
+		}
+
+		result.Status = "success"
+		result.DryRun = &DryRunResult{
+			FilesToWrite:    filePreviews,
+			PRTitle:         prTitle,
+			SecretsToCreate: secretsToDelete,
+		}
+		return result, nil
+	}
+
+	// Require confirmation.
+	if !req.Yes {
+		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
+	}
+
+	var steps []string
+	files := make(map[string][]byte)
+
+	files[valuesPath] = updatedValues
+	steps = append(steps, "update_values_file")
+
+	if cleanup != "none" {
+		if clusterAddonsData == nil {
+			log.Error("managed-clusters.yaml unavailable — cannot set addon label; aborting before PR",
+				"cluster", req.Cluster, "addon", req.Addon)
+			result.Status = "failed"
+			result.CompletedSteps = steps
+			result.FailedStep = "update_addon_label"
+			result.Error = "managed-clusters.yaml not found"
+			result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so the addon label cannot be updated. Retry with cleanup=none to update only the values file, or register the cluster first.", req.Cluster)
+			return result, nil
+		}
+		if updatedClusterAddons == nil {
+			result.Status = "failed"
+			result.CompletedSteps = steps
+			result.FailedStep = "update_addon_label"
+			result.Message = fmt.Sprintf("Could not clear the addon label for %s on cluster %s; no change was committed.", req.Addon, req.Cluster)
+			return result, nil
+		}
+		files[clusterAddonsPath] = updatedClusterAddons
+		steps = append(steps, "update_addon_label")
+	}
+
+	// Step 3: Create PR with combined changes.
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("disable addon %s on cluster %s", req.Addon, req.Cluster),
+		o.prMeta(req.AutoMerge, "addon-disable", fmt.Sprintf("Disable %s on cluster %s", req.Addon, req.Cluster), req.Cluster, req.Addon))
+	if gitErr != nil {
+		if gitResult != nil {
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "pr_merge"
+			result.Error = gitErr.Error()
+			result.Message = fmt.Sprintf("PR created but merge failed: %s", gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		result.Status = "failed"
+		result.CompletedSteps = steps
+		result.FailedStep = "git_commit"
+		result.Error = gitErr.Error()
+		result.Message = "Git commit failed while disabling addon"
+		return result, nil
+	}
+	result.Git = gitResult
+	steps = append(steps, "git_commit")
+
+	// Step 4: If cleanup=all, delete addon secrets from remote cluster (best-effort).
+	// The cluster's entry stays in managed-clusters.yaml (only its addon label
+	// changed), so the stored secretPath override resolves post-merge (V2-cleanup-55.1).
+	if cleanup == "all" && o.credProvider != nil {
+		creds, credErr := o.fetchClusterCredentials(ctx, req.Cluster)
+		if credErr == nil {
+			disabledAddons := map[string]bool{req.Addon: false}
+			deleted, _ := o.deleteAddonSecrets(ctx, req.Cluster, creds.Raw, disabledAddons)
+			if len(deleted) > 0 {
+				steps = append(steps, "delete_remote_secrets")
+			}
+		} else {
+			log.Warn("could not fetch credentials for remote secret cleanup",
+				"cluster", req.Cluster, "addon", req.Addon, "error", credErr)
+		}
+	}
+
+	result.Status = "success"
+	result.CompletedSteps = steps
+	return result, nil
+}
+
+// EnableAddon enables a specific addon on a cluster.
+//
+// Steps:
+//  1. Validate input and confirmation.
+//  2. Update values file (set addon to true).
+//  3. Update managed-clusters.yaml (set addon label to enabled).
+//  4. Create single PR with both changes.
+//  5. If the cluster has a credential provider, create addon secrets on remote cluster (best-effort).
+func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) (*EnableAddonResult, error) {
+	log := logging.LoggerFromContext(ctx)
+	if req.Cluster == "" {
+		return nil, fmt.Errorf("cluster name is required")
+	}
+	if req.Addon == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+
+	// Same second-registry hazard as DisableAddon — see the note there.
+	// Explicit gate before any read, rather than relying on a missing file.
+	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "switching an addon on through this endpoint", V4EnableDoor); err != nil {
+		return nil, err
+	}
+
+	// Referential integrity (V2-cleanup-22, Part 2 / decision #3): the addon
+	// must exist in the catalog before we label a cluster for it. Labeling a
+	// cluster for an addon that has no ApplicationSet entry produces config
+	// ArgoCD can never render. We also reuse the parsed catalog below for
+	// value generation, and — critically — we no longer swallow a catalog
+	// READ failure (the old `catalog, _ = parseAddonsCatalog(...)` hid a
+	// broken catalog). A genuine read failure surfaces; an absent addon
+	// returns *AddonNotInCatalogError → 4xx at the API edge.
+	catalog, catalogErr := o.requireAddonsInCatalog(ctx, []string{req.Addon})
+	if catalogErr != nil {
+		return nil, catalogErr
+	}
+
+	// Pre-flight credentials gate (V2-cleanup-88.3 — lazy credentials): the
+	// ONE moment Sharko needs its own spoke-cluster credentials is pushing
+	// this addon's Secrets to the cluster. A secret-less addon is a no-op
+	// here — it deploys via Git -> ArgoCD like any other workload, on a
+	// cred-less cluster with zero friction. Checked before any Git write
+	// (including dry-run) so a preview never promises something the real
+	// enable would then reject.
+	if credErr := o.requireClusterCredentialsForAddon(ctx, catalog, req.Cluster, req.Addon); credErr != nil {
+		return nil, credErr
+	}
+
+	result := &EnableAddonResult{
+		Cluster: req.Cluster,
+		Addon:   req.Addon,
+	}
+
+	valuesPath := path.Join(o.paths.ClusterValues, req.Cluster+".yaml")
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
+
+	// Generate file content (shared between dry-run and real path).
+	existingValues, valuesErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch)
+	if valuesErr != nil {
+		return nil, fmt.Errorf("reading values file for cluster %q: %w", req.Cluster, valuesErr)
+	}
+
+	clusterAddonsData, _ := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+
+	addons := o.extractAddonsFromValuesForEnable(existingValues, req.Addon)
+
+	// catalog was loaded by the referential-integrity check above
+	updatedValues := generateClusterValues(req.Cluster, "", addons, catalog)
+
+	// Seed the per-cluster template
+	if seeded, ok := o.seedPerClusterTemplate(ctx, req.Cluster, req.Addon, existingValues, updatedValues); ok {
+		updatedValues = seeded
+	}
+
+	var updatedClusterAddons []byte
+	if clusterAddonsData != nil {
+		var labelErr error
+		updatedClusterAddons, labelErr = gitops.EnableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
+		if labelErr != nil && !req.DryRun {
+			log.Error("failed to enable addon label in managed-clusters.yaml — aborting before PR (no half-write)",
+				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
+			result.Status = "failed"
+			result.FailedStep = "update_addon_label"
+			result.Error = labelErr.Error()
+			result.Message = fmt.Sprintf("Could not set the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", req.Addon, req.Cluster)
+			return result, nil
+		}
+	}
+
+	// Dry-run exit point.
+	if req.DryRun {
+		var filePreviews []FilePreview
+
+		valuesAction := "update"
+		filePreviews = append(filePreviews, FilePreview{
+			Path:   valuesPath,
+			Action: valuesAction,
+			Diff:   o.buildFileDiff(valuesPath, existingValues, updatedValues, valuesAction),
+		})
+
+		if updatedClusterAddons != nil {
+			filePreviews = append(filePreviews, FilePreview{
+				Path:   clusterAddonsPath,
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, updatedClusterAddons, "update"),
+			})
+		}
+
+		prTitle := fmt.Sprintf("%s enable addon %s on cluster %s", o.gitops.CommitPrefix, req.Addon, req.Cluster)
+
+		var secretsToCreate []string
+		if def, ok := o.secretDefs[req.Addon]; ok {
+			secretsToCreate = []string{def.SecretName}
+		}
+
+		result.Status = "success"
+		result.DryRun = &DryRunResult{
+			FilesToWrite:    filePreviews,
+			PRTitle:         prTitle,
+			SecretsToCreate: secretsToCreate,
+		}
+		return result, nil
+	}
+
+	// Require confirmation.
+	if !req.Yes {
+		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
+	}
+
+	var steps []string
+	files := make(map[string][]byte)
+
+	files[valuesPath] = updatedValues
+	steps = append(steps, "update_values_file")
+
+	if clusterAddonsData != nil && updatedClusterAddons != nil {
+		files[clusterAddonsPath] = updatedClusterAddons
+		steps = append(steps, "update_addon_label")
+	} else {
+		// No managed-clusters.yaml means the cluster isn't registered yet, so
+		// there is no label to drive deployment. Refuse rather than open a
+		// values-only PR that silently does nothing.
+		log.Error("managed-clusters.yaml unavailable — cannot set addon label; aborting before PR",
+			"cluster", req.Cluster, "addon", req.Addon)
+		result.Status = "failed"
+		result.CompletedSteps = steps
+		result.FailedStep = "update_addon_label"
+		result.Error = "managed-clusters.yaml not found"
+		result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so the addon label that drives deployment cannot be set. Register the cluster first, then retry.", req.Cluster)
+		return result, nil
+	}
+
+	// Step 3: Create PR with combined changes.
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s", req.Addon, req.Cluster),
+		o.prMeta(req.AutoMerge, "addon-enable", fmt.Sprintf("Enable %s on cluster %s", req.Addon, req.Cluster), req.Cluster, req.Addon))
+	if gitErr != nil {
+		if gitResult != nil {
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "pr_merge"
+			result.Error = gitErr.Error()
+			result.Message = fmt.Sprintf("PR created but merge failed: %s", gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		result.Status = "failed"
+		result.CompletedSteps = steps
+		result.FailedStep = "git_commit"
+		result.Error = gitErr.Error()
+		result.Message = "Git commit failed while enabling addon"
+		return result, nil
+	}
+	result.Git = gitResult
+	steps = append(steps, "git_commit")
+
+	// Step 4: Create addon secrets on remote cluster (best-effort).
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
+	if o.credProvider != nil {
+		creds, credErr := o.fetchClusterCredentials(ctx, req.Cluster)
+		if credErr == nil {
+			enabledAddons := map[string]bool{req.Addon: true}
+			secretRes, _ := o.createAddonSecrets(ctx, creds.Raw, enabledAddons)
+			if secretRes != nil && len(secretRes.Created) > 0 {
+				steps = append(steps, "create_remote_secrets")
+			}
+		} else {
+			log.Warn("could not fetch credentials for remote secret creation",
+				"cluster", req.Cluster, "addon", req.Addon, "error", credErr)
+		}
+	}
+
+	result.Status = "success"
+	result.CompletedSteps = steps
+	return result, nil
+}
+
+// extractAddonsFromValuesForEnable parses a cluster values file to extract the current addon
+// states, then sets the target addon to true.
+func (o *Orchestrator) extractAddonsFromValuesForEnable(valuesData []byte, enableAddon string) map[string]bool {
+	addons := o.extractAddonsFromValues(valuesData, enableAddon)
+	// Override: set the target addon to true.
+	addons[enableAddon] = true
+	return addons
+}
+
+// extractAddonsFromValues parses a cluster values file to extract the current addon
+// states, then sets the target addon to false. This is a best-effort parser that
+// looks for "<addon>:\n  enabled: true/false" patterns.
+func (o *Orchestrator) extractAddonsFromValues(valuesData []byte, disableAddon string) map[string]bool {
+	addons := make(map[string]bool)
+
+	// Parse simple YAML pattern: "addonName:\n  enabled: true/false"
+	lines := splitLines(string(valuesData))
+	for i := 0; i < len(lines)-1; i++ {
+		line := lines[i]
+		nextLine := lines[i+1]
+
+		// Skip indented lines and comments.
+		if len(line) == 0 || line[0] == ' ' || line[0] == '#' || line[0] == '_' {
+			continue
+		}
+
+		// Check if this looks like "addonName:"
+		if len(line) > 1 && line[len(line)-1] == ':' {
+			name := line[:len(line)-1]
+			if name == "clusterGlobalValues" {
+				continue
+			}
+			// Check if next line is "  enabled: true/false"
+			trimmed := trimSpaces(nextLine)
+			if trimmed == "enabled: true" {
+				addons[name] = true
+			} else if trimmed == "enabled: false" {
+				addons[name] = false
+			}
+		}
+	}
+
+	// Override the target addon.
+	addons[disableAddon] = false
+
+	return addons
+}
+
+// splitLines splits a string into lines without importing strings.
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
+}
+
+// trimSpaces removes leading and trailing whitespace.
+func trimSpaces(s string) string {
+	start := 0
+	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	end := len(s)
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
+}

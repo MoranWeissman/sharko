@@ -1,0 +1,1475 @@
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Eye,
+  ExternalLink,
+  FileText,
+  Github,
+  Info,
+  Loader2,
+  Package,
+  Star,
+  Tag,
+} from 'lucide-react'
+import { api, fetchTrackedPRs } from '@/services/api'
+import { getToken } from '@/lib/authStorage'
+import type {
+  AddToCatalogResult,
+  CatalogEntry,
+  CatalogReadmeResponse,
+  CatalogSourceRecord,
+  CatalogVersionsResponse,
+  DryRunResult,
+  TrackedPR,
+} from '@/services/models'
+import { LoadingState } from '@/components/LoadingState'
+import { ErrorState } from '@/components/ErrorState'
+import { ScorecardBadge } from '@/components/ScorecardBadge'
+import { SourceBadge } from '@/components/SourceBadge'
+import { AttributionNudge } from '@/components/AttributionNudge'
+import { RichMarkdown } from '@/components/RichMarkdown'
+import { VersionPicker } from '@/components/VersionPicker'
+import { showToast } from '@/components/ToastNotification'
+import {
+  DryRunPreview,
+  EnableOnClusterField,
+  SubmitErrorBanner,
+  SubmitPhaseBanner,
+  SubmitResultBanner,
+  type SubmitPhase,
+} from '@/components/AddAddonFlow'
+
+/**
+ * In-page Marketplace detail view. Embedded form (NOT a modal) — clicking
+ * "Add to catalog" opens a pull request adding an entry to the user's
+ * `catalog.yaml` (POST /api/v1/catalog/addons, from_marketplace: true).
+ * The merge is the approval; nothing deploys until the addon is enabled on
+ * a cluster.
+ *
+ * Layout (top → bottom):
+ *   1. Back link + title row + "✓ In your catalog" badge
+ *   2. Hero — icon, name, description, category/curator chips, license,
+ *      OpenSSF score, GitHub stars, chart name
+ *   3. Action panel — "Add <addon> to your catalog" (no sync-wave; set on
+ *      the addon page after creation). Collapses to a friendly link when
+ *      the addon is already in the catalog so we don't tempt the user to
+ *      open a no-op PR.
+ *   4. README — Rendered via RichMarkdown (react-markdown + rehype-raw +
+ *      rehype-sanitize with a tightened GitHub schema). Third-party README
+ *      content from ArtifactHub and upstream projects is treated as hostile:
+ *      script/iframe/on-handlers/javascript:/data: vectors are stripped; only safe
+ *      http/https content attributes survive. Loading skeleton while fetching;
+ *      empty state when no README.
+ *   5. Metadata footer — chart, repo URL, docs URL, source URL, maintainers.
+ *
+ * Data fetching:
+ *   - Curated: /catalog/addons/{name}[/readme]
+ *   - ArtifactHub: /catalog/remote/{repo}/{name} (carries the README too)
+ *
+ * Accessibility (WCAG 2.1 AA): the back link gets initial focus so keyboard
+ * users land in a sensible spot after the tab swap. Sections use
+ * <header role="banner">, <section aria-labelledby=...>, and <footer>
+ * landmarks. All interactive controls are keyboard-navigable.
+ */
+
+export interface MarketplaceAddonDetailProps {
+  /** Addon name from the URL (?mp_addon=). For curated source this is the
+   *  curated catalog name; for AH source this is the ArtifactHub chart name. */
+  addonName: string
+  /** Where to fetch metadata + README from. */
+  source: 'curated' | 'ah'
+  /** ArtifactHub repo name — required when source is "ah". */
+  ahRepoName?: string | null
+  /** Called when the user clicks the "← Back to Marketplace" link. */
+  onBack: () => void
+}
+
+export function MarketplaceAddonDetail({
+  addonName,
+  source,
+  ahRepoName,
+  onBack,
+}: MarketplaceAddonDetailProps) {
+  // ─── Metadata + README state ─────────────────────────────────────────────
+  const [entry, setEntry] = useState<CatalogEntry | null>(null)
+  const [entryLoading, setEntryLoading] = useState(true)
+  const [entryError, setEntryError] = useState<string | null>(null)
+
+  const [readmeResp, setReadmeResp] = useState<CatalogReadmeResponse | null>(
+    null,
+  )
+  const [readmeLoading, setReadmeLoading] = useState(true)
+
+  // ─── Add-to-catalog form state ───────────────────────────────────────────
+  const [name, setName] = useState('')
+  const [namespace, setNamespace] = useState('')
+  const [version, setVersion] = useState('')
+  const [showPrereleases, setShowPrereleases] = useState(false)
+  const [versionTouched, setVersionTouched] = useState(false)
+
+  const [versionsResp, setVersionsResp] = useState<CatalogVersionsResponse | null>(
+    null,
+  )
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [versionsError, setVersionsError] = useState<string | null>(null)
+
+  // Pre-flight duplicate detection: lower-cased compare against the user's
+  // catalog so the submit button is gated before the network round-trip.
+  const [existingNames, setExistingNames] = useState<Set<string> | null>(null)
+  const [hasPersonalToken, setHasPersonalToken] = useState<boolean | undefined>(
+    undefined,
+  )
+
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitResult, setSubmitResult] = useState<AddToCatalogResult | null>(null)
+
+  // v4 walk-findings W2, item 4 — the OPTIONAL "also enable on a cluster"
+  // combo, mirrored from the same add door in AddonCatalog.tsx. Default is
+  // always "Don't enable yet" — never pre-selected.
+  const [enableOnCluster, setEnableOnCluster] = useState('')
+  const [managedClusterNames, setManagedClusterNames] = useState<string[]>([])
+
+  // v4 walk-findings W2, item 5 — open catalog-add PRs. Both catalog reads
+  // only see the merged base branch, so an addon mid-PR is otherwise
+  // invisible here and the "Add to catalog" panel would offer a duplicate
+  // add.
+  const [pendingAddonPRs, setPendingAddonPRs] = useState<TrackedPR[]>([])
+  // Surfaced when the pending-PR fetch itself fails (e.g. a 401 on a
+  // half-dead session) — previously swallowed silently, which let the
+  // form offer a duplicate add-PR with no visible reason. See the effect
+  // below.
+  const [pendingAddonPRsError, setPendingAddonPRsError] = useState(false)
+  const pendingAddonNames = useMemo(
+    () =>
+      new Set(
+        pendingAddonPRs
+          .map((pr) => pr.addon?.trim().toLowerCase())
+          .filter((n): n is string => !!n),
+      ),
+    [pendingAddonPRs],
+  )
+
+  const navigate = useNavigate()
+
+  // ─── Preview (dry-run) state ─────────────────────────────────────────────
+  // Calling addToCatalog with dry_run:true returns the files it WOULD write
+  // with no PR/commit. We render the same DryRunResult shape the
+  // "add your own chart" flow uses so the operator sees the change before
+  // committing.
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+
+  // ─── Submit progress (branch → commit → PR → merge) ──────────────────────
+  // Mirrors the register flow's step indicator in spirit. We can't observe
+  // the individual git steps from a single synchronous POST, so we surface a
+  // coarse phase: "submitting" while the request is in flight, then the
+  // terminal merged/opened state from the result.
+  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>('idle')
+
+  // Configured catalog sources. Curated detail view uses this to render the
+  // "Source" section + SourceBadge tooltip (last_fetched/status).
+  // ArtifactHub (source === 'ah') entries skip this fetch.
+  const [catalogSources, setCatalogSources] = useState<CatalogSourceRecord[]>([])
+
+  const backLinkRef = useRef<HTMLButtonElement>(null)
+
+  // README tabs — Helm Chart vs upstream GitHub repo's project README.
+  // Project README lazy-loads on tab click so we don't pay GitHub API
+  // round-trips for users who never click it.
+  const [readmeTab, setReadmeTab] = useState<'chart' | 'project'>('chart')
+  const [projectReadme, setProjectReadme] =
+    useState<{ readme: string; available: boolean; source_url?: string; reason?: string } | null>(null)
+  const [projectReadmeLoading, setProjectReadmeLoading] = useState(false)
+
+  // ─── Initial focus on the back link for keyboard accessibility ───────────
+  useEffect(() => {
+    backLinkRef.current?.focus()
+  }, [])
+
+  // Pull configured catalog sources once for the curated detail view so we
+  // can render the "Source" section + SourceBadge tooltip. Defensive —
+  // older test fixtures may not mock listCatalogSources.
+  useEffect(() => {
+    if (source !== 'curated') return
+    if (typeof api.listCatalogSources !== 'function') return
+    let cancelled = false
+    api
+      .listCatalogSources()
+      .then((resp) => {
+        if (!cancelled) setCatalogSources(resp ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogSources([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [source])
+
+  const matchedSourceRecord = useMemo<CatalogSourceRecord | undefined>(() => {
+    if (!entry) return undefined
+    const key = entry.source ?? 'embedded'
+    return catalogSources.find((s) => s.url === key)
+  }, [catalogSources, entry])
+
+  // Lazy-load the project README the first time the user clicks its tab.
+  useEffect(() => {
+    if (readmeTab !== 'project') return
+    if (projectReadme !== null) return
+    setProjectReadmeLoading(true)
+    const endpoint =
+      source === 'curated'
+        ? `/api/v1/marketplace/addons/${encodeURIComponent(addonName)}/project-readme`
+        : `/api/v1/marketplace/remote/${encodeURIComponent(ahRepoName ?? '')}/${encodeURIComponent(addonName)}/project-readme`
+    const authToken = getToken()
+    fetch(endpoint, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+    })
+      .then((res) => res.json())
+      .then((data) => setProjectReadme(data))
+      .catch(() =>
+        setProjectReadme({
+          readme: '',
+          available: false,
+          reason: 'Project README not available',
+        }),
+      )
+      .finally(() => setProjectReadmeLoading(false))
+  }, [readmeTab, projectReadme, source, addonName, ahRepoName])
+
+  // ─── Load metadata ───────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    setEntryLoading(true)
+    setEntryError(null)
+    setEntry(null)
+
+    const load = async () => {
+      try {
+        if (source === 'curated') {
+          const e = await api.getCuratedCatalogEntry(addonName)
+          if (!cancelled) setEntry(e)
+        } else {
+          if (!ahRepoName) {
+            throw new Error('ArtifactHub repo name missing on URL (?mp_repo=)')
+          }
+          const detail = await api.getRemoteCatalogPackage(ahRepoName, addonName)
+          if (cancelled) return
+          if (!detail.package) {
+            setEntryError('Package not found on ArtifactHub')
+            return
+          }
+          const pkg = detail.package
+          // Synthesise a CatalogEntry from the AH package shape so the rest
+          // of this component renders uniformly. Fields the UI needs but AH
+          // doesn't always expose (license/category) get sensible defaults.
+          setEntry({
+            name: pkg.normalized_name || pkg.name,
+            description: pkg.description ?? '',
+            chart: pkg.name,
+            repo: pkg.repository.url || '',
+            default_namespace: pkg.normalized_name || pkg.name,
+            maintainers:
+              pkg.maintainers
+                ?.map((m) => m.name)
+                .filter((n): n is string => !!n) ?? [],
+            license: pkg.license ?? '',
+            // 'developer-tools' is the catch-all category for external
+            // entries — cosmetic only, not persisted on submit.
+            category: 'developer-tools',
+            curated_by: [],
+            github_stars: pkg.stars,
+            homepage: pkg.home_url ?? pkg.repository.url,
+            source_url: pkg.repository.url,
+          } as CatalogEntry)
+          // ArtifactHub package detail already includes the README, so we
+          // can prime that state too and skip the second request below.
+          setReadmeResp({
+            readme: pkg.readme ?? '',
+            source: 'artifacthub',
+            ah_repo: pkg.repository.name,
+            ah_chart: pkg.name,
+          })
+          setReadmeLoading(false)
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setEntryError(e instanceof Error ? e.message : 'Failed to load addon')
+        }
+      } finally {
+        if (!cancelled) setEntryLoading(false)
+      }
+    }
+    void load()
+
+    return () => {
+      cancelled = true
+    }
+  }, [addonName, source, ahRepoName])
+
+  // ─── Load README (curated source only — AH source primed it above) ───────
+  useEffect(() => {
+    if (source !== 'curated') return
+    let cancelled = false
+    setReadmeLoading(true)
+    setReadmeResp(null)
+    api
+      .getCuratedCatalogReadme(addonName)
+      .then((resp) => {
+        if (!cancelled) setReadmeResp(resp)
+      })
+      .catch(() => {
+        // README is best-effort — render an empty state rather than blocking
+        // the "Add to catalog" panel.
+        if (!cancelled) {
+          setReadmeResp({ readme: '', source: 'artifacthub' })
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReadmeLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [addonName, source])
+
+  // ─── Load chart versions for the picker ──────────────────────────────────
+  // Extracted to a stable function (not just inline in the effect) so a
+  // "Retry" button can re-run the exact same fetch after a failure — see
+  // the disabled-reason banner near the action buttons below (v4
+  // walk-findings W2, item 3: the Preview/Add buttons used to go quietly
+  // disabled forever when this fetch failed, with no visible reason).
+  // versionLoadSeqRef guards against a stale response (from the entry-load
+  // effect or a slow retry) landing after a newer call has already started.
+  const versionLoadSeqRef = useRef(0)
+
+  const loadVersions = useCallback(
+    async (e: CatalogEntry) => {
+      const seq = ++versionLoadSeqRef.current
+      const stillCurrent = () => versionLoadSeqRef.current === seq
+      setVersionsLoading(true)
+      setVersionsError(null)
+      setVersion('')
+      setVersionTouched(false)
+
+      if (source === 'curated') {
+        // Curated entries → use the cached /catalog/addons/{name}/versions endpoint.
+        try {
+          const resp = await api.listCuratedCatalogVersions(e.name)
+          if (!stillCurrent()) return
+          setVersionsResp(resp)
+          if (resp.latest_stable) setVersion(resp.latest_stable)
+          else if (resp.versions[0]) setVersion(resp.versions[0].version)
+        } catch (err: unknown) {
+          if (!stillCurrent()) return
+          setVersionsError(
+            err instanceof Error ? err.message : 'Failed to load chart versions',
+          )
+        } finally {
+          if (stillCurrent()) setVersionsLoading(false)
+        }
+      } else {
+        // AH entries → use /catalog/validate so we get the chart's versions
+        // without needing a curated-catalog entry. The validate response uses a
+        // flat versions[] shape; we re-wrap it into CatalogVersionsResponse so
+        // the shared VersionPicker doesn't need to know about either origin.
+        try {
+          const resp = await api.validateCatalogChart(e.repo, e.chart)
+          if (!stillCurrent()) return
+          if (!resp.valid || !resp.versions) {
+            setVersionsError(resp.message || 'Repo or chart not reachable')
+            return
+          }
+          const wrapped: CatalogVersionsResponse = {
+            addon: e.name,
+            chart: e.chart,
+            repo: e.repo,
+            versions: resp.versions,
+            latest_stable: resp.latest_stable,
+            cached_at: resp.cached_at ?? new Date().toISOString(),
+          }
+          setVersionsResp(wrapped)
+          if (wrapped.latest_stable) {
+            setVersion(wrapped.latest_stable)
+          } else if (wrapped.versions[0]) {
+            setVersion(wrapped.versions[0].version)
+          }
+        } catch (err: unknown) {
+          if (!stillCurrent()) return
+          setVersionsError(
+            err instanceof Error ? err.message : 'Failed to load chart versions',
+          )
+        } finally {
+          if (stillCurrent()) setVersionsLoading(false)
+        }
+      }
+    },
+    [source],
+  )
+
+  useEffect(() => {
+    if (!entry) return
+    void loadVersions(entry)
+    // loadVersions is listed below because it's already memoized on
+    // [source] — it only actually changes identity when source does, so
+    // including it doesn't cause any extra re-runs beyond what `source`
+    // changing already triggers.
+    return () => {
+      // Bump the sequence on unmount (and on every re-run) too, not just
+      // at the start of the next loadVersions call — otherwise a mock/
+      // fetch that resolves after this component has already unmounted
+      // still passes loadVersions' own stillCurrent() check and calls
+      // setVersionsResp/setVersion/setVersionsLoading on a gone
+      // component. Every sibling effect in this file guards the same way
+      // via a local `cancelled` flag; this one reuses the ref the
+      // staleness check already maintains instead of adding a second,
+      // parallel guard mechanism.
+      versionLoadSeqRef.current += 1
+    }
+  }, [entry, source, loadVersions])
+
+  const retryLoadVersions = useCallback(() => {
+    if (entry) void loadVersions(entry)
+  }, [entry, loadVersions])
+
+  // ─── Pre-flight duplicate check + PAT lookup ─────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getAddonCatalog()
+      .then((resp) => {
+        if (cancelled) return
+        const names = new Set(
+          resp.addons.map((a) => a.addon_name.trim().toLowerCase()),
+        )
+        setExistingNames(names)
+      })
+      .catch(() => {
+        if (!cancelled) setExistingNames(new Set())
+      })
+    api
+      .getMe()
+      .then((me) => {
+        if (!cancelled) setHasPersonalToken(me.has_github_token)
+      })
+      .catch(() => {
+        if (!cancelled) setHasPersonalToken(undefined)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v4 walk-findings W2, item 4 — managed cluster names for the optional
+  // "also enable on a cluster" selector. Defensive existence check (like
+  // listCatalogSources above) so older test fixtures without getClusters
+  // mocked don't throw.
+  useEffect(() => {
+    if (typeof api.getClusters !== 'function') return
+    let cancelled = false
+    api
+      .getClusters()
+      .then((resp) => {
+        if (cancelled) return
+        const names = (resp.clusters ?? [])
+          .filter((c) => c.managed !== false && c.connection_status !== 'not_in_git')
+          .map((c) => c.name)
+        setManagedClusterNames(names)
+      })
+      .catch(() => {
+        if (!cancelled) setManagedClusterNames([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v4 walk-findings W2, item 5 — open catalog-add PRs, so the "in your
+  // catalog" check can distinguish "pending" from "not there yet" and skip
+  // offering a duplicate add.
+  useEffect(() => {
+    let cancelled = false
+    setPendingAddonPRsError(false)
+    fetchTrackedPRs({ status: 'open', operation: 'catalog-add,catalog-add-enable' })
+      .then((resp) => {
+        if (!cancelled) setPendingAddonPRs(resp.prs ?? [])
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return
+        console.warn('Failed to check for pending addon PRs', e)
+        setPendingAddonPRs([])
+        setPendingAddonPRsError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // ─── Seed form name/namespace once entry loads ───────────────────────────
+  useEffect(() => {
+    if (!entry) return
+    setName(entry.name)
+    setNamespace(entry.default_namespace)
+  }, [entry])
+
+  // ─── Derived state ───────────────────────────────────────────────────────
+  const trimmedName = name.trim()
+  const inCatalog = useMemo(() => {
+    if (!existingNames || trimmedName.length === 0) return false
+    return existingNames.has(trimmedName.toLowerCase())
+  }, [existingNames, trimmedName])
+
+  // The entry-level "is the original addon already in your catalog?" check.
+  // Flipping the form's display name doesn't change this — we want a stable
+  // signal for the top-bar badge.
+  const entryInCatalog = useMemo(() => {
+    if (!existingNames || !entry) return false
+    return existingNames.has(entry.name.trim().toLowerCase())
+  }, [existingNames, entry])
+
+  // v4 walk-findings W2, item 5 — an open catalog-add PR for this addon.
+  // Checked against the entry's OWN name (stable signal, like
+  // entryInCatalog above) so renaming the display name doesn't hide it.
+  const entryPending = useMemo(() => {
+    if (!entry) return false
+    return pendingAddonNames.has(entry.name.trim().toLowerCase())
+  }, [pendingAddonNames, entry])
+
+  const pending = useMemo(
+    () => pendingAddonNames.has(trimmedName.toLowerCase()),
+    [pendingAddonNames, trimmedName],
+  )
+
+  const pendingPR = useMemo(
+    () => pendingAddonPRs.find((pr) => pr.addon?.trim().toLowerCase() === trimmedName.toLowerCase()),
+    [pendingAddonPRs, trimmedName],
+  )
+
+  const versionInList = useMemo(
+    () => versionsResp?.versions.some((v) => v.version === version) ?? false,
+    [versionsResp, version],
+  )
+  const versionInvalid =
+    versionTouched && !!version && versionsResp !== null && !versionInList
+
+  const formValid =
+    trimmedName.length > 0 &&
+    namespace.trim().length > 0 &&
+    version.trim().length > 0 &&
+    !versionInvalid &&
+    !inCatalog &&
+    !pending &&
+    !submitting &&
+    submitResult === null
+
+  // api.addToCatalog now unwraps the attribution envelope centrally
+  // (ui/src/services/api.ts), so pr_url/pr_id/merged always land at the
+  // top level — the `result?.x` fallback this used to need is dead.
+  const prURL = submitResult?.pr_url
+
+  // Shared request payload for both the preview and the real submit so the
+  // dry-run previews exactly what the real call will write. Posts to
+  // POST /api/v1/catalog/addons (v4 wave 2.5 review B-3 — the old legacy
+  // POST /addons 409s on a v4 repo). `from_marketplace: true` only when the
+  // display name still matches the curated entry's own name — that's the
+  // name the server looks the curated entry up by, so a renamed curated
+  // pick (or an ArtifactHub pick, never curated) falls back to sending the
+  // chart location explicitly instead of a lookup that would 422.
+  //
+  // v4 walk-findings W2, item 4 — when a cluster is picked in the optional
+  // "Also enable on a cluster" selector, this sends the SAME combo payload
+  // the cluster-side V4EnableAddonDialog sends: `enable_on_cluster` + one
+  // pull request touching both catalog.yaml and cluster-addons/<name>.yaml.
+  // `yes: true` is only required (and only sent) on the real submit.
+  const buildAddRequest = (dryRun: boolean) => {
+    if (!entry) return null
+    const fromMarketplace = source === 'curated' && trimmedName === entry.name
+    return {
+      addons: [
+        {
+          name: trimmedName,
+          from_marketplace: fromMarketplace,
+          chart: entry.chart,
+          repo_url: entry.repo,
+          version: version.trim() || undefined,
+          namespace: namespace.trim() || undefined,
+        },
+      ],
+      enable_on_cluster: enableOnCluster || undefined,
+      yes: !dryRun && enableOnCluster ? true : undefined,
+      // Advanced options (sync options, ignore differences, additional
+      // sources) are set on the addon page after creation.
+      // auto_merge omitted — falls back to the global GitOps setting.
+      dry_run: dryRun,
+    }
+  }
+
+  // Preview step: dry-run the add and render the files it would write. No PR,
+  // no commit. Re-runnable — the operator can tweak the form and preview again.
+  const handlePreview = async () => {
+    const req = buildAddRequest(true)
+    if (!req || !formValid) return
+    setPreviewing(true)
+    setSubmitError(null)
+    setDryRunResult(null)
+    try {
+      const res = await api.addToCatalog(req)
+      if (res.dry_run) {
+        setDryRunResult(res.dry_run)
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to preview'
+      setSubmitError(msg)
+      showToast(`Failed to preview — ${msg}`, 'info')
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  const handleSubmit = async () => {
+    const req = buildAddRequest(false)
+    if (!req || !formValid || !entry) return
+    setSubmitting(true)
+    setSubmitPhase('submitting')
+    setSubmitError(null)
+    try {
+      const res = await api.addToCatalog(req)
+      setSubmitResult(res)
+      // api.addToCatalog unwraps the attribution envelope centrally — no
+      // need to also check res.result?.x here.
+      const resPrID = res.pr_id
+      const label = resPrID ? `PR #${resPrID}` : 'PR'
+      const wasMerged = res.merged ?? false
+      const url = res.pr_url
+
+      // Keep the lifecycle window (SubmitPhaseBanner / PRLifecycleProgress)
+      // on screen instead of navigating away the instant the POST resolves
+      // (V2-cleanup-66.1) — the user proceeds via the explicit "View addon"
+      // / "Track on Dashboard" button below the banner. Branch STRICTLY on
+      // `merged` (load-bearing — 61.3's "not really in git" fix):
+      //   - merged  → the addon really landed in git.
+      //   - opened  → a PR is awaiting review; don't imply it's applied yet.
+      // resolved_versions names the pin that actually landed in
+      // catalog.yaml — the version the caller sent, or the newest one
+      // Sharko filled in when the request left it blank. Echo it in the
+      // success toast so "added" always says what was added (PR #658
+      // follow-up).
+      const resolvedVersion = res.resolved_versions?.[entry.name]
+      const addedLabel = resolvedVersion
+        ? `${entry.name} ${resolvedVersion}`
+        : entry.name
+
+      if (wasMerged) {
+        setSubmitPhase('merged')
+        showToast(`${addedLabel} added to your catalog`, 'success')
+      } else if (url) {
+        setSubmitPhase('opened')
+        showToast(`${label} opened — merge to apply`, 'success')
+      } else {
+        // Defensive: no merge flag and no PR URL. Stay on the page and tell
+        // the truth rather than navigating somewhere misleading.
+        setSubmitPhase('opened')
+        showToast(`${entry.name} submitted — check the open PR list`, 'info')
+      }
+    } catch (e) {
+      setSubmitPhase('idle')
+      const msg = e instanceof Error ? e.message : 'Failed to open PR'
+      setSubmitError(msg)
+      showToast(`Failed to add addon — ${msg}`, 'info')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // ─── Render ──────────────────────────────────────────────────────────────
+  if (entryLoading) {
+    return (
+      <div className="flex flex-col gap-3">
+        <BackLink onBack={onBack} ref={backLinkRef} />
+        <LoadingState message="Loading addon details…" />
+      </div>
+    )
+  }
+  if (entryError || !entry) {
+    return (
+      <div className="flex flex-col gap-3">
+        <BackLink onBack={onBack} ref={backLinkRef} />
+        <ErrorState message={entryError ?? 'Addon not found'} />
+      </div>
+    )
+  }
+
+  return (
+    // Constrain the detail view to a comfortable reading width centred in
+    // the available space (max-w-5xl is the widely-accepted "prose"
+    // ceiling). Also reserves a stable scrollbar gutter so the document-
+    // level scrollbar doesn't pop in/out as the user scrolls — Tailwind
+    // has no utility for `scrollbar-gutter` yet.
+    <article
+      className="mx-auto flex w-full max-w-5xl flex-col gap-5"
+      aria-labelledby="mp-addon-detail-title"
+      style={{ scrollbarGutter: 'stable both-edges' }}
+    >
+      {/* ─── 1. Top bar ─── */}
+      <header className="flex flex-wrap items-start gap-3">
+        <BackLink onBack={onBack} ref={backLinkRef} />
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <h1
+            id="mp-addon-detail-title"
+            className="truncate text-xl font-bold text-[#0a2a4a] dark:text-gray-100"
+          >
+            {entry.name}
+          </h1>
+          {entryInCatalog && (
+            <Link
+              to={`/addons/${encodeURIComponent(entry.name)}`}
+              className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-green-800 hover:bg-green-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 dark:bg-green-900/40 dark:text-green-300 dark:hover:bg-green-900/60"
+              title="Open the addon page in your catalog"
+            >
+              <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+              In your catalog
+            </Link>
+          )}
+          {/* v4 walk-findings W2, item 5 — not merged yet, so no addon page
+              exists to link to; the badge is plain text, not a link. */}
+          {!entryInCatalog && entryPending && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300"
+              title="An add-PR is already open for this addon"
+            >
+              Pending
+            </span>
+          )}
+          {entry.deprecated && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+              Deprecated
+            </span>
+          )}
+          {source === 'ah' && (
+            <span
+              className="rounded-full bg-[#e8f3fb] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-300"
+              title="Result fetched from ArtifactHub"
+            >
+              ArtifactHub
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* ─── 2. Hero ─── */}
+      <section
+        aria-label="Addon overview"
+        className="flex flex-col gap-3 rounded-lg border border-[#c0ddf0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-900 sm:flex-row sm:items-start"
+      >
+        <div
+          aria-hidden="true"
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-white text-teal-600 ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-teal-400 dark:ring-gray-700"
+        >
+          <Package className="h-7 w-7" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-sm text-[#0a3a5a] dark:text-gray-300">
+            {entry.description || 'No description published for this chart.'}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-[#2a5a7a] dark:text-gray-400">
+            {entry.category && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 font-medium capitalize text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
+                <Tag className="h-3 w-3" aria-hidden="true" />
+                {entry.category}
+              </span>
+            )}
+            {entry.curated_by.map((c) => (
+              <span
+                key={c}
+                className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 font-medium text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300"
+                title={`Curated source: ${c}`}
+              >
+                {c}
+              </span>
+            ))}
+            {entry.license && (
+              <span
+                className="inline-flex items-center rounded-full bg-white px-2 py-0.5 font-medium text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-400 dark:ring-gray-700"
+                title={`License: ${entry.license}`}
+              >
+                {entry.license}
+              </span>
+            )}
+            <ScorecardBadge
+              score={entry.security_score}
+              tier={entry.security_tier}
+              updated={entry.security_score_updated}
+              // Skip the "Unknown" chip — render the OpenSSF Scorecard
+              // badge only when the daily refresh job has populated a
+              // real score.
+              hideWhenUnknown
+            />
+            {source === 'curated' && entry.source && entry.source !== 'embedded' && (
+              <SourceBadge
+                source={entry.source}
+                sourceRecord={matchedSourceRecord}
+              />
+            )}
+            {entry.github_stars !== undefined && entry.github_stars > 0 && (
+              <span
+                className="inline-flex items-center gap-1 font-medium"
+                title={`${entry.github_stars.toLocaleString()} GitHub stars`}
+              >
+                <Github className="h-3.5 w-3.5" aria-hidden="true" />
+                <Star className="h-3 w-3 fill-current text-amber-500" aria-hidden="true" />
+                {formatStars(entry.github_stars)}
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Third-party catalog source section. URL is rendered as text only,
+          never as a clickable link — paths may carry auth tokens. */}
+      {source === 'curated' && entry.source && entry.source !== 'embedded' ? (
+        <section
+          aria-label="Third-party catalog source"
+          className="rounded-md bg-[#eaf4fc] p-3 ring-1 ring-[#c0ddf0] dark:bg-[#123044] dark:ring-[#2a5a7a]"
+        >
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[#2a5a7a] dark:text-[#b4dcf5]">
+            Source
+          </h3>
+          <div className="mt-1 break-all text-sm text-[#0a3a5a] dark:text-[#d6eeff]">
+            {entry.source}
+          </div>
+          {matchedSourceRecord ? (
+            <div className="mt-1 text-xs text-[#2a5a7a] dark:text-[#b4dcf5]">
+              Status: {matchedSourceRecord.status}
+              {matchedSourceRecord.last_fetched
+                ? ` \u00b7 Last fetched ${matchedSourceRecord.last_fetched}`
+                : ''}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* ─── 3. Action panel — Add to catalog ─── */}
+      <section
+        aria-labelledby="mp-add-panel-title"
+        className="flex flex-col gap-3 rounded-lg border border-teal-200 bg-white p-4 shadow-sm dark:border-teal-700 dark:bg-gray-900"
+      >
+        <header className="flex flex-col gap-1">
+          <h2
+            id="mp-add-panel-title"
+            className="text-base font-bold text-[#0a2a4a] dark:text-gray-100"
+          >
+            Add {entry.name} to your catalog
+          </h2>
+          <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+            This opens a pull request adding{' '}
+            <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
+              {entry.name}
+            </code>{' '}
+            to your{' '}
+            <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
+              catalog.yaml
+            </code>
+            . Merging the pull request is the approval. Nothing deploys
+            until you enable it on a cluster (per-cluster, from the Catalog
+            tab).
+          </p>
+          {pendingAddonPRsError && (
+            <p className="text-xs italic text-[#5a8aaa] dark:text-gray-500">
+              Couldn&rsquo;t check for pending addons — this form may offer
+              an add PR that&rsquo;s already open.
+            </p>
+          )}
+        </header>
+
+        {entryInCatalog ? (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
+          >
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>
+              <span className="font-semibold">{entry.name}</span> is
+              already in your catalog.{' '}
+              <Link
+                to={`/addons/${encodeURIComponent(entry.name)}`}
+                className="font-medium underline hover:no-underline"
+              >
+                Open its page
+              </Link>{' '}
+              to edit values or enable it on a cluster.
+            </p>
+          </div>
+        ) : entryPending ? (
+          // v4 walk-findings W2, item 5 — an add-PR is already open for
+          // this addon. No addon page exists to link to yet (it 404s
+          // until the PR merges) and offering the form again would open a
+          // second, competing PR — so this replaces the form entirely.
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-md border border-[#c0ddf0] bg-[#eaf4fc] p-3 text-sm text-[#0a3a5a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          >
+            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>
+              <span className="font-semibold">{entry.name}</span> already
+              has an add-PR open.{' '}
+              {pendingPR?.pr_url ? (
+                <a
+                  href={pendingPR.pr_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium underline hover:no-underline"
+                >
+                  {pendingPR.pr_id ? `View PR #${pendingPR.pr_id}` : 'View PR'}
+                </a>
+              ) : (
+                'Merge it to apply.'
+              )}
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Display name" htmlFor="mp-add-name" required>
+                <input
+                  id="mp-add-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                />
+              </Field>
+              <Field label="Namespace" htmlFor="mp-add-ns" required>
+                <input
+                  id="mp-add-ns"
+                  type="text"
+                  value={namespace}
+                  onChange={(e) => setNamespace(e.target.value)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                />
+              </Field>
+            </div>
+
+            <Field label="Chart version" htmlFor="mp-add-version" required>
+              <VersionPicker
+                inputId="mp-add-version"
+                value={version}
+                onChange={(v) => {
+                  setVersion(v)
+                  setVersionTouched(true)
+                }}
+                versionsResp={versionsResp}
+                loading={versionsLoading}
+                error={versionsError}
+                showPrereleases={showPrereleases}
+                onShowPrereleasesChange={setShowPrereleases}
+                invalid={versionInvalid}
+              />
+            </Field>
+
+            {/* v4 walk-findings W2, item 4 — optional add+enable combo.
+                Default is always "Don't enable yet"; never pre-selected. */}
+            {!submitResult && (
+              <EnableOnClusterField
+                clusterNames={managedClusterNames}
+                value={enableOnCluster}
+                onChange={setEnableOnCluster}
+                addonName={trimmedName}
+              />
+            )}
+
+            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
+            {!submitResult && (
+              <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+                Auto-merge follows your{' '}
+                <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                  global GitOps setting
+                </a>
+                .
+              </p>
+            )}
+
+            {/* Dry-run preview panel (shared AddAddonFlow render). Shows the
+              * files the real submit would write — no PR, no commit. */}
+            {dryRunResult && !submitResult && (
+              <DryRunPreview result={dryRunResult} />
+            )}
+
+            {/* PR lifecycle — init-style step list from submitting to terminal. */}
+            <SubmitPhaseBanner phase={submitPhase} result={submitResult} />
+
+            {inCatalog && !submitResult && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>
+                  <span className="font-semibold">{trimmedName}</span> is
+                  already in the catalog.{' '}
+                  <Link
+                    to={`/addons/${encodeURIComponent(trimmedName)}`}
+                    className="font-medium underline hover:no-underline"
+                  >
+                    Open its page
+                  </Link>{' '}
+                  to edit it, or change the Display name to add a different
+                  copy.
+                </p>
+              </div>
+            )}
+
+            {/* v4 walk-findings W2, item 5 — the rename-collision twin of
+                the inCatalog banner above: the typed Display name matches
+                a DIFFERENT addon that already has an add-PR open. */}
+            {!inCatalog && pending && !submitResult && (
+              <div
+                role="alert"
+                className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>
+                  <span className="font-semibold">{trimmedName}</span>{' '}
+                  already has an add-PR open. Wait for it to merge, or
+                  change the Display name to add a different copy.
+                </p>
+              </div>
+            )}
+
+            {hasPersonalToken === false && !submitResult && (
+              <AttributionNudge inline />
+            )}
+            {submitResult?.attribution_warning === 'no_per_user_pat' &&
+              hasPersonalToken !== false && <AttributionNudge inline />}
+
+            {/* SubmitResultBanner is now redundant when SubmitPhaseBanner
+              * receives result — kept as a defensive fallback for the no-prURL
+              * edge case (submitResult with no PR link at all). */}
+            {submitResult && prURL && submitPhase === 'idle' && (
+              <SubmitResultBanner result={submitResult} />
+            )}
+
+            {submitError && !submitResult && (
+              <SubmitErrorBanner message={submitError} />
+            )}
+
+            {/* v4 walk-findings W2, item 3: Preview/Add go quietly disabled
+              * forever when the version field is empty — which happens
+              * whenever the versions fetch failed, with nothing near the
+              * buttons to say why. Name the reason right here, and offer a
+              * retry when the fetch itself is what failed. */}
+            {!version.trim() && !inCatalog && !submitResult && !versionsLoading && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                <span>
+                  {versionsError
+                    ? 'Pick a version first — the version list failed to load.'
+                    : 'Pick a version first.'}
+                </span>
+                {versionsError && (
+                  <button
+                    type="button"
+                    onClick={retryLoadVersions}
+                    className="shrink-0 rounded-md border border-amber-400 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-200 dark:hover:bg-amber-900/60"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={onBack}
+                className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {submitResult ? 'Back to Marketplace' : 'Cancel'}
+              </button>
+              {!submitResult && (
+                <button
+                  type="button"
+                  onClick={handlePreview}
+                  disabled={!formValid || previewing}
+                  title="Preview: show the PR title and the files that would be committed — without opening a PR."
+                  className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  {previewing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Preview
+                </button>
+              )}
+              {/* Terminal-state navigation (V2-cleanup-66.1) — explicit
+                  buttons instead of an automatic jump, so the lifecycle
+                  window above stays on screen long enough to read.
+                  Merged: the addon really landed, so the primary door is
+                  the catalog grid it now shows up in (not the ?tab param —
+                  the default tab already is Catalog). "Track on Dashboard"
+                  stays available as a quieter secondary action. */}
+              {submitResult && submitPhase === 'merged' && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/dashboard?prs_state=pending')}
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Track on Dashboard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/addons')}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    View in catalog
+                  </button>
+                </>
+              )}
+              {submitResult && submitPhase === 'opened' && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/dashboard?prs_state=pending')}
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  Track on Dashboard
+                </button>
+              )}
+              {!submitResult && (
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={!formValid}
+                  title={
+                    inCatalog
+                      ? `${trimmedName} is already in the catalog`
+                      : !formValid
+                        ? 'Fix the highlighted fields first'
+                        : 'Open a PR adding this addon to your catalog'
+                  }
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      Submitting…
+                    </>
+                  ) : (
+                    'Add to catalog'
+                  )}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* ─── 4. README (tabs + stable scrollbar) ─── */}
+      <section
+        aria-labelledby="mp-readme-title"
+        className="flex flex-col gap-2 rounded-lg border border-[#c0ddf0] bg-white p-4 dark:border-gray-700 dark:bg-gray-900"
+      >
+        <header className="flex items-center gap-2 border-b border-[#c0ddf0] pb-2 dark:border-gray-700">
+          <FileText className="h-4 w-4 text-teal-600 dark:text-teal-400" aria-hidden="true" />
+          <h2
+            id="mp-readme-title"
+            className="text-base font-bold text-[#0a2a4a] dark:text-gray-100"
+          >
+            README
+          </h2>
+          {/* Tab bar — Helm Chart | Project. WAI-ARIA tablist so
+              keyboard arrows cycle. The chart tab is always present;
+              the project tab is always present too but the body may
+              render the "not available" empty state. */}
+          <div
+            role="tablist"
+            aria-label="README source"
+            className="inline-flex overflow-hidden rounded-md ring-1 ring-[#c0ddf0] dark:ring-gray-700"
+          >
+            {(['chart', 'project'] as const).map((key) => {
+              const active = readmeTab === key
+              return (
+                <button
+                  key={key}
+                  role="tab"
+                  type="button"
+                  aria-selected={active}
+                  tabIndex={active ? 0 : -1}
+                  onClick={() => setReadmeTab(key)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                      e.preventDefault()
+                      setReadmeTab(key === 'chart' ? 'project' : 'chart')
+                    }
+                  }}
+                  className={`px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                    active
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  {key === 'chart' ? 'Helm Chart' : 'Project'}
+                </button>
+              )
+            })}
+          </div>
+          {readmeTab === 'chart' && readmeResp?.ah_repo && readmeResp?.ah_chart && (
+            <a
+              href={`https://artifacthub.io/packages/helm/${encodeURIComponent(
+                readmeResp.ah_repo,
+              )}/${encodeURIComponent(readmeResp.ah_chart)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-teal-700 underline hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400"
+            >
+              View on ArtifactHub
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+          {readmeTab === 'project' && projectReadme?.source_url && (
+            <a
+              href={projectReadme.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-teal-700 underline hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400"
+            >
+              View on GitHub
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+        </header>
+
+        {/* The README body keeps its scrollbar gutter stable so the track
+            is always rendered. max-h anchors a scrollable region so long
+            READMEs don't dominate the layout. */}
+        <div
+          className="max-h-[72vh] overflow-y-auto pr-1 dark:[color-scheme:dark]"
+          style={{ scrollbarGutter: 'stable' }}
+          role="tabpanel"
+          aria-label={readmeTab === 'chart' ? 'Helm Chart README' : 'Project README'}
+        >
+          {readmeTab === 'chart' ? (
+            readmeLoading ? (
+              <div className="space-y-2 py-2" aria-hidden="true">
+                <div className="h-4 w-1/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+                <div className="h-3 w-full animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+                <div className="h-3 w-5/6 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+                <div className="h-3 w-2/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              </div>
+            ) : readmeResp && readmeResp.readme.trim().length > 0 ? (
+              <div className="prose prose-sm max-w-none dark:prose-invert">
+                <RichMarkdown content={readmeResp.readme} />
+              </div>
+            ) : (
+              <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
+                No README available from ArtifactHub for this chart.
+              </p>
+            )
+          ) : projectReadmeLoading ? (
+            <div className="space-y-2 py-2" aria-hidden="true">
+              <div className="h-4 w-1/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              <div className="h-3 w-full animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              <div className="h-3 w-5/6 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              <div className="h-3 w-2/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+            </div>
+          ) : projectReadme?.available ? (
+            <div className="prose prose-sm max-w-none dark:prose-invert">
+              <RichMarkdown content={projectReadme.readme} />
+            </div>
+          ) : (
+            <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
+              {projectReadme?.reason ?? 'Project README not available.'}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* ─── 4b. What you need to know (v4 wave 1 Story 3.1 — extended entry) ─── */}
+      {(entry.required_values?.length ||
+        entry.secrets?.length ||
+        entry.quirks?.length) ? (
+        <section className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:bg-gray-800">
+          <h2 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-white">
+            What you need to know
+          </h2>
+          <div className="space-y-4">
+            {entry.required_values && entry.required_values.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  Required values
+                </h3>
+                <ul className="space-y-1 text-sm text-[#2a5a7a] dark:text-gray-300">
+                  {entry.required_values.map((rv) => (
+                    <li key={rv.key}>
+                      <code className="rounded bg-[#e0f0ff] px-1 py-0.5 font-mono text-xs dark:bg-gray-700">
+                        {rv.key}
+                      </code>{' '}
+                      — {rv.description}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {entry.secrets && entry.secrets.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  Needed secrets
+                </h3>
+                <ul className="space-y-1 text-sm text-[#2a5a7a] dark:text-gray-300">
+                  {entry.secrets.map((sec) => (
+                    <li key={sec.name}>
+                      <strong>{sec.name}</strong> — {sec.description}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {entry.quirks && entry.quirks.length > 0 && (
+              <div>
+                <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  Known quirks
+                </h3>
+                <ul className="list-disc space-y-1 pl-4 text-sm text-[#2a5a7a] dark:text-gray-300">
+                  {entry.quirks.map((q) => (
+                    <li key={q}>{q}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ─── 5. Metadata footer ─── */}
+      <footer className="flex flex-col gap-2 rounded-lg border border-dashed border-[#c0ddf0] bg-[#f7fbff] p-4 text-xs text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span>
+            <strong>Helm chart:</strong>{' '}
+            <code className="font-mono">{entry.chart}</code>
+          </span>
+          {entry.repo && (
+            <span>
+              <strong>Repo:</strong>{' '}
+              <a
+                href={entry.repo}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-teal-700 underline hover:no-underline dark:text-teal-400"
+              >
+                {entry.repo}
+              </a>
+            </span>
+          )}
+          {entry.homepage && (
+            <a
+              href={entry.homepage}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-teal-700 underline hover:no-underline dark:text-teal-400"
+            >
+              Project home <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+          {entry.docs_url && (
+            <a
+              href={entry.docs_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-teal-700 underline hover:no-underline dark:text-teal-400"
+            >
+              Docs <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+          {entry.source_url && (
+            <a
+              href={entry.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-teal-700 underline hover:no-underline dark:text-teal-400"
+            >
+              Source <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
+        </div>
+        {entry.maintainers.length > 0 && (
+          <p>
+            <strong>Maintainers:</strong> {entry.maintainers.join(', ')}
+          </p>
+        )}
+        <p className="italic text-[#3a6a8a] dark:text-gray-500">
+          Trust signals shown above are sourced by Sharko (curator chips +
+          OpenSSF score). They are not a substitute for your own security
+          review.
+        </p>
+      </footer>
+    </article>
+  )
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function formatStars(stars: number): string {
+  if (stars >= 1000) {
+    const k = stars / 1000
+    return `${k.toFixed(1).replace(/\.0$/, '')}k`
+  }
+  return String(stars)
+}
+
+interface BackLinkProps {
+  onBack: () => void
+}
+
+const BackLink = forwardRef<HTMLButtonElement, BackLinkProps>(function BackLink(
+  { onBack },
+  ref,
+) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      onClick={onBack}
+      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-medium text-teal-700 hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400 dark:hover:bg-gray-800"
+    >
+      <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+      Back to Marketplace
+    </button>
+  )
+})
+
+function Field({
+  label,
+  htmlFor,
+  required,
+  children,
+}: {
+  label: string
+  htmlFor: string
+  required?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <label
+        htmlFor={htmlFor}
+        className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+      >
+        {label}
+        {required && (
+          <span className="text-red-500" aria-hidden="true">
+            {' '}
+            *
+          </span>
+        )}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+export default MarketplaceAddonDetail

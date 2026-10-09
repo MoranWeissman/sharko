@@ -1,0 +1,125 @@
+# Installation
+
+!!! warning "Sharko v4 is a technical preview, for evaluation and staging environments. It is not supported in production."
+    Start with the
+    [latest published v4 release](https://github.com/MoranWeissman/sharko/releases/latest)
+    and read the [current limitations](../technical-preview.md) before deploying
+    it more widely.
+
+## Prerequisites
+
+- Kubernetes with **ArgoCD** installed and running (tested against **1.31** in CI — see [Operator prerequisites](../operator/installation.md#prerequisites) for the full Kubernetes and ArgoCD compatibility range)
+- **Helm 3.x** (`helm version` to verify)
+
+That's it. Connection credentials (Git token, ArgoCD token) are entered through the first-run wizard after install — not at Helm install time.
+
+## Install Sharko
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace
+```
+
+!!! warning "Install only published `v4.0.1`-or-later artifacts"
+    Do not install any Sharko chart version below `v4.0.1` — all earlier
+    release lines are retired and unsupported. There is no patch for the `v3`
+    line.
+    See [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md#why-v300-is-retired).
+
+Verify the pod is running:
+
+```bash
+kubectl get pods -n sharko
+```
+
+## AWS Secrets Manager (optional)
+
+If you plan to use AWS Secrets Manager as the secrets provider for cluster credentials, annotate the service account with your IRSA role at install time:
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/sharko-role
+```
+
+This lets the Sharko pod assume the IAM role via IRSA and read secrets from AWS SM without static credentials.
+
+## Get the Admin Password
+
+Sharko generates a random admin password on first install and stores it in the `sharko-initial-admin-secret` Secret (the same pattern ArgoCD uses):
+
+```bash
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+Save this password — you will use it to log in for the first time.
+
+## Access the UI
+
+**Port-forward (quickest for initial setup):**
+
+```bash
+kubectl port-forward svc/sharko 8080:80 -n sharko
+```
+
+Open [http://localhost:8080](http://localhost:8080).
+
+**Via Ingress:**
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set "ingress.hosts[0].host=sharko.your-domain.com" \
+  --set "ingress.hosts[0].paths[0].path=/" \
+  --set "ingress.hosts[0].paths[0].pathType=Prefix" \
+  --set "ingress.tls[0].secretName=sharko-tls" \
+  --set "ingress.tls[0].hosts[0]=sharko.your-domain.com"
+```
+
+Or use a values file:
+
+```yaml
+# sharko-values.yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: sharko.your-domain.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: sharko-tls
+      hosts:
+        - sharko.your-domain.com
+```
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace \
+  -f sharko-values.yaml
+```
+
+## What's Next
+
+After accessing the UI, the first-run wizard appears automatically. See [First-Run Wizard](first-run.md) for a step-by-step walkthrough.
+
+## Upgrading Sharko
+
+```bash
+helm upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko \
+  -f sharko-values.yaml
+```
+
+## Uninstalling
+
+```bash
+helm uninstall sharko -n sharko
+```
+
+!!! warning
+    Uninstalling does not delete the `sharko-connections` secret containing your connection credentials. Delete it manually if needed: `kubectl delete secret sharko-connections -n sharko`.

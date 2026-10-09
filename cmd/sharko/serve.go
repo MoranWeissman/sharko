@@ -1,0 +1,1801 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	catalogembed "github.com/MoranWeissman/sharko/catalog"
+	"github.com/MoranWeissman/sharko/internal/advisories"
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/appsets"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/catalog/signing"
+	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/changelog"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/envreg"
+	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/notifications"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/platform"
+	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
+	"github.com/MoranWeissman/sharko/internal/remediation"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	"github.com/MoranWeissman/sharko/internal/secrets"
+	"github.com/MoranWeissman/sharko/internal/service"
+	"github.com/MoranWeissman/sharko/internal/settings"
+	"github.com/MoranWeissman/sharko/templates"
+	"github.com/spf13/cobra"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+func init() {
+	serveCmd.Flags().Int("port", 8080, "HTTP server port")
+	serveCmd.Flags().String("config", "config.yaml", "Path to config file (local mode)")
+	serveCmd.Flags().String("static", "", "Path to static files directory (UI)")
+	serveCmd.Flags().Bool("demo", false, "Run with mock backends for QA testing (no external dependencies)")
+	// Demo estate sizing (S2): unset flags reproduce today's small,
+	// hand-written estate (demo.DefaultScaleConfig — 5 clusters, 8 addons).
+	// --demo-scale=big is a shorthand preset (demo.BigScaleConfig — 50
+	// clusters, 30 addons, a fixed seed); any explicit --demo-clusters/
+	// --demo-addons/--demo-seed flag overrides the preset's value for that
+	// one field. All four flags are no-ops unless --demo is also set.
+	serveCmd.Flags().Int("demo-clusters", 0, "Demo mode: number of clusters to generate (0 = default/preset size)")
+	serveCmd.Flags().Int("demo-addons", 0, "Demo mode: number of addons to generate (0 = default/preset size)")
+	serveCmd.Flags().Int64("demo-seed", 0, "Demo mode: RNG seed for the generated estate (0 = default/preset seed)")
+	serveCmd.Flags().String("demo-scale", "", "Demo mode: size preset (\"big\" = 50 clusters / 30 addons / a fixed seed with messy production-like data)")
+	rootCmd.AddCommand(serveCmd)
+}
+
+// @title Sharko API
+// @version 1.0.0
+// @description Addon management server for Kubernetes clusters, built on ArgoCD.
+// @host localhost:8080
+// @BasePath /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Start the Sharko API server",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// The configuration registry runs FIRST, before any other code
+		// reads the environment — including the log-level read three
+		// lines below.
+		//
+		// It fails the boot on a registry that contradicts itself and on
+		// a canonical setting and its deprecated alias set to different
+		// values. Silently preferring one of two contradictory
+		// instructions is how an operator ends up certain they changed
+		// something they did not. The error names both settings and
+		// repeats neither value.
+		//
+		// See internal/envreg.
+		if err := envreg.Validate(); err != nil {
+			return err
+		}
+
+		// And then the environment itself: a SHARKO_ name the registry
+		// has never heard of stops the server here. A misspelled setting
+		// used to be accepted in silence, which left an operator sure
+		// they had changed something they had not.
+		//
+		// The names Kubernetes injects into Sharko's own Pod are
+		// recognised by their shape and pass through — see
+		// internal/envreg/unknown.go, which also says what this rule
+		// deliberately does not cover.
+		if err := envreg.ValidateEnvironment(); err != nil {
+			return err
+		}
+
+		// Configure structured logging from SHARKO_LOG_LEVEL env var (default: info).
+		//
+		// Handler chain order matters: the RedactHandler wraps the base
+		// JSON handler so credential-shape values (tokens, kubeconfigs,
+		// JWTs, base64 blobs >100 chars) are scrubbed BEFORE any
+		// downstream sink serializes them. Wrapping last would let a
+		// misconfigured sink emit the raw value.
+		logLevel := getEnvDefault("SHARKO_LOG_LEVEL", "info")
+		var level slog.Level
+		switch strings.ToLower(logLevel) {
+		case "debug":
+			level = slog.LevelDebug
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		default:
+			level = slog.LevelInfo
+		}
+		slog.SetDefault(slog.New(logging.NewHandler(os.Stdout, level)))
+
+		port, _ := cmd.Flags().GetInt("port")
+		configPath, _ := cmd.Flags().GetString("config")
+		staticDir, _ := cmd.Flags().GetString("static")
+		demoMode, _ := cmd.Flags().GetBool("demo")
+
+		// Demo estate size (S2). Start from the preset named by --demo-scale
+		// (default: today's small hand-written estate), then let any
+		// explicitly-set --demo-clusters/--demo-addons/--demo-seed flag
+		// override just that one field. No effect unless --demo is set.
+		demoScaleConfig := demo.DefaultScaleConfig
+		if demoScaleFlag, _ := cmd.Flags().GetString("demo-scale"); demoScaleFlag != "" {
+			switch strings.ToLower(demoScaleFlag) {
+			case "big":
+				demoScaleConfig = demo.BigScaleConfig
+			default:
+				slog.Warn("unrecognized --demo-scale value, using the default estate size",
+					"value", demoScaleFlag, "known_values", "big")
+			}
+		}
+		if cmd.Flags().Changed("demo-clusters") {
+			demoScaleConfig.Clusters, _ = cmd.Flags().GetInt("demo-clusters")
+		}
+		if cmd.Flags().Changed("demo-addons") {
+			demoScaleConfig.Addons, _ = cmd.Flags().GetInt("demo-addons")
+		}
+		if cmd.Flags().Changed("demo-seed") {
+			demoScaleConfig.Seed, _ = cmd.Flags().GetInt64("demo-seed")
+		}
+
+		// Override from env
+		//
+		// The listen port comes from SHARKO_HTTP_PORT, with --port as the
+		// fallback when nothing is set. The old line here was
+		// fmt.Sscanf(envPort, "%d", &port) with the error dropped, which
+		// read "80x" as 80 and left a URI-shaped value doing nothing at
+		// all — silently, in both cases. envreg.ResolveHTTPPort parses
+		// strictly, still accepts the old SHARKO_PORT name with a
+		// deprecation warning, and refuses to start on anything that is
+		// not a port. Its error names the setting and never the value.
+		resolvedPort, err := envreg.ResolveHTTPPort(port)
+		if err != nil {
+			return err
+		}
+		port = resolvedPort
+
+		// One warning per deprecated setting in use, once, from this one
+		// call. Each record names the setting and the name to use
+		// instead, and carries no value attribute at all. It runs after
+		// the port is resolved so a deprecated name used only there is
+		// still reported.
+		envreg.WarnDeprecated(slog.Default())
+
+		// One line per registered setting that is set here but only ever
+		// read by the end-to-end test harness. Registered names, so not a
+		// refusal; never read by the server, so not silence either.
+		envreg.WarnUnusedSettings(slog.Default())
+
+		if envConfig := os.Getenv("SHARKO_CONFIG"); envConfig != "" {
+			configPath = envConfig
+		}
+		if envStatic := os.Getenv("SHARKO_STATIC_DIR"); envStatic != "" {
+			staticDir = envStatic
+		}
+
+		// Which proxies may tell Sharko who the caller is.
+		//
+		// Parsed before anything else is built, so a bad list stops the
+		// server here instead of at the first request. An empty setting
+		// trusts no proxy: forwarding headers are ignored and every caller
+		// is keyed by its real TCP peer. See internal/api/clientip.go.
+		//
+		// The error names the setting and the position of the bad entry and
+		// never repeats the configured value.
+		trustedProxies, err := api.ParseTrustedProxies(os.Getenv(api.TrustedProxiesEnv))
+		if err != nil {
+			return err
+		}
+		slog.Info("trusted proxy list loaded", "setting", api.TrustedProxiesEnv, "entries", trustedProxies.Count())
+
+		// Load secrets from secrets.env for local development.
+		//
+		// This file calls os.Setenv, eighty-odd lines after the check
+		// above has already walked the environment — so a SHARKO_ name
+		// introduced HERE would never meet that rule. loadSecretsEnv
+		// checks each key itself, as it reads it, which is why the rule
+		// cannot be dodged by putting the misspelling in a file.
+		if err := loadSecretsEnv("secrets.env"); err != nil {
+			return err
+		}
+
+		// Detect runtime mode
+		mode := platform.Detect()
+		slog.Info("sharko starting", "mode", mode)
+
+		// Initialize config store
+		var store config.Store
+		switch mode {
+		case platform.ModeKubernetes:
+			encKey := os.Getenv("SHARKO_ENCRYPTION_KEY")
+			if encKey == "" {
+				return fmt.Errorf("SHARKO_ENCRYPTION_KEY is required when running on Kubernetes. " +
+					"It is auto-generated by the Helm chart on first install.")
+			}
+			secretName := os.Getenv("CONNECTION_SECRET_NAME")
+			if secretName == "" {
+				secretName = "sharko-connections"
+			}
+			namespace := os.Getenv("SHARKO_NAMESPACE")
+			if namespace == "" {
+				namespace = "sharko"
+			}
+			var err error
+			store, err = config.NewK8sStore(namespace, secretName, encKey)
+			if err != nil {
+				return fmt.Errorf("failed to create K8s connection store: %w", err)
+			}
+			slog.Info("connection config stored in encrypted k8s secret", "namespace", namespace, "secret", secretName)
+		default:
+			store = config.NewFileStore(configPath)
+		}
+
+		// AI configuration — resolve per-provider API key and model
+		aiProvider := ai.Provider(os.Getenv("AI_PROVIDER"))
+		aiAPIKey := os.Getenv("AI_API_KEY")    // generic fallback
+		aiModel := os.Getenv("AI_CLOUD_MODEL") // generic fallback
+		aiBaseURL := os.Getenv("AI_BASE_URL")
+		aiAuthHeader := os.Getenv("AI_AUTH_HEADER")
+
+		switch aiProvider {
+		case ai.ProviderOpenAI:
+			if k := os.Getenv("OPENAI_API_KEY"); k != "" {
+				aiAPIKey = k
+			}
+			if m := os.Getenv("OPENAI_MODEL"); m != "" {
+				aiModel = m
+			}
+		case ai.ProviderClaude:
+			if k := os.Getenv("CLAUDE_API_KEY"); k != "" {
+				aiAPIKey = k
+			}
+			if m := os.Getenv("CLAUDE_MODEL"); m != "" {
+				aiModel = m
+			}
+		case ai.ProviderGemini:
+			if k := os.Getenv("GEMINI_API_KEY"); k != "" {
+				aiAPIKey = k
+			}
+			if m := os.Getenv("GEMINI_MODEL"); m != "" {
+				aiModel = m
+			}
+		case ai.ProviderCustomOpenAI:
+			if k := os.Getenv("CUSTOM_OPENAI_API_KEY"); k != "" {
+				aiAPIKey = k
+			}
+			if m := os.Getenv("CUSTOM_OPENAI_MODEL"); m != "" {
+				aiModel = m
+			}
+			if u := os.Getenv("CUSTOM_OPENAI_BASE_URL"); u != "" {
+				aiBaseURL = u
+			}
+			if h := os.Getenv("CUSTOM_OPENAI_AUTH_HEADER"); h != "" {
+				aiAuthHeader = h
+			}
+		}
+
+		aiCfg := ai.Config{
+			Provider:      aiProvider,
+			OllamaURL:     getEnvDefault("AI_OLLAMA_URL", "http://localhost:11434"),
+			OllamaModel:   getEnvDefault("AI_OLLAMA_MODEL", "llama3.2"),
+			AgentModel:    os.Getenv("AI_AGENT_MODEL"),
+			APIKey:        aiAPIKey,
+			CloudModel:    aiModel,
+			BaseURL:       aiBaseURL,
+			AuthHeader:    aiAuthHeader,
+			GitOpsEnabled: os.Getenv("GITOPS_ACTIONS_ENABLED") == "true",
+		}
+		if v := os.Getenv("AI_MAX_ITERATIONS"); v != "" {
+			fmt.Sscanf(v, "%d", &aiCfg.MaxIterations)
+		}
+		aiClient := ai.NewClient(aiCfg)
+		if aiClient.IsEnabled() {
+			model := aiCfg.OllamaModel
+			if aiCfg.Provider == ai.ProviderClaude || aiCfg.Provider == ai.ProviderOpenAI || aiCfg.Provider == ai.ProviderGemini {
+				model = aiCfg.CloudModel
+			}
+			slog.Info("ai provider enabled", "provider", aiCfg.Provider, "model", model)
+		}
+
+		// Wire up services
+		connSvc := service.NewConnectionService(store)
+		clusterSvc := service.NewClusterService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+		addonSvc := service.NewAddonService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+		dashboardSvc := service.NewDashboardService(connSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+		observabilitySvc := service.NewObservabilityService(clusterSvc)
+		advSvc := advisories.NewService(nil) // nil = uses default http.Client with 5s timeout
+		upgradeSvc := service.NewUpgradeService(aiClient, advSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+
+		// Build server
+		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+		srv.SetTrustedProxies(trustedProxies)   // Who may say where a request came from (parsed above)
+		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
+		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
+		// v4 read paths must honor the configured GitOps base branch
+		// instead of hardcoding "main" (Wave 2 ride-along w2-q6 item 1).
+		// srv.GitopsBaseBranch reads the live published gitops snapshot,
+		// so this stays correct across ReinitializeFromConnection. Every
+		// service that reads Git directly gets the same seam (Wave 2
+		// review "BaseBranch hardcode sweep" — #637 wired AddonService
+		// only, leaving the rest of the service layer reading "main"
+		// unconditionally on repos whose default branch isn't main).
+		addonSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		clusterSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		dashboardSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		upgradeSvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+		observabilitySvc.SetBaseBranchFn(srv.GitopsBaseBranch)
+
+		// Construct the cosign-keyless verifier, shared between:
+		//
+		//   1. The third-party catalog fetcher — as a sources.SidecarVerifier
+		//      when a `.bundle` sidecar is discovered next to a fetched YAML.
+		//   2. The embedded-catalog loader — VerifyEntryFunc to verify
+		//      per-entry signatures at load time.
+		//
+		// SHARKO_CATALOG_TRUSTED_IDENTITIES configures trusted identities;
+		// unset / empty falls back to a conservative default (CNCF org
+		// workflows + Sharko's own release workflow). Operators extend via
+		// the literal "<defaults>" magic token, override entirely with their
+		// own regexes, or set "^$" for the explicit "trust nothing" escape
+		// hatch. See docs/site/operator/catalog-trust-policy.md.
+		//
+		// Failure to parse a regex is fatal — the operator notices at startup
+		// instead of shipping a broken trust policy that silently rejects
+		// every signature.
+		//
+		// We load the Sigstore public-good trust root via TUF and wire it
+		// into the verifier with WithTrustedMaterial. TUF fetch failures are
+		// non-fatal so air-gapped deployments still boot — we log a WARN and
+		// continue with the unconfigured verifier (every signed entry then
+		// surfaces Verified=false, which is the correct conservative outcome
+		// offline).
+		//
+		// nil http.Client means the verifier uses a sane 30s default for
+		// bundle fetches.
+		var verifierOpts []signing.VerifierOption
+		trustRoot, trustRootErr := signing.LoadProductionTrustedRoot(context.Background())
+		if trustRootErr != nil {
+			slog.Warn("sigstore trust root unavailable; signed entries will surface as unverified",
+				"err", trustRootErr.Error())
+		} else {
+			verifierOpts = append(verifierOpts, signing.WithTrustedMaterial(trustRoot))
+			slog.Info("sigstore trust root loaded")
+		}
+		catalogVerifier := signing.NewVerifier(nil /* http client */, verifierOpts...)
+		// TWO policies, deliberately — see cmd/sharko/catalog_trust.go for
+		// why Sharko's own catalogue is held to a stricter rule than
+		// everybody else's, and why mixing the two up would refuse every
+		// third-party signature.
+		catalogTrust, err := buildCatalogTrustPolicies(commit)
+		if err != nil {
+			return fmt.Errorf("load catalog trust policy: %w", err)
+		}
+		slog.Info("catalog trust policy loaded",
+			"identity_count", len(catalogTrust.ThirdParty.Identities))
+		// Said out loud at startup, both ways round. This is the one thing an
+		// operator cannot work out from the entries alone: whether this build
+		// is able to bind its own catalogue to a release at all.
+		if catalogTrust.ReleaseStamped {
+			slog.Info("embedded catalog signatures are bound to this build's release commit",
+				"release_commit", catalogTrust.Embedded.ReleaseCommit)
+		} else {
+			slog.Warn("this build carries no release commit, so its own embedded catalog entries "+
+				"cannot be bound to a release and will surface as unverified; "+
+				"a release binary is stamped with the commit it was built from",
+				"build_commit", catalogTrust.BuildCommit)
+		}
+
+		// Load the embedded curated catalog. Failure here is fatal — a
+		// malformed catalog indicates a build-time regression, not a runtime
+		// problem operators can work around. The catalog is loaded through
+		// LoadBytesWithVerifier so that any future signing of embedded
+		// entries lights up the verified path automatically.
+		//
+		// catalogTrust.Embedded, never catalogTrust.ThirdParty: this is the
+		// catalogue Sharko's own release workflow signed, so the certificate
+		// must claim the commit this binary was released from.
+		cat, err := catalog.LoadBytesWithVerifier(
+			context.Background(),
+			catalogembed.AddonsYAML(),
+			catalogVerifier.VerifyEntryFunc(catalogTrust.Embedded),
+		)
+		if err != nil {
+			return fmt.Errorf("load curated catalog: %w", err)
+		}
+		slog.Info("curated catalog loaded", "entries", cat.Len())
+		srv.SetCatalog(cat)
+		// v4 Wave 1 Story 4.2: AddonService.GetVersionMatrix's v4 branch
+		// needs the shipped curated catalog to merge a caller's
+		// catalog.yaml delta the same way handleListMergedCatalogDelta
+		// does (internal/api/catalog_delta.go).
+		addonSvc.SetCuratedCatalog(cat)
+		// v4 Wave 2 Epic 7 Story 7.3: UpgradeService.ListVersions/
+		// CheckUpgrade/GetRecommendations' v4 branch needs the same
+		// curated catalog, for the identical reason.
+		upgradeSvc.SetCuratedCatalog(cat)
+		// Wave 2 review fix: DashboardService.gitStatsV4's TotalAvailable
+		// needs the same curated catalog to count curated+delta merged
+		// addons instead of only the caller's delta (which reported 0 on
+		// every fresh v4 repo that hadn't customized the shipped catalog).
+		dashboardSvc.SetCuratedCatalog(cat)
+
+		// Third-party catalog sources moved to after ReinitializeFromConnection
+		// so we can try file-then-env (V3-P3.1). See below.
+
+		// Daily OpenSSF Scorecard refresh (non-fatal failures per design §4.6).
+		scorecardSched := catalog.NewScheduler(cat, metrics.ScorecardMetricsAdapter{})
+		scorecardSched.Start(context.Background())
+		defer scorecardSched.Stop()
+
+		// v4 wave 1 Story 3.4 — catalog version-freshness scheduler. Walks
+		// the curated catalog on a fixed cadence (default 24h) and keeps a
+		// durable "last checked" snapshot per addon
+		// (internal/catalog.FreshnessScheduler), independent of who's
+		// browsing. Also runs the engine pin-bump check (Story 2.5) on the
+		// same cycle, so GET /api/v1/engine/pin can serve a recent result
+		// even with no live Git connection at request time. Configurable
+		// via SHARKO_CATALOG_FRESHNESS_ENABLED / _INTERVAL
+		// (charts/sharko/values.yaml catalog.freshness.{enabled,interval}),
+		// mirroring the connectivityCheck.enabled / autoRemediate.enabled
+		// toggle shape already used for other background jobs in this file.
+		freshnessEnabled := getEnvDefault("SHARKO_CATALOG_FRESHNESS_ENABLED", "true") != "false"
+		if freshnessEnabled {
+			freshnessIntervalRaw := getEnvDefault("SHARKO_CATALOG_FRESHNESS_INTERVAL", "24h")
+			freshnessInterval, parseErr := time.ParseDuration(freshnessIntervalRaw)
+			if parseErr != nil || freshnessInterval <= 0 {
+				slog.Warn("invalid SHARKO_CATALOG_FRESHNESS_INTERVAL, using default",
+					"value", freshnessIntervalRaw, "default", catalog.DefaultFreshnessInterval)
+				freshnessInterval = catalog.DefaultFreshnessInterval
+			}
+			// enginePinCheckFn closes over srv (already constructed above)
+			// rather than being wired later — CheckEnginePinLive resolves
+			// the active Git connection freshly on every call, so it is
+			// safe to hand this closure to the scheduler before
+			// ReinitializeFromConnection (below) has run. By the time the
+			// scheduler's first tick actually fires, the connection (if
+			// any) is initialized.
+			freshnessSched := catalog.NewFreshnessScheduler(cat, helm.NewFetcher(),
+				func(ctx context.Context) (*catalog.EnginePinStatus, error) {
+					result, checkErr := srv.CheckEnginePinLive(ctx)
+					if checkErr != nil {
+						return nil, checkErr
+					}
+					return &catalog.EnginePinStatus{
+						V4Repo:           result.V4Repo,
+						BundledVersion:   result.BundledVersion,
+						PinnedVersion:    result.PinnedVersion,
+						UpgradeAvailable: result.UpgradeAvailable,
+						Message:          result.Message,
+					}, nil
+				},
+				freshnessInterval,
+			)
+			// Watch the org's own approved addons too, not just the list
+			// Sharko ships — otherwise a chart somebody added themselves
+			// never gets a "a newer version is out" signal. Same
+			// resolve-the-connection-on-every-call shape as the engine pin
+			// closure above.
+			freshnessSched.WithApprovedAddons(srv.ApprovedAddonsForFreshness)
+			srv.SetFreshness(freshnessSched)
+			freshnessSched.Start()
+			defer freshnessSched.Stop()
+			slog.Info("catalog freshness scheduler started", "interval", freshnessInterval)
+		} else {
+			slog.Info("catalog freshness scheduler disabled via SHARKO_CATALOG_FRESHNESS_ENABLED=false")
+		}
+
+		slog.Info("sharko starting", "version", version)
+
+		// V3 C2: reconcile the ACTIVE connection toward git-declared non-secret
+		// env fields (git wins) BEFORE ReinitializeFromConnection, so the single
+		// reinit below picks up the merged values. Field-level merge preserves
+		// the encrypted git Token/PAT and ArgoCD Token — secret material is
+		// never sourced from these env vars. No-op when no connection is active.
+		//
+		// This mutates `store` directly rather than through connSvc, so it
+		// bypasses connSvc's perf S1 active-connection cache — invalidate it
+		// explicitly on a change. connSvc is freshly constructed at this
+		// point (nothing has called a GetActive* method yet) so this is a
+		// no-op today, but it's cheap and keeps this call site correct if
+		// that ordering ever changes.
+		if changed, err := config.ReconcileConnectionFromEnv(store); err != nil {
+			slog.Warn("connection boot reconcile failed, continuing with stored connection", "error", err)
+		} else if changed {
+			connSvc.InvalidateActiveCache()
+		}
+
+		// Initialize provider + gitops config from active connection (if exists).
+		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
+		slog.Info("initializing from stored connection")
+		srv.ReinitializeFromConnection()
+		slog.Info("server initialization complete")
+
+		// Third-party catalog sources (V3-P3.1): try file-then-env.
+		// Reads configuration/marketplace-sources.yaml if the git provider is
+		// available and the file exists; falls back to SHARKO_CATALOG_URLS env
+		// when the file is absent or git not yet connected. A misconfiguration
+		// in EITHER path is fatal so the operator notices at startup.
+		//
+		// URLs are deliberately NOT logged — a third-party catalog URL may
+		// encode an auth token in the path (the file is for public URLs only;
+		// tokened URLs stay in the env var). Authenticated operators can
+		// retrieve the authoritative list via /api/v1/catalog/sources.
+		var catSources *config.CatalogSourcesConfig
+		var catSourcesOrigin string
+
+		// Try file first if git is available.
+		if gp, gpErr := connSvc.GetActiveGitProvider(); gpErr == nil && gp != nil {
+			if gitopsCfg := getConnectionGitOps(connSvc); gitopsCfg != nil {
+				fileBody, fileErr := gp.GetFileContent(cmd.Context(), config.MarketplaceSourcesPath, gitopsCfg.BaseBranch)
+				if fileErr == nil && len(fileBody) > 0 {
+					// File exists — parse it.
+					catSources, err = config.LoadMarketplaceSourcesFromFile(fileBody)
+					if err != nil {
+						return fmt.Errorf("load marketplace sources from file: %w", err)
+					}
+					catSourcesOrigin = "file"
+					slog.Info("loaded marketplace sources from git file",
+						"path", config.MarketplaceSourcesPath,
+						"count", len(catSources.Sources),
+					)
+				}
+			}
+		}
+
+		// Fall back to env if file didn't provide sources.
+		if catSources == nil {
+			catSources, err = config.LoadCatalogSourcesFromEnv()
+			if err != nil {
+				return fmt.Errorf("load catalog sources from env: %w", err)
+			}
+			catSourcesOrigin = "env"
+			if len(catSources.Sources) > 0 {
+				slog.Info("loaded catalog sources from env",
+					"count", len(catSources.Sources),
+				)
+			}
+		}
+
+		srv.SetCatalogSources(catSources)
+		if len(catSources.Sources) == 0 {
+			slog.Info("no third-party catalogs configured, using embedded only")
+		} else {
+			slog.Info("third-party catalog sources configured",
+				"origin", catSourcesOrigin,
+				"count", len(catSources.Sources),
+				"refresh_interval", catSources.RefreshInterval,
+				"allow_private", catSources.AllowPrivate,
+			)
+			if catSources.AllowPrivate {
+				slog.Warn("SHARKO_CATALOG_URLS_ALLOW_PRIVATE is enabled — SSRF guard disabled; only safe on trusted networks")
+			}
+
+			// Start the third-party catalog fetch loop. The cosign verifier
+			// is wired into the fetcher so when a `.bundle` sidecar is
+			// discovered next to a fetched catalog YAML, the snapshot's
+			// Verified + Issuer fields are populated by
+			// signing.Verifier.Verify. Nil clock = production wall clock.
+			// Fetcher.Start is non-blocking; supervisor goroutine fans out
+			// one fetch per URL per tick. Fetcher.Stop drains in-flight
+			// fetches at shutdown.
+			sourcesFetcher := sources.NewFetcher(catSources, catalogVerifier, nil /* clock */)
+			// Per-entry verification on third-party feeds. Each entry with
+			// a signature.bundle is run through the same trust policy that
+			// gates the embedded catalog — without this, a compromised
+			// third-party curator could flip an entry and have Sharko serve
+			// it as if signed.
+			// catalogTrust.ThirdParty, never catalogTrust.Embedded. A
+			// third-party publisher signs from their own repository at their
+			// own commit, so requiring Sharko's release commit here would
+			// refuse every third-party signature. Their behaviour is
+			// unchanged by the release-commit binding.
+			sourcesFetcher.SetEntryVerifyFunc(catalogVerifier.VerifyEntryFunc(catalogTrust.ThirdParty))
+			// Install the canonical trust policy on the fetcher so its
+			// sidecar verifier (which receives the policy via
+			// Verify(... TrustPolicy)) shares the same trusted-identity
+			// list as the embedded catalog.
+			sourcesFetcher.SetTrustPolicy(catalogTrust.ThirdParty)
+			srv.SetSourcesFetcher(sourcesFetcher)
+			sourcesFetcher.Start(context.Background())
+			defer sourcesFetcher.Stop()
+			slog.Info("catalog sources fetcher started", "count", len(catSources.Sources))
+		}
+
+		// Demo mode: wire up mock backends BEFORE the notification checker and
+		// connection poller below are constructed and started (S3 demo wiring
+		// fix). Both fire an immediate check from inside Start() on their own
+		// goroutine, so they must be built from the POST-swap connection
+		// service, not before it — otherwise the checker/poller silently keep
+		// talking to the real (empty, disconnected) connection service and
+		// the demo's notification feed never has anything to say. Everything
+		// else in demo mode (skipping the real provider setup, serving static
+		// files) still happens further down, unchanged — only the mock
+		// backend swap itself moved earlier.
+		if demoMode {
+			slog.Info("demo mode: running with mock backends", "users", "admin/admin, qa/sharko")
+			demoCleanup, err := demo.SetupDemoServer(srv, demoScaleConfig)
+			if err != nil {
+				return fmt.Errorf("setting up demo server: %w", err)
+			}
+			defer demoCleanup()
+		}
+
+		// Start notification checker (background goroutine, checks every 30 min).
+		//
+		// Reads the connection service through srv.ConnectionService() rather
+		// than closing over the local connSvc variable: in demo mode the swap
+		// above reassigns srv's OWN connSvc field (SetDemoConnectionService),
+		// which never touches this local variable. Resolving through the
+		// getter picks up the demo connection service when demoMode is true,
+		// and is byte-for-byte the same object as the local variable
+		// otherwise — no behavior change outside demo mode.
+		notifProvider := notifications.NewServiceProvider(srv.ConnectionService(), addonSvc)
+		notifChecker := notifications.NewChecker(srv.NotificationStore(), notifProvider, 30*time.Minute)
+		notifChecker.Start()
+		defer notifChecker.Stop()
+
+		// Start connection-health poller (background goroutine, ~60s by default).
+		// It watches Sharko's OWN two connections — Sharko→Git (used for every
+		// commit/PR) and ArgoCD→repo — and pushes a bell alert when either
+		// breaks, auto-clearing it when the connection recovers. The two health
+		// probes are injected as closures here because this is the one place
+		// that can reach both connSvc (for the active Git provider + ArgoCD
+		// client) and api.ProbeBootstrapApp without an import cycle.
+		connCheckInterval := getEnvDefault("SHARKO_CONNECTION_CHECK_INTERVAL", "60s")
+		connDur, connParseErr := time.ParseDuration(connCheckInterval)
+		if connParseErr != nil || connDur <= 0 {
+			connDur = notifications.DefaultConnectionCheckInterval
+			warnUnreadableSetting("SHARKO_CONNECTION_CHECK_INTERVAL", connDur)
+		}
+
+		// gitHealthFn: Sharko→Git. An error from GetActiveGitProvider (or a nil
+		// provider) means no active connection — undetermined, not broken.
+		// Resolves srv.ConnectionService() fresh on every call (not just once
+		// at closure-construction time) for the same demo-swap reason as
+		// notifProvider above.
+		//
+		// SECURITY (story S4): this used to return
+		// notifications.UnhealthyResult(err.Error()) — the Git provider's own
+		// error text, which the notification store then wrote into the
+		// sharko-notifications ConfigMap, served on every GET /notifications,
+		// and restored on the next restart. The bell now gets the CATEGORY of
+		// the failure, classified here where the error is still a live typed
+		// value; the error's own words go to the server log and stop there.
+		gitHealthFn := func(ctx context.Context) notifications.HealthResult {
+			gp, gpErr := srv.ConnectionService().GetActiveGitProvider()
+			if gpErr != nil || gp == nil {
+				return notifications.UndeterminedResult()
+			}
+			if err := gp.TestConnection(ctx); err != nil {
+				slog.Warn("git connection health check failed", "error", err, "component", "notifications")
+				return notifications.UnhealthyResult(notifications.ClassifyReason(err))
+			}
+			return notifications.HealthyResult()
+		}
+
+		// argoHealthFn: ArgoCD→repo. A client error means no active connection —
+		// undetermined. Otherwise probe the bootstrap app and raise an alert
+		// that names the ACTUAL problem: a rejected/expired token and an
+		// uncategorized probe failure are credential/connectivity problems,
+		// not "ArgoCD can't sync the repo" — conflating them made an expired
+		// token read as a broken repo sync (error review package 1).
+		//
+		// SECURITY (story S4): ProbeBootstrapApp's second return value is a
+		// free-text detail — err.Error() on a rejected token, a formatted %v on
+		// any other listing failure, and the source repo URL on an out-of-sync
+		// app. All of that used to be handed to the notification store, which
+		// persisted it into the sharko-notifications ConfigMap. It goes to the
+		// server log now and nowhere else; the bell gets the code and the
+		// category, both of which are enums.
+		argoHealthFn := func(ctx context.Context) notifications.HealthResult {
+			ac, acErr := srv.ConnectionService().GetActiveOrchestratorArgocdClient()
+			if acErr != nil || ac == nil {
+				return notifications.UndeterminedResult()
+			}
+			status, detail := api.ProbeBootstrapApp(ctx, ac)
+			if status != "healthy" && detail != "" {
+				slog.Warn("argocd bootstrap health probe reported a problem",
+					"status", status, "detail", detail, "component", "notifications")
+			}
+			switch status {
+			case "healthy":
+				return notifications.HealthyResult()
+			case "auth_failed":
+				return notifications.UnhealthyResultWithCode(
+					notifications.CodeArgoAuthFailed,
+					notifications.ReasonCredentials,
+				)
+			case "unknown":
+				return notifications.UnhealthyResultWithCode(
+					notifications.CodeArgoUnreachable,
+					notifications.ReasonUnreachable,
+				)
+			case "forbidden":
+				// Review findings r1, H1: a 403 means the token is valid but
+				// lacks permission — Sharko never got to check the bootstrap
+				// app, so this must not fall into the default "can't sync the
+				// repo" title, which would falsely claim Sharko found the
+				// repo broken.
+				return notifications.UnhealthyResultWithCode(
+					notifications.CodeArgoForbidden,
+					notifications.ReasonPermission,
+				)
+			default:
+				// ArgoCD answered and reported the bootstrap app as out of sync
+				// or unhealthy — nobody errored, the answer simply is not the
+				// one Sharko wants. That is what ReasonNotSynced says.
+				return notifications.UnhealthyResult(notifications.ReasonNotSynced)
+			}
+		}
+
+		connPoller := notifications.NewConnectionPoller(srv.NotificationStore(), connDur, gitHealthFn, argoHealthFn)
+		connPoller.Start()
+		defer connPoller.Stop()
+
+		// Demo mode: mock backends are already wired up above (before the
+		// notification checker + connection poller); skip all real provider
+		// setup and go straight to static files + listen.
+		if demoMode {
+			var staticFS fs.FS
+			if staticDir != "" {
+				if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+					staticFS = os.DirFS(staticDir)
+				}
+			}
+			router := api.NewRouter(srv, staticFS)
+			addr := fmt.Sprintf(":%d", port)
+			slog.Info("listening", "addr", addr)
+			// ReadHeaderTimeout guards against Slowloris-style attacks (a client
+			// that opens a connection and trickles headers forever, tying up a
+			// handler goroutine indefinitely). http.ListenAndServe has no such
+			// timeout; an explicit http.Server does.
+			httpServer := &http.Server{Addr: addr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
+			if err := httpServer.ListenAndServe(); err != nil {
+				return fmt.Errorf("server error: %w", err)
+			}
+			return nil
+		}
+
+		// Non-demo path from here on. If nothing configured a user by now
+		// (no chart-seeded accounts, no SHARKO_BOOTSTRAP_ADMIN_PASSWORD,
+		// no SHARKO_AUTH_USER), Sharko creates its own admin with a
+		// random password and prints where to find it — the
+		// sharko-initial-admin-secret Secret in-cluster, or a 0600 local
+		// file outside a cluster. Auth is enforced from the first request
+		// either way; a zero-user start no longer runs open. Demo mode is
+		// the only path that skips this, and it seeds its own users above
+		// before its router is built.
+		if err := srv.EnsureInitialAdmin(cmd.Context()); err != nil {
+			return fmt.Errorf("could not set up the initial admin user (and Sharko refuses to run without auth): %w", err)
+		}
+
+		// API tokens survive restarts: load the persisted set (the
+		// sharko-api-tokens Secret in-cluster, a 0600 file under
+		// ~/.sharko locally) and write through on every create, renew,
+		// and revoke from here on. Failing to READ the persisted set is
+		// fatal — running with an empty in-memory set would clobber the
+		// durable copy on the first write and silently lose every
+		// existing machine token.
+		if err := srv.LoadPersistedAPITokens(cmd.Context()); err != nil {
+			return fmt.Errorf("could not load persisted API tokens (running on would risk losing them): %w", err)
+		}
+
+		// Repo path and GitOps config — always constructed (not provider-dependent).
+		repoPaths := orchestrator.RepoPathsConfig{
+			ClusterValues:   "configuration/addons-clusters-values",
+			GlobalValues:    "configuration/addons-global-values",
+			Catalog:         "configuration/addons-catalog.yaml",
+			Charts:          "charts/",
+			Bootstrap:       "bootstrap/",
+			ManagedClusters: getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"),
+		}
+
+		gitopsCfg := orchestrator.GitOpsConfig{
+			BranchPrefix: "sharko/",
+			CommitPrefix: "sharko:",
+			BaseBranch:   "main",
+		}
+
+		// Build product config from active connection (connection store is sole authority).
+		if conn, err := connSvc.GetActiveConnection(); err == nil && conn != nil {
+			if conn.GitOps != nil {
+				if conn.GitOps.BaseBranch != "" {
+					gitopsCfg.BaseBranch = conn.GitOps.BaseBranch
+				}
+				if conn.GitOps.BranchPrefix != "" {
+					gitopsCfg.BranchPrefix = conn.GitOps.BranchPrefix
+				}
+				if conn.GitOps.CommitPrefix != "" {
+					gitopsCfg.CommitPrefix = conn.GitOps.CommitPrefix
+				}
+				if conn.GitOps.PRAutoMerge != nil {
+					gitopsCfg.PRAutoMerge = *conn.GitOps.PRAutoMerge
+				}
+				if conn.GitOps.HostClusterName != "" {
+					repoPaths.HostClusterName = conn.GitOps.HostClusterName
+				} else if mode == platform.ModeKubernetes {
+					if detected := platform.DetectClusterName(); detected != "" {
+						repoPaths.HostClusterName = detected
+						slog.Info("host cluster name auto-detected", "cluster", detected)
+					}
+				}
+			}
+			if conn.Git.RepoURL != "" {
+				gitopsCfg.RepoURL = conn.Git.RepoURL
+			}
+		}
+
+		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
+		//
+		// The connection-level Provider block fans out at parse time into TWO
+		// typed configs — AddonSecretProviderConfig (rich addon-secret fields)
+		// and ClusterTestProviderConfig (cluster-test, argocd-only) — that
+		// downstream consumers (the Server struct, the secrets reconciler, the
+		// argosecrets reconciler) read independently per mechanism.
+		var credProvider providers.ClusterCredentialsProvider
+		var addonCfgPtr *providers.AddonSecretProviderConfig
+		var clusterTestCfgPtr *providers.ClusterTestProviderConfig
+
+		namespace := os.Getenv("SHARKO_NAMESPACE")
+		if namespace == "" {
+			namespace = "sharko"
+		}
+
+		// Always resolve a provider config and call the cluster-test factory,
+		// even when the active connection's provider.type is empty. The
+		// auto-default path fires inside the factory — gating the call on
+		// Type != "" silently bypasses the default and leaves credProvider
+		// nil, which then trips the "no_secrets_backend" surface in the Test
+		// handler instead of the intended argocd auto-default.
+		//
+		// When in-cluster + Type == "":  NewClusterTestProvider returns ArgoCDProvider.
+		// When Type == "argocd":          NewClusterTestProvider returns ArgoCDProvider.
+		// When out-of-cluster + Type=="": NewClusterTestProvider returns the
+		//                                 "no provider configured" error → log
+		//                                 + leave credProvider nil → existing
+		//                                 no_secrets_backend surface.
+		// When Type ∈ {aws-sm, k8s-secrets}: cluster-test builds the matching
+		//                                    secret-backend provider so the
+		//                                    registration path (creds_source=
+		//                                    secret-kubeconfig / eks-token)
+		//                                    reaches the configured backend
+		//                                    (V2-cleanup-53.1 restored arms).
+		// When Type ∈ {gcp-sm, azure-kv, ...}: still retired for cluster creds —
+		//                                      the fan-out returns a zero config
+		//                                      → auto-default, as before. The
+		//                                      addon-secret reconciler wires all
+		//                                      backends via NewAddonSecretProvider.
+		var resolvedAddonCfg providers.AddonSecretProviderConfig
+		var resolvedTestCfg providers.ClusterTestProviderConfig
+		{
+			connProv := connSvc.GetProviderConfig()
+			addonProv := connSvc.GetAddonSecretProviderConfig()
+			ns := namespace
+
+			// Unpack the two provider blocks into raw fields for the shared resolvers.
+			// V3-P1.1: addon-secret backend resolution goes through
+			// AddonSecretConfigFromConnection so boot and hot-reload can never
+			// drift (mirrors the V2-cleanup-53.1 cluster-test mapper discipline).
+			var ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN string
+			if connProv != nil {
+				ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN = connProv.Type, connProv.Region, connProv.Prefix, connProv.Namespace, connProv.RoleARN
+			}
+			var asType, asRegion, asPrefix, asNamespace, asRoleARN string
+			if addonProv != nil {
+				asType, asRegion, asPrefix, asNamespace, asRoleARN = addonProv.Type, addonProv.Region, addonProv.Prefix, addonProv.Namespace, addonProv.RoleARN
+			}
+
+			resolvedAddonCfg = providers.AddonSecretConfigFromConnection(
+				ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN,
+				asType, asRegion, asPrefix, asNamespace, asRoleARN,
+				ns,
+			)
+
+			// Cluster-test fan-through goes through the SINGLE shared
+			// mapper (providers.ClusterTestConfigFromConnection) — the
+			// same one ReinitializeFromConnection uses on connection
+			// save, so boot and hot-reload wiring can never drift
+			// (V2-cleanup-53.1). The mapper preserves the V125-1-10.8
+			// cross-contamination guard: connProv.Namespace is NEVER
+			// copied into ArgoCDNamespace (it's the addon-secrets-shaped
+			// slot; e.g. a leftover "sharko" from a prior k8s-secrets
+			// selection would make ArgoCDProvider look for cluster
+			// Secrets in "sharko" instead of "argocd"). Empty
+			// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
+			// through SHARKO_ARGOCD_NAMESPACE env → "argocd" default.
+			// For k8s-secrets, ns (SHARKO_NAMESPACE default, overridden
+			// by connProv.Namespace) flows into the DISTINCT Namespace
+			// field, matching the addon-side k8s-secrets convention.
+			if connProv != nil {
+				resolvedTestCfg = providers.ClusterTestConfigFromConnection(
+					ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN)
+				if ccType != "" {
+					slog.Info("secrets provider configured from connection", "type", ccType)
+				} else {
+					slog.Info("no explicit provider type in connection — cluster-test will auto-default")
+				}
+			} else {
+				resolvedTestCfg = providers.ClusterTestProviderConfig{}
+				slog.Info("no provider config in connection — cluster-test will auto-default")
+			}
+		}
+
+		{
+			cp, err := providers.NewClusterTestProvider(resolvedTestCfg)
+			if err != nil {
+				// Out-of-cluster + no explicit type lands here (the "no
+				// provider configured" error from NewClusterTestProvider).
+				// credProvider stays nil and the Test handler surfaces the
+				// structured 503 with no_secrets_backend.
+				slog.Info("[serve] no credentials provider configured", "reason", err)
+			} else {
+				credProvider = cp
+				slog.Info("[serve] credentials provider constructed", "type", resolvedTestCfg.Type)
+			}
+
+			// V3-P1.1: publish the configs (addon-secret, cluster-test)
+			// even when the cluster-creds provider failed to construct
+			// (cp == nil), since addon-secret backend is independent of
+			// cluster-creds backend. The credProvider can be nil (handlers
+			// surface structured 503 for nil credProvider).
+			addonCfgPtr = &resolvedAddonCfg
+			clusterTestCfgPtr = &resolvedTestCfg
+
+			// Default addons (applied to clusters registered without explicit addons).
+			// V3-P2.1a: read from git file (configuration/default-addons.yaml) with
+			// connection-string fallback for backward compatibility. Reuses the
+			// same read+fallback logic the GET handler uses.
+			addons, err := srv.ReadDefaultAddons(cmd.Context())
+			if err != nil {
+				slog.Info("failed to read default addons at boot", "error", err)
+			} else if len(addons) > 0 {
+				defaults := make(map[string]bool, len(addons))
+				for _, name := range addons {
+					defaults[name] = true
+				}
+				srv.SetDefaultAddons(defaults)
+				slog.Info("default addons configured", "count", len(addons), "addons", strings.Join(addons, ","))
+			}
+
+			slog.Info("secrets provider enabled", "addon_type", resolvedAddonCfg.Type)
+		}
+
+		// Pre-wire ClusterRegistrationSourceConfig for the cluster reconciler.
+		// SHARKO_CLUSTER_REG_TYPE: "" → no reconciler; "argocd" → write ArgoCD
+		// cluster Secrets.
+		// SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE: "" → defaults to "argocd".
+		clusterRegCfg := providers.ClusterRegistrationSourceConfig{
+			Type:            os.Getenv("SHARKO_CLUSTER_REG_TYPE"),
+			ArgoCDNamespace: os.Getenv("SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE"),
+		}
+		slog.Info("cluster registration source config parsed",
+			"type", clusterRegCfg.Type,
+			"argocdNamespace", clusterRegCfg.ArgoCDNamespace,
+		)
+		_ = clusterRegCfg // intentionally unused — reserved for the cluster reconciler wiring
+
+		// Always wire write-API deps — credProvider may be nil if no provider is configured.
+		srv.SetWriteAPIDeps(credProvider, addonCfgPtr, clusterTestCfgPtr, repoPaths, gitopsCfg)
+
+		// Secret reconciler — reconciles addon secrets on remote clusters.
+		// Consumes the canonical AddonSecretProviderConfig that the
+		// connection-parsing layer fanned out above; no translation.
+		//
+		// secretRecon is hoisted to this scope (mirrors clusterRecon below)
+		// so the prTracker.SetOnMergeFn fan-out further down can nudge it
+		// immediately after a merge — see the comment there for why.
+		var secretRecon *secrets.Reconciler
+		if credProvider != nil && addonCfgPtr != nil {
+			secretProvider, spErr := providers.NewAddonSecretProvider(*addonCfgPtr)
+			if spErr != nil {
+				slog.Warn("could not create secret provider for reconciler", "error", spErr)
+			} else {
+				reconcileInterval := getEnvDefault("SHARKO_SECRET_RECONCILE_INTERVAL", "5m")
+				dur, parseErr := time.ParseDuration(reconcileInterval)
+				if parseErr != nil {
+					dur = 5 * time.Minute
+					warnUnreadableSetting("SHARKO_SECRET_RECONCILE_INTERVAL", dur)
+				}
+
+				parser := config.NewParser()
+				baseBranch := gitopsCfg.BaseBranch
+				if baseBranch == "" {
+					baseBranch = "main"
+				}
+
+				gitReaderFn := func() secrets.GitReader {
+					gp, err := connSvc.GetActiveGitProvider()
+					if err != nil {
+						return nil
+					}
+					return gp
+				}
+
+				reconciler := secrets.NewReconciler(
+					credProvider,
+					secretProvider,
+					gitReaderFn,
+					remoteclient.NewClientFromKubeconfig,
+					parser,
+					baseBranch,
+					repoPaths.ManagedClusters,
+					dur,
+				)
+				srv.SetSecretReconciler(reconciler)
+				secretRecon = reconciler
+				// P2-C5: the raw provider type string ("aws-sm",
+				// "k8s-secrets", ...) stamped verbatim into every
+				// addon-values Secret's sharko.dev/source provenance
+				// annotation.
+				reconciler.SetSourceType(addonCfgPtr.Type)
+
+				// Wire audit callback so reconcile events appear in GET /api/v1/audit.
+				auditLog := srv.AuditLog()
+				reconciler.SetAuditFunc(func(clusterName string, created, updated int) {
+					auditLog.Add(audit.Entry{
+						Level:    "info",
+						Event:    "secret_push",
+						User:     "sharko",
+						Action:   "push",
+						Resource: fmt.Sprintf("secrets reconciled — created: %d, updated: %d", created, updated),
+						Source:   "reconciler",
+						Result:   "success",
+					})
+				})
+
+				// Wire per-item audit callback — one entry per addon-values
+				// secret actually created or updated (never for an
+				// unchanged check), Resource shaped so the System page's
+				// addon_values_secrets rows can join onto it the same way
+				// cluster_connection_secrets rows already join onto
+				// "cluster:<name>" entries (internal/api/system_managed_secrets.go).
+				reconciler.SetItemAuditFunc(func(cluster, addon string, outcome secrets.ItemOutcome) {
+					event := "addon_secret_updated"
+					detail := "secret updated"
+					if outcome == secrets.ItemOutcomeCreated {
+						event = "addon_secret_created"
+						detail = "secret created"
+					}
+					auditLog.Add(audit.Entry{
+						Level:    "info",
+						Event:    event,
+						User:     "sharko",
+						Action:   "push",
+						Resource: fmt.Sprintf("cluster:%s/addon:%s", cluster, addon),
+						Source:   "reconciler",
+						Result:   "success",
+						Detail:   detail,
+					})
+				})
+
+				reconciler.Start()
+				defer reconciler.Stop()
+				slog.Info("secret reconciler started", "interval", dur)
+			}
+		}
+
+		// ArgoCD Manager — declared here so it's accessible in the argocd-secrets
+		// block below. Will be nil unless Sharko runs in-cluster.
+		var argoManager *argosecrets.Manager
+
+		// ArgoCD cluster secrets — writes ArgoCD cluster secrets into the argocd namespace
+		// so that ArgoCD's ApplicationSet cluster generator can discover Sharko-managed clusters.
+		//
+		// Two distinct pieces of machinery live here and have DIFFERENT gates:
+		//
+		//   - The *manager* (argosecrets.NewManager) is a pure writer that needs
+		//     only an in-cluster k8s client + the argocd namespace. It is wired
+		//     whenever Sharko runs in-cluster, INDEPENDENT of credProvider, so
+		//     that the kubeconfig registration path can write an ArgoCD cluster
+		//     Secret directly from the pasted credentials (V2-cleanup-8.2). Those
+		//     credentials never live in a secrets backend, so the reconciler can
+		//     never create the Secret for them — the manager must.
+		//
+		//   - The *reconciler* (argosecrets.NewReconciler) was retired long ago.
+		//     internal/clusterreconciler is the canonical reconciler for
+		//     managed-clusters.yaml.
+		if inClusterCfg, inClusterErr := rest.InClusterConfig(); inClusterErr != nil {
+			slog.Warn("not running in-cluster, skipping argocd cluster-secret manager", "error", inClusterErr)
+		} else if k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg); k8sErr != nil {
+			slog.Warn("could not create in-cluster k8s client, skipping argocd cluster-secret manager", "error", k8sErr)
+		} else {
+			// Canonical source for the argocd namespace is the typed
+			// ClusterTestProviderConfig (when populated from the
+			// connection). SHARKO_ARGOCD_NAMESPACE still works and is
+			// deprecated — read through providers.ArgoCDNamespaceFromEnv
+			// so it WARNS here too. This read used to be silent while the
+			// chart told operators it warned at startup.
+			argocdNamespace := ""
+			if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
+				argocdNamespace = clusterTestCfgPtr.ArgoCDNamespace
+			}
+			if argocdNamespace == "" {
+				argocdNamespace = providers.DefaultArgoCDNamespace
+				if fromEnv, set := providers.ArgoCDNamespaceFromEnv(); set {
+					argocdNamespace = fromEnv
+				}
+			}
+
+			// Manager: always wired in-cluster, regardless of credProvider.
+			// The Manager is a pure writer for kubeconfig direct-write path
+			// (adopt, remove, providers, API handlers). The legacy reconciler
+			// loop has been retired; internal/clusterreconciler is the
+			// canonical reconciler for managed-clusters.yaml.
+			argoManager = argosecrets.NewManager(k8sClient, argocdNamespace)
+			srv.SetArgoSecretManager(argoManager)
+			slog.Info("argocd cluster-secret manager wired", "namespace", argocdNamespace)
+
+			// Read-only ApplicationSet view for the brownfield-takeover
+			// checks (v4 Wave 2, Epic 6). Uses the dynamic client because
+			// ApplicationSet is a CRD; the chart grants get/list/watch on
+			// applicationsets.argoproj.io and nothing else. Failing to
+			// build it is not fatal — the takeover checks then say they
+			// could not check, which is the honest answer.
+			if dynClient, dynErr := dynamic.NewForConfig(inClusterCfg); dynErr != nil {
+				slog.Warn("could not create dynamic k8s client — takeover checks will not be able to read ApplicationSets", "error", dynErr)
+			} else {
+				srv.SetApplicationSetReader(appsets.NewDynamicReader(dynClient, argocdNamespace))
+				slog.Info("applicationset reader wired", "namespace", argocdNamespace)
+			}
+		}
+
+		// PR Tracker — polls Git provider for PR status changes and emits
+		// audit events. Uses a ConfigMap to persist tracking state across
+		// restarts. This block is also the wiring site for the cluster
+		// reconciler: the K8s clientset built here is shared between
+		// prtracker's ConfigMap store and the cluster reconciler's
+		// ArgoCD-Secret CRUD path; prTracker.OnMergeFn fans out into BOTH
+		// the legacy argosecrets reconciler trigger AND the new cluster
+		// reconciler trigger so sub-5s post-merge convergence works
+		// regardless of which writer is in charge.
+		{
+			prNamespace := os.Getenv("SHARKO_NAMESPACE")
+			if prNamespace == "" {
+				prNamespace = "sharko"
+			}
+
+			// Build K8s client for cmstore — in-cluster or skip if not
+			// available. The SAME clientset is reused for the cluster
+			// reconciler (same in-cluster credentials, same RBAC surface).
+			var prCMStore *cmstore.Store
+			var inClusterK8sClient kubernetes.Interface
+			if mode == platform.ModeKubernetes {
+				inClusterCfg, inClusterErr := rest.InClusterConfig()
+				if inClusterErr == nil {
+					k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg)
+					if k8sErr == nil {
+						inClusterK8sClient = k8sClient
+						prCMStore = cmstore.NewStore(k8sClient, prNamespace, "sharko-pending-prs")
+					} else {
+						slog.Warn("could not create k8s client for pr tracker", "error", k8sErr)
+					}
+				} else {
+					slog.Warn("not running in-cluster, skipping pr tracker cmstore", "error", inClusterErr)
+				}
+			}
+
+			// Notifications — upgrade the in-memory-only store built in
+			// api.NewServer to ConfigMap-backed persistence (V2-cleanup-82.1),
+			// reusing the SAME in-cluster clientset + namespace as the PR
+			// tracker above. Without this, notifications live only in the pod's
+			// memory and are wiped on every restart (an emptyDir-backed
+			// /app/data volume, or no persistence at all, loses the file the
+			// old implementation wrote). Falls back to in-memory when there is
+			// no in-cluster client (local/dev, or the clientset build above
+			// failed) — the server still boots fine either way.
+			if inClusterK8sClient != nil {
+				notifCMStore := cmstore.NewStore(inClusterK8sClient, prNamespace, "sharko-notifications")
+				if err := srv.SetNotificationCMStore(context.Background(), notifCMStore); err != nil {
+					slog.Warn("could not attach configmap store to notifications, continuing in-memory only", "error", err)
+				} else {
+					slog.Info("notifications persisted via configmap", "namespace", prNamespace, "name", "sharko-notifications")
+				}
+			} else {
+				slog.Info("notifications running in-memory only (no in-cluster k8s client)")
+			}
+
+			// Change log — upgrade the in-memory-only store built in
+			// api.NewServer to ConfigMap-backed persistence (V2-cleanup-84.1),
+			// reusing the SAME in-cluster clientset + namespace as the PR
+			// tracker and notifications above. Without this, Sharko's record
+			// of completed cluster changes lives only in the pod's memory and
+			// is wiped on every restart. Falls back to in-memory when there
+			// is no in-cluster client (local/dev, or the clientset build
+			// above failed) — the server still boots fine either way.
+			if inClusterK8sClient != nil {
+				changeLogCMStore := cmstore.NewStore(inClusterK8sClient, prNamespace, "sharko-cluster-changes")
+				if err := srv.SetChangeLogCMStore(context.Background(), changeLogCMStore); err != nil {
+					slog.Warn("could not attach configmap store to change log, continuing in-memory only", "error", err)
+				} else {
+					slog.Info("change log persisted via configmap", "namespace", prNamespace, "name", "sharko-cluster-changes")
+				}
+			} else {
+				slog.Info("change log running in-memory only (no in-cluster k8s client)")
+			}
+
+			// Server-wide settings store (probe_mode, V2-cleanup-85.4) — same
+			// in-cluster clientset + namespace as the stores above. probeModeFn
+			// is the live reader both reconcilers (legacy argosecrets AND the
+			// canonical clusterreconciler below) consult on every tick to
+			// decide whether the connectivity-check app should be deployed.
+			// nil when there is no in-cluster client (local/dev mode) — both
+			// reconcilers already treat a nil ProbeModeFn/SetProbeModeFn as
+			// "no live override", falling back to their static
+			// SHARKO_CONNECTIVITY_CHECK-derived behavior, so probe_mode
+			// effectively stays at its "check-app" default out of cluster.
+			var settingsStore *settings.Store
+			var probeModeFn func(ctx context.Context) bool
+			// selfHealFn is the live reader the cluster reconciler consults
+			// when it detects drift on a Sharko-MANAGED cluster, to decide
+			// whether to converge git-desired addon labels (V3 GF1 — opt-in
+			// self-heal, default OFF). nil when there is no in-cluster settings
+			// store (local/dev) — the reconciler treats nil as "off", so the
+			// switch is dead by default out of cluster. Wiring this is what
+			// makes the managed_cluster_self_heal setting actually take effect
+			// in production (without it the setting was a no-op).
+			var selfHealFn func(ctx context.Context) bool
+			if inClusterK8sClient != nil {
+				settingsStore = settings.NewStore(inClusterK8sClient, prNamespace)
+				srv.SetSettingsStore(settingsStore)
+				probeModeFn = settingsStore.IsAPITest
+				selfHealFn = settingsStore.IsManagedClusterSelfHealEnabled
+				// gitops-proud P4-I (D2) — wires the addon-values engine's
+				// off switch. secretRecon is hoisted to function scope above
+				// (mirrors clusterRecon) and is already constructed by this
+				// point; nil-guarded the same way clusterRecon's own
+				// wiring below is, since secretRecon can be nil when its own
+				// preconditions (git connection, remote client factory)
+				// weren't available at construction time.
+				if secretRecon != nil {
+					secretRecon.SetEnabledFn(settingsStore.IsAddonValuesEngineEnabled)
+				}
+				slog.Info("server settings persisted via configmap", "namespace", prNamespace, "name", "sharko-server-settings")
+
+				// V3 C1: boot reconcile — resolve desired state from env
+				// (when declared) and reconcile the ConfigMap toward it
+				// (git wins) BEFORE probeModeFn is wired into reconcilers,
+				// so they read the git-authoritative value.
+				if err := settingsStore.Reconcile(context.Background()); err != nil {
+					slog.Warn("settings boot reconcile failed, continuing with stale ConfigMap state", "error", err)
+				} else {
+					slog.Info("settings boot reconcile completed (git-declared values applied)")
+				}
+			} else {
+				slog.Info("server settings running at defaults only (no in-cluster k8s client) — probe_mode reads as check-app")
+			}
+
+			// Wire the live probe_mode reader into the legacy argosecrets
+			// reconciler (started earlier in this function, before prCMStore
+			// Kubernetes EventRecorder (V3 E1) — emits operational events
+			// for Sharko's own failures and successes. Only active when
+			// in-cluster; nil-safe no-op otherwise (local/dev mode).
+			var eventRecorder *events.EventRecorder
+			if inClusterK8sClient != nil {
+				eventRecorder = events.NewRecorder(inClusterK8sClient, prNamespace)
+				slog.Info("k8s event recorder initialized", "namespace", prNamespace, "component", events.ComponentName)
+			} else {
+				slog.Info("k8s event recorder disabled (no in-cluster k8s client)")
+			}
+			srv.SetEventRecorder(eventRecorder)
+			// Construct + start the cluster Secret reconciler alongside the
+			// prtracker so its post-merge fan-out can nudge the reconciler
+			// immediately. The reconciler requires the same preconditions
+			// as the prtracker (in-cluster K8s clientset for argocd Secret
+			// API access; an active git provider eventually becomes
+			// available via connSvc lazy getter). When any precondition is
+			// missing we log + skip.
+			//
+			// The credentials backend is deliberately NOT a start
+			// precondition (R2-1): Deps.Vault below is a resolver over the
+			// Server's live provider snapshot — the SAME snapshot the check
+			// path reads — so a backend configured through the connections
+			// API after boot is seen by the very next check, repair, and
+			// background write with no restart. Until one is configured the
+			// reconciler runs and skips each pass (fail closed).
+			//
+			// This reconciler is the SOLE writer of ArgoCD cluster Secrets
+			// driven by managed-clusters.yaml. The legacy argosecrets.Reconciler
+			// loop (dual-writer until V2-cleanup-28) has been retired.
+			var clusterRecon *clusterreconciler.Reconciler
+			if prCMStore != nil && inClusterK8sClient != nil {
+				// Same deprecated setting, same one warning — see
+				// providers.ArgoCDNamespaceFromEnv. This read was silent too.
+				clusterReconNamespace := providers.DefaultArgoCDNamespace
+				if fromEnv, set := providers.ArgoCDNamespaceFromEnv(); set {
+					clusterReconNamespace = fromEnv
+				}
+				if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
+					clusterReconNamespace = clusterTestCfgPtr.ArgoCDNamespace
+				}
+				clusterReconBranch := gitopsCfg.BaseBranch
+				if clusterReconBranch == "" {
+					clusterReconBranch = clusterreconciler.DefaultBranch
+				}
+				clusterReconRoleARN := ""
+				if addonCfgPtr != nil {
+					clusterReconRoleARN = addonCfgPtr.RoleARN
+				}
+				auditLog := srv.AuditLog()
+				clusterRecon = clusterreconciler.New(clusterreconciler.Deps{
+					CMStore: prCMStore,
+					GitProvider: func() gitprovider.GitProvider {
+						gp, err := connSvc.GetActiveGitProvider()
+						if err != nil {
+							return nil
+						}
+						return gp
+					},
+					ArgoClient: inClusterK8sClient,
+					// The live resolver, not the boot value: every write
+					// resolves the currently-published provider at use time,
+					// the same generation the check path reads. Wiring
+					// credProvider here directly is the R2-1 bug — a backend
+					// configured after boot would stay invisible to writes
+					// until a restart.
+					Vault:                    srv.ClusterCredentialsProvider,
+					AuditFn:                  auditLog.Add,
+					TickInterval:             clusterreconciler.DefaultTickInterval,
+					ManagedClustersPath:      repoPaths.ManagedClusters,
+					Namespace:                clusterReconNamespace,
+					Branch:                   clusterReconBranch,
+					DefaultRoleARN:           clusterReconRoleARN,
+					DisableConnectivityCheck: connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")),
+					ProbeModeFn:              probeModeFn,
+					SelfHealFn:               selfHealFn,
+					EventRecorder:            eventRecorder,
+				})
+				// Wire the trigger onto the Server BEFORE Start() so the
+				// first request to the per-request orchestrator helper
+				// (attachPRTracker) immediately sees the nudge fn — no
+				// startup race.
+				srv.SetReconcilerTrigger(clusterRecon.Trigger)
+				// The read-only check the UI's Refresh drives (P1-A A2) —
+				// a separate nudge from the write trigger above, so a
+				// button labelled "check" can never start a pass that
+				// writes.
+				srv.SetReconcilerCheckTrigger(clusterRecon.TriggerCheck)
+				// Read side of V2-cleanup-89.4: lets the cluster read model
+				// project each cluster's last reconcile outcome and lets
+				// handleReconcileCluster tell "reconciler not wired" apart
+				// from "trigger accepted".
+				srv.SetClusterReconciler(clusterRecon)
+				clusterRecon.Start(context.Background())
+				// Server-lifetime: shutdown is signal-driven via Stop().
+				// http.ListenAndServe blocks the goroutine until the
+				// process exits, so the defer fires on shutdown.
+				defer clusterRecon.Stop()
+				slog.Info("cluster reconciler started",
+					"namespace", clusterReconNamespace,
+					"branch", clusterReconBranch,
+					"tick_interval", clusterreconciler.DefaultTickInterval,
+					"managed_clusters_path", repoPaths.ManagedClusters,
+				)
+
+				// W3-3: the slow background credential check. Runs the SAME
+				// read-only comparison the connection page's Check-again
+				// button drives, per managed cluster, on its own slow
+				// interval — deliberately NOT on the reconciler's 30-second
+				// tick, which must never read the credentials backend (see
+				// internal/clusterreconciler/connection_drift_notice.go).
+				// It detects only; repair stays an admin's click.
+				credCheckIntervalStr := getEnvDefault("SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL", "15m")
+				credCheckInterval, credCheckParseErr := time.ParseDuration(credCheckIntervalStr)
+				if credCheckParseErr != nil {
+					credCheckInterval = api.DefaultConnectionCredentialCheckInterval
+					warnUnreadableSetting("SHARKO_CONNECTION_CREDENTIAL_CHECK_INTERVAL", credCheckInterval)
+				}
+				credCheckLoop := api.NewConnectionCredentialCheckLoop(srv, credCheckInterval)
+				credCheckLoop.Start(context.Background())
+				defer credCheckLoop.Stop()
+				slog.Info("connection credential check loop started", "interval", credCheckInterval)
+			} else {
+				if prCMStore == nil {
+					slog.Info("cluster reconciler skipped: no ConfigMap store (out-of-cluster or k8s client failure)")
+				} else if inClusterK8sClient == nil {
+					slog.Info("cluster reconciler skipped: no in-cluster k8s client")
+				}
+			}
+
+			// V3 C1: periodic settings reclaim goroutine (60s default)
+			// — reclaims runtime API edits on git-declared keys so git wins.
+			// Only when settingsStore is wired (in-cluster). Mirrors
+			// prtracker/clusterreconciler shape: sync.Once Start + ticker.
+			if settingsStore != nil {
+				settingsReclaimInterval := 60 * time.Second
+				if envInterval := os.Getenv("SHARKO_SETTINGS_RECONCILE_INTERVAL"); envInterval != "" {
+					if parsed, err := time.ParseDuration(envInterval); err == nil {
+						settingsReclaimInterval = parsed
+					} else {
+						warnUnreadableSetting("SHARKO_SETTINGS_RECONCILE_INTERVAL", settingsReclaimInterval)
+					}
+				}
+
+				var settingsReclaimOnce sync.Once
+				var settingsReclaimStop chan struct{}
+				settingsReclaimStop = make(chan struct{})
+				defer close(settingsReclaimStop)
+
+				settingsReclaimOnce.Do(func() {
+					go func() {
+						ticker := time.NewTicker(settingsReclaimInterval)
+						defer ticker.Stop()
+						for {
+							select {
+							case <-ticker.C:
+								if err := settingsStore.Reconcile(context.Background()); err != nil {
+									slog.Warn("settings reclaim tick failed", "error", err)
+								}
+								// V3 C2: reclaim runtime edits to git-declared
+								// non-secret connection fields (git wins). The
+								// field-level merge preserves encrypted secret
+								// material; when it changes the stored connection
+								// we re-run ReinitializeFromConnection so live
+								// providers/gitops config pick up the merged value.
+								//
+								// This mutates `store` directly, bypassing
+								// connSvc — so it also bypasses connSvc's perf S1
+								// active-connection cache (cached ArgoCD
+								// client/Git provider). Invalidate explicitly on
+								// a change, or every in-flight request would keep
+								// getting the pre-reclaim ArgoCD client/token
+								// until something else happened to invalidate it.
+								if changed, err := config.ReconcileConnectionFromEnv(store); err != nil {
+									slog.Warn("connection reclaim tick failed", "error", err)
+								} else if changed {
+									connSvc.InvalidateActiveCache()
+									srv.ReinitializeFromConnection()
+								}
+							case <-settingsReclaimStop:
+								slog.Info("settings reclaim goroutine stopped")
+								return
+							}
+						}
+					}()
+				})
+
+				slog.Info("settings reclaim goroutine started", "interval", settingsReclaimInterval)
+			}
+
+			if prCMStore != nil {
+				auditLog := srv.AuditLog()
+				gitProviderFn := func() prtracker.GitProvider {
+					gp, err := connSvc.GetActiveGitProvider()
+					if err != nil {
+						return nil
+					}
+					return gp
+				}
+
+				prTracker := prtracker.NewTracker(prCMStore, gitProviderFn, func(e audit.Entry) {
+					auditLog.Add(e)
+				})
+
+				// Post-merge fan-out: PR merge triggers the canonical
+				// cluster-Secret reconciler, the addon-secrets reconciler,
+				// and the auto-remediator.
+				//   - clusterRecon.Trigger(): low-latency convergence (sub-5s)
+				//     after a managed-clusters.yaml PR merge. Idempotent +
+				//     lock-free Trigger() means it is safe to call even
+				//     when no reconciler is wired (the buffered-1 channel
+				//     drops the redundant nudge).
+				//   - secretRecon.Trigger(): same idea, for addon secrets.
+				//     Without this, a freshly-enabled addon's secret waits
+				//     up to SHARKO_SECRET_RECONCILE_INTERVAL (5m default)
+				//     for the next timer tick before it lands on the remote
+				//     cluster — the merge already told us the enable
+				//     happened, so there's no reason to wait. The 5-minute
+				//     timer stays as the drift-catching backstop; this is
+				//     only the fast path. Fired on every merge, same as
+				//     clusterRecon — the reconciler's own per-addon/per-
+				//     cluster hash check makes an unrelated-operation nudge
+				//     a no-op read, not a wasted write.
+				//   - remediator.OnMerge(): auto-terminates stale failing
+				//     ArgoCD sync ops caused by the merged change.
+				//
+				// The legacy argosecrets.Reconciler trigger was removed;
+				// clusterRecon is the sole writer of ArgoCD cluster Secrets.
+
+				// Build the auto-remediator. It only acts when an active
+				// ArgoCD connection exists at merge time (lazy lookup via
+				// connSvc so the wiring works even when ArgoCD is configured
+				// after startup).
+				var remediator *remediation.Remediator
+				if remediation.IsAutoRemediateEnabled(getEnvDefault("SHARKO_AUTO_REMEDIATE", "true")) {
+					remediator = remediation.New(remediation.Deps{
+						ArgoClient: &remediation.LazyArgoClient{ConnSvc: connSvc},
+						AuditFn: func(e audit.Entry) {
+							auditLog.Add(e)
+						},
+					})
+					slog.Info("auto-remediation enabled (SHARKO_AUTO_REMEDIATE)")
+				} else {
+					slog.Info("auto-remediation disabled via SHARKO_AUTO_REMEDIATE")
+				}
+
+				prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+					// perf M1: a merged PR just changed what dashboard
+					// stats/clusters list/fleet status/catalog/version
+					// matrix/observability overview report. This callback
+					// fires from the PR tracker's background poll loop, not
+					// an HTTP request, so auditMiddleware's invalidation net
+					// can't see it — invalidate explicitly.
+					srv.InvalidateReadCache()
+					triggerMergeReconcilers(clusterRecon, secretRecon)
+					// The second half of a v3 → v4 migration: retire the old
+					// ApplicationSets and start the engine in their place.
+					// Nothing else does this, so without it a merged
+					// migration leaves a repo in the new format with no
+					// engine running (v4 Wave 2 review finding H-2). Ignored
+					// for every other operation, and safe to call twice.
+					go srv.CompleteMigrationHandoffOnMerge(context.Background(), pr.Operation)
+					if remediator != nil {
+						go remediator.OnMerge(pr)
+						// Refresh ArgoCD immediately after the merge so it picks up
+						// the new config without waiting for its git-poll cycle.
+						go remediator.OnMergeRefresh(context.Background(), pr)
+					}
+				})
+
+				// Record every completed change (merged OR closed) into the
+				// durable change-log store BEFORE prtracker drops the PR from
+				// tracking (V2-cleanup-84.1). This fires for both terminal
+				// states, unlike SetOnMergeFn above which only fires on
+				// merge — a rejected/abandoned change belongs in the log too.
+				prTracker.SetOnCompleteFn(func(pr prtracker.PRInfo, status string) {
+					srv.ChangeLogStore().Record(changelog.Entry{
+						Operation:   changelog.PrettyOperation(pr.Operation),
+						Addon:       pr.Addon,
+						Cluster:     pr.Cluster,
+						PRID:        pr.PRID,
+						PRUrl:       pr.PRUrl,
+						OpenedAt:    pr.CreatedAt,
+						CompletedAt: time.Now(),
+						Status:      status,
+					})
+				})
+
+				srv.SetPRTracker(prTracker)
+				prTracker.ReconcileOnStartup(context.Background())
+				prTracker.Start(context.Background())
+				defer prTracker.Stop()
+				slog.Info("pr tracker started")
+			}
+
+		}
+
+		// AI config persistence (K8s mode — encrypted Secret)
+		if mode == platform.ModeKubernetes {
+			encKey := os.Getenv("SHARKO_ENCRYPTION_KEY")
+			namespace := os.Getenv("SHARKO_NAMESPACE")
+			if namespace == "" {
+				namespace = "sharko"
+			}
+			if encKey != "" {
+				aiStore, err := config.NewAIConfigStore(namespace, encKey)
+				if err != nil {
+					slog.Warn("could not create ai config store", "error", err)
+				} else {
+					srv.SetAIConfigStore(aiStore)
+					// Load persisted AI config (UI-set values override env vars)
+					if savedJSON, err := aiStore.LoadJSON(); err != nil {
+						slog.Warn("could not load ai config", "error", err)
+					} else if savedJSON != nil {
+						var savedCfg ai.Config
+						if err := json.Unmarshal(savedJSON, &savedCfg); err != nil {
+							slog.Warn("could not decode ai config", "error", err)
+						} else if savedCfg.Provider != "" {
+							// V3 C2 (C2a): git wins on non-secret AI fields.
+							// Overlay git-declared env fields onto the persisted
+							// blob (provider/model/baseURL/authHeader/maxIterations/
+							// ollama.*), PRESERVING the encrypted APIKey and any
+							// UI-only field (e.g. AnnotateOnSeed). AI_API_KEY is a
+							// secret and is never merged here — it stays in the
+							// encrypted Secret / chart Secret envFrom.
+							mergedCfg, merged := ai.MergeGitNativeFromEnv(savedCfg)
+							aiClient.SetConfig(mergedCfg)
+							if merged {
+								slog.Info("ai config loaded from k8s secret; git-declared non-secret fields applied (git wins)", "provider", mergedCfg.Provider)
+							} else {
+								slog.Info("ai config loaded from k8s secret", "provider", mergedCfg.Provider)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Static files
+		var staticFS fs.FS
+		if staticDir != "" {
+			if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+				staticFS = os.DirFS(staticDir)
+				slog.Info("serving static files", "dir", staticDir)
+			}
+		}
+
+		router := api.NewRouter(srv, staticFS)
+
+		addr := fmt.Sprintf(":%d", port)
+		slog.Info("listening", "addr", addr)
+		// ReadHeaderTimeout guards against Slowloris-style attacks (a client
+		// that opens a connection and trickles headers forever, tying up a
+		// handler goroutine indefinitely). http.ListenAndServe has no such
+		// timeout; an explicit http.Server does.
+		httpServer := &http.Server{Addr: addr, Handler: router, ReadHeaderTimeout: 10 * time.Second}
+		if err := httpServer.ListenAndServe(); err != nil {
+			return fmt.Errorf("server error: %w", err)
+		}
+		return nil
+	},
+}
+
+// triggerMergeReconcilers fires the low-latency nudge on each reconciler
+// that was actually wired for this server run, right after a PR merges. A
+// nil reconciler (not wired — e.g. out-of-cluster mode, or the relevant
+// preconditions were missing at startup) is silently skipped.
+//
+// Extracted out of the SetOnMergeFn closure so the fan-out itself has a
+// direct unit test (serve_test.go) — the earlier shape had this logic
+// inline, so the "does the addon-secrets reconciler actually get nudged on
+// merge" question could only be answered by reading the closure.
+//
+// secretRecon joining clusterRecon here is the fix for "secrets push on
+// enable-merge": before this, an enable-PR merge only nudged the ArgoCD
+// cluster-Secret reconciler, and a freshly-enabled addon's secret waited
+// for the addon-secrets reconciler's own timer (SHARKO_SECRET_RECONCILE_INTERVAL,
+// 5m default) before it landed on the remote cluster. The timer stays as
+// the drift-catching backstop; this is only the fast path.
+func triggerMergeReconcilers(clusterRecon *clusterreconciler.Reconciler, secretRecon *secrets.Reconciler) {
+	if clusterRecon != nil {
+		clusterRecon.Trigger()
+	}
+	if secretRecon != nil {
+		secretRecon.Trigger()
+	}
+}
+
+func getEnvDefault(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// warnUnreadableSetting is the ONE way this file complains about a
+// configuration value it could not use.
+//
+// It names the setting and says what Sharko will use instead. It never
+// carries the value the operator typed, and it takes no parameter that
+// could hold one — there is nowhere to put it.
+//
+// # Why the shape matters more than these four call sites
+//
+// Four startup warnings used to log their own value:
+//
+//	slog.Warn("invalid SHARKO_SETTINGS_RECONCILE_INTERVAL, using default 60s", "value", envInterval)
+//	slog.Warn("invalid connection check interval, using 60s", "interval", connCheckInterval)
+//	slog.Warn("invalid connection credential check interval, using 15m", "interval", credCheckIntervalStr)
+//	slog.Warn("invalid reconcile interval, using 5m", "interval", reconcileInterval)
+//
+// All four hold a duration, so nothing secret leaked. That is not the
+// point. A rule that holds only for the settings somebody remembered to
+// mark secret is not a rule, and the next warning added by copying one
+// of these lines will be copied whole — attribute included. The way to
+// stop that is to leave no line worth copying: the value never reaches
+// a signature, so it cannot reach a log.
+//
+// The fourth one is the argument for the source guard in
+// serve_setting_warning_test.go rather than a runtime test. Three were
+// reported; the guard read the file and found the fourth, on a branch no
+// test drives.
+//
+// Three of the four did not even name their setting — "invalid connection
+// check interval" left an operator grepping for which variable to fix.
+// Naming it is the half of the message that was actually useful.
+func warnUnreadableSetting(setting string, using time.Duration) {
+	slog.Warn("configuration setting could not be read, using the default instead",
+		"setting", setting,
+		"using", using.String())
+}
+
+// connectivityCheckDisabled returns true when the caller should DISABLE the
+// connectivity-check feature. The feature is on by default; the operator
+// opts out by setting SHARKO_CONNECTIVITY_CHECK=false or
+// SHARKO_CONNECTIVITY_CHECK=0. Any other value (including the default "true"
+// and empty string) leaves the feature on.
+func connectivityCheckDisabled(val string) bool {
+	return strings.EqualFold(val, "false") || val == "0"
+}
+
+// getConnectionGitOps returns the GitOpsSettings from the active connection, or nil if not set.
+func getConnectionGitOps(connSvc *service.ConnectionService) *models.GitOpsSettings {
+	conn, err := connSvc.GetActiveConnection()
+	if err != nil || conn == nil {
+		return nil
+	}
+	return conn.GitOps
+}
+
+// loadSecretsEnv loads KEY=VALUE pairs from secrets.env into the environment.
+// Lines starting with # and empty lines are skipped. Does not override existing env vars.
+//
+// # The hole this closes
+//
+// envreg.ValidateEnvironment walks the environment at the top of serve,
+// and this function runs eighty-odd lines later and calls os.Setenv. A
+// SHARKO_ name that arrived through this file was therefore never seen
+// by that rule at all: put the misspelling in secrets.env instead of in
+// the Pod and the rule was gone. So every SHARKO_ key is checked HERE,
+// as it is read, against the same registry and by the same function.
+//
+// Keys are checked whether or not the value is actually set. A line the
+// file only fails to apply because the name is already exported is
+// still a line telling the reader that setting exists; if the name is a
+// misspelling, saying so is the point.
+//
+// The error names the file, the line and the key, and never the value —
+// this is the secrets file.
+func loadSecretsEnv(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil // file doesn't exist, that's fine
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	count := 0
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		// Remove surrounding quotes if present
+		if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
+			value = value[1 : len(value)-1]
+		}
+		if checkErr := envreg.CheckSetting(key, value); checkErr != nil {
+			return fmt.Errorf("%s line %d: %w", path, lineNo, checkErr)
+		}
+		// Don't override existing env vars
+		if os.Getenv(key) == "" {
+			os.Setenv(key, value)
+			count++
+		}
+	}
+	if count > 0 {
+		slog.Info("loaded secrets from file", "count", count, "path", path)
+	}
+	return nil
+}

@@ -1,0 +1,579 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
+)
+
+// secret_resource.go — "show me the actual Secret, as it is on the cluster
+// right now, read-only" (S3, Managed Secrets page). Two endpoints, one for
+// each kind of secret Sharko manages:
+//
+//   - GET /clusters/{name}/secret/resource
+//     the cluster's ArgoCD connection Secret, read from the HUB's argocd
+//     namespace (the same client + namespace the cluster reconciler uses).
+//   - GET /clusters/{name}/addons/{addon}/secret/resource
+//     one addon-values Secret, read from the REMOTE cluster it was pushed
+//     to, over that cluster's own credentials.
+//
+// COST (S5) — READ THIS BEFORE "OPTIMISING" ANYTHING HERE.
+//
+// Each call is one live round trip to a cluster: fetch credentials, build a
+// throwaway client, GET one Secret, throw the client away. That is fine
+// because it happens ON A CLICK and only on a click. It must NEVER be:
+//   - called while the Managed Secrets list renders (the list is built
+//     entirely from data the server already has — see
+//     system_managed_secrets.go's own header, which says the same thing),
+//   - put on a timer, prefetched, or warmed,
+//   - fanned out over the row set ("just load them all so the panel is
+//     instant"). At 50 clusters x 10 addons that is 500 remote calls per
+//     page view.
+// If a future change needs many of these at once, that is a new design
+// decision with a new shape (a batched, server-paced endpoint), not a loop
+// around this handler.
+//
+// SECURITY (S4) — the whole point of this file.
+//
+// A Secret's VALUES never leave the server. Blanking is not a UI concern
+// and is not done by the browser: newSecretResourceView below builds the
+// response from a *corev1.Secret and copies ONLY key names out of
+// .Data/.StringData, pairing each with the fixed blankedValue mask. The
+// real bytes are never read, never measured, never hashed, never logged.
+// The mask is a constant — it does not depend on the value in any way, so
+// it cannot leak a length. ArgoCD's own resource view does exactly this
+// (a Secret renders with its values replaced by asterisks), so this is a
+// known-safe shape, not a new risk being invented.
+//
+// The same rule now runs through the METADATA too (P3-F2): annotation
+// values are blanked by default and only a short, named list of Sharko's
+// own provenance keys comes through — see annotationsSafeToShow, which
+// also explains why labels are the deliberate exception.
+//
+// AUDIT (P3-F1) — opening a live secret object writes an audit entry.
+// GETs are not audited anywhere else in Sharko and this is not the start
+// of that: it is the one read where a person asks to look at a real
+// Secret. See auditSecretResourceRead.
+
+// blankedValue is what every secret data key's value renders as. A fixed
+// constant on purpose: anything derived from the real value — its length,
+// a prefix, a hash, "(24 bytes)" — is a leak. Eight bullets, always,
+// whatever the value was.
+const blankedValue = "••••••••"
+
+// annotationsSafeToShow is an ALLOW-LIST (P3-F2), and the direction it
+// runs in is the whole point.
+//
+// It used to be a BLOCK-list of exactly one key —
+// kubectl.kubernetes.io/last-applied-configuration, the annotation kubectl
+// writes on every `kubectl apply`, whose value is a serialized copy of the
+// object it sits on and therefore, on a Secret, a copy of the values this
+// file exists to blank. That list was right about the one key it knew
+// about and wrong about every key it didn't: an annotation is free-form
+// text a human or a controller can put anything into, and "show it unless
+// we already thought of it" means the FIRST tool that writes a value into
+// an annotation wins, silently, in production, before anyone adds it to
+// the list.
+//
+// So: every annotation value is blanked, and only these keys pass. They
+// are all written by Sharko itself, they are all "where and when", and
+// there is no code path in this repo that can put a secret value in one —
+// see connectionProvenanceAnnotations and ValuesProvenanceAnnotations,
+// both of which take only a path, a commit, an addon name, a store NAME,
+// and a timestamp.
+//
+// The KEY is always shown, whether or not the value passes: an operator
+// should know an annotation is there, and a hidden key would be its own
+// small lie. Adding a key here is a security decision — the question to
+// answer is not "is this useful to see" but "can anything ever write a
+// secret into this key".
+//
+// (clusterreconciler.AnnotationWrittenAt and remoteclient.AnnotationWrittenAt
+// are the same key — both engines stamp sharko.dev/written-at — so it is
+// listed once, from the connection side, rather than twice.)
+var annotationsSafeToShow = map[string]bool{
+	// Connection secrets (internal/clusterreconciler/revision.go).
+	clusterreconciler.AnnotationSourceFile: true,
+	clusterreconciler.AnnotationRevision:   true,
+	clusterreconciler.AnnotationWrittenAt:  true,
+	// Addon-values secrets (internal/remoteclient/secrets.go).
+	remoteclient.AnnotationAddon:  true,
+	remoteclient.AnnotationSource: true,
+}
+
+// secretResourceKeyView is one data key of the live Secret. Value is
+// ALWAYS blankedValue — the field exists so the response states plainly
+// that the server blanked it, not so a future change has somewhere to put
+// the real thing. There is no code path in this package that assigns
+// anything else to it.
+type secretResourceKeyView struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// Path (P2-C2) is the secrets-store POINTER this key's value comes
+	// from — a location, not a value; safe to show (the whole point of
+	// this endpoint's own header comment: Sharko may describe the
+	// delivery, never the secret). Populated ONLY on the addon-values
+	// live-read response (handleGetAddonValuesSecretResource), which is
+	// already behind the operator-gated secret.resource.read action — NEVER
+	// on the list endpoint (buildAddonValuesSecretRows), which any logged-in
+	// user can reach. Empty on the connection-secret live-read response,
+	// which has no per-key store-pointer concept — a connection secret's
+	// desired state lives at one FILE path, already carried on the row
+	// (connectionSecretRow.ComparedPath), not per-key.
+	Path string `json:"path,omitempty"`
+	// Present (P3-F2) reports whether this key is actually on the live
+	// Secret right now. False means the key is DECLARED — the addon's
+	// catalog definition says its value comes from a store path — but the
+	// Secret on the cluster does not have it.
+	//
+	// This is the only per-key verdict this response is allowed to carry,
+	// and it is deliberately about EXISTENCE, never about content: the two
+	// engines compare whole secrets, so "does key X match its source" is a
+	// question nothing in Sharko has actually asked, and answering it here
+	// would be inventing a fact. Present/absent, and nothing else.
+	Present bool `json:"present"`
+}
+
+// secretResourceLabelView is one label or annotation, as a sorted list
+// rather than a map so the panel renders in a stable order.
+type secretResourceLabelView struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// Blanked is true when Value is the mask rather than the real text.
+	// On annotations that is now the DEFAULT (P3-F2): every annotation
+	// value is masked except the handful of Sharko-written provenance keys
+	// in annotationsSafeToShow. On labels it is never set — see
+	// newSecretResourceView for why labels are shown in full.
+	Blanked bool `json:"blanked,omitempty"`
+}
+
+// secretResourceView is the response body for both endpoints: the live
+// Secret as ArgoCD would show it, with every value blanked.
+type secretResourceView struct {
+	Kind       string `json:"kind"`        // always "Secret"
+	APIVersion string `json:"api_version"` // always "v1"
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	// SecretType is the Kubernetes Secret type ("Opaque",
+	// "kubernetes.io/tls", ...) — metadata, never content.
+	SecretType string `json:"secret_type,omitempty"`
+	// CreatedAt is the object's creationTimestamp in RFC3339, "" when the
+	// cluster did not set one. The UI turns this into an age.
+	CreatedAt   string                    `json:"created_at,omitempty"`
+	Labels      []secretResourceLabelView `json:"labels"`
+	Annotations []secretResourceLabelView `json:"annotations"`
+	DataKeys    []secretResourceKeyView   `json:"data_keys"`
+	// ReadFrom is a plain sentence naming where this object was read from,
+	// so the panel never leaves a reader guessing which cluster they are
+	// looking at.
+	ReadFrom string `json:"read_from"`
+	// ValuesBlanked is always true. It is in the body so the contract is
+	// visible to anyone reading the API, not only to anyone reading this
+	// file.
+	ValuesBlanked bool `json:"values_blanked"`
+}
+
+// newSecretResourceView is THE blanking point. Every response body both
+// handlers below return is built here, from a *corev1.Secret, and this
+// function never reads sec.Data[k] or sec.StringData[k] — only their key
+// names. Nothing downstream of here has access to the live object, so
+// there is no second place a value could escape from.
+//
+// keyPaths (P2-C2) is the per-key secrets-store pointer map (data key →
+// provider path, e.g. models.AddonSecretRef.Keys) — nil for the connection
+// endpoint, def.Keys for the addon-values endpoint. A key with no entry in
+// keyPaths simply gets an empty Path, same as before this parameter
+// existed.
+func newSecretResourceView(sec *corev1.Secret, readFrom string, keyPaths map[string]string) secretResourceView {
+	view := secretResourceView{
+		Kind:          "Secret",
+		APIVersion:    "v1",
+		Name:          sec.Name,
+		Namespace:     sec.Namespace,
+		SecretType:    string(sec.Type),
+		Labels:        []secretResourceLabelView{},
+		Annotations:   []secretResourceLabelView{},
+		DataKeys:      []secretResourceKeyView{},
+		ReadFrom:      readFrom,
+		ValuesBlanked: true,
+	}
+	if !sec.CreationTimestamp.IsZero() {
+		view.CreatedAt = sec.CreationTimestamp.UTC().Format(time.RFC3339)
+	}
+
+	// Labels are shown IN FULL, and that stayed a deliberate choice when
+	// the annotations flipped to an allow-list (P3-F2). The reasoning is
+	// not "labels feel safer" — it is that a label is a different kind of
+	// field from an annotation:
+	//
+	//   - Kubernetes constrains a label VALUE to at most 63 characters of
+	//     [A-Za-z0-9] with -_. in the middle. A base64 blob, a PEM block, a
+	//     kubeconfig, a serialized copy of the object — none of them fit or
+	//     validate. Annotations have no such limit, which is exactly why
+	//     kubectl puts a whole object in one.
+	//   - On a cluster connection Secret the addon labels ARE the useful
+	//     content: they decide which addons run on that cluster. Blanking
+	//     them would gut the reason this panel exists, to defend against a
+	//     shape Kubernetes will not store.
+	//
+	// A short token could in principle be pasted into a label by hand, and
+	// that residual risk is accepted knowingly. If that ever stops being
+	// acceptable, the fix is the same allow-list shape used for annotations
+	// below — not a second, softer rule.
+	for _, k := range sortedKeys(sec.Labels) {
+		view.Labels = append(view.Labels, secretResourceLabelView{Key: k, Value: sec.Labels[k]})
+	}
+
+	// Annotations: blank by default, show only the allow-listed provenance
+	// keys. See annotationsSafeToShow for why the list runs this way round.
+	for _, k := range sortedKeys(sec.Annotations) {
+		if annotationsSafeToShow[k] {
+			view.Annotations = append(view.Annotations, secretResourceLabelView{Key: k, Value: sec.Annotations[k]})
+			continue
+		}
+		view.Annotations = append(view.Annotations, secretResourceLabelView{
+			Key: k, Value: blankedValue, Blanked: true,
+		})
+	}
+
+	// Key NAMES only. Both maps are walked because StringData is a valid
+	// place for a key name to appear on an object handed to us; the value
+	// side of either map is never touched.
+	//
+	// P3-F2: the DECLARED keys (keyPaths — the addon's catalog definition)
+	// are folded in too, so a key the definition declares but the live
+	// Secret does not have shows up as present=false instead of silently
+	// vanishing from the list. That is the one thing an operator staring at
+	// a half-written secret needs to see, and it costs nothing: keyPaths is
+	// a map of key name -> store PATH, no value anywhere near it.
+	names := make(map[string]struct{}, len(sec.Data)+len(sec.StringData))
+	for k := range sec.Data {
+		names[k] = struct{}{}
+	}
+	for k := range sec.StringData {
+		names[k] = struct{}{}
+	}
+	keys := make([]string, 0, len(names)+len(keyPaths))
+	for k := range names {
+		keys = append(keys, k)
+	}
+	for k := range keyPaths {
+		if _, onCluster := names[k]; !onCluster {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		_, present := names[k]
+		view.DataKeys = append(view.DataKeys, secretResourceKeyView{
+			Key:     k,
+			Value:   blankedValue,
+			Path:    keyPaths[k],
+			Present: present,
+		})
+	}
+
+	return view
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// readFailureSentence maps a failed live read to ONE safe, pre-written
+// sentence. Same choice addonValuesSecretCheckFailureSentence already
+// makes for the reconciler's own errors, and for the same reason: the
+// error we are handed can wrap text from a credentials provider SDK, and
+// this project has already had a near-miss where provider error text was
+// about to be rendered straight back to a browser. Categorise by WHICH
+// STEP failed — never render the error's own text — and there is nothing
+// for a misbehaving SDK to smuggle out.
+//
+// A failure never falls back to stale or invented content: the handler
+// returns this sentence and no view at all.
+func readFailureSentence(step string, cluster string, err error) (int, string) {
+	switch {
+	case apierrors.IsNotFound(err):
+		return http.StatusNotFound, fmt.Sprintf("This secret does not exist on cluster %q right now.", cluster)
+	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
+		return http.StatusBadGateway, fmt.Sprintf("Sharko is not allowed to read this secret on cluster %q.", cluster)
+	}
+	switch step {
+	case "credentials":
+		return http.StatusBadGateway, fmt.Sprintf("Sharko couldn't get credentials for cluster %q.", cluster)
+	case "connect":
+		return http.StatusBadGateway, fmt.Sprintf("Sharko couldn't connect to cluster %q.", cluster)
+	default:
+		return http.StatusBadGateway, fmt.Sprintf("Sharko couldn't read this secret from cluster %q.", cluster)
+	}
+}
+
+// logReadFailure records that a read failed, with the step that failed and
+// the object it was for — and NOT the error's own text. Same reasoning as
+// readFailureSentence: the wrapped error can carry provider SDK text, and
+// a log line is a place that text would be kept. The step name plus the
+// cluster/namespace/name is enough to find the matching entry in the
+// credentials provider's or the cluster's own logs.
+func logReadFailure(step, cluster, namespace, name string) {
+	slog.Warn("[secret-resource] could not read the live secret",
+		"step", step, "cluster", cluster, "namespace", namespace, "secret", name)
+}
+
+// auditSecretResourceRead records that somebody opened a live secret
+// object (P3-F1).
+//
+// WHY THIS IS A DIRECT Add AND NOT audit.Enrich. auditMiddleware skips
+// GET/HEAD/OPTIONS outright, so there is no enrichment slot on a read
+// request's context and audit.Enrich would be a silent no-op. This writes
+// its own entry instead.
+//
+// WHY ONLY HERE. "Every GET is audited" is a different product with a
+// different cost — the ring holds ~1000 entries and a page of rows would
+// flush it. These two endpoints are the exception because of what they
+// are: the only place in Sharko where a person asks to look at a live
+// Secret object. Opening one is worth a line in the log even though it
+// changes nothing. Do NOT generalise this into middleware.
+//
+// The entry never names a data key, a store path, or anything read off the
+// object — the cluster (and addon) is the whole record, which is exactly
+// the "Sharko may describe the delivery, never the secret" rule applied to
+// the audit log itself. result is "success" when the object was returned
+// and "failure" when the read did not produce one, so an operator can see
+// a run of refused or failing reads.
+func (s *Server) auditSecretResourceRead(r *http.Request, resource, detail, result string) {
+	if s == nil || s.auditLog == nil {
+		return
+	}
+	user := r.Header.Get("X-Sharko-User")
+	if user == "" {
+		user = "anonymous"
+	}
+	level := "info"
+	if result != "success" {
+		level = "warn"
+	}
+	s.auditLog.Add(audit.Entry{
+		Timestamp: time.Now().UTC(),
+		Level:     level,
+		Event:     "secret_resource_read",
+		User:      user,
+		Action:    "read",
+		Resource:  resource,
+		Source:    detectSource(r),
+		Result:    result,
+		Detail:    detail,
+		RequestID: logging.RequestID(r.Context()),
+	})
+}
+
+// remoteClientForCluster resolves a read-only Kubernetes client for one
+// registered cluster: fetch its credentials, build a throwaway client,
+// hand it back. The caller discards it after one Get — no persistent
+// connection, the same connect/operate/disconnect shape
+// internal/remoteclient has always used.
+//
+// Demo mode replaces this whole function via SetDemoRemoteClusterClient
+// (there are no real clusters there, and a real dial against a fake
+// kubeconfig would just hang until the 30s client timeout).
+func (s *Server) remoteClientForCluster(ctx context.Context, cluster string) (kubernetes.Interface, string, error) {
+	if fn := s.demoRemoteClusterClientFn; fn != nil {
+		client, err := fn(ctx, cluster)
+		return client, "connect", err
+	}
+	if s.credProvider() == nil {
+		return nil, "credentials", fmt.Errorf("no credentials provider configured")
+	}
+	creds, err := s.fetchClusterCredentials(ctx, cluster)
+	if err != nil {
+		return nil, "credentials", err
+	}
+	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
+	if err != nil {
+		return nil, "connect", err
+	}
+	return client, "", nil
+}
+
+// handleGetConnectionSecretResource godoc
+//
+// @Summary Read the live cluster connection Secret, values blanked
+// @Description Reads the named cluster's ArgoCD connection Secret from the hub's argocd namespace as it is right now, and returns it for display: kind, name, namespace, labels, annotations, age, secret type, and the data KEY NAMES with every value blanked server-side. The addon labels are shown in full — they are not secret and they are what decides which addons run on that cluster. Values never reach the browser: the response is built from key names only (see internal/api/secret_resource.go). One live read per call, on click only — never while a list renders, never on a timer, never fanned out.
+// @Tags secrets
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Success 200 {object} secretResourceView "The live Secret, values blanked"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — requires operator role or higher"
+// @Failure 404 {object} map[string]interface{} "This secret does not exist right now"
+// @Failure 502 {object} map[string]interface{} "Sharko could not read the secret"
+// @Failure 503 {object} map[string]interface{} "Sharko has no Kubernetes client for its own cluster on this server"
+// @Router /clusters/{name}/secret/resource [get]
+func (s *Server) handleGetConnectionSecretResource(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "secret.resource.read") {
+		return
+	}
+
+	cluster := r.PathValue("name")
+	if cluster == "" {
+		writeError(w, http.StatusBadRequest, "cluster name is required")
+		return
+	}
+
+	client, ns, ok := s.k8sClientAndNamespace()
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable,
+			"Sharko is not connected to its own cluster on this server, so it cannot read this secret.")
+		return
+	}
+
+	// The connection Secret's name always equals the cluster's name — the
+	// same deterministic fact buildConnectionSecretRows uses to fill in the
+	// row this panel opened from.
+	resource := fmt.Sprintf("cluster:%s", cluster)
+
+	sec, err := client.CoreV1().Secrets(ns).Get(r.Context(), cluster, metav1.GetOptions{})
+	if err != nil {
+		logReadFailure("get", cluster, ns, cluster)
+		status, msg := readFailureSentence("get", cluster, err)
+		s.auditSecretResourceRead(r, resource, "opened the live cluster connection secret", "failure")
+		writeError(w, status, msg)
+		return
+	}
+
+	s.auditSecretResourceRead(r, resource, "opened the live cluster connection secret", "success")
+
+	// A connection secret has no per-key store pointer — its desired state
+	// lives at one FILE path, already on the row (P2-C1's ComparedPath) —
+	// so keyPaths is nil here (P2-C2).
+	writeJSON(w, http.StatusOK, newSecretResourceView(sec,
+		fmt.Sprintf("Sharko's own cluster, namespace %q", ns), nil))
+}
+
+// handleGetAddonValuesSecretResource godoc
+//
+// @Summary Read the live addon values Secret on a cluster, values blanked
+// @Description Reads one addon's values Secret from the remote cluster it was pushed to, as it is right now, and returns it for display: kind, name, namespace, labels, annotations, age, secret type, and the data KEY NAMES with every value blanked server-side. Values never reach the browser: the response is built from key names only (see internal/api/secret_resource.go). One live read per call, on click only — never while a list renders, never on a timer, never fanned out.
+// @Tags secrets
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Param addon path string true "Addon name"
+// @Success 200 {object} secretResourceView "The live Secret, values blanked"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden — requires operator role or higher"
+// @Failure 404 {object} map[string]interface{} "No values secret is defined for this addon, or it does not exist on the cluster right now"
+// @Failure 502 {object} map[string]interface{} "Sharko could not read the secret"
+// @Router /clusters/{name}/addons/{addon}/secret/resource [get]
+func (s *Server) handleGetAddonValuesSecretResource(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "secret.resource.read") {
+		return
+	}
+
+	cluster := r.PathValue("name")
+	addon := r.PathValue("addon")
+	if cluster == "" || addon == "" {
+		writeError(w, http.StatusBadRequest, "cluster name and addon name are required")
+		return
+	}
+
+	// Where the Secret lives comes from the same registered definition the
+	// row itself was built from (buildAddonValuesSecretRows) — one source
+	// of truth for "which Secret is this row about".
+	s.addonSecretDefsMu.RLock()
+	def, defined := s.addonSecretDefs[addon]
+	s.addonSecretDefsMu.RUnlock()
+	if !defined || def.SecretName == "" || def.Namespace == "" {
+		writeError(w, http.StatusNotFound,
+			fmt.Sprintf("Sharko has no values secret defined for addon %q, so there is nothing to show.", addon))
+		return
+	}
+
+	resource := fmt.Sprintf("cluster:%s/addon:%s", cluster, addon)
+	const readDetail = "opened the live addon values secret"
+
+	client, step, err := s.remoteClientForCluster(r.Context(), cluster)
+	if err != nil {
+		logReadFailure(step, cluster, def.Namespace, def.SecretName)
+		status, msg := readFailureSentence(step, cluster, err)
+		s.auditSecretResourceRead(r, resource, readDetail, "failure")
+		writeError(w, status, msg)
+		return
+	}
+
+	sec, err := client.CoreV1().Secrets(def.Namespace).Get(r.Context(), def.SecretName, metav1.GetOptions{})
+	if err != nil {
+		logReadFailure("get", cluster, def.Namespace, def.SecretName)
+		status, msg := readFailureSentence("get", cluster, err)
+		s.auditSecretResourceRead(r, resource, readDetail, "failure")
+		writeError(w, status, msg)
+		return
+	}
+
+	s.auditSecretResourceRead(r, resource, readDetail, "success")
+
+	// P2-C2: the per-key store pointer list — key name -> provider path.
+	// This is the ONE place it ever ships: this endpoint is already
+	// operator-gated (secret.resource.read, checked at the top of this
+	// handler), unlike the list endpoint any logged-in user can reach.
+	writeJSON(w, http.StatusOK, newSecretResourceView(sec,
+		fmt.Sprintf("cluster %q, namespace %q", cluster, def.Namespace), def.Keys))
+}
+
+// secretResourceViewHasNoValue is a belt-and-braces assertion used by the
+// tests in secret_resource_test.go: it reports the first field of a built
+// view that carries anything other than the fixed mask where a value would
+// be. Kept in non-test code on purpose — a reviewer reading this file can
+// see exactly what "no value escapes" is being checked against, and it
+// cannot drift away from the view type it guards.
+func secretResourceViewHasNoValue(view secretResourceView) (field string, ok bool) {
+	for _, k := range view.DataKeys {
+		if k.Value != blankedValue {
+			return "data_keys[" + k.Key + "]", false
+		}
+	}
+	// P3-F2: the check follows the allow-list, so it now catches ANY
+	// annotation that came through unmasked without being on the list —
+	// not just the one key the old block-list knew about.
+	for _, a := range view.Annotations {
+		if !annotationsSafeToShow[a.Key] && a.Value != blankedValue {
+			return "annotations[" + a.Key + "]", false
+		}
+	}
+	if !view.ValuesBlanked {
+		return "values_blanked", false
+	}
+	return "", true
+}
+
+// containsAny is a small helper for the tests' "does this response body
+// contain any of these secret values" sweep. Declared here so the check
+// lives next to the thing it guards.
+func containsAny(haystack string, needles []string) (string, bool) {
+	for _, n := range needles {
+		if n != "" && strings.Contains(haystack, n) {
+			return n, true
+		}
+	}
+	return "", false
+}

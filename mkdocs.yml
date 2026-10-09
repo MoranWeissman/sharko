@@ -1,0 +1,198 @@
+site_name: Sharko - Addon management for Kubernetes clusters
+site_description: Addon management for Kubernetes clusters, built on ArgoCD
+site_url: https://sharko.readthedocs.io/en/latest/
+repo_url: https://github.com/MoranWeissman/sharko
+repo_name: MoranWeissman/sharko
+edit_uri: edit/main/docs/site/
+docs_dir: docs/site
+
+theme:
+  name: material
+  logo: assets/sharko-icon-256.png
+  favicon: assets/sharko-mascot.png
+  palette:
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - content.tabs.link
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - 'Current Limitations and Supported Use': technical-preview.md
+  - Release Notes: release-notes.md
+  - Getting Started:
+    - Quick Start: getting-started/quickstart.md
+    - Installation: getting-started/installation.md
+    - First Run: getting-started/first-run.md
+  - User Guide:
+    - Why Sharko?: user-guide/why-sharko.md
+    - 'Sharko vs. the Alternatives': user-guide/comparison.md
+    - Managing Connections: user-guide/connections.md
+    - Secrets Provider: user-guide/secrets-provider.md
+    - Managing Clusters: user-guide/clusters.md
+    - Drift Detection and Sync: user-guide/drift-and-sync.md
+    - Secrets: user-guide/secret-sync.md
+    - Managing Addons: user-guide/addons.md
+    - Marketplace: user-guide/marketplace.md
+    - Editing Values: user-guide/values-editing.md
+    - Smart Values Layer: user-guide/smart-values.md
+    - Editing Deployment Options: user-guide/argocd-app-options.md
+    - Upgrades: user-guide/upgrades.md
+    - Dashboard: user-guide/dashboard.md
+    - Status Vocabulary: user-guide/status-vocabulary.md
+    - Notifications: user-guide/notifications.md
+    - Verified Signatures: user-guide/verified-signatures.md
+    - Git Attribution: user-guide/attribution.md
+  - Operator Manual:
+    - Installation: operator/installation.md
+    - Configuration: operator/configuration.md
+    - 'Upgrading & Rollback Safety': operator/upgrading-and-rollback.md
+    - 'Taking Over a Fleet That Is Already Running': operator/takeover-playbook.md
+    - 'Migrating a Repo to the New Format': operator/migrating-to-the-new-format.md
+    - 'Migrating Off Pasted (Inline) Credentials': operator/migrate-inline-credentials.md
+    - 'If You Remove Sharko (no lock-in)': operator/removing-sharko.md
+    - 'Managing Cluster Connections Yourself': operator/self-managed-connections.md
+    - 'Reference — Connection Doctor': operator/connection-doctor.md
+    - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
+    - 'Reference — Git-Native Server Configuration (git wins)': operator/git-native-config.md
+    - 'Reference — Gitea Provider': operator/gitea-provider.md
+    - 'Reference — Sharko Events': operator/sharko-events.md
+    - 'Reference — AI Configuration': operator/ai-config.md
+    - 'Reference — Security': operator/security.md
+    - 'Reference — Supply Chain': operator/supply-chain.md
+    - 'Reference — Marketplace Architecture (Catalog vs. Marketplace)': operator/marketplace-architecture.md
+    - 'Reference — Catalog Sources (env vars)': operator/catalog-sources.md
+    - 'Reference — Marketplace Sources (git-native config)': operator/marketplace-sources-config.md
+    - 'Reference — Cluster Connectivity Model': operator/cluster-connectivity-model.md
+    - 'Reference — EKS Hub-and-Spoke Identity (IAM Setup)': operator/eks-hub-and-spoke-identity.md
+    - 'Reference — Activity History (in memory only)': operator/audit-log.md
+    - 'Reference — Perf Baselines': operator/perf-baselines.md
+    - 'Reference — SLOs': operator/slos.md
+    - 'Reference — Metrics, Alerts, and Grafana Dashboard': operator/metrics.md
+    - 'Reference — Metrics Naming': operator/metrics-naming.md
+    - Catalog Trust Policy: operator/catalog-trust-policy.md
+    - 'AWS IAM Cluster Auth — Sharko Identity Needed': operator/aws-iam-cluster-auth.md
+    - Corporate TLS MITM: operator/corporate-mitm-tls.md
+    - Budget-Burn Runbook: operator/budget-burn-runbook.md
+    - Failure Mode Index: operator/failure-mode-index.md
+    - 'P0 Runbook — ArgoCD Upstream Unreachable': operator/argocd-upstream-unreachable.md
+    - 'P0 Runbook — ArgoCD PR Merge No Converge': operator/argocd-pr-merge-no-converge.md
+    - 'P0 Runbook — Auth Bypass': operator/auth-bypass.md
+    - 'P0 Runbook — Catalog Trust Root Unavailable': operator/catalog-trust-root-unavailable.md
+    - 'P0 Runbook — Credential Leak in Logs': operator/credential-leak-in-logs.md
+    - 'P0 Runbook — Git Provider Unreachable': operator/git-provider-unreachable.md
+    - 'P0 Runbook — Init Operation Deadlocked': operator/init-operation-deadlocked.md
+    - 'P0 Runbook — OOM / Restart Loop': operator/oom-restart-loop.md
+    - 'P0 Runbook — Reconciler Crash Loop': operator/reconciler-crash-loop.md
+    - 'P0 Runbook — Secret Push Silently Failed': operator/secret-push-silently-failed.md
+    - 'P0 Runbook — Secrets Provider Unreachable': operator/secrets-provider-unreachable.md
+    - 'P1 Runbook — Addon Application Stuck Degraded': operator/addon-application-stuck-degraded.md
+    - 'P1 Runbook — Adopt: Cluster Entry Write Failed': operator/adopt-cluster-entry-write-failed.md
+    - 'P1 Runbook — Adopt: Managed-By Label Read Failed': operator/adopt-managed-by-label-read-failed.md
+    - 'P1 Runbook — AI Annotation Secret Blocked': operator/ai-annotation-secret-blocked.md
+    - 'P1 Runbook — AI Provider Misconfigured': operator/ai-provider-misconfigured.md
+    - 'P1 Runbook — ArgoCD Account Token Expired': operator/argocd-account-token-expired.md
+    - 'P1 Runbook — ArgoCD Cluster-Secret Corruption': operator/argocd-cluster-secret-corruption.md
+    - 'P1 Runbook — ArgoCD Exec-Plugin Auth (Unknown Commands Only)': operator/argocd-exec-plugin-auth-unsupported.md
+    - 'P1 Runbook — Auto-Merge Failed After PR Opened': operator/auto-merge-failed-after-pr-opened.md
+    - 'P1 Runbook — AWS-SM Search AccessDenied': operator/aws-sm-search-access-denied.md
+    - 'P1 Runbook — AWS-SM Secret Not Found': operator/aws-sm-secret-not-found.md
+    - 'P1 Runbook — Azure / GCP Provider Not Yet Implemented': operator/azure-gcp-provider-unimplemented.md
+    - 'P1 Runbook — Catalog Parse Failure on Startup': operator/catalog-parse-failure-on-startup.md
+    - 'P1 Runbook — Catalog Source HTTP Fetch Failed': operator/catalog-source-http-fetch-failed.md
+    - 'P1 Runbook — Catalog Source Schema Validation Failed': operator/catalog-source-schema-validation-failed.md
+    - 'P1 Runbook — Cluster Reconciler Dependency Missing': operator/cluster-reconciler-dependency-missing.md
+    - 'P1 Runbook — EKS Token Generation Failed': operator/eks-token-generation-failed.md
+    - 'P1 Runbook — Encryption Key Not Configured': operator/encryption-key-not-configured.md
+    - 'P1 Runbook — Git Provider Rate Limited': operator/git-provider-rate-limited.md
+    - 'P1 Runbook — Init Operation Abandoned': operator/init-operation-abandoned.md
+    - 'P1 Runbook — K8s Secrets Not Found in Namespace': operator/k8s-secrets-not-found-in-namespace.md
+    - 'P1 Runbook — Single Cluster Credential Fetch Failed': operator/single-cluster-credential-fetch-failed.md
+    - 'P1 Runbook — Webhook Handler Failures': operator/webhook-handler-failures.md
+    - Troubleshooting: operator/troubleshooting.md
+  - CLI Reference:
+    - Overview: cli/overview.md
+    - Commands: cli/commands.md
+  - API Reference:
+    - Overview: api/overview.md
+    - Endpoints: api/endpoints.md
+    - 'API Walkthrough (do anything the UI does)': api/api-walkthrough.md
+    - 'Full API Reference (OpenAPI)': api/reference.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Repository Structure: architecture/repo-structure.md
+  - Developer Guide:
+    - Overview: developer-guide.md
+    - Developing with AI: developer-guide/developing-with-ai.md
+    - 'Architecture & Design History': developer-guide/design-history.md
+    - 'Security Review History': developer-guide/security-review-history.md
+    - API Stability Contract: developer-guide/api-stability.md
+    - Local Playground: developer-guide/playground.md
+    - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
+    - Catalog Sources Smoke Runbook: developer-guide/catalog-sources-smoke.md
+    - EKS Live-Test Runbook: developer-guide/eks-live-test-runbook.md
+    - Testing Guide: developer-guide/testing-guide.md
+    - End-to-End Testing: developer-guide/e2e-testing.md
+    - Perf Harness: developer-guide/perf-harness.md
+    - Release Checklist: developer-guide/release-checklist.md
+    - Contributor Smoke Walk: developer-guide/contributor-smoke-walk.md
+    - Logging: developer-guide/logging.md
+    - Runbook Style Guide: developer-guide/runbook-style-guide.md
+  - Community:
+    - Roadmap: community/roadmap.md
+    - Contributing a Catalog Entry: community/contributing-catalog-entries.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+# Build hooks (pure-stdlib, no pip dependency). copy_openapi copies the
+# swag-generated docs/swagger/swagger.json (which lives outside docs_dir) into
+# the built site so api/reference.md can render it with Redoc — always in sync,
+# no committed duplicate.
+hooks:
+  - docs/hooks/copy_openapi.py
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      enable_creation_date: false
+      type: date
+      fallback_to_build_date: true

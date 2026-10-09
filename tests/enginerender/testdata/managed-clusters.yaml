@@ -1,0 +1,17 @@
+# Fixture managed-clusters.yaml — ManagedClusters, flat (decision 9), root
+# file name per decision 10 ("fleet" is gone — the word is reserved for
+# Sharko's own server-side Settings → Connections, never the repo). Not read
+# by the engine (design doc section 2.4 — the Sharko server's cluster
+# reconciler reads this, never the engine); included so the fixture is a
+# complete, realistic repo, not just the files the chart touches.
+apiVersion: sharko.dev/v1
+kind: ManagedClusters
+clusters:
+  - name: prod-eu
+    secretPath: k8s-prod-eu
+    region: eu-central-1
+    credsSource: secret-kubeconfig
+  - name: staging-us
+    secretPath: k8s-staging-us
+    region: us-east-1
+    credsSource: secret-kubeconfig

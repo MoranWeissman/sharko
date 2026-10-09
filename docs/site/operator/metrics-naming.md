@@ -1,0 +1,219 @@
+# Metrics naming and exposition
+
+Sharko exposes Prometheus metrics on the unauthenticated `/metrics`
+endpoint of its HTTP listener. This page documents the naming scheme,
+the per-metric inventory for the four SLO surfaces, and the operational
+choices Sharko locked in when it started exporting them.
+
+## Naming scheme
+
+All metric names follow the pattern:
+
+```
+sharko_<surface>_<verb>_<unit>
+```
+
+- `sharko_` namespace — distinguishes Sharko metrics from kube-state,
+  argocd-metrics, or anything else in the cluster's Prometheus.
+- `<surface>` — the SLO path id (`cluster_registration`, `addon_cycle`,
+  `catalog_scan`, `dashboard_read`) or the subsystem (`reconciler`,
+  `api`, `auth`, ...).
+- `<verb>` — what is being measured (`duration`, `errors`, `requests`,
+  ...). The trailing `_total` suffix follows the OpenMetrics convention
+  for monotonically increasing counters.
+- `<unit>` — `seconds` for histograms, omitted for counters (since
+  counts are unitless).
+
+The four SLO surfaces map to three metric families each:
+
+| Path id                | Histogram                                    | Total counter                 | Error counter                        |
+| ---------------------- | -------------------------------------------- | ----------------------------- | ------------------------------------ |
+| `cluster_registration` | `sharko_cluster_registration_duration_seconds` | `sharko_cluster_registration_total` | `sharko_cluster_registration_errors_total` |
+| `addon_cycle`          | `sharko_addon_cycle_duration_seconds`        | `sharko_addon_cycle_total`    | `sharko_addon_cycle_errors_total`    |
+| `catalog_scan`         | `sharko_catalog_scan_duration_seconds`       | `sharko_catalog_scan_total`   | `sharko_catalog_scan_errors_total`   |
+| `dashboard_read`       | `sharko_dashboard_read_duration_seconds`     | `sharko_dashboard_read_total` | `sharko_dashboard_read_errors_total` |
+
+The path ids match the recorded baselines in
+[`perf-baselines.md`](perf-baselines.md) verbatim — renaming any of them
+invalidates the baselines and breaks the shipped recording rules.
+
+## SLO surface inventory
+
+Every SLO histogram carries the `phase` label; every counter carries
+the `code` label.
+
+### `cluster_registration`
+
+- Sized to baseline: slowest phase `ui_submit` p99 = 2150.9 ms.
+- Right edge: 5.0 s (~2.3x headroom).
+- Histogram buckets (seconds):
+  `0.005, 0.010, 0.020, 0.050, 0.100, 0.250, 0.500, 1.0, 2.5, 5.0`
+- Phase label values: `total` (end to end). A later release will add
+  `ui_submit`, `argocd_secret_created` and
+  `argocd_application_reachable`, once the handlers can report each
+  phase separately.
+- Code label values: HTTP status (`200`, `201`, `400`, `502`, ...).
+
+### `addon_cycle`
+
+- Sized to baseline: **N/A** — the recorded baselines only cover dry-run
+  phases (sub-ms). The real SLO surface is the multi-second-to-minute
+  PR-open → merge → reconciler-converge → ArgoCD-sync cycle.
+- Histogram buckets (seconds): Prometheus defaults
+  (`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10`).
+- Bucket sizing still needs a refresh, once the performance harness
+  measures the real async cycle rather than just the dry-run phases.
+- Phase label values: `enable`, `disable` — both wired at the handler
+  boundary. A later release will split each into `pr_open`, `pr_merged`,
+  `reconciler_converged` and `argo_sync`.
+- Code label values: HTTP status.
+
+### `catalog_scan`
+
+- Sized to baseline: slowest phase `catalog_load` p99 = 1.515 ms.
+- Right edge: 50 ms (~33x headroom — covers cold-cache and large
+  catalog sweeps).
+- Histogram buckets (seconds):
+  `0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.010, 0.025, 0.050`
+- Phase label values: `total`. A later release will add `catalog_load`,
+  `list_addons` and `sources_refresh`, once the catalog read reports its
+  internal phases.
+- Code label values: HTTP status.
+
+### `dashboard_read`
+
+- Sized to baseline: slowest phase `fleet_status` p99 = 0.479 ms.
+- Right edge: 50 ms (~100x headroom — covers cold cache + degraded
+  ArgoCD list).
+- Histogram buckets (seconds):
+  `0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.010, 0.025, 0.050`
+- Phase label values: `fleet_status` (`/api/v1/dashboard/stats`),
+  `attention` (`/api/v1/dashboard/attention`), `pull_requests`
+  (`/api/v1/dashboard/pull-requests`).
+- Code label values: HTTP status.
+
+## Operational choices
+
+### `/metrics` is unauthenticated
+
+Industry standard for Prometheus scraping. Authentication on the scrape
+endpoint adds operational friction (credentials in Prometheus config)
+without meaningful security benefit — Sharko's metrics expose no secret
+material. The security boundary is the cluster's NetworkPolicy / Service
+selector / ServiceMonitor namespace selector, not a per-request auth
+check.
+
+If your environment requires authenticated scraping anyway, run Sharko
+behind an authenticating reverse proxy that strips the auth header from
+`/metrics` before forwarding to Prometheus, or expose `/metrics` on a
+separate port bound to a private interface.
+
+### No swagger / OpenAPI annotation on `/metrics`
+
+The Prometheus exposition format is line-oriented text, not JSON;
+OpenAPI annotations do not model it well. Including a swagger entry for
+`/metrics` would mislead users into thinking it accepts standard JSON
+content negotiation. The route is intentionally omitted from
+`docs/swagger/`. CI's `swagger-check` job is aware of the exception.
+
+### Histogram exemplars (OpenMetrics)
+
+Histogram observations attach a `request_id` exemplar when the request
+already carries one. The
+exemplar wire-up requires:
+
+- Prometheus 2.43+ with `--enable-feature=exemplar-storage`.
+- Grafana 9.4+ with the Prometheus data source set to
+  "Exemplars enabled".
+
+When both are configured, a Grafana drill-down from a histogram bucket
+surfaces a clickable `request_id` link; a sibling Loki data source can
+then jump straight to the matching slog line:
+
+```logql
+{app="sharko"} | json | request_id="<id>"
+```
+
+Older scrapers ignore the exemplar field — metrics still scrape
+correctly, only the click-through join is unavailable.
+
+### BYO scrape config — ServiceMonitor deferred
+
+Sharko does not ship a `ServiceMonitor` CR in the Helm chart. Operators
+can write their own:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sharko
+  labels:
+    app.kubernetes.io/name: sharko
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sharko
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+```
+
+A first-party `ServiceMonitor`, gated by a chart value, is planned and
+not built.
+
+### Cardinality budget
+
+The four SLO surfaces hold a soft cardinality budget of approximately
+60 series:
+
+- 4 paths × ≤5 phases × 1 histogram = 20 histogram series (plus 10
+  buckets each = ~200 derived series at scrape time).
+- 4 paths × ~3 status codes × 2 counters = ~24 counter series.
+
+Adding new phases or paths requires an explicit update to this
+inventory so the budget stays bounded. New high-cardinality labels
+(e.g., `cluster_name`, `user`) are NOT acceptable on SLO histograms.
+
+## Legacy metrics (default registry)
+
+Sharko's `/metrics` endpoint also exposes the older metric families —
+cluster status, addon health, reconciler runs, catalog source fetching,
+API request counters, auth, AI, Scorecard and so on. The SLO surfaces are
+served alongside them, so a single scrape returns both.
+
+Those older names predate the OTEL-aligned naming scheme above. New SLO
+work follows the scheme above only.
+
+### Ten of these are registered but never written
+
+Do not build anything on these ten. They are declared, so they are part
+of the registry, but nothing in Sharko ever sets a value on them:
+
+`sharko_cluster_count`, `sharko_cluster_status`,
+`sharko_cluster_last_verified_timestamp`,
+`sharko_cluster_last_test_duration_seconds`,
+`sharko_cluster_test_failures_total`, `sharko_addon_sync_status`,
+`sharko_addon_health`, `sharko_addon_version`, `sharko_pr_tracked`,
+`sharko_auth_login_total`.
+
+All ten carry labels, and a labelled Prometheus collector with no
+children emits nothing at all, so they are simply absent from a scrape.
+A query against them returns no data — which is the honest answer for
+something nobody measures.
+
+There used to be three worse than absent. `sharko_active_sessions`,
+`sharko_catalog_entries_count` and a pull-request merge-duration
+histogram carried no labels, so Prometheus published all three on every
+scrape at zero whether or not anything had written them, and an operator
+reading `sharko_active_sessions 0` on a server people were logged into
+read it as a fact about the server. It was not. The first two now carry
+real numbers. The merge-duration histogram was deleted instead: Sharko
+only learns that a pull request merged when its tracker next polls, so
+the only end time it could measure was "when we noticed", which is not
+the same thing as when the merge happened. See
+[Metrics](metrics.md#everything-else-sharko-exports).
+
+Whether the remaining ten get wired up or deleted is an open product
+decision. Until it is made, this page is the warning, and Sharko's own
+tests keep the list on this page from drifting away from the code.
