@@ -212,7 +212,7 @@ Go through these in order. Stop when the check in the next section passes.
           port: 8080
     ```
 
-    See also the [Network Policy](security.md#network-policy) example for
+    See also the [Network Policy](security-network-and-addresses.md#network-policy) example for
     Sharko's own namespace.
 
 5. **If the code is `argocd_tls_untrusted`**, follow
