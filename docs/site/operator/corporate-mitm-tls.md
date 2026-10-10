@@ -1,74 +1,60 @@
 # Corporate TLS MITM / SSL Inspection
 
-**Severity:** P2
+Some company networks open up every outgoing HTTPS connection at a proxy,
+look inside, and then sign it again with the company's own root
+certificate (a private CA). Zscaler and Bluecoat work this way, and so do
+many in-house gateways. This is called TLS inspection, or a "man in the
+middle" (MITM) proxy.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
-> `argocd-repo-server` mount path and ConfigMap shape are verified against
-> the upstream argo-cd Helm chart values surface as shipped with ArgoCD
-> 2.x. The `openssl s_client` capture and the `kubectl exec` mount probe
-> were re-run from a shell against a kind cluster. Re-verify before
-> changing the ConfigMap name in Sharko's `values.yaml` comment block —
-> that comment and this runbook share a name, and an operator who reads
-> the comment will Ctrl-F the same string here.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+The containers in your cluster do not know that company certificate. So
+when `argocd-repo-server` fetches a Git repository or a Helm chart through
+the proxy, the check of the certificate fails. ArgoCD Applications then
+stay `Unknown` or `OutOfSync`, even though the addresses can be reached
+from inside the cluster.
 
-Public Git fetches from `argocd-repo-server` are failing because your
-corporate network is terminating outbound TLS at an inspection proxy
-and re-signing certificates with a private root CA that the
-`argocd-repo-server` container's trust store does not know. ArgoCD
-Applications stay `Unknown` or `OutOfSync` even though the repo URLs
-are reachable from inside the cluster. This is **not** a Sharko bug —
-it is an environmental workaround that has to be applied to ArgoCD's
-own Helm values. Severity is **P2** because the workaround is well
-understood, the failure is reproducible per cluster, and the rest of
-the fleet is unaffected; once applied, the fix is stable.
+This is not a Sharko bug. The fix is to give ArgoCD the company
+certificate, and that goes in **ArgoCD's own Helm values**. In short:
+get the company root certificate, mount it into `argocd-repo-server`, and
+restart it.
 
-This page is short because the workaround is bounded: capture the
-corporate root CA, mount it into `argocd-repo-server`, restart the
-deployment. The same procedure handles Zscaler, Bluecoat, in-house
-inspection gateways, and any other MITM proxy that re-signs outbound
-TLS. If your environment does not run a TLS-inspecting proxy, you do
-not need this runbook.
+If your network does not inspect TLS, you do not need this page.
 
 ---
 
 ## Symptoms
 
-What an operator sees when this fires:
+What you see when this happens:
 
-- ArgoCD Applications stay `Unknown` or `OutOfSync` after `sharko init`
-  or after enabling an addon, with the sync error pointing at the
-  repo URL (typically `github.com` or your internal Helm chart
-  registry).
-- `argocd-repo-server` pod logs contain the exact line:
+- ArgoCD Applications stay `Unknown` or `OutOfSync` after `sharko init` or
+  after you turn on an addon. The sync error names the repository address
+  (often `github.com`, or your own Helm chart registry).
+- The `argocd-repo-server` pod logs have this exact line:
 
   ```
   x509: certificate signed by unknown authority
   ```
 
-- Sharko UI surfaces this indirectly — the cluster card / addon card
-  shows the ArgoCD sync error verbatim, but Sharko itself reports the
-  Git connection as "active" (Sharko reaches Git fine; ArgoCD does
-  not).
-- `kubectl exec -n sharko deploy/sharko -- wget -qO- https://github.com`
-  succeeds. `kubectl exec -n argocd deploy/argocd-repo-server -- wget -qO- https://github.com`
-  fails with a TLS handshake error.
-- No Sharko-specific alert fires. The alert that would surface this is
-  upstream of Sharko — typically the ArgoCD Application status
-  surface, not the Prometheus metric surface.
+- Sharko shows the ArgoCD sync error on the cluster or addon card, word for
+  word.
+- Sharko itself may fail too. Sharko also talks to your Git host, to Helm
+  chart repositories and to catalog sources over HTTPS, so its own Git
+  connection or catalog can show the same certificate error. See
+  [Sharko needs the certificate too](#sharko-needs-the-certificate-too).
+- No Sharko alert fires for this. You see it in the ArgoCD Application
+  status, not in Sharko's metrics.
 
-If the `x509: certificate signed by unknown authority` line is absent
-and you instead see `dial tcp: lookup` or `i/o timeout`, the failure
-is connectivity / DNS, not TLS interception — see
-[`git-provider-unreachable.md`](git-provider-unreachable.md) and the
-network-policy section there.
+If the `x509: certificate signed by unknown authority` line is not there,
+and you see `dial tcp: lookup` or `i/o timeout` instead, the problem is the
+network or DNS, not TLS inspection. See
+[`git-provider-unreachable.md`](git-provider-unreachable.md) and the network
+policy part of that page.
 
 ---
 
 ## Diagnosis
 
-Where to look to confirm "the proxy is re-signing TLS" vs. "ArgoCD
-itself is broken." Three checks, in this order.
+These three checks tell you if the proxy is signing the connections again,
+or if ArgoCD is broken in some other way. Run them in this order.
 
 ### 1. Is the x509 line in `argocd-repo-server` logs?
 
@@ -76,18 +62,18 @@ itself is broken." Three checks, in this order.
 kubectl logs -n argocd deploy/argocd-repo-server --tail=500 | grep -i x509
 ```
 
-Expected on the failing path: at least one line containing
-`x509: certificate signed by unknown authority`. If you see other
-TLS errors (`x509: cannot validate certificate for ... because it
+When TLS inspection is the cause, you see at least one line with
+`x509: certificate signed by unknown authority`. If you see a different
+TLS error instead (`x509: cannot validate certificate for ... because it
 doesn't contain any IP SANs`, `tls: handshake failure`,
-`tls: server selected unsupported protocol`), the failure is not
-corporate MITM — those are server-side or protocol issues. Stop here
-and follow ArgoCD's own troubleshooting.
+`tls: server selected unsupported protocol`), this page is not your
+problem. Those come from the server or the protocol. Stop here and follow
+ArgoCD's own troubleshooting.
 
 ### 2. Does the proxy actually re-sign the cert?
 
-Run the OpenSSL probe from inside the cluster to capture what
-`argocd-repo-server` is seeing:
+Run this from inside the cluster. It shows which certificate the cluster
+really gets:
 
 ```sh
 kubectl run -n argocd --rm -i --restart=Never --image=alpine:3 \
@@ -96,10 +82,10 @@ kubectl run -n argocd --rm -i --restart=Never --image=alpine:3 \
   | grep -A1 "issuer="'
 ```
 
-Expected on the MITM path: the issuer is **your corporate CA**, not
-DigiCert / Let's Encrypt / Sectigo. If the issuer is a public CA
-(DigiCert High Assurance / GTS / etc.), TLS is not being intercepted
-— the failure has a different root cause.
+If the proxy signs again, the issuer is **your company's CA**. If the issuer
+is a public CA (DigiCert, Let's Encrypt, Sectigo, Google Trust Services and
+so on), nothing is inspecting the connection, and the cause is something
+else.
 
 ### 3. Is the corporate CA already mounted in the pod?
 
@@ -108,26 +94,24 @@ kubectl exec -n argocd deploy/argocd-repo-server -- \
   ls -l /etc/ssl/certs/ 2>/dev/null | grep -i corporate
 ```
 
-Expected if a previous attempt was made: a `corporate-ca.crt` symlink
-or file. Empty output = the workaround was never applied (this
-runbook is the right place). A file present but logs still show
-`x509` = the mount is in place but the file is empty or the wrong CA
-— jump to Mitigation step 5 (Verify).
+- No output: the fix was never applied. Carry on with Mitigation below.
+- A `corporate-ca.crt` file is there, but the logs still show `x509`: the
+  file is mounted but it is empty or the wrong certificate. Go to
+  [step 5 (Verify)](#5-verify).
 
 ---
 
 ## Mitigation (try in order)
 
-The workaround lives in **your ArgoCD Helm values**, not in Sharko's.
-Sharko does not package the argo-cd chart as a subchart — ArgoCD is
-installed separately, ahead of Sharko (see
-[Installation](installation.md)). Sharko's `values.yaml` carries an
-informational comment block that points back here.
+The fix goes in **your ArgoCD Helm values**, not in Sharko's. Sharko does
+not install ArgoCD for you. You install ArgoCD first, on its own (see
+[Installation](installation.md)). Sharko is tested with ArgoCD v3.3 to v3.5.
+Sharko's `values.yaml` only has a comment that points to this page.
 
 ### 1. Capture the corporate root CA
 
-Ask IT for the corporate root CA bundle. If they cannot produce one
-quickly, extract it from any TLS handshake that goes through the
+Ask your IT team for the company root CA. If they cannot give it to you
+soon, you can copy it from any HTTPS connection that goes through the
 proxy:
 
 ```sh
@@ -136,16 +120,16 @@ openssl s_client -connect github.com:443 -showcerts < /dev/null 2>/dev/null \
   > corporate-ca.crt
 ```
 
-The bottom-most certificate in the chain is the root your proxy is
-using. Verify it covers the hosts you need (GitHub, your Helm chart
-registry, your internal Git server):
+The last certificate in the chain is the root the proxy uses. Check that
+you have the right one:
 
 ```sh
 openssl x509 -in corporate-ca.crt -noout -issuer -subject
 ```
 
-Expected: issuer and subject both point at your corporate CA, not a
-public CA.
+The issuer and the subject should both name your company's CA, not a
+public CA. Make sure it covers every host you need: GitHub (or your Git
+host), your Helm chart registry, and any internal Git server.
 
 ### 2. Create a ConfigMap in the `argocd` namespace
 
@@ -154,15 +138,14 @@ kubectl create configmap sharko-extra-ca-bundle -n argocd \
   --from-file=ca.crt=corporate-ca.crt
 ```
 
-The ConfigMap lives in the namespace where ArgoCD is installed
-(default: `argocd`). Use a different namespace only if your ArgoCD
-release is installed elsewhere.
+Put the ConfigMap in the namespace where ArgoCD is installed (usually
+`argocd`).
 
 ### 3. Patch your ArgoCD Helm values
 
-Add the block below to **your ArgoCD Helm values file** — the one you
-pass to `helm upgrade argo-cd argo/argo-cd -f ...`, **not** Sharko's
-`values.yaml`:
+Add this to **your ArgoCD Helm values file**. That is the file you pass to
+`helm upgrade argo-cd argo/argo-cd -f ...`. It is **not** Sharko's
+`values.yaml`.
 
 ```yaml
 repoServer:
@@ -180,9 +163,9 @@ repoServer:
       value: /etc/ssl/certs
 ```
 
-The mount lands the corporate CA at a path OpenSSL already trusts.
-`SSL_CERT_DIR` is set explicitly so the Go HTTP client inside
-`argocd-repo-server` picks it up at startup.
+This puts the company certificate in the folder where the container keeps
+its trusted certificates. `SSL_CERT_DIR` tells the programs in
+`argocd-repo-server` to read that folder when they start.
 
 ### 4. Apply and restart
 
@@ -191,26 +174,25 @@ helm upgrade argo-cd argo/argo-cd -n argocd -f your-argocd-values.yaml
 kubectl rollout restart deployment/argocd-repo-server -n argocd
 ```
 
-`rollout restart` is required even though `helm upgrade` triggers
-one — Helm restarts on template diffs, and a ConfigMap value change
-alone may not produce one.
+`helm upgrade` may not restart the pod, so restart it yourself with the
+second command.
 
 ### 5. Verify
 
-Wait ~30 seconds for the new repo-server pods to come up. The
-diagnosis steps above should now all flip green:
+Wait about 30 seconds for the new `argocd-repo-server` pods to start. Then
+check the logs again:
 
 ```sh
 kubectl logs -n argocd deploy/argocd-repo-server --tail=200 | grep -i x509
 ```
 
-Empty output = the workaround landed. If the line still appears,
-double-check:
+No output means the fix worked. If the line still shows up, check these:
 
 - The ConfigMap is in the same namespace as `argocd-repo-server`.
-- The key inside the ConfigMap is `ca.crt` (matching the `subPath`).
-- The CA bundle in step 1 actually contains the corporate root.
-- The mount exists inside the pod:
+- The key inside the ConfigMap is `ca.crt`, the same as the `subPath`.
+- The file from step 1 really holds the company root certificate.
+- The file is there inside the pod:
+
   ```sh
   kubectl exec -n argocd deploy/argocd-repo-server -- \
     ls -l /etc/ssl/certs/corporate-ca.crt
@@ -218,92 +200,93 @@ double-check:
 
 ---
 
+## Sharko needs the certificate too {#sharko-needs-the-certificate-too}
+
+The steps above fix ArgoCD only. The Sharko pod also makes HTTPS calls
+through the same proxy: to your Git host, to Helm chart repositories, and
+to catalog sources. Those can fail with the same certificate error.
+
+The Sharko Helm chart has no way today to add a company certificate to the
+Sharko pod. If you need this, please
+[open a GitHub issue](https://github.com/MoranWeissman/sharko/issues).
+
+---
+
 ## Root-cause patterns
 
 ### Outbound TLS inspection re-signs server certs
 
-The proxy (Zscaler, Bluecoat, an in-house gateway) terminates TLS,
-inspects plaintext, re-encrypts with its own cert chain, and forwards
-on. The cert chain it presents to `argocd-repo-server` is signed by
-the corporate root, not by the public CA the upstream host actually
-uses. OpenSSL's default trust store does not include the corporate
-root, so the handshake fails with `x509: certificate signed by
-unknown authority`. This is the single most common variant of the
-failure mode and the one the Mitigation section targets directly.
+The proxy opens the HTTPS connection, looks at what is inside, then sends
+it on, signed with its own certificate. The certificate that reaches
+`argocd-repo-server` is signed by the company root, not by the public CA
+the real host uses. The container does not trust the company root, so the
+check fails with `x509: certificate signed by unknown authority`. This is
+by far the most common case, and it is the one the Mitigation steps fix.
 
 ### Egress proxy that requires `HTTPS_PROXY` env
 
-Some environments do not re-sign TLS but require all outbound HTTPS
-to traverse a forward proxy. If `HTTPS_PROXY` / `https_proxy` is not
-set on the `argocd-repo-server` pod, fetches go directly and the
-egress firewall drops them. The symptom looks similar but the log
-line is different (`connection refused` or `i/o timeout`, not
-`x509`). This is **not** the corporate-MITM case — set
-`HTTPS_PROXY` via `repoServer.env` on the argo-cd chart instead.
+Some networks do not sign connections again, but make all outgoing HTTPS go
+through a forward proxy. If `HTTPS_PROXY` is not set on the
+`argocd-repo-server` pod, it tries to connect directly and the firewall
+drops the connection. This looks alike, but the log line is different
+(`connection refused` or `i/o timeout`, not `x509`). It is **not** the case
+this page fixes. Set `HTTPS_PROXY` with `repoServer.env` in the ArgoCD Helm
+values instead.
 
 ### Bundling the CA only in `configs.tls.certificates`
 
-A common misconfiguration: operators try to fix this by setting
-`configs.tls.certificates` on the argo-cd chart. That value
-populates `argocd-tls-certs-cm`, which ArgoCD uses for **inbound**
-TLS and for Git server certificate pinning. It does **not** add CAs
-to the OpenSSL trust store that `argocd-repo-server` uses for
-outbound HTTPS to public hosts. The ConfigMap + volume-mount approach
-in the Mitigation section is the supported path.
+A common mistake is to set `configs.tls.certificates` in the ArgoCD Helm
+values. That fills `argocd-tls-certs-cm`, which ArgoCD uses to trust the
+certificates of specific Git servers you name. It does **not** add a
+certificate that `argocd-repo-server` trusts for every outgoing HTTPS call.
+Use the ConfigMap and mount from the Mitigation steps.
 
 ---
 
 ## Prevention
 
-How to make this failure mode less likely going forward.
-
-- **Pre-install survey:** document corporate-proxy presence as a
-  pre-install checklist item in your internal Sharko deployment guide.
-  Operators who answer "yes" hit this page before `sharko init`, not
-  after.
-- **Helm values audit:** wire a small check into your pre-install CI
-  that grep's for `x509: certificate signed by unknown authority` in
-  `argocd-repo-server` logs during the post-install smoke pass. If
-  the line appears, fail the install and surface this runbook.
-- **Image build alternative for hardened environments:** for
-  environments where mounting an external CA is operationally
-  awkward, build a custom `argocd-repo-server` image with the
-  corporate CA pre-trusted. This couples CA rotation to your image
-  pipeline and blocks ArgoCD upgrades behind a rebuild — the
-  Mitigation section above is preferred — but it is a documented
-  alternative for air-gapped deployments.
+- **Ask before you install.** Add "does our network inspect TLS?" to your own
+  install checklist. If the answer is yes, apply this page before
+  `sharko init`, not after.
+- **Check after you install.** After an install, look for
+  `x509: certificate signed by unknown authority` in the
+  `argocd-repo-server` logs. If the line is there, stop and apply this page.
+- **Build your own image, if mounting is hard.** Where mounting an extra
+  certificate is awkward, you can build your own `argocd-repo-server` image
+  with the company certificate already trusted. The cost: every certificate
+  change and every ArgoCD upgrade needs a new image. Mounting is better, but
+  this works for networks with no internet access.
 
 ---
 
 ## Related runbooks
 
-- [`git-provider-unreachable.md`](git-provider-unreachable.md) — if
-  the symptom is `i/o timeout` / `connection refused` rather than the
-  `x509` line, Git connectivity is failing for a different reason.
+- [`git-provider-unreachable.md`](git-provider-unreachable.md) — when the
+  error is `i/o timeout` or `connection refused` instead of the `x509`
+  line, Git cannot be reached for a different reason.
 - [`catalog-parse-failure-on-startup.md`](catalog-parse-failure-on-startup.md)
-  — when the third-party catalog URL itself fails TLS handshake the
-  fix is the same (mount the CA), but the failing component is the
-  Sharko pod, not `argocd-repo-server`.
-- [`installation.md`](installation.md) — Sharko / ArgoCD install
-  sequence; the workaround in this runbook patches values on the
-  argo-cd Helm release, not on the sharko release.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory
-  of operator-facing failures.
+  — when a catalog source address fails the TLS check, the failing pod is
+  Sharko, not `argocd-repo-server`. See
+  [Sharko needs the certificate too](#sharko-needs-the-certificate-too).
+- [`installation.md`](installation.md) — the order to install ArgoCD and
+  Sharko in. The fix on this page changes the ArgoCD Helm release, not the
+  Sharko one.
+- [`failure-mode-index.md`](failure-mode-index.md) — the full list of
+  failures with a page of their own.
 
 ## Escalation
 
-If the mitigations above do not resolve the failure within one
-business day, email the maintainer: `moran.weissman@gmail.com`.
-Include:
+If the steps above do not fix it, please
+[open a GitHub issue](https://github.com/MoranWeissman/sharko/issues).
+Put in:
 
-- The runbook URL you used (this page)
-- The output of `openssl x509 -in corporate-ca.crt -noout -issuer -subject`
-  (issuer + subject of the captured CA — names of corporate CAs are
-  not sensitive, but redact internal hostnames if your policy
-  requires)
-- The Sharko version (`sharko version` or the Helm chart version)
-- The ArgoCD Helm chart version
-- The full `x509` log line from `argocd-repo-server`
+- a link to this page
+- the output of `openssl x509 -in corporate-ca.crt -noout -issuer -subject`
+  (the names of company CAs are not secret, but take out internal host
+  names if your rules say so)
+- the Sharko version (`sharko version`, or the Helm chart version)
+- the ArgoCD Helm chart version
+- the full `x509` line from the `argocd-repo-server` logs
 
-The maintainer is a single human, not a 24x7 rotation. Expect a
-business-day SLA, not a paged response.
+Sharko is a technical preview, looked after by one person in their own
+time. There is no on-call support.

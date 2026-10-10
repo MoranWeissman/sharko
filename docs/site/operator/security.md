@@ -1,29 +1,21 @@
 # Security
 
-This page documents Sharko's security posture and the hardening recommendations for a sensitive environment.
+Sharko is a technical preview. This page says how it protects itself
+today, and what you should set up around it.
 
-## Security Headers
-
-Sharko sets the following HTTP security headers on every response:
-
-| Header | Value |
-|--------|-------|
-| `Content-Security-Policy` | Restricts sources for scripts, styles, and frames |
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (HTTPS enforced for 1 year) |
-| `X-Content-Type-Options` | `nosniff` |
-| `X-Frame-Options` | `DENY` |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` |
-
-HSTS is only effective when Sharko is served over HTTPS. Configure TLS termination at the ingress layer and ensure the ingress controller forwards the `X-Forwarded-Proto` header.
+This page covers signing in, sessions, API keys, roles, running behind a
+proxy, what Sharko may do in ArgoCD and in Kubernetes, and how Sharko keeps
+the credentials you give it. The other security topics have their own pages,
+listed at the [end of this page](#other-security-pages).
 
 ## Rate Limiting
 
-Sharko applies rate limiting to both authentication endpoints and admin write endpoints:
+Sharko limits how fast one client address can call it:
 
-| Scope | Limit |
-|-------|-------|
-| Auth endpoints (`/api/v1/auth/*`) | Per-IP burst limit |
-| Write endpoints (admin POST/DELETE/PATCH) | 30 requests/minute per IP |
+| What | Limit |
+|------|-------|
+| Signing in (`POST /api/v1/auth/login`) | 5 tries per minute for each client address |
+| Every request that changes something (`POST`, `PUT`, `PATCH`, `DELETE`) | 30 requests per minute for each client address |
 
 Rate limiting counts requests per client address. Which address that is depends on **trusted proxy** configuration.
 
@@ -89,7 +81,7 @@ The rules Sharko follows:
 - Leaving the setting empty trusts no proxy at all. There is no wildcard, and loopback, private and Kubernetes ranges get no automatic trust — the list is exactly what you write.
 - A value that is not an address or CIDR range stops the server at startup rather than starting with a setting that cannot be enforced. So does any value that would trust every address — `*`, `0.0.0.0/0` and `::/0` are all refused by name, because trusting everyone is the exact hole this setting closes. An older version of this page told you to use `"*"`; if you copied it, change it to your proxy's real address or range before you upgrade, or the server will not start.
 
-The same resolved address is used for rate limiting and for the client address recorded in security log lines, so the two can never disagree. Note that the **audit log records no client address at all** — a refused request does not leave an audit entry naming the caller.
+The same resolved address is used for rate limiting and for the client address recorded in security log lines, so the two can never disagree. Note that the **Activity History records no client address at all** — a refused request does not leave an Activity History entry naming the caller.
 
 !!! warning
     List only proxies you control. A proxy you list is one you trust to overwrite whatever forwarding header its own client sent; if it passes the client's header through untouched, that client is choosing its own address again.
@@ -101,27 +93,41 @@ The same resolved address is used for rate limiting and for the client address r
 
 ### Admin Password
 
-The initial admin password is randomly generated and stored as a bcrypt hash in a Kubernetes Secret. The plaintext is mirrored to the `sharko-initial-admin-secret` Secret (the same pattern ArgoCD uses with `argocd-initial-admin-secret`) so you can retrieve it after install:
+On first install Sharko makes a random admin password. It keeps only a
+bcrypt hash of it (a one-way scramble that cannot be turned back into the
+password). It also puts the plain password in the
+`sharko-initial-admin-secret` Secret, the same way ArgoCD uses
+`argocd-initial-admin-secret`, so you can read it once:
 
 ```bash
 kubectl get secret sharko-initial-admin-secret -n sharko \
   -o jsonpath='{.data.password}' | base64 -d
 ```
 
-Retrieve it once and change it immediately after first login.
+Read it once and change it right after your first login.
 
 ### No Users Configured
 
-There is no way to run Sharko with authentication off (outside demo mode). If Sharko starts and finds **zero** configured users — no chart-seeded accounts, no `SHARKO_BOOTSTRAP_ADMIN_PASSWORD`, no `SHARKO_AUTH_USER` / `SHARKO_AUTH_PASSWORD` env vars — it creates an `admin` user itself with a random password and tells you where to find it:
+You cannot run Sharko with sign-in turned off, outside demo mode. Say
+Sharko starts and finds **no** users at all: no accounts from the chart, no
+`SHARKO_BOOTSTRAP_ADMIN_PASSWORD`, and no `SHARKO_AUTH_USER` /
+`SHARKO_AUTH_PASSWORD`. Then it makes an `admin` user itself, with a random
+password, and tells you where to find it:
 
-- **In a cluster:** the password lands in the `sharko-initial-admin-secret` Secret (retrieve it with the command above). Set `SHARKO_WRITE_INITIAL_ADMIN_SECRET=false` if you want the password to appear only in the startup log.
-- **Outside a cluster (local binary):** the password is saved to `~/.sharko/initial-admin.json` (file mode 0600; override the path with `SHARKO_INITIAL_ADMIN_FILE`). The same password is reused on the next start.
+- **In a cluster:** the password goes into the `sharko-initial-admin-secret` Secret. Read it with the command above. Set `SHARKO_WRITE_INITIAL_ADMIN_SECRET=false` if you want the password to show only in the startup log.
+- **Outside a cluster (the `sharko` binary on your machine):** the password is saved to `~/.sharko/initial-admin.json`. Only your user can read that file. Change the path with `SHARKO_INITIAL_ADMIN_FILE`. The next start uses the same password.
 
-Either way the password is also printed once on the server's startup output, and every API request requires authentication from the first moment. If the user store somehow ends up empty at request time, requests are refused with a 401 — the server never falls back to running open.
+Either way, the password is also printed once when the server starts, and
+every API request needs a login from the very first moment. If the user list
+is somehow empty when a request comes in, the request gets a 401. Sharko
+never falls back to running open.
 
-The only exception is **demo mode** (`sharko serve --demo`), which is loud about it: it seeds the fixed demo users `admin/admin` and `qa/sharko` and enforces login with those. Demo mode is for trying Sharko out with mock backends, never for real clusters.
+The one exception is **demo mode** (`sharko serve --demo`). It makes the
+fixed demo users `admin/admin` and `qa/sharko` and asks you to log in with
+them. Demo mode is for trying Sharko with fake backends. Never point it at
+real clusters.
 
-Check user configuration:
+To see which users are set up:
 
 ```bash
 kubectl get configmap sharko-users -n sharko -o yaml
@@ -142,7 +148,9 @@ immediately whether or not the sweep has run.
 
 ### API Keys
 
-API keys use bcrypt hashing — the server never stores plaintext keys. The plaintext key is shown only once at creation time. Treat API keys as secrets; store them in your CI/CD vault (e.g., GitHub Actions secrets, Vault).
+Sharko keeps only a bcrypt hash of each API key, never the key itself. You
+see the key once, when you create it. Treat it like a password and keep it
+in your CI system's secret store, for example GitHub Actions secrets.
 
 **Keys expire after 90 days by default.** You can ask for anything from 1 to
 365 days when you create one. A key past its date is refused with a `401` that
@@ -164,19 +172,19 @@ Full request and response shapes are in the
 
 ## Application Roles
 
-Every user and every API key carries one of three roles. The role decides
-which write actions (and a few read actions) are allowed — it is checked on
-**every** request, not just at login.
+Every user and every API key has one of three roles. The role decides which
+changes (and a few reads) are allowed. Sharko checks it on **every**
+request, not just at login.
 
 | Role | Who it's for | Can do |
 |------|---------------|--------|
-| `viewer` | Anyone who should be able to look, not touch | See clusters, addons, connections, pull requests, the audit log, and metrics. Manage their own profile (change their own token, clear their own GitHub token). Cannot create, change, or delete anything shared. |
-| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, test connections and credential providers, edit the addon catalog, create API tokens and renew *their own* tokens, trigger the secrets reconciler, and run the first-time init wizard. |
-| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions with blast radius beyond the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, revoke any token, renew *someone else's* token, clear the audit log, change AI provider settings, save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security-relevant settings toggles (probe mode, inline credentials, self-heal). |
+| `viewer` | Anyone who should be able to look, not touch | See clusters, addons, connections, pull requests, the Activity History, and metrics. Set or clear their own personal Git token. Cannot create, change, or delete anything shared. |
+| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, test connections and credential providers, edit the addon catalog, create API tokens and renew *their own* tokens, trigger the secrets reconciler, and run the first-time setup. |
+| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions that reach past the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, revoke any token, renew *someone else's* token, change AI provider settings, save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security settings (probe mode, inline credentials, self-heal). |
 
-**New users and new API tokens default to `viewer`** if no role is given —
-the caller (an admin) has to deliberately opt a person up to `operator` or
-`admin`, both at `POST /api/v1/users` and `POST /api/v1/tokens`.
+**New users and new API tokens get `viewer`** if no role is given. An admin
+has to choose `operator` or `admin` on purpose, both at `POST /api/v1/users`
+and at `POST /api/v1/tokens`.
 
 **A token can never carry a role higher than the person who created it.** An
 operator asking for an `admin` token is refused with a 403; only an admin can
@@ -190,64 +198,37 @@ own name); renewing anyone else's — including a token created before Sharko
 started recording who asked for it — takes an admin. Renewing keeps a live
 credential alive, so it sits on the same own/other line as revoking.
 
-An action Sharko's code doesn't recognize is treated as **admin-only**
-(fail-closed) rather than open to everyone — a bug that adds a new write path
-without registering its action shows up as "nobody but admin can use this
-yet," never as "anyone can use this."
+If Sharko meets an action it does not know, only an admin may run it. So a
+new change that someone forgot to give a role shows up as "only an admin can
+use this yet", never as "anyone can use this".
 
 ### The honest limit: roles are coarse, not scoped
 
-As of v4, permissions are **not** scoped to a specific cluster or a specific
-addon. An `operator` who can enable addons can enable them on *any*
-registered cluster — there is no "operator for cluster X only" or "operator
-for addon Y only." The three roles are the entire permission model.
+Roles are **not** tied to one cluster or one addon. An `operator` who can
+enable addons can enable them on *any* registered cluster. There is no
+"operator for cluster X only" and no "operator for addon Y only". The three
+roles are the whole permission model.
 
-This is a known gap, not an oversight: finer-grained, per-cluster or
-per-addon permissions are tracked as future work (see the
-[roadmap](../community/roadmap.md)) and are intentionally out of scope for
-v4. If your team needs cluster-level isolation today, the practical
-workaround is separate Sharko installs per team/cluster-group rather than
-one shared install with mixed trust levels.
+This is a known gap. Roles per cluster or per addon are on the
+[roadmap](../community/roadmap.md), and are not part of v4. If your teams
+need to be kept apart today, give each team (or each group of clusters) its
+own Sharko install, rather than one shared install with mixed trust.
 
-### Where the mapping lives
+### Where the roles are checked
 
-One table maps every action to the role it needs, and it is enforced
-identically on two surfaces:
+One table says which role each action needs. Sharko uses the same table in
+two places:
 
-- **REST API** — every mutating handler (`POST`/`PUT`/`PATCH`/`DELETE`) calls
-  `authz.RequireWithResponse` naming its action before doing anything else.
-- **AI assistant tools** — the handful of tools that write (enable/disable an
-  addon, bump a catalog version, trigger an ArgoCD sync/refresh) check the
-  SAME action table before touching Git or ArgoCD, so a viewer asking the
-  assistant to "enable datadog on prod" gets the identical refusal a direct
-  API call would get.
+- **The REST API.** Every request that changes something checks its action
+  against the table before it does anything else.
+- **The AI assistant.** The few assistant tools that change things (turn an
+  addon on or off, bump a catalog version, start an ArgoCD sync or refresh)
+  check the same table before they touch Git or ArgoCD. So a viewer who asks
+  the assistant to "enable datadog on prod" is refused, the same as if they
+  had called the API.
 
-Both surfaces are covered by tests that re-derive the route and tool
-inventory from the code, rather than trusting a hand-maintained list to
-stay in step. A new route or a new AI tool with no role requirement fails
-the build.
-
-## Pod Security
-
-Sharko's default security context enforces a hardened pod configuration:
-
-```yaml
-podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1001
-  runAsGroup: 1001
-  fsGroup: 1001
-
-securityContext:
-  allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  capabilities:
-    drop:
-      - ALL
-```
-
-This is compliant with the Kubernetes **Restricted** Pod Security Standard. No privileged containers, no root access, no capability escalation.
+Tests build the list of routes and assistant tools from the code itself. A
+new route or tool with no role fails the build.
 
 ## ArgoCD's own permissions
 
@@ -322,12 +303,9 @@ instead.
 
 ## RBAC
 
-Sharko's default install grants **no cluster-wide access to Secrets**. As of
-v4, every Secret read the Sharko ServiceAccount does on the
-host cluster is scoped to the one namespace it actually needs, not the
-whole cluster. This is a real tightening from earlier versions, which
-carried a cluster-wide `secrets: get,list` rule — `list` on Secrets hands
-over their contents, so that rule was wider than any code path needed.
+Sharko's default install gives it **no cluster-wide access to Secrets**.
+Every Secret the Sharko ServiceAccount reads on the main cluster sits in one
+of the few namespaces it really needs, never across the whole cluster.
 
 Sharko creates one `ClusterRole` (cluster-wide, but **not** for Secrets)
 plus a small set of namespaced `Role`s:
@@ -390,10 +368,16 @@ When disabled, the `/api/v1/cluster/nodes` endpoint returns an empty list with a
 
 ## Secret Encryption
 
-Connection credentials (ArgoCD tokens, Git tokens) stored in the `sharko-connections` Secret are encrypted at rest using **AES-256-GCM** with a randomly generated encryption key. The encryption key is stored in the Helm release Secret.
+The connection tokens you save (ArgoCD tokens and Git tokens) are kept in the
+`sharko-connections` Secret. Sharko encrypts them with **AES-256-GCM**, using
+the key in `SHARKO_ENCRYPTION_KEY`. The chart makes that key at random on the
+first install, keeps it in Sharko's own Secret, and keeps the same key on every
+upgrade.
 
-!!! tip
-    To rotate the encryption key, update the `SHARKO_ENCRYPTION_KEY` env var and re-save all connections in the Settings UI.
+!!! tip "Changing the encryption key"
+    Sharko cannot read tokens saved with an old key. If you change
+    `SHARKO_ENCRYPTION_KEY`, enter the tokens for every connection again in
+    the Settings page.
 
 ### A stored credential only ever goes to its own address
 
@@ -411,395 +395,32 @@ connectivity tests (`/connections/test`, `/connections/test-credentials`,
 `/providers/test`, `/providers/test-config`) also require `operator` — they
 reach out with real credentials, which is not a read.
 
-## Catalog repository addresses carry no credentials
-
-A catalog entry names the Helm repository its chart comes from. That address is
-written into a YAML file and committed to your Git repository, which makes it
-the one place in Sharko where an address is *stored durably and replicated*.
-Git keeps history: a token in a commit is in every clone, fork, CI cache and
-backup, and a later edit does not remove it.
-
-So Sharko refuses to save an address that has anywhere in it for a credential
-to sit. The rule, in the words an operator sees:
-
-> Catalog repository URLs in the technical preview must be ones Sharko can
-> read in full: a host, an optional port, and an optional path. User
-> information in the address, a query string, and a fragment are all refused,
-> and so is an address Sharko cannot read. Use a credential-free base URL.
-
-### The shapes that are refused
-
-| Shape | Example | Why |
-|---|---|---|
-| User information, with a password | `https://user:pw@charts.example/org/charts` | The classic place a token goes. |
-| User information, no password | `https://a-token@charts.example/org/charts` | A token in the username slot. `url.Redacted()` does not hide this — which is why Sharko does not use it. |
-| A query string | `https://charts.example/org/charts?access_token=…` | A token as a parameter. |
-| A fragment | `https://charts.example/org/charts#…` | Same. |
-| Any query string at all | `https://charts.example/org/charts?ref=main` | **Refused on purpose.** See below. |
-| An empty forced query | `https://charts.example/org/charts?` | Same. |
-| An address Sharko cannot read | `https://charts.example:notaport/org/charts` | **Refused on purpose.** If Sharko cannot read the address it cannot tell what is in it, and "I could not tell" is not a yes. |
-
-The last three carry nothing secret. The two query ones are refused because the
-check is about the *shape* of the address and never about whether the text in
-it looks like a secret. A check that reads the text stops working the first
-time somebody writes a credential in a shape nobody predicted, and it fails
-silently. A check on the shape cannot. The cost is a refused `?ref=main`; take
-the query string off the address and it is accepted.
-
-Because the check cannot know whether a credential is really there, the message
-states the rule and never claims Sharko found one.
-
-### The shapes that are accepted
-
-A scheme is optional, and an `@` inside the path is not user information. All
-of these are accepted:
-
-| Shape | Example |
-|---|---|
-| An ordinary address | `https://charts.example/org/charts` |
-| No scheme | `charts.example/org/charts` |
-| A host and a port | `localhost:8080` |
-| An `@` in the path | `https://charts.example/org/charts@v1` |
-
-### Where it is applied
-
-The same one rule is asked at every point that matters, and nothing holds a
-copy of it:
-
-- the API doors that add or edit a catalog entry, and the paste-a-URL
-  validator, so you are told while you are still typing;
-- the CLI's `add-addon`;
-- the two functions every catalog file write in Sharko funnels through, so a
-  new caller cannot get around the doors;
-- the migration from the older repository layout to the current one;
-- the one place Sharko dials a chart repository, so a refused address is never
-  contacted even if it is already in a file.
-
-### If your repository already has one
-
-Sharko keeps running. The catalog file still loads and every other addon still
-works. The one entry comes back marked unusable with the file and field named
-— never the address, never part of it, never its length. Sharko will not
-deploy that addon, will not reach out using the address, and will not put the
-address in any answer or log line.
-
-Every write to the catalog file is refused while that entry is there, because
-writing the file again would put the credential into a fresh commit. Sharko
-will not quietly strip the address and will not quietly drop the entry —
-either would be Sharko editing your repository behind your back.
-
-**Fixing it takes three steps, and the first one is the important one:**
-
-1. **Revoke or rotate that credential** at whatever issued it. The token is in
-   your Git history, so it is in every clone, fork, build cache and backup.
-   Treat it as public.
-2. **Remove it from the history**, not just from the current file — for
-   example with `git filter-repo`. Editing the file leaves the token one
-   `git log -p` away.
-3. **Put a credential-free address in the entry** and commit that.
-
-### Private chart repositories
-
-There is no supported way to use a chart repository that needs a sign-in in
-this preview. Naming a Kubernetes Secret or an AWS Secrets Manager entry from
-the catalog entry — the same value-or-pointer shape the cluster credentials
-use — is the right answer and is work for after the preview.
-
-## Network Policy
-
-Sharko does not ship a NetworkPolicy by default. In a sensitive environment, create one that restricts inbound traffic to your ingress controller and ArgoCD, and restricts outbound traffic to ArgoCD and your Git provider:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: sharko
-  namespace: sharko
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: sharko
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: argocd
-    - ports:
-        - port: 443
-          protocol: TCP
-```
-
-## A worked example: a hardened installation
-
-This section puts RBAC, the AWS IRSA policy, and a NetworkPolicy together
-into one example, so you have something to copy and adapt rather than
-piecing the three together yourself. Everything below uses placeholder
-values — `123456789012` for an AWS account ID, `sharko.example.com` for a
-hostname — swap in your own before applying anything.
-
-The scenario: Sharko is installed in the `sharko` namespace, ArgoCD in the
-`argocd` namespace, both AWS Secrets Manager backends (cluster credentials
-and addon secrets) live under two different prefixes in the same account.
-
-**1. Helm values — namespaced RBAC, no cluster-wide Secrets access:**
-
-```yaml
-rbac:
-  create: true
-  argocdNamespace: argocd
-  # Only needed here because this example's connection.provider.namespace
-  # and connection.addonSecretProvider.namespace stay empty — they're
-  # unused with the aws-sm backend below. Left in to show the shape.
-  k8sSecretsProviderNamespaces: []
-
-connection:
-  provider:
-    type: "aws-sm"
-    region: "us-east-1"
-    prefix: "clusters/"
-    roleArn: "arn:aws:iam::123456789012:role/sharko-hub-role"
-  addonSecretProvider:
-    type: "aws-sm"
-    region: "us-east-1"
-    prefix: "addon-secrets/"
-    roleArn: "arn:aws:iam::123456789012:role/sharko-hub-role"
-
-serviceAccount:
-  annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/sharko-hub-role"
-```
-
-Running `helm template` on this confirms what actually gets created — no
-`ClusterRole` rule for Secrets, one namespaced `Role` in `argocd` for the
-cluster-connection Secrets, and (since the backend here is `aws-sm`, not
-`k8s-secrets`) no `-secrets-provider` Role is needed at all.
-
-### Scoped AWS IRSA policy
-
-Attach this policy to the `sharko-hub-role` IAM role referenced above (the
-role the ServiceAccount annotation points at). It has two separate
-statements — one for cluster-credential secrets, one for addon-secret
-values — each scoped to its own resource-name prefix, matching the two
-different `prefix` values set above:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "ReadClusterCredentialSecrets",
-      "Effect": "Allow",
-      "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:clusters/*"
-    },
-    {
-      "Sid": "ReadAddonSecretValues",
-      "Effect": "Allow",
-      "Action": "secretsmanager:GetSecretValue",
-      "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:addon-secrets/*"
-    },
-    {
-      "Sid": "AssumeSpokeRolesForTestAndSecretPush",
-      "Effect": "Allow",
-      "Action": "sts:AssumeRole",
-      "Resource": [
-        "arn:aws:iam::123456789012:role/example-spoke-role"
-      ]
-    }
-  ]
-}
-```
-
-**The honest limit:** the two `GetSecretValue` statements above scope *what
-each call can reach* to a disjoint prefix, but both calls still run as the
-same `sharko-hub-role` principal — Sharko's cluster-credential provider and
-its addon-secret provider don't assume two different IAM roles for a plain
-Secrets Manager read (only cluster-credential EKS-token minting supports a
-per-cluster `roleArn`; see
-[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md#c-sharkos-own-role-for-pushing-addon-secrets-and-running-tests)).
-So this is real blast-radius reduction — a leaked policy edit or a bug that
-sends the wrong prefix to `GetSecretValue` is refused by AWS, not just by
-Sharko's own code — but it isn't full identity separation. Full separation
-would need Sharko to assume a distinct IAM role per provider even for plain
-value reads, which the current code doesn't do. Treat it as a known
-follow-up, not a solved problem, if your threat model requires two fully
-separate principals.
-
-**2. NetworkPolicy — restrict Sharko's egress to what it actually calls:**
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: sharko
-  namespace: sharko
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: sharko
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
-  egress:
-    # ArgoCD API (cluster-connection Secret reads/writes go through the
-    # Kubernetes API, not a network call to ArgoCD, but Sharko also calls
-    # ArgoCD's REST API for applications/projects).
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: argocd
-    # DNS
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
-    # HTTPS out — your Git provider, AWS Secrets Manager / STS endpoints,
-    # and any managed cluster's Kubernetes API Sharko pushes addon secrets
-    # to. Narrow this to an IP allowlist if your platform supports it;
-    # NetworkPolicy alone can't match on hostname.
-    - ports:
-        - port: 443
-          protocol: TCP
-```
-
-This is a starting point, not a finished policy — the exact egress
-destinations depend on which Git provider, which AWS region, and which
-managed clusters you actually run. Test with `kubectl exec` into the
-Sharko pod and a `curl` to each expected destination after applying it,
-before relying on it in production.
-
-## Webhook Security
-
-`POST /api/v1/webhooks/git` accepts push events from your Git provider so
-Sharko notices a change sooner. It is the one route that takes no login and no
-API token, so a shared secret is the only thing in front of it.
-
-**It ships closed.** `secrets.webhookSecret` is empty by default, and while it
-is empty Sharko refuses every call to this endpoint. There is no setting that
-turns the signature check off and leaves the endpoint answering — an empty
-value closes the door rather than opening it.
-
-To switch it on:
-
-1. Generate a random secret: `openssl rand -hex 32`
-2. Set it in Sharko: `secrets.webhookSecret: "<secret>"` (or the `SHARKO_WEBHOOK_SECRET` env var)
-3. Set the same secret in your Git provider's webhook settings
-
-Sharko then checks the `X-Hub-Signature-256` header on every call. Anything
-that does not match is refused with `401 Unauthorized`.
-
-Every refusal reads the same, whether no secret is set, no signature arrived,
-or a signature did not match. That is deliberate: it means nobody can use the
-endpoint to find out how your server is configured.
-
-## Secrets Provider Security Model
-
-Sharko's secrets reconciler uses a push-based model:
-
-- Sharko fetches secrets from the provider (AWS SM or K8s Secrets) at reconcile time
-- Values are **never cached** in memory or on disk between reconcile cycles
-- Secrets are pushed directly to remote clusters via temporary kubeconfig connections
-- All Sharko-managed secrets are labeled `app.kubernetes.io/managed-by: sharko`
-- ArgoCD must exclude these secrets from management (see [Configuration](configuration.md#secrets-reconciler))
-
-This means the blast radius of a Sharko compromise is limited to the window between reconcile cycles — there is no persistent plaintext store on the Sharko pod.
-
-## Secrets Management Recommendations
-
-- Use `existingSecret` with **Sealed Secrets** or **External Secrets Operator** instead of passing tokens as Helm values
-- Enable **RBAC audit logging** in your cluster to track Sharko's API calls
-- Rotate GitHub PATs and ArgoCD tokens periodically via the Settings UI
-- Do not set `SHARKO_DEV_MODE=true` in production — it allows credential fallback via environment variables
-- Set `SHARKO_WEBHOOK_SECRET` before you expect the webhook endpoint to do anything — until it is set, Sharko refuses every call to it
-- **Leave "Allow legacy inline credentials" off** (`allow_inline_credentials`, Settings → same section as Connectivity Probe, default **false**). With the default in place, registration only accepts a pointer to an already-stored secret, an EKS token mint, or no credentials at all — GitOps-clean secret-store pointers for every cluster, and no path where sensitive kubeconfig bytes travel inside the request itself. Enabling the setting is the legacy escape hatch for installs that still depend on pasted registrations; know what it costs: a pasted credential exists only in the live ArgoCD cluster Secret and **cannot be recovered from Git** if that Secret is lost. To move existing pasted connections onto a supported provider, follow [Migrating Off Pasted (Inline) Credentials](migrate-inline-credentials.md). Once scoped RBAC ships (see the [roadmap](../community/roadmap.md)), this is planned to become a per-role permission rather than one server-wide switch — until then, it's all-or-nothing for every admin. Note that the switch only exists where a settings store does, which means in-cluster: run Sharko out of cluster and pasted registration is refused with no way to enable it, which is the correct fail-closed behaviour and is spelled out in [Connections → Allow legacy inline credentials](../user-guide/connections.md#allow-legacy-inline-credentials).
-
-## Tiered Git Attribution (v1.20+)
-
-Sharko classifies every mutating endpoint as **Tier 1** (operational) or **Tier 2** (configuration) and resolves the Git author accordingly:
-
-| Tier | Examples | Token used | Commit author | Trailer |
-|---|---|---|---|---|
-| **Tier 1** | cluster register/remove, addon enable/disable, addon upgrade, PR refresh, connection CRUD, AI config | Service token | `Sharko Bot` | `Co-authored-by: <user>` |
-| **Tier 2** | edit addon catalog metadata, edit values | Per-user PAT if configured, else service token | The user (per-user PAT) or `Sharko Bot` (fallback) | None (per-user) or `Co-authored-by: <user>` (fallback) |
-| **Personal / Auth / Webhook** | login, set-own-PAT, inbound webhooks | n/a | n/a | n/a |
-
-Each user can configure a personal GitHub PAT under **Settings → My Account**. PATs are stored encrypted at rest with `SHARKO_ENCRYPTION_KEY` (AES-256-GCM, the same key used by the connection store) under the `<username>.github_token` key in the auth Secret.
-
-The audit log records the resolved attribution mode on every mutating entry:
-
-| `attribution_mode` | Meaning |
-|---|---|
-| `service` | Service token used; no human identified on the commit (e.g. webhooks) |
-| `co_author` | Service token used; user listed in `Co-authored-by:` trailer |
-| `per_user` | Per-user PAT used; commit `Author` IS the user |
-
-When a user performs a Tier 2 action without a personal PAT configured, the response includes `attribution_warning: "no_per_user_pat"` and the UI renders a banner pointing to **Settings → My Account**.
-
-For the full design rationale and the V2.x roadmap that builds on this foundation, see `docs/design/2026-04-16-attribution-and-permissions-model.md`.
-
-## v4 threat model
-
-The threat model lives at [`docs/design/2026-08-08-threat-model-v4.md`](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-08-08-threat-model-v4.md). It is a full rewrite for v4, written in plain language for an operator rather than a security-review committee — it replaces the older v2.0.0 document, which used a heavier STRIDE/OWASP/SLSA framework structure. It walks through the four checks that guard a secret value on its way through Sharko (one delivery path shared by the scheduled engine and "refresh now," the backend boundary, the destination TLS check, and the ownership gate that stops Sharko overwriting a Secret it doesn't own), where a raw secret value exists and for how long, what permissions Sharko holds and how to cut them down, the residual risk if the Sharko pod itself is compromised, and a plain list of what is honestly not built yet. The companion review-prep bundle scoped for an external security consultant against the older v2.0.0 baseline is kept for historical reference at `.bmad/output/reviews/v2-security-review-prep.md`.
-
-## SSRF guard on URL-fetching endpoints
-
-Several endpoints fetch from a user-supplied URL (e.g. `GET /api/v1/catalog/validate` pulls `<repo>/index.yaml` from a Helm repo URL the user pastes into the Marketplace). To prevent an authenticated user from coaxing the server into hitting cluster-internal addresses (the K8s API, ArgoCD, the cloud-provider metadata service), Sharko ships a built-in SSRF guard that runs in front of every such handler.
-
-The guard rejects URLs that resolve to:
-
-| Range | Reason |
-|---|---|
-| `127.0.0.0/8`, `::1` | Loopback |
-| `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | RFC1918 private |
-| `169.254.0.0/16`, `fe80::/10` | Link-local (cloud metadata services) |
-| `fc00::/7` | IPv6 ULA |
-| Multicast / unspecified | Defense in depth |
-
-A blocked request returns HTTP 200 with `error_code: "ssrf_blocked"` (matches the rest of the catalog-validate failure taxonomy so the UI's switch table doesn't need to branch on HTTP status).
-
-### Optional allowlist
-
-For higher-assurance deployments, set `SHARKO_URL_ALLOWLIST` to restrict outbound fetches to a fixed set of hostnames:
-
-```yaml
-extraEnv:
-  - name: SHARKO_URL_ALLOWLIST
-    value: "charts.jetstack.io,charts.bitnami.com,api.scorecard.dev"
-```
-
-When set, only the listed hostnames pass the guard — every other host is rejected with `ssrf_blocked: not_in_allowlist`. When unset, the guard falls back to the default deny-list above (RFC1918 + loopback + link-local + ULA), which is appropriate for self-hosted Sharko behind a network policy.
-
-The guard runs in addition to (not instead of) any Kubernetes NetworkPolicy fronting the Sharko pod. Treat it as defense-in-depth — operators of production clusters should still apply egress NetworkPolicy that pins Sharko to its required external endpoints.
-
-## Secret-leak guard on AI annotation
-
-When AI annotation is enabled, Sharko scans every upstream `values.yaml` for secret-like patterns (AWS keys, GitHub PATs, JWTs, PEM blocks, Slack tokens, Google API keys, generic API key/password assignments, high-entropy base64 blobs). On a match the LLM call is **hard-blocked** — there is no override.
-
-Every block emits a dedicated audit-log entry with the event name `secret_leak_blocked`, so you can grep one stable token across the audit log:
-
-```bash
-curl -H "Authorization: Bearer $SHARKO_TOKEN" \
-  "https://sharko.example.com/api/v1/audit?action=block&limit=200" \
-  | jq '.[] | select(.event == "secret_leak_blocked")'
-```
-
-The audit `Detail` field carries the source handler (`addon_add`, `ai_annotate`, or `values_refresh`), the chart + version, the match count, and the deduplicated list of pattern names that fired. The actual matched bytes are never logged, never stored, and never returned in API responses.
+## Scoped AWS IRSA policy {#scoped-aws-irsa-policy}
+
+If Sharko reads secrets from AWS Secrets Manager, the IAM policy for its own
+AWS role is on
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md#c-sharkos-own-role-for-pushing-addon-secrets-and-running-tests).
+That page also says the limit plainly: you can give cluster credentials and
+addon secrets two different name prefixes, so each read can only reach its own
+prefix. But both reads still run as the same AWS role, so this is not two
+separate identities.
+
+## Other security pages
+
+The rest of the security topics are on their own pages:
+
+<a id="ssrf-guard-on-url-fetching-endpoints"></a>
+
+- [Addresses, network and webhook](security-network-and-addresses.md):
+  which addresses may carry a token, the guard that stops Sharko fetching
+  from inside your network, a network policy to start from, the Git webhook,
+  and the HTTP security headers.
+- [Secrets, threats and the AI guard](security-threat-model.md): what
+  Sharko does with a secret value, what is not protected, advice for
+  handling secrets (including pasted cluster credentials), who is named on
+  Git commits, and the AI secret guard.
+- [A hardened install, step by step](security-hardened-example.md): the
+  pod security settings, and one full example with Helm values, the AWS
+  role and a network policy.
+- To report a security problem, follow
+  [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md).
