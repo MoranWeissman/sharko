@@ -1,185 +1,217 @@
 # AWS IAM Cluster Auth — Sharko Couldn't Mint a Token
 
-**Severity:** P1
+Use this page when **Test connection** fails with `503` on an EKS cluster
+that logs in with AWS IAM. Sharko understood how the cluster logs in, but
+could not get a working EKS login token for it.
 
-> **Verified:** Authored 2026-07-09 against Sharko as shipped. Sharko
-> **parses** the `awsAuthConfig` shape (and the two known AWS
-> `execProviderConfig` commands) and mints an EKS token using its own
-> AWS identity, instead of refusing the shape outright. The wire code
-> `argocd_provider_iam_required` and the two failure messages below are
-> verified verbatim.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+Some ArgoCD cluster Secrets for EKS use AWS IAM to log in. They use either
+the `awsAuthConfig` shape, or an `execProviderConfig` that names
+`argocd-k8s-auth aws` or `aws-iam-authenticator`. Sharko supports these
+shapes. It reads them and tries to get an EKS token with its own AWS
+identity (IRSA, EKS Pod Identity, or the normal AWS credential chain). If a
+role is named, it assumes that role first.
 
-Operators registering (or adopting) an EKS cluster whose ArgoCD cluster
-Secret uses AWS IAM authentication (the `awsAuthConfig` shape, or an
-`execProviderConfig` naming `argocd-k8s-auth aws` / `aws-iam-authenticator`)
-hit a `503 Service Unavailable` when they click **Test connection** in
-the UI. This is **not** the "IAM auth isn't supported" gap it used to
-be — Sharko recognizes the shape and actively tries to mint a usable
-EKS token with its own AWS identity (IRSA / EKS Pod Identity / the
-default credential chain, optionally assuming a named role first). This
-runbook covers the two ways that mint attempt can still fail: no
-resolvable AWS region, or the mint itself being rejected by AWS.
+That can still fail in two ways:
 
-If your cluster Secret uses this shape and Test connection succeeds,
-you don't need this runbook — that's the working path, and it's
-documented in [Cluster Connectivity Model](cluster-connectivity-model.md)
-and [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md).
+- Sharko can't find out which AWS region the cluster is in, or
+- AWS refuses to give Sharko the token.
+
+If Test connection works for your cluster, you don't need this page. The
+working setup is described in
+[Cluster Connectivity Model](cluster-connectivity-model.md) and
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md).
 
 ---
 
 ## Symptoms
 
-What an operator sees when this fires:
+- **In the UI:** clicking **Test connection** on the cluster page shows one
+  of these messages.
 
-- UI: clicking **Test connection** on a Cluster detail page surfaces a
-  banner with one of two messages, depending on which failure this is
-  (see Diagnosis):
+    When no region can be found (`awsAuthConfig` shape):
 
-  > "cluster "\<name\>" uses AWS IAM authentication (awsAuthConfig) but
-  > no AWS region could be determined (no region field in awsAuthConfig,
-  > the cluster Secret has no "region" label, and the server URL
-  > "\<url\>" isn't a recognizable EKS endpoint). Set the region label on
-  > the ArgoCD cluster Secret, or add a region field to awsAuthConfig."
+    > "cluster "\<name\>" uses AWS IAM authentication (awsAuthConfig) but no
+    > AWS region could be determined (no region field in awsAuthConfig, the
+    > cluster Secret has no "region" label, and the server URL "\<url\>"
+    > isn't a recognizable EKS endpoint). Set the region label on the ArgoCD
+    > cluster Secret, or add a region field to awsAuthConfig."
 
-  or
+    When no region can be found (`execProviderConfig` shape):
 
-  > "cluster "\<name\>" needs Sharko's own AWS identity (IRSA/Pod
-  > Identity) to use this cluster's IAM-based connection, and minting an
-  > EKS token failed: \<AWS error\>"
+    > "cluster "\<name\>" uses exec-plugin AWS authentication (command
+    > "\<command\>") but no AWS region could be determined (no AWS_REGION in
+    > execProviderConfig.env, the cluster Secret has no "region" label, and
+    > the server URL "\<url\>" isn't a recognizable EKS endpoint). Set the
+    > region label on the ArgoCD cluster Secret, or add AWS_REGION to
+    > execProviderConfig.env."
 
-- API: `POST /api/v1/clusters/{name}/test` returns
-  `503 Service Unavailable` with body:
+    When AWS refused the token:
+
+    > "Cluster "\<name\>" needs Sharko's own AWS identity (IRSA / EKS Pod
+    > Identity) to use this cluster's IAM-based connection, and minting an
+    > EKS sign-in token failed. The server log for this request id says
+    > which step failed."
+
+- **In the API:** `POST /api/v1/clusters/{name}/test` returns
+  `503 Service Unavailable` with a body like this:
 
   ```json
-  {"error":"cluster \"prod-eks-1\" needs Sharko's own AWS identity (IRSA/Pod Identity) to use this cluster's IAM-based connection, and minting an EKS token failed: ...","error_code":"argocd_provider_iam_required"}
+  {"error":"Cluster \"prod-eks-1\" needs Sharko's own AWS identity (IRSA / EKS Pod Identity) to use this cluster's IAM-based connection, and minting an EKS sign-in token failed. The server log for this request id says which step failed.","error_code":"argocd_provider_iam_required"}
   ```
 
-  `error_code` is the stable field the UI dispatches on — always
-  `argocd_provider_iam_required` for this failure, whichever of the two
-  root causes produced it.
+  `error_code` is always `argocd_provider_iam_required` for this problem,
+  whichever of the two causes it is. The UI uses this field to decide what
+  to show.
 
-- `kubectl logs -n sharko deploy/sharko` line at the failed test — the
-  missing-region case:
+- **In the Sharko log** (`kubectl logs -n sharko deploy/sharko`), at the
+  moment of the failed test. When no region can be found:
 
   ```
   {"time":"...","level":"WARN","msg":"[provider] argocd cluster awsAuthConfig has no resolvable AWS region — cannot mint an EKS token","cluster":"prod-eks-1","server":"https://...","eksClusterName":"prod-eks-1"}
   ```
 
-  or the mint-failure case:
+  (For the `execProviderConfig` shape, the message says
+  `execProviderConfig` instead, and also has a `command` field.)
+
+  When AWS refused the token:
 
   ```
-  {"time":"...","level":"ERROR","msg":"[provider] EKS token mint failed for argocd cluster — Sharko has no usable AWS identity for this cluster","cluster":"prod-eks-1","server":"https://...","eksClusterName":"prod-eks-1","region":"us-east-1","error":"..."}
+  {"time":"...","level":"ERROR","msg":"[provider] EKS token mint failed for argocd cluster — Sharko has no usable AWS identity for this cluster","cluster":"prod-eks-1","server":"https://...","eksClusterName":"prod-eks-1","region":"us-east-1","step":"mint-eks-token"}
   ```
 
-- No Sharko alert fires — `Test connection` is a synchronous read; the
-  burn-rate alerts do not cover it because there is no error budget
-  defined for cluster-test calls. The failure is purely user-visible.
-- ArgoCD itself may or may not be able to reach the cluster, depending
-  on whether **ArgoCD's own** IAM identity (a separate role from
-  Sharko's — see [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md))
-  is correctly set up. A cluster can be healthy in ArgoCD while Sharko's
-  Test connection still fails, if only Sharko's own identity is broken —
-  they're two different IAM roles doing two different jobs.
+  This line does not include the AWS error text. To see which part
+  failed, use the steps under Diagnosis.
 
-If the error message differs (`argocd_provider_exec_unsupported`,
-`no credentials provider configured`, `cluster secret malformed`),
-this is **not** the right runbook. See
-[`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md),
-[`secrets-provider-unreachable.md`](secrets-provider-unreachable.md),
-or
-[`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md).
+- **A Kubernetes Warning event** with the reason `AWSTokenMintFailed` is
+  also recorded.
+- **No Sharko alert fires.** Test connection is something you run by hand,
+  so no alert watches it. You only see it on the screen.
+- **ArgoCD may still reach the cluster fine.** ArgoCD has its own AWS role,
+  separate from Sharko's (see
+  [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md)). A cluster
+  can be healthy in ArgoCD while Sharko's Test connection fails, if only
+  Sharko's identity is broken. They are two different roles doing two
+  different jobs.
+
+If you see a different error, this is **not** the right page:
+
+- `argocd_provider_exec_unsupported` → see
+  [ArgoCD exec plugin auth unsupported](argocd-exec-plugin-auth-unsupported.md).
+- `no credentials provider configured` → see
+  [Secrets provider unreachable](secrets-provider-unreachable.md).
+- `cluster secret malformed` → see
+  [ArgoCD cluster Secret corruption](argocd-cluster-secret-corruption.md).
 
 ---
 
 ## Diagnosis
 
-Four checks, in order. The first confirms the Secret shape; the second
-and third split the two root causes; the fourth checks Sharko's own
-identity directly.
+Four checks, in this order. The first confirms the Secret's shape. The
+second tells the two causes apart. The third and fourth check Sharko's own
+identity.
 
-### 1. Confirm the cluster Secret uses `awsAuthConfig` or a known AWS exec command
+The [Connection Doctor](connection-doctor.md) also helps here. Its
+`assume-role` check really tries to assume the role, and its
+`cluster-access` check tells you if the cluster itself does not trust the
+role.
+
+### 1. Check that the cluster Secret uses `awsAuthConfig` or a known AWS helper
+
+The Secret has the same name as the cluster in Sharko.
 
 ```sh
-kubectl -n argocd get secret cluster-<cluster-name> -o json \
+kubectl -n argocd get secret <cluster-name> -o json \
   | jq -r '.data.config | @base64d' \
   | jq '{ awsAuthConfig, execProviderConfig, bearerToken: (.bearerToken // null | tostring | .[0:10]) }'
 ```
 
-Expected on this failure path: either `awsAuthConfig` is non-null, or
-`execProviderConfig.command` is `"aws-iam-authenticator"` or
+For this problem you should see either `awsAuthConfig` set, or
+`execProviderConfig.command` set to `"aws-iam-authenticator"`, or to
 `"argocd-k8s-auth"` with `args[0] == "aws"`. `bearerToken` should be
-null — if it's set, your cluster isn't using IAM auth at all.
+empty. If it is set, the cluster does not use IAM at all.
 
-### 2. Check which failure this is — missing region, or failed mint
+### 2. Check which cause it is: no region, or AWS refused
 
-The two messages in Symptoms tell you which. If it's the region
-message, the Secret's `awsAuthConfig`/`execProviderConfig.env` carries
-no region, the Secret has no `region` label, and the server URL isn't a
-standard EKS hostname (`<id>.gr7.<region>.eks.amazonaws.com`) — Sharko
-has genuinely nothing to go on. If it's the mint-failure message, the
-shape parsed fine and Sharko knows the region; the AWS call itself
-failed.
+The message under Symptoms tells you.
 
-### 3. For a mint failure, confirm Sharko's own AWS identity
+- **No region:** Sharko looks for the region in this order:
+    1. `awsAuthConfig.region` (or `AWS_REGION` in `execProviderConfig.env`),
+    2. the `region` label on the Secret,
+    3. the cluster's server address, if it is a normal EKS address
+       (`<id>.gr7.<region>.eks.amazonaws.com`).
+
+    None of these was there, so Sharko has nothing to go on.
+- **AWS refused:** Sharko read the shape and knows the region. The call to
+  AWS failed.
+
+### 3. If AWS refused, check Sharko's own AWS identity
 
 ```sh
 curl -s https://sharko.example.com/api/v1/system/capabilities \
   -H "Authorization: Bearer $SHARKO_TOKEN" | jq '.aws'
 ```
 
-`"detected": false` means the Sharko pod has no AWS identity at all —
-no IRSA annotation, no Pod Identity association, nothing in the default
-credential chain. That's the fix (see Mitigation). `"detected": true`
-with a `method` and `identity_arn` means Sharko has *an* identity but
-it either lacks `sts:AssumeRole` on the target role, or the target
-role's trust policy doesn't list Sharko's role as a trusted principal.
+- `"detected": false` means the Sharko pod has no AWS identity at all: no
+  IRSA annotation, no Pod Identity association, and nothing in the normal
+  AWS credential chain. Fix that first (see Mitigation step 2).
+- `"detected": true` with a `method` and `identity_arn` means Sharko has an
+  identity. Then either it is not allowed `sts:AssumeRole` on the cluster's
+  role, or the role's trust policy does not list Sharko's role.
 
-### 4. Confirm the target role's trust policy actually trusts Sharko
+### 4. Check that the cluster's role really trusts Sharko
 
 ```sh
 aws iam get-role --role-name example-spoke-role \
   --query 'Role.AssumeRolePolicyDocument' --output json
 ```
 
-The `Principal.AWS` list must include the ARN from step 3's
-`identity_arn` (or the role it's an assumed-role session of). If it
-only lists ArgoCD's own hub role, that's the gap — Sharko needs its own
-trust entry, it doesn't inherit ArgoCD's. See
-[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for the full
-trust-policy recipe.
+The `Principal.AWS` list must include the `identity_arn` from step 3 (or
+the role it is a session of). If it only lists ArgoCD's hub role, that is
+the problem. Sharko needs its own trust entry. It does not get ArgoCD's.
+See [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for the
+full trust policy setup.
 
 ---
 
 ## Mitigation (try in order)
 
-### 1. No resolvable region — set one explicitly
+### 1. No region found — set one
 
-Add a `region` label to the ArgoCD cluster Secret (the field Sharko
-checks first after the Secret's own `awsAuthConfig.region` /
-`execProviderConfig.env.AWS_REGION`):
+Add a `region` label to the ArgoCD cluster Secret:
 
 ```sh
-kubectl -n argocd label secret cluster-<cluster-name> region=us-east-1 --overwrite
+kubectl -n argocd label secret <cluster-name> region=us-east-1 --overwrite
 ```
 
-If the Secret is Sharko-managed (not `connectionManagedBy: user`),
-this label is a stopgap until the next reconcile — the durable fix is
-setting `region` on the cluster's entry in `managed-clusters.yaml` so
-Sharko's own writer stops omitting it.
+If **you** manage this cluster's connection (`connectionManagedBy: user`),
+you can also put the region in the Secret's own `config` instead:
+`awsAuthConfig.region`, or `AWS_REGION` in `execProviderConfig.env`. Both
+are permanent fixes.
+
+If **Sharko** manages the Secret, the label is a quick fix only. Sharko
+does not write a region into the Secrets it creates. For a normal EKS
+address it doesn't need to, because it reads the region from the address.
+Sharko leaves your `region` label alone, but if it ever builds the Secret
+again (for example after the Secret was deleted), the label is gone and you
+must add it again. For a cluster on its own DNS name, or in an AWS
+partition with a different address (GovCloud or China), there is no lasting
+fix on Sharko's side today. If this affects you, please
+[open an issue](https://github.com/MoranWeissman/sharko/issues) and say
+which kind of address the cluster has.
 
 ### 2. Sharko has no AWS identity at all — give it one
 
-If step 3 above showed `"detected": false`, annotate the Sharko
-ServiceAccount with an IRSA role, or create an EKS Pod Identity
-association — see [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md#c-sharkos-own-role-for-pushing-addon-secrets-and-running-tests)
-for the exact role policy Sharko needs (`secretsmanager:GetSecretValue`
-scoped to your secret prefix, `sts:AssumeRole` on the spoke roles).
+If step 3 showed `"detected": false`, add an IRSA role annotation to
+Sharko's service account (the `serviceAccount.annotations` Helm value), or
+create an EKS Pod Identity association. See
+[EKS Hub-and-Spoke Identity → Sharko's IAM policy](eks-hub-and-spoke-identity.md#sharko-iam-policy)
+for the policy Sharko needs: `secretsmanager:GetSecretValue` limited to
+your secret prefix, and `sts:AssumeRole` on the spoke roles.
 
-### 3. Sharko has an identity but can't assume the target role — fix the trust policy
+### 3. Sharko has an identity but can't assume the role — fix the trust policy
 
-Add Sharko's role ARN to the target spoke role's trust policy (step 4
-above shows you what's currently there):
+Add Sharko's role ARN to the trust policy of the cluster's role (step 4
+shows what is there now):
 
 ```json
 {
@@ -191,114 +223,108 @@ above shows you what's currently there):
 }
 ```
 
-And confirm Sharko's own role policy grants `sts:AssumeRole` on that
-target role's ARN — see the recipe page for the exact statement shape.
+Also check that Sharko's own role policy allows `sts:AssumeRole` on that
+role's ARN. See
+[EKS Hub-and-Spoke Identity → Sharko's IAM policy](eks-hub-and-spoke-identity.md#sharko-iam-policy)
+for the statement.
 
-### 4. Verify connectivity manually outside Sharko (while you fix the above)
+### 4. Check the cluster outside Sharko while you fix the above
 
-The fastest "did my cluster actually register?" check that doesn't
-depend on Sharko's own IAM chain:
+These checks do not depend on Sharko's AWS setup:
 
 ```sh
-# Sanity-check ArgoCD's view (ArgoCD has its own, separate IAM role)
+# What ArgoCD sees (ArgoCD has its own, separate AWS role)
 kubectl -n argocd get application -o wide | grep <cluster-name>
 
-# Probe the cluster's API directly using your own AWS identity
-aws eks get-token --cluster-name <eks-cluster-name> --region <region> \
-  | kubectl --token "$(...)" get nodes
+# Reach the cluster's API with your own AWS identity
+aws eks update-kubeconfig --name <eks-cluster-name> --region <region> \
+  --kubeconfig /tmp/eks-check.kubeconfig
+kubectl --kubeconfig /tmp/eks-check.kubeconfig get nodes
 ```
 
-If ArgoCD itself reports the cluster Healthy/Synced, registration
-succeeded and this is purely Sharko's own Test connection button being
-blocked on its own IAM setup — not a sign the cluster is broken.
+If ArgoCD shows the cluster as Healthy and Synced, the cluster is fine.
+Only Sharko's own Test connection is stuck on Sharko's AWS setup.
 
-### 5. Last resort — re-register the cluster as bearer-token
+### 5. Last choice — register the cluster again with a bearer token
 
-**Not recommended.** EKS clusters can be added to ArgoCD using a static
-bearer token (a long-lived ServiceAccount token), bypassing IAM auth
-entirely. Long-lived ServiceAccount tokens are a security regression
-versus IAM auth — they don't rotate, they survive role revocation, and
-they can't be scoped down by IAM policy. Use this lane only if your
-security posture explicitly allows it and only as a stop-gap while you
-fix the IAM chain.
+**Not recommended.** You can add an EKS cluster to ArgoCD with a fixed
+bearer token (a long-lived service account token), and skip IAM. But such
+tokens are less safe than IAM: they don't rotate, they keep working after
+a role is removed, and IAM policies can't limit them. Only do this if your
+security rules allow it, and only for a short time while you fix the IAM
+setup.
 
 ---
 
-## Root-cause patterns
+## Common causes
 
-### Sharko's pod has no AWS identity
+### The Sharko pod has no AWS identity
 
-The most common cause after a fresh install: the Sharko Helm chart was
-deployed without the `serviceAccount.annotations."eks.amazonaws.com/role-arn"`
-value set, and no EKS Pod Identity association was created either.
-`GET /api/v1/system/capabilities` reports `"detected": false, "method": "none"`.
-Fix is Mitigation step 2.
+This is the most common cause right after an install. Sharko's Helm chart
+was installed without the
+`serviceAccount.annotations."eks.amazonaws.com/role-arn"` value, and no EKS
+Pod Identity association was created either.
+`GET /api/v1/system/capabilities` reports
+`"detected": false, "method": "none"`. Fix: Mitigation step 2.
 
-### Target role's trust policy only trusts ArgoCD's role, not Sharko's
+### The cluster's role only trusts ArgoCD's role, not Sharko's
 
-A common misconfiguration when a platform team sets up the hub-and-spoke
-IAM chain for ArgoCD alone and doesn't realize Sharko needs its own,
-separate trust entry on the same target role. ArgoCD syncs fine;
-Sharko's Test connection fails. Fix is Mitigation step 3.
+This happens when a platform team sets up IAM for ArgoCD only, and doesn't
+know Sharko needs its own trust entry on the same role. ArgoCD syncs fine,
+but Sharko's Test connection fails. Fix: Mitigation step 3.
 
-### No region signal anywhere on the Secret
+### No region anywhere on the Secret
 
-Sharko's own writer (`argosecrets.buildSecretConfig`) never persists
-region as a JSON field, an env var, or a Secret label for its own
-`execProviderConfig` output — the EKS server URL is the only fallback
-signal for Sharko-registered clusters, and it only works for
-standard-shaped `*.eks.amazonaws.com` hostnames. A cluster on a custom
-DNS name, or in a GovCloud/China partition with a different server
-suffix, has no automatic region signal at all. Fix is Mitigation step 1.
+Sharko does not write a region into the Secrets it creates, in any form.
+For those clusters, the server address is the only place Sharko can find
+the region. That only works for normal `*.eks.amazonaws.com` addresses. A
+cluster on its own DNS name, or in GovCloud or China with a different
+address, has no region Sharko can find. Fix: Mitigation step 1.
 
 ---
 
 ## Prevention
 
-- **Set the IAM chain up once, at install time.** [EKS Hub-and-Spoke
-  Identity](eks-hub-and-spoke-identity.md) is the recipe to hand your
-  platform team before the first EKS cluster gets registered — it
-  covers Sharko's role alongside ArgoCD's, so the "Sharko has no trust
-  entry" gap in Root-cause patterns above never happens.
-- **Check `/system/capabilities` right after install.** A quick
-  `curl .../system/capabilities` confirming `"detected": true` catches
-  a missing IRSA annotation before it becomes a per-cluster support
-  ticket.
-- **Set `region` on every cluster's Git entry explicitly** for
-  non-standard EKS endpoints (GovCloud, China partitions, custom DNS) —
-  don't rely on the server-URL fallback for anything outside the
-  standard AWS partition.
+- **Set up IAM once, when you install.** Give your platform team
+  [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) before the
+  first EKS cluster is registered. It covers Sharko's role next to
+  ArgoCD's, so Sharko is never left without a trust entry.
+- **Check `/api/v1/system/capabilities` right after you install.** If it
+  says `"detected": true`, Sharko has an AWS identity. This catches a
+  missing IRSA annotation before it shows up on every cluster.
+- **Give every cluster that does not use a normal EKS address a region**
+  (GovCloud, China, or your own DNS name), as in Mitigation step 1. Don't
+  count on Sharko reading the region from the address.
 
 ---
 
-## Related runbooks
+## Related pages
 
-- [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-  — adjacent failure: the Secret's exec command isn't one of the two
-  known AWS authenticators at all.
-- [`eks-token-generation-failed.md`](eks-token-generation-failed.md) —
-  overlapping failure surface (same `getEKSToken` code path), framed
-  around Sharko's own IRSA chain rather than a specific cluster's
-  Secret shape. Read this one if step 3/4 above point at Sharko's own
-  role rather than the target role.
-- [Cluster Connectivity Model](cluster-connectivity-model.md) —
-  reference for which kubeconfig auth shapes Sharko handles today.
-- [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) — the
-  full IAM setup recipe this runbook's mitigations point back to.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
+- [ArgoCD exec plugin auth unsupported](argocd-exec-plugin-auth-unsupported.md)
+  — a close problem: the Secret's login helper is not one of the two known
+  AWS helpers.
+- [EKS token generation failed](eks-token-generation-failed.md) — a close
+  problem, seen from Sharko's own IRSA setup instead of one cluster's
+  Secret. Read it if steps 3 and 4 point at Sharko's role rather than the
+  cluster's role.
+- [Cluster Connectivity Model](cluster-connectivity-model.md) — which login
+  shapes Sharko supports today.
+- [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) — the full
+  IAM setup that the steps above point back to.
+- [Failure mode index](failure-mode-index.md) — the full list of problems.
 
-## Escalation
+## If this does not fix it
 
-If the mitigations above don't restore Test connection and the
-limitation is blocking fleet on-boarding, email the maintainer:
-`moran.weissman@gmail.com`. Include:
+Sharko is a technical preview, and it is looked after by one person. There
+is no on-call support. If the steps above don't fix Test connection,
+[open an issue on GitHub](https://github.com/MoranWeissman/sharko/issues).
+Please include:
 
-- The runbook URL you used (this page)
-- The output of `GET /api/v1/system/capabilities`
-- A diff of `kubectl get secret cluster-<name> -n argocd -o yaml`
-  showing the `awsAuthConfig`/`execProviderConfig` shape (redact the
-  role ARN if your policy requires; the failure is not role-specific)
-- The full `error` string from the failed `POST /clusters/{name}/test`
+- a link to this page,
+- the output of `GET /api/v1/system/capabilities`,
+- the `awsAuthConfig` or `execProviderConfig` part of
+  `kubectl get secret <cluster-name> -n argocd -o yaml` (remove the role
+  ARN if your rules say so, the problem does not depend on it),
+- the full `error` text from the failed `POST /api/v1/clusters/{name}/test`.
 
-The maintainer is a single human, not a 24x7 rotation. Expect a
-business-day SLA, not a paged response.
+Don't post tokens, keys or other secret values in the issue.

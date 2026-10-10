@@ -1,30 +1,29 @@
 # Connecting EKS Clusters with IAM (Hub-and-Spoke Identity)
 
-> **Reference page, not a runbook.** This page is the recipe for wiring
-> IAM-based access from your ArgoCD hub to your EKS spoke clusters, and
-> for giving Sharko the same access so it can push addon secrets and run
-> connectivity tests. It does not cover a specific failure — if
-> something in this recipe is broken, see
-> [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) (Sharko couldn't
-> mint a usable token) or
-> [`eks-token-generation-failed.md`](eks-token-generation-failed.md)
-> (Sharko's own identity is broken). For the bigger picture of where
-> connection truth lives, see
-> [Cluster Connectivity Model](cluster-connectivity-model.md).
+This page shows how to set up AWS IAM so that ArgoCD, and Sharko, can reach
+your EKS clusters. It uses the **hub and spoke** setup: ArgoCD and Sharko
+run on one main cluster (the hub), and deploy to many other clusters (the
+spokes), often in other AWS accounts. See the
+[glossary](../glossary.md#main-cluster-and-managed-clusters-hub-and-spoke)
+for more on these words.
 
-Every EKS cluster that ArgoCD deploys to needs one thing settled before
-anything else works: **who is allowed to authenticate to the cluster's
-Kubernetes API, and as what identity?** On EKS, that's an IAM question,
-not a Kubernetes-RBAC-only question — the cluster's `aws-auth`
-ConfigMap or its EKS **access entries** decide which IAM principals get
-in.
+This page is a setup guide. If something is already broken, see
+[AWS IAM Cluster Auth](aws-iam-cluster-auth.md) (Sharko could not get a
+token for a cluster) or
+[EKS token generation failed](eks-token-generation-failed.md) (Sharko's own
+AWS identity is broken).
 
-This page walks through the three IAM identities involved in a
-hub-and-spoke EKS setup, in plain language, with copy-paste JSON and
-CLI you can adapt. **Setting this up is the ArgoCD installer's job, not
-Sharko's** — Sharko never creates IAM roles, policies, or EKS access
-entries on your behalf. What Sharko does is *use* whatever identity it's
-been given, and tell you what it detected via
+Every EKS cluster ArgoCD deploys to needs one question answered before
+anything else works: **who is allowed to log in to the cluster's Kubernetes
+API, and as which identity?** On EKS this is an IAM question, not only a
+Kubernetes RBAC question. The cluster's EKS **access entries** (or its
+older `aws-auth` ConfigMap) decide which IAM roles get in.
+
+This page walks through the three IAM identities in a hub and spoke EKS
+setup, with JSON and commands you can copy and change. **Setting this up is
+the job of whoever installs ArgoCD, not Sharko's.** Sharko never creates
+IAM roles, policies or EKS access entries for you. Sharko *uses* whatever
+identity it has, and tells you what it found at
 `GET /api/v1/system/capabilities`.
 
 ## The three identities
@@ -43,20 +42,16 @@ been given, and tell you what it detected via
 └─────────────────────┘                        └─────────────────────┘
 ```
 
-### (a) ArgoCD's role — the one that actually talks to the spoke API
+### (a) ArgoCD's role — the one that really talks to the spoke cluster
 
-ArgoCD's `argocd-application-controller` and `argocd-server` components
-are the ones that open a Kubernetes client against each spoke cluster to
-sync Applications. On EKS they need an AWS identity to mint an EKS
-authentication token (the same `k8s-aws-v1.` presigned-STS-URL token
-Sharko's own minting code produces — see
-[Cluster Connectivity Model](cluster-connectivity-model.md)).
+ArgoCD's `argocd-application-controller` and `argocd-server` are the parts
+that connect to each spoke cluster to sync Applications. On EKS they need an
+AWS identity to get an EKS login token.
 
-Give them that identity one of two ways:
+Give them that identity in one of two ways:
 
-- **IRSA (IAM Roles for Service Accounts)** — annotate the
-  `argocd-application-controller` and `argocd-server` ServiceAccounts
-  with a role ARN:
+- **IRSA (IAM Roles for Service Accounts).** Add a role ARN to the
+  `argocd-application-controller` and `argocd-server` service accounts:
 
   ```yaml
   # values.yaml for the argo-cd Helm chart
@@ -70,8 +65,8 @@ Give them that identity one of two ways:
         eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/argocd-hub-role"
   ```
 
-- **EKS Pod Identity** — create a Pod Identity association instead of an
-  annotation (newer EKS clusters, no OIDC provider trust needed):
+- **EKS Pod Identity.** Create a Pod Identity association instead. This
+  works on newer EKS clusters and needs no OIDC provider trust:
 
   ```bash
   aws eks create-pod-identity-association \
@@ -81,11 +76,10 @@ Give them that identity one of two ways:
     --role-arn arn:aws:iam::123456789012:role/argocd-hub-role
   ```
 
-Either way, `argocd-hub-role`'s policy needs `sts:AssumeRole` on every
-spoke role it needs to reach. **Scope it down** — a wildcard resource
-works, but it means a compromised hub role can assume *any* spoke role
-in *any* account that trusts it, which is a much bigger blast radius
-than the hub actually needs:
+Either way, the policy on `argocd-hub-role` needs `sts:AssumeRole` on every
+spoke role it must reach. **List those roles by name.** A `*` here does
+work, but then anyone who takes over the hub role can assume *any* role in
+*any* account that trusts it. That is far more than the hub needs:
 
 ```json
 {
@@ -103,17 +97,14 @@ than the hub actually needs:
 }
 ```
 
-`"Resource": "*"` here does work — AssumeRole doesn't fail on a
-wildcard — but it trades convenience for a much wider blast radius. List
-the spoke role ARNs explicitly, and add a new statement (or a new line
-in the list) each time you onboard a spoke account.
+Each time you add a spoke account, add its role to this list.
 
 ### (b) The spoke account's role — one per spoke account, trusting the hub
 
 In each spoke AWS account, create (or reuse) a role that:
 
-1. **Trusts the hub role** — its trust policy allows `sts:AssumeRole`
-   from `argocd-hub-role`'s ARN:
+1. **Trusts the hub role.** Its trust policy allows `sts:AssumeRole` from
+   the ARN of `argocd-hub-role`:
 
    ```json
    {
@@ -130,10 +121,10 @@ In each spoke AWS account, create (or reuse) a role that:
    }
    ```
 
-2. **Is mapped into the spoke cluster** via an EKS access entry — this
-   is the step that actually grants Kubernetes-level permissions once
-   the IAM assume-role succeeds. Without this, a successfully-assumed
-   role still gets a Kubernetes `403` at the API server:
+2. **Is allowed into the spoke cluster** through an EKS access entry. This
+   is the step that gives Kubernetes permissions once AWS lets the hub
+   assume the role. Without it, the role is assumed fine but the cluster
+   still answers with a Kubernetes `403`:
 
    ```bash
    aws eks create-access-entry \
@@ -149,39 +140,43 @@ In each spoke AWS account, create (or reuse) a role that:
      --region us-east-1
    ```
 
-   Pick a narrower access policy than `AmazonEKSClusterAdminPolicy` if
-   ArgoCD's job on that cluster doesn't need cluster-admin — EKS ships
-   several built-in access policies at different privilege levels.
-   (Clusters still on the legacy `aws-auth` ConfigMap instead of access
-   entries need the equivalent `mapRoles` entry there instead.)
+   If ArgoCD does not need full admin on that cluster, pick a smaller
+   access policy than `AmazonEKSClusterAdminPolicy`. EKS comes with several
+   built-in access policies with different levels of access. Clusters still
+   on the older `aws-auth` ConfigMap need a matching `mapRoles` entry there
+   instead.
 
-This is the role ARN that ends up in the ArgoCD cluster Secret's
-`awsAuthConfig.roleARN` or `execProviderConfig` `--role-arn` argument —
-see [Managing Cluster Connections Yourself](self-managed-connections.md#the-secret-you-create)
+This is the role ARN that goes into the ArgoCD cluster Secret, as
+`awsAuthConfig.roleARN` or as the `--role-arn` argument in
+`execProviderConfig`. See
+[Managing Cluster Connections Yourself](self-managed-connections.md#the-secret-you-create)
 for the exact Secret shape.
 
 ### (c) Sharko's own role — for pushing addon secrets and running tests
 
-Sharko needs its own AWS identity for two things, both of which are
-**separate from ArgoCD's sync path** — Sharko never syncs addons to
-spoke clusters itself:
+Sharko needs its own AWS identity for two things. Both are **separate from
+how ArgoCD syncs**. Sharko never deploys addons to spoke clusters itself.
 
-- **`secretsmanager:GetSecretValue`** — to read cluster credentials and
-  addon secret values out of AWS Secrets Manager (if that's your
-  configured secrets backend).
-- **`sts:AssumeRole`** on the same spoke roles from (b) — for two
-  narrower jobs than ArgoCD's: minting an EKS token to push addon
-  secrets directly onto a spoke cluster (`internal/remoteclient`), and
-  minting one to answer **Test connection** for an existing ArgoCD
-  cluster Secret that uses `awsAuthConfig` or `execProviderConfig` (see
-  [Cluster Connectivity Model](cluster-connectivity-model.md)).
+- **`secretsmanager:GetSecretValue`**, to read cluster credentials and addon
+  secret values from AWS Secrets Manager, if that is your secrets backend.
+- **`sts:AssumeRole`** on the same spoke roles from (b), for two smaller
+  jobs than ArgoCD's:
+    - getting an EKS token to put addon secrets straight onto a spoke
+      cluster, and
+    - getting one to answer **Test connection** for an ArgoCD cluster Secret
+      that uses `awsAuthConfig` or `execProviderConfig` (see
+      [Cluster Connectivity Model](cluster-connectivity-model.md)).
+
+Give Sharko its role with IRSA in Sharko's Helm values:
 
 ```yaml
-# charts/sharko/values.yaml
+# Sharko Helm values
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/sharko-hub-role"
 ```
+
+### Sharko's IAM policy {#sharko-iam-policy}
 
 ```json
 {
@@ -212,77 +207,57 @@ serviceAccount:
 }
 ```
 
-Scope each `secretsmanager:GetSecretValue` resource to the prefix its own
-provider is configured with — `connection.provider.prefix` (default
-`clusters/`) for cluster credentials, `connection.addonSecretProvider.prefix`
-for addon secret values (see
-[Installation](../getting-started/installation.md#aws-secrets-manager-optional)) —
-not to `*`, and not to one shared prefix for both. Splitting the two
-statements onto two disjoint prefixes means a caller (or a bug) reading
-under the wrong provider's assumption is refused by AWS itself, not just
-by Sharko's own code. It is **not** full identity separation — both reads
-still run as this one `sharko-hub-role` principal, since a plain
-`GetSecretValue` call doesn't assume a per-provider role today (only the
-EKS-token-mint path for cluster credentials supports a per-cluster
-`roleArn`). See
-[Security → A worked example](security.md#a-worked-example-a-hardened-installation)
-for the fuller picture and that limit spelled out. Scope the
-`sts:AssumeRole` resource to the same explicit spoke-role list as ArgoCD's
-role in (a) — Sharko never needs to assume a role ArgoCD itself couldn't
-also assume, since it's reaching the same clusters for a narrower purpose.
+Limit each `secretsmanager:GetSecretValue` statement to its own prefix:
+`connection.provider.prefix` (for example `clusters/`) for cluster
+credentials, and `connection.addonSecretProvider.prefix` for addon secret
+values (see
+[Installation → AWS Secrets Manager](../getting-started/installation.md#aws-secrets-manager-optional)).
+Don't use `*`, and don't share one prefix for both. Why this matters, and
+where its limits are, is explained in
+[Security: a hardened install, step by step](security-hardened-example.md#a-worked-example-a-hardened-installation).
 
-If Sharko has **no** identity at all (no IRSA annotation, no Pod
-Identity association, nothing in the default credential chain), it
-degrades honestly rather than guessing: `GET /api/v1/system/capabilities`
-reports `"aws": {"detected": false, "method": "none"}`, and any
-operation that needs an AWS identity (minting a token for an
-`awsAuthConfig` cluster, pushing an addon secret from AWS-SM) fails with
-a typed, actionable error instead of a silent no-op.
+Limit the `sts:AssumeRole` statement to the same list of spoke roles as
+ArgoCD's role in (a). Sharko never needs a role that ArgoCD could not also
+assume, because it reaches the same clusters for a smaller job.
+
+If Sharko has **no** AWS identity at all (no IRSA annotation, no Pod
+Identity association, nothing in the normal AWS credential chain), it says
+so instead of guessing. `GET /api/v1/system/capabilities` reports
+`"aws": {"detected": false, "method": "none"}`. Anything that needs an AWS
+identity, like getting a token for an `awsAuthConfig` cluster or reading an
+addon secret from AWS Secrets Manager, then fails with a clear error
+instead of silently doing nothing.
 
 ## Why identity-based access is the recommended path
 
-Sharko supports three ways to give it a spoke cluster's credentials at
-registration time (point at a stored kubeconfig, mint an Amazon EKS
-token, or — legacy and off by default — paste a kubeconfig; see
-[Managing Clusters](../user-guide/clusters.md#adding-a-cluster)), plus
-this hub-and-spoke recipe for clusters whose ArgoCD Secret already
-exists. **The identity-based path — Sharko minting its own EKS token via
-IRSA / Pod Identity, the same way this page sets up ArgoCD's access — is
-the recommended one for AWS.** Nothing long-lived is stored anywhere;
-every token is minted on demand and expires in minutes; there's no
-kubeconfig or static bearer token sitting in a secrets backend for
-someone to leak or forget to rotate.
+For EKS, the best way is for Sharko to get its own short-lived EKS tokens
+with IRSA or Pod Identity, the same way this page sets up ArgoCD. Nothing
+long-lived is stored, so there is nothing to leak or forget to rotate. The
+other ways (a stored kubeconfig, or a pasted one) are still supported, and
+they are the only ways for clusters outside AWS. See
+[Cluster Connectivity Model](cluster-connectivity-model.md) for all the
+options.
 
-Paste-a-kubeconfig and point-at-a-stored-secret remain supported
-fallbacks — and today they're the **only** path for non-AWS clusters.
-Sharko does not mint GCP or Azure identities; if you're registering a
-GKE or AKS cluster, one of those two fallbacks is what you use (see
-[`azure-gcp-provider-unimplemented.md`](azure-gcp-provider-unimplemented.md)
-for the honest state of native GCP/Azure credential minting).
+### What about clusters that already have an exec plugin Secret?
 
-### What about clusters that already have an exec-plugin Secret?
+You may adopt a cluster whose ArgoCD Secret was written by `eksctl`,
+`aws eks update-kubeconfig`, or ArgoCD's own `argocd-k8s-auth aws` helper.
+Its Secret has an `execProviderConfig` block that names a login helper,
+like `aws-iam-authenticator` or `argocd-k8s-auth aws`. Sharko knows
+**exactly those two AWS helpers**. It reads the `--cluster-name` and
+`--role-arn` arguments from them, and gets a token with its own identity,
+using the same (a), (b), (c) chain as above. It never runs the helper
+program. It only reads the arguments that were meant for it.
 
-If you're adopting a cluster whose ArgoCD Secret was written by
-`eksctl`, `aws eks update-kubeconfig`, or ArgoCD's own
-`argocd-k8s-auth aws` helper, its Secret carries an
-`execProviderConfig` block naming a command like `aws-iam-authenticator`
-or `argocd-k8s-auth aws`. Sharko recognizes **exactly those two AWS
-authenticator commands** — it parses the `--cluster-name` /
-`--role-arn` arguments out of them and mints a token with its own
-identity, following the same (a)/(b)/(c) chain as above. It never
-executes the plugin binary itself; it only reads the arguments that
-were meant for it.
+Every other helper, like `gke-gcloud-auth-plugin`, `kubelogin`, or a script
+your company wrote, is not supported. Sharko can't log in as a Google Cloud
+or Azure identity, and it will not run an unknown program for you. See
+[ArgoCD exec plugin auth unsupported](argocd-exec-plugin-auth-unsupported.md)
+for what that looks like and what to do.
 
-Every other exec command — `gke-gcloud-auth-plugin`, `kubelogin`, a
-custom corporate helper script — stays genuinely unsupported. Sharko
-has no way to authenticate as GCP or Azure, and it will not shell out to
-run an arbitrary binary on your behalf. See
-[`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-for what that looks like and what to do about it.
+## Checking the setup
 
-## Verifying the setup
-
-1. Check what Sharko detected about itself:
+1. See what Sharko found about itself:
 
    ```bash
    curl -s https://sharko.example.com/api/v1/system/capabilities \
@@ -300,22 +275,21 @@ for what that looks like and what to do about it.
    }
    ```
 
-   `method` is one of `pod-identity`, `irsa`, `chain` (some other link
-   in the default AWS credential chain, e.g. an instance profile), or
-   `none`. `hub_platform` is Sharko's best-effort guess at whether the
-   cluster it's running on is EKS, from the hub's own Kubernetes version
-   string.
+   `method` is `pod-identity`, `irsa`, `chain` (some other part of the
+   normal AWS credential chain, like an instance profile), or `none`.
+   `hub_platform` is Sharko's best guess at whether the cluster it runs on
+   is EKS, based on the cluster's Kubernetes version string.
 
-2. Check what Sharko thinks a given spoke cluster is:
+2. See what Sharko thinks a spoke cluster is:
 
    ```bash
    curl -s https://sharko.example.com/api/v1/clusters/prod-us \
      -H "Authorization: Bearer $SHARKO_TOKEN" | jq '.target_platform'
    ```
 
-   `"eks"` or `"unknown"` — derived from the cluster's registered server
-   URL (an `.eks.amazonaws.com` hostname) or its stored credentials
-   source, no extra network call.
+   You get `"eks"` or `"unknown"`. Sharko works this out from the
+   cluster's server address (an `.eks.amazonaws.com` host name) or from how
+   its credentials are stored. It makes no extra network call for this.
 
 3. Click **Test connection** on the cluster, or:
 
@@ -324,26 +298,23 @@ for what that looks like and what to do about it.
      -H "Authorization: Bearer $SHARKO_TOKEN"
    ```
 
-   A `200` with `"reachable": true` means the whole chain worked. A
-   `503` with `"error_code": "argocd_provider_iam_required"` means the
-   Secret's shape was recognized but Sharko couldn't turn it into a
-   usable token — see
-   [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) for the
-   diagnosis path.
+   A `200` with `"reachable": true` means the whole chain works. A `503`
+   with `"error_code": "argocd_provider_iam_required"` means Sharko
+   understood the Secret's shape, but could not turn it into a working
+   token. See [AWS IAM Cluster Auth](aws-iam-cluster-auth.md) for what to
+   do.
 
 ## Related pages
 
-- [Cluster Connectivity Model](cluster-connectivity-model.md) — the
-  full picture of which credential shapes Sharko reads, and where each
-  piece of connection truth lives.
-- [Managing Cluster Connections Yourself](self-managed-connections.md)
-  — the exact ArgoCD cluster Secret shapes, including the EKS/IAM one.
-- [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) — what it looks
-  like when this chain is broken.
-- [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-  — what happens for exec commands Sharko doesn't recognize.
-- [`eks-token-generation-failed.md`](eks-token-generation-failed.md) —
-  Sharko's own IRSA/Pod-Identity chain is broken (not a spoke-role
-  problem).
-- [Reference — Security](security.md) — the wider IAM/RBAC posture
-  reference.
+- [Cluster Connectivity Model](cluster-connectivity-model.md) — which
+  credential shapes Sharko reads, and where each piece of connection
+  information lives.
+- [Managing Cluster Connections Yourself](self-managed-connections.md) —
+  the exact ArgoCD cluster Secret shapes, including the EKS one.
+- [AWS IAM Cluster Auth](aws-iam-cluster-auth.md) — what it looks like when
+  this chain is broken.
+- [ArgoCD exec plugin auth unsupported](argocd-exec-plugin-auth-unsupported.md)
+  — what happens for login helpers Sharko doesn't know.
+- [EKS token generation failed](eks-token-generation-failed.md) — Sharko's
+  own IRSA or Pod Identity setup is broken (not a spoke role problem).
+- [Security](security.md) — the wider IAM and RBAC reference.

@@ -1,436 +1,404 @@
 # Cluster Reconciler
 
-> **Reference page (architecture) + embedded troubleshooting
-> mini-runbooks.** The first two-thirds of this page documents the
-> reconciler's ownership semantics, cadence, two-direction policy, and
-> recovery scenarios. The Troubleshooting section near the bottom
-> contains the failure-specific lanes that
-> [`failure-mode-index.md`](failure-mode-index.md) deep-links into —
-> the section anchors there (`#what-if-managed-clustersyaml-has-a-schema-validation-error`,
-> `#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete`,
-> `#what-happens-if-a-user-removes-the-label-manually`) are
-> load-bearing. Standalone P0 / P1 runbooks for distinct reconciler
-> failures live at
-> [`reconciler-crash-loop.md`](reconciler-crash-loop.md) and
-> [`cluster-reconciler-dependency-missing.md`](cluster-reconciler-dependency-missing.md);
-> this page is the architecture reference operators read once to
-> understand the reconciler and the embedded troubleshooting
-> sub-sections are the inline mitigations for the specific failures
-> the index points at.
+ArgoCD reaches each cluster through a Kubernetes Secret in the `argocd`
+namespace, called the ArgoCD cluster Secret. Sharko has a part called the
+**cluster reconciler** that keeps these Secrets in line with what your Git
+repo says. To [reconcile](../glossary.md#reconcile) means to compare what
+Git says with what is really there, and fix the difference.
 
-Sharko v1.25 introduces an in-Pod **cluster-secret reconciler** that owns
-the lifecycle of ArgoCD cluster Secrets. This page is the operator
-runbook: ownership semantics, reconcile cadence, the two-direction
-policy, recovery scenarios, coexistence with externally-created
-clusters, and troubleshooting.
+If you only use Sharko and don't write Kubernetes files by hand, the short
+version is:
 
-If you only operate Sharko (don't author K8s manifests by hand), the
-headline is:
+> **You don't have to do anything.** When you register a cluster, Sharko
+> opens a pull request. Once it merges, Sharko creates the ArgoCD cluster
+> Secret, marks it as its own, and removes it again when you remove the
+> cluster. No `kubectl` work is needed.
 
-> **You don't have to do anything.** First cluster registration after
-> upgrading to v1.25 is reconciled post-merge — the ArgoCD cluster
-> Secret is created automatically once the PR merges, tagged with an
-> ownership label, and removed automatically when the cluster is
-> removed from `managed-clusters.yaml`. No manual `kubectl` work.
+The rest of this page is for when something goes wrong, or when you run
+Sharko on an ArgoCD that already has cluster Secrets.
 
-The rest of this page is for operators who need to reason about the
-reconciler when something goes wrong, or who run Sharko on top of an
-existing ArgoCD with pre-existing cluster Secrets.
+Two other pages cover problems with the reconciler itself:
+[Reconciler crash loop](reconciler-crash-loop.md) and
+[Cluster reconciler dependency missing](cluster-reconciler-dependency-missing.md).
 
 ---
 
 ## Overview
 
-Sharko runs a single in-Pod goroutine (no CRD, no controller-runtime,
-no operator deployment) that reads `managed-clusters.yaml` from your
-bootstrap Git repo and reconciles ArgoCD's cluster Secret state to
-match. Every cluster Sharko creates carries the ownership label
-`app.kubernetes.io/managed-by: sharko`; the reconciler only ever
-mutates Secrets that carry that label. Externally-created cluster
-Secrets are surfaced for adoption and never touched by the
-reconciler.
+The reconciler runs inside the Sharko pod. There is no extra operator or
+custom resource to install. It reads your cluster list from Git:
 
-The reconciler is the V1.25 architectural answer to the
-PR-closed-without-merge orphan bug — Secrets are now only ever created
-**after** a registration PR merges, so a cancelled PR cannot leave an
-orphan Secret behind. See the design discussion at
-[`docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md`](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md)
-for the architectural reasoning.
+- `managed-clusters.yaml` at the root of the repo, which lists the
+  clusters, and
+- `cluster-addons/<cluster>.yaml`, which says which addons are on for each
+  cluster.
+
+On a repo still on the older layout, it reads
+`configuration/managed-clusters.yaml` instead. It always reads the branch
+Sharko is set up to use.
+
+It then makes ArgoCD's cluster Secrets match. Every Secret Sharko creates
+has the label `app.kubernetes.io/managed-by: sharko`. Sharko only ever
+creates, changes or deletes Secrets that have that label. Secrets made by
+other people or tools are left alone, and you can [adopt](#coexistence-with-clusters-created-outside-sharko)
+them if you want Sharko to manage them.
+
+Sharko only creates a Secret **after** the registration pull request
+merges. So if someone closes that pull request without merging it, no
+leftover Secret is left behind.
 
 ---
 
-## Ownership label: `app.kubernetes.io/managed-by: sharko`
+## The ownership label: `app.kubernetes.io/managed-by: sharko`
 
-The reconciler uses a single label as its safety gate.
+This one label is what keeps the reconciler safe.
 
 ### What it is
 
-Every ArgoCD cluster Secret that Sharko creates in the `argocd`
-namespace carries the standard Kubernetes-recommended ownership label:
+Every ArgoCD cluster Secret Sharko creates in the `argocd` namespace has
+the standard Kubernetes ownership label:
 
 ```yaml
 metadata:
   labels:
     app.kubernetes.io/managed-by: sharko
     argocd.argoproj.io/secret-type: cluster
-    # ...plus any addon-enable labels Sharko writes from managed-clusters.yaml
+    # ...plus one addons.sharko.dev/<addon>: enabled label for each addon
+    #    that is on in cluster-addons/<cluster>.yaml
 ```
 
-The label is applied when the Secret is created. It is idempotent —
-re-applying it is a no-op.
+Sharko adds the label when it creates the Secret. Adding it again changes
+nothing.
 
 ### Why it exists
 
-Before V1.25, Sharko's view of "what clusters exist" was "whatever
-ArgoCD reports", with no way to distinguish Sharko-created Secrets
-from operator-created or kubectl-created Secrets. That made two
-surfaces unsafe to ship:
+Without the label, Sharko could not tell its own Secrets apart from
+Secrets someone made with `kubectl` or another tool. Two things depend on
+that:
 
-- The "Delete cluster Secret" orphan-cleanup flow could destroy a
-  user's manually-created cluster Secret if it happened to be absent
-  from `managed-clusters.yaml`.
-- The Adopt UI (planned) needs to surface exactly the *unmanaged*
-  Secrets — the inverse of the orphan-cleanup set.
+- Cleaning up leftover Secrets. Without the label, Sharko could delete a
+  Secret you made by hand just because it was not in
+  `managed-clusters.yaml`.
+- Adopting clusters. Sharko offers to adopt exactly the Secrets that do
+  *not* have the label.
 
-The label is the gate that makes both surfaces safe: Sharko mutates
-only labeled Secrets, and the Adopt UI surfaces only unlabeled ones.
+So Sharko only changes Secrets with the label, and only offers to adopt
+Secrets without it.
 
-### When Sharko applies it
+### When Sharko adds it
 
-On every Secret it creates — there is no other path. There is no
-back-fill migration in v1.25 (Sharko is pre-prod and there are no
-unlabeled legacy Sharko-Secrets in the field).
+On every Secret it creates. There is no other way the label gets added.
 
-### What happens if a user removes the label manually
+### What happens if someone removes the label by hand {#what-happens-if-a-user-removes-the-label-manually}
 
-Sharko stops touching the Secret. From the reconciler's perspective
-the Secret no longer exists — it falls out of the "labeled Secrets in
-argocd" set used for diff. The cluster also disappears from the
-orphan-resolver lane, so the "Discard cancelled registration" UI
-button won't act on it either. The Secret enters "externally managed"
-territory; the planned Adopt UI will surface it as an adoption
-candidate.
+Sharko stops touching the Secret. For the reconciler, the Secret is no
+longer one of its own. The **Discard cancelled registration** button on the
+Clusters page also won't act on it, and
+`DELETE /api/v1/clusters/{name}/orphan` refuses with HTTP 400 (Activity
+History shows `cluster_orphan_delete_rejected`). The Secret now counts as
+managed outside Sharko, and you can adopt it if you want Sharko to manage
+it again.
 
-### What happens if a user adds the label to a Secret Sharko didn't create
+### What happens if someone adds the label to a Secret Sharko didn't create
 
-The next reconcile tick will read the labeled Secret, fail to find a
-matching entry in `managed-clusters.yaml`, classify it as an
-in-argocd ∖ in-git delta, and **delete it** as part of the
-self-consistency pass. This is the inverse of the missing-cluster case
-and it is intentional — the reconciler exists to make ArgoCD state
-match the Git declaration.
+On its next check, Sharko sees a Secret with its label but no matching
+entry in `managed-clusters.yaml`, and **deletes it**. This is on purpose:
+the reconciler makes ArgoCD match what Git says.
 
-**Operator action if you see this happen unintentionally:** either add
-the cluster to `managed-clusters.yaml` (preferred — declare the
-desired state) or remove the label from the Secret to take it out of
-the reconciler's purview.
+**If this happened by mistake:** either add the cluster to
+`managed-clusters.yaml` (the better choice, because it says in Git what you
+want), or remove the label from the Secret so Sharko leaves it alone.
 
 ---
 
-## Reconciliation cadence
+## How often it runs
 
-Two triggers drive a `PollOnce` call:
+The reconciler checks in three cases:
 
-- **Periodic tick** — default 30 seconds. Fixed, not configurable from
-  Helm values today.
-- **Immediate post-merge trigger** — every Sharko-opened PR that merges
-  triggers a reconcile straight away. Back-to-back merges coalesce, so
-  the reconciler sees *at least one* tick after the last merge and
-  converges.
-- **Manual "Sync now" trigger** — `POST
-  /api/v1/clusters/{name}/reconcile` fires the same `Trigger()` channel
-  on demand. It's a fleet-wide pass, not a scoped single-cluster
-  reconcile (`pollOnce` always diffs the full desired-vs-live set in
-  one pass, so a full pass is the same work the 30s tick already does
-  — triggering it early is cheap). Returns `202` immediately; poll `GET
-  /clusters/{name}` and read the updated `last_reconcile` field once
-  the triggered pass completes. In the UI, this is the **Sync now**
-  button on the cluster detail page.
+- **Every 30 seconds.** This is fixed and can't be changed in the Helm
+  values today.
+- **Right after a Sharko pull request merges.** If several merge one after
+  another, Sharko still runs at least once after the last one. In the
+  normal case, the Secret is ready a few seconds after the merge.
+- **When you ask for a check.** The **Refresh** button in the **Managed
+  cluster secret** panel on the cluster page runs a check of every cluster
+  right away, instead of waiting for the next one. This check only reads.
+  It writes nothing. The same thing through the API is
+  `POST /api/v1/clusters/{name}/reconcile`, which returns `202` at once.
+  Then read `last_reconcile` from `GET /api/v1/clusters/{name}` to see the
+  result. It returns `503` if the reconciler is not running.
 
-The 30s periodic tick is the safety net for:
+The check every 30 seconds is what catches:
 
-- out-of-band Git changes (someone edited `managed-clusters.yaml`
-  directly on the main branch instead of via Sharko),
-- accidental Secret deletion (`kubectl delete secret ...` in the
-  argocd namespace),
-- vault transient outages (the next tick retries).
-
-End-to-end convergence latency in the happy path (PR merged via
-Sharko-UI auto-merge) is under 5 seconds, measured end to end against a
-real cluster.
+- changes made straight in Git, outside Sharko (someone edited
+  `managed-clusters.yaml` by hand),
+- Secrets deleted by mistake (`kubectl delete secret ...` in the `argocd`
+  namespace),
+- a credentials backend that was down for a moment (the next check tries
+  again).
 
 ---
 
-## Per-cluster reconcile visibility (`last_reconcile`)
+## The last check result for each cluster (`last_reconcile`)
 
-In earlier versions, a reconcile failure for one specific cluster (a
-vault fetch error, a rejected K8s API call, a self-managed connection
-still waiting on the user to create its Secret) went to the server log
-and the audit log only — ArgoCD would show a failed apply, and Sharko
-showed nothing. `GET /clusters/{name}` (and the clusters list/detail
-endpoints) now include a `last_reconcile` field:
+`GET /api/v1/clusters/{name}`, and the cluster list, include a
+`last_reconcile` field for each cluster:
 
 ```json
 {
   "last_reconcile": {
     "time": "2026-07-09T14:32:07Z",
     "outcome": "failed",
-    "message": "vault_get_failed: ..."
+    "message": "The last check didn't finish. Click Refresh to try again."
   }
 }
 ```
 
-`outcome` is one of `succeeded`, `failed`, or `skipped`. This is
-**derived, in-memory state only** — never written to Git, never
-persisted across a restart. A server restart loses the history, but the
-next tick (at most `DefaultTickInterval` later) repopulates it, exactly
-like the reconcile loop itself is self-healing. The field is
-absent/`null` when the reconciler hasn't processed this cluster on this
-server instance yet (fresh startup, or a registration PR that hasn't
-merged). In the UI, this renders as a "Last sync" line on the cluster
-detail page.
+`outcome` is `succeeded`, `failed` or `skipped`. `message` is a plain
+sentence that says what happened. When the addon labels on the Secret
+differ from Git, the field also has a `label_drift` part that lists them.
 
-### Label-fight detection
+Sharko keeps this only in memory. It is never written to Git, and it is
+lost when Sharko restarts. The next check, at most 30 seconds later, fills
+it in again. The field is empty when Sharko has not checked this cluster
+yet since it started, or when the registration pull request has not merged
+yet. In the UI it is the **Last sync** line in the **Managed cluster
+secret** panel on the cluster page.
 
-For a **self-managed** connection, the reconciler only ever merges
-addon labels onto the Secret you created — it never touches anything
-else. If that same Secret is *also* rendered from Git by a separate
-ArgoCD Application, the two can end up fighting over the addon-label
-keys. The reconciler tracks consecutive ticks where a label it just
-wrote comes back with a different live value than the one it wrote —
-not merely "changed" (an addon toggle in `managed-clusters.yaml`
-changing what Sharko itself wants is never flagged as a fight). After
-**2 consecutive reverted ticks**, `last_reconcile.outcome` stays
-`succeeded` (Sharko is still successfully re-applying its labels every
-tick — nothing is actually broken from Sharko's side) but `message`
-carries a plain-English warning naming the pattern. The fix is always
-to stop the other writer at its source — never an `ignoreDifferences`
-rule, which only hides the fight. Full writeup, including the fix, at
-[Managing Cluster Connections Yourself → When another ArgoCD
-Application also renders this
-secret](self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
+### When addon labels differ from Git
 
----
+If the addon labels on a Secret Sharko manages no longer match Git, Sharko
+puts them back on its next check. On a repo still on the older layout,
+Sharko only does this when the self-heal setting is on. That setting is
+off by default, and you change it with
+`PUT /api/v1/settings/managed-cluster-self-heal` (admin only). With the
+setting off, Sharko only records the difference in `label_drift`.
 
-## Two-direction policy
+To put the labels back once, for one cluster, whatever the setting says,
+click **Sync addon labels** on the cluster page. It is only enabled when
+there is a difference. The same thing through the API is
+`POST /api/v1/clusters/{name}/resync`. It only writes Sharko's own addon
+label keys.
 
-The reconciler handles one direction automatically (Git → ArgoCD) and
-defers the other direction (ArgoCD → Git) to a human-initiated Adopt
-action.
+### When two tools fight over the same labels
 
-| Source change                                       | Reconciler action                              | Direction               | Status   |
-| --------------------------------------------------- | ---------------------------------------------- | ----------------------- | -------- |
-| New entry in `managed-clusters.yaml`                | Create labeled Secret in argocd namespace      | Git → ArgoCD (auto)     | ✓ shipped |
-| Entry removed from `managed-clusters.yaml`          | Delete labeled Secret                          | Git → ArgoCD (auto)     | ✓ shipped |
-| ArgoCD Secret **without** sharko label appears      | Ignored (never touched; Adopt surfaces it)     | ArgoCD → Git (manual)   | ✓ shipped |
-| Labeled Secret deleted out-of-band                  | Re-create from Git + vault on next tick        | Git → ArgoCD (auto)     | ✓ shipped |
-| Unlabeled Secret deleted                            | Untracked — never Sharko's problem             | none                    | ✓ shipped |
-
-Two principles drive the asymmetry:
-
-- **One direction is automatic** because Git is the declared source of
-  truth and convergence is well-defined.
-- **The other direction is human-initiated** because importing an
-  existing Secret is destructive (rewriting `managed-clusters.yaml`)
-  and requires explicit operator intent — someone might be running
-  diagnostics with `kubectl apply` and a silent auto-PR would be
-  hostile.
+This can happen when **you** manage a cluster's connection and another
+ArgoCD Application also writes the same Secret from Git. If a label Sharko
+just wrote comes back with a different value two checks in a row,
+`last_reconcile.outcome` still says `succeeded` (Sharko is still putting
+its labels back), but `message` warns you that something keeps overwriting
+them. The fix is always to stop the other writer. An `ignoreDifferences`
+rule only hides the fight. The full explanation and fix are in
+[Managing Cluster Connections Yourself → When another ArgoCD Application also renders this secret](self-managed-connections.md#when-another-argocd-application-also-renders-this-secret).
 
 ---
 
-## Recovery scenarios
+## Git to ArgoCD on its own, ArgoCD to Git only when you ask
+
+The reconciler copies changes from Git to ArgoCD by itself. It never copies
+changes from ArgoCD back to Git unless a person asks for it by adopting a
+cluster.
+
+| What changed | What the reconciler does | Direction |
+| --- | --- | --- |
+| New entry in `managed-clusters.yaml` | Creates a Secret with Sharko's label in the `argocd` namespace | Git → ArgoCD (on its own) |
+| Entry removed from `managed-clusters.yaml` | Deletes the Secret with Sharko's label | Git → ArgoCD (on its own) |
+| A Secret **without** Sharko's label shows up in ArgoCD | Leaves it alone. You can adopt it. | ArgoCD → Git (only when you adopt) |
+| A Secret with Sharko's label was deleted outside Sharko | Creates it again on the next check | Git → ArgoCD (on its own) |
+| A Secret without Sharko's label was deleted | Nothing. It was never Sharko's. | none |
+
+Why the two directions are different:
+
+- **Git to ArgoCD is safe to do by itself,** because Git says what you want
+  and the result is clear.
+- **ArgoCD to Git needs a person,** because it rewrites
+  `managed-clusters.yaml`. Someone may just be testing with
+  `kubectl apply`, and a pull request opened behind their back would be
+  unwelcome.
+
+---
+
+## When things go wrong
 
 ### What if Sharko is down?
 
-Cluster *registration* (creating new entries in `managed-clusters.yaml`
-via Sharko's API/UI) is blocked because no PR can be opened. Existing
-labeled cluster Secrets in the argocd namespace are **unchanged** —
-ArgoCD continues to use them for in-flight syncs. Read paths via the
-ArgoCD UI and `kubectl -n argocd get secrets` continue to work.
+You can't register new clusters, because Sharko can't open pull requests.
+The ArgoCD cluster Secrets that already exist **stay as they are**, and
+ArgoCD keeps using them. The ArgoCD UI and
+`kubectl -n argocd get secrets` keep working.
 
-Sharko is a single-pod SPOF for *write* operations. This is the same
-posture as v1.24 and earlier — V1.25 does not change the SPOF
-characteristic. HA / leader-election work is deferred to V2 per the
-design doc §14.
+Sharko runs as one pod. While that pod is down, nothing that writes through
+Sharko works.
 
-### What if vault is transiently down?
+### What if the credentials backend is down for a moment?
 
-The reconciler logs an error per affected cluster, audit-logs the
-failure with `cluster_secret_create_failed` / `vault_get_failed`, and
-**continues** to other clusters in the same tick (per-cluster error
-isolation in `pollOnce`). Other clusters whose creds are cacheable or
-unaffected will still reconcile in the same tick. The failed cluster
-retries on the next tick — there is no exponential backoff in v1.25
-(design §14; deferred to V2 if production load reveals the need).
+Sharko writes the error to its log and to Activity History
+(`cluster_secret_create_failed`), and **carries on** with the other
+clusters in the same check. A problem with one cluster does not stop the
+others. The failed cluster is tried again on the next check, 30 seconds
+later. There is no growing wait between tries.
 
-### What if a labeled Secret is accidentally deleted (`kubectl delete`)?
+### What if a labeled Secret is accidentally deleted (`kubectl delete`)? {#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete}
 
-**Self-healing.** The next reconciler tick observes the in-git ∖
-in-argocd delta, re-fetches credentials from vault, and re-creates the
-Secret with the ownership label and addon-enable labels. Up to a 30s
-recovery window, or immediately if you click **Sync now** (or `POST
-/clusters/{name}/reconcile`) — see "Troubleshooting" below.
+**It fixes itself.** On the next check, Sharko sees the cluster in Git but
+not in ArgoCD. It fetches the credentials again and creates the Secret
+again, with its ownership label and the addon labels. This takes up to 30
+seconds. If the Secret does not come back, look in Activity History for
+`cluster_secret_create_failed` on that cluster (see
+[My cluster's Secret didn't appear](#my-clusters-secret-didnt-appear-after-merging-the-pull-request)).
 
-### What if `managed-clusters.yaml` has a schema-validation error?
+### What if `managed-clusters.yaml` has a schema-validation error? {#what-if-managed-clustersyaml-has-a-schema-validation-error}
 
-The reconciler refuses to act on the invalid file. The read-time
-validator returns a structured error, the reconciler audit-logs
-`schema_validation_failed`, and **no partial reconcile happens** —
-existing labeled Secrets remain untouched until the file validates
-again. The fix is to correct the YAML via a follow-up PR; the next
-tick after the fix converges normally.
+Sharko refuses to act on a file it can't read correctly. It writes a
+`cluster_secret_reconcile` entry to Activity History with the action
+`schema_validation` and the result `failure`, and **does nothing else in
+that check**. The Secrets that already exist stay as they are until the
+file is valid again. Fix the YAML with a new pull request. The next check
+after the fix works as normal.
 
-That is the operational-safety guarantee: a bad file stops the
-reconciler rather than letting it act on a wrong picture of the fleet.
-Run `sharko validate-config configuration/` locally to
-exercise the same validator surface before opening a PR.
+This is on purpose: a broken file stops the reconciler, instead of letting
+it act on a wrong picture of your clusters.
 
-### What if Git is rate-limited or unreachable?
+To catch this before you open a pull request, run the same check on your
+own machine, from the root of your repo:
 
-The reconciler logs the git-fetch error, audit-logs
-`git_fetch_failed`, and **skips this tick**. Existing labeled Secrets
-remain unchanged (no destructive action on incomplete information).
-The next tick retries.
+```bash
+sharko validate-config managed-clusters.yaml
+sharko validate-config cluster-addons/
+```
 
-GitHub Contents API rate limits in practice: the reconciler makes one
-GET per tick (the `managed-clusters.yaml` file at `main`). At a 30s
-tick, that's 120 reads per hour per Sharko Pod — well under any
-sensible PAT rate limit.
+### What if Git is rate-limited or can't be reached?
+
+Sharko writes the error to its log, writes a `cluster_secret_reconcile`
+entry to Activity History with the action `git_read` and the result
+`failure`, and **skips this check**. The Secrets that already exist stay as
+they are. Sharko does nothing it can't undo when it does not have the full
+picture. The next check tries again.
+
+Sharko reads only a few files from Git on each check, every 30 seconds.
+That is far below the normal API limits of GitHub, Azure DevOps and Gitea.
 
 ---
 
-## Coexistence with externally-created clusters
+## Coexistence with clusters created outside Sharko
 
-Pre-existing ArgoCD cluster Secrets that don't carry the
-`app.kubernetes.io/managed-by: sharko` label are entirely ignored by
-the reconciler. They show up in ArgoCD's dashboard as
-ArgoCD-known clusters, but Sharko's "in-git" list does not include
-them and the orphan-cleanup flow refuses to touch them.
+ArgoCD cluster Secrets that do not have the
+`app.kubernetes.io/managed-by: sharko` label are left alone. ArgoCD still
+shows them as clusters. Sharko does not count them as its own, and its
+cleanup refuses to touch them.
 
-**Future direction:** the planned Adopt UI will surface these
-unmanaged Secrets and let you import them into Sharko management — the
-Adopt action writes a `managed-clusters.yaml` entry **and** adds the
-sharko ownership label to the existing Secret, bringing it under
-management without re-registering or rotating credentials.
+To bring one under Sharko, **adopt** it. Adopting writes an entry to
+`managed-clusters.yaml` through a pull request. The cluster's connection
+stays managed by you, so Sharko does not rewrite or rotate its
+credentials. See [Managing Cluster Connections Yourself](self-managed-connections.md).
 
-> **Do not** try to delete an unlabeled Secret via Sharko's "Discard
-> cancelled registration" button (formerly "Delete cluster Secret").
-> The orphan-delete endpoint refuses with HTTP 400 for Secrets without
-> the sharko label. If you want to
-> delete an externally-managed cluster Secret, use `kubectl -n argocd
-> delete secret <name>` directly.
+> **Don't** try to delete a Secret without Sharko's label using the
+> **Discard cancelled registration** button. Sharko refuses with HTTP 400.
+> If you really want to delete a cluster Secret that Sharko does not
+> manage, use `kubectl -n argocd delete secret <name>` yourself.
 
 ---
 
 ## Troubleshooting
 
-### "My cluster's Secret didn't appear after merging the PR"
+### My cluster's Secret didn't appear after merging the pull request
 
-1. Check the audit log for `cluster_secret_create` events around the
-   merge time. Use the Audit Log UI or `GET /api/v1/audit?
-   action=cluster_secret_create&since=<time>`.
-2. If you see `cluster_secret_create_failed` or `vault_get_failed`,
-   the cluster's credentials are not retrievable. Check vault for the
-   cluster's creds path and ensure your Sharko vault provider has
-   access.
-3. If you see no events at all for the cluster, the reconciler may
-   not have run yet (wait up to 30s) or `managed-clusters.yaml` may
-   have a schema-validation error blocking the entire tick — check
-   for `schema_validation_failed`.
-4. If you see `git_fetch_failed`, check the Git provider PAT and
-   GitHub/GitLab/ADO API status.
+1. Look in Activity History for `cluster_secret_create` around the time of
+   the merge. You can also use the API:
+   `GET /api/v1/audit?action=cluster_secret_create&since=<time>`.
+2. If you see `cluster_secret_create_failed`, Sharko could not get the
+   cluster's credentials. Check that the credentials are stored at the
+   cluster's path in your credentials backend, and that Sharko is allowed
+   to read them.
+3. If you see nothing at all for the cluster, either the reconciler has not
+   run yet (wait up to 30 seconds), or a file problem is stopping every
+   check. Look for a `cluster_secret_reconcile` entry with the action
+   `schema_validation`.
+4. If you see a `cluster_secret_reconcile` entry with the action
+   `git_read`, check Sharko's Git token and whether your Git host
+   (GitHub, Azure DevOps or Gitea) is working.
 
-### "A cluster I removed from `managed-clusters.yaml` is still in ArgoCD"
+### A cluster I removed from `managed-clusters.yaml` is still in ArgoCD
 
-1. Verify the Secret carries the sharko label:
+1. Check that the Secret has Sharko's label:
    `kubectl -n argocd get secret <name> -o yaml | grep managed-by`.
-   If the label is absent, the reconciler will not delete the Secret
-   — it is treated as externally-managed.
-2. If the label is present, check the audit log for
-   `cluster_secret_delete` events on subsequent ticks. A delete
-   failure (RBAC, API server down) will appear as
-   `cluster_secret_delete_failed` with a per-cluster error.
-3. Worst case: confirm `managed-clusters.yaml` actually omits the
-   cluster on the `main` branch (the reconciler reads `main`, not your
-   working branch).
+   If the label is missing, Sharko will not delete the Secret. It counts as
+   managed outside Sharko.
+2. If the label is there, look in Activity History for
+   `cluster_secret_delete` on the next checks. If the delete failed (RBAC,
+   or the API server was down), you see `cluster_secret_delete_failed`
+   with the error for that cluster.
+3. Check that the cluster is really gone from `managed-clusters.yaml` on
+   the branch Sharko uses. Sharko reads that branch, not your working
+   branch.
 
-### "Sharko keeps trying to delete my cluster Secret"
+### Sharko keeps trying to delete my cluster Secret
 
-You likely have a Secret with the sharko label but no corresponding
-entry in `managed-clusters.yaml`. The reconciler is doing its job —
-converging ArgoCD state to match the declared Git state. Two fixes:
+You most likely have a Secret with Sharko's label but no entry for it in
+`managed-clusters.yaml`. The reconciler is doing its job: making ArgoCD
+match Git. Two fixes:
 
-- **Preferred:** add the cluster to `managed-clusters.yaml` (declare
-  the desired state).
-- **Alternative:** remove the `app.kubernetes.io/managed-by: sharko`
-  label from the Secret to take it out of the reconciler's purview.
+- **Better:** add the cluster to `managed-clusters.yaml`.
+- **Or:** remove the `app.kubernetes.io/managed-by: sharko` label from the
+  Secret, so Sharko leaves it alone.
 
-### "How do I force a reconcile right now without waiting 30s?"
+### How do I make Sharko act right now, without waiting 30 seconds?
 
-Two ways:
+- **To check every cluster's Secret now:** click **Refresh** in the
+  **Managed cluster secret** panel, or call
+  `POST /api/v1/clusters/{name}/reconcile`. This only reads, and returns
+  `202` at once. Then read `last_reconcile` from
+  `GET /api/v1/clusters/{name}`.
+- **To put one cluster's addon labels back now:** click **Sync addon
+  labels**, or call `POST /api/v1/clusters/{name}/resync`.
 
-- **UI:** click **Sync now** on the cluster's detail page.
-- **API:** `POST /api/v1/clusters/{name}/reconcile` — returns `202`
-  immediately (the reconcile itself runs asynchronously), then poll
-  `GET /clusters/{name}` and read the updated `last_reconcile` field
-  once the triggered pass completes.
+When a Sharko pull request merges, Sharko already runs at once on its own.
+The steps above are for everything else: a change made straight in Git, a
+Secret you created again by hand, or just wanting to see the result
+without waiting.
 
-Any merge of a Sharko-opened PR also still triggers an immediate
-reconcile automatically via `prTracker.SetOnMergeFn` — the manual
-trigger above is for the cases that aren't a PR merge (an out-of-band
-Git edit, a manually-recreated Secret, or just wanting to confirm
-convergence without waiting for the safety-net tick).
+### Activity History entries to look for
 
-### Common audit-log actions to grep for
+| Action | Meaning |
+| --- | --- |
+| `cluster_secret_create` | Sharko created a Secret in the `argocd` namespace |
+| `cluster_secret_create_failed` | Creating it failed (only this cluster is affected) |
+| `cluster_secret_delete` | Sharko deleted a Secret with its label |
+| `cluster_secret_delete_failed` | Deleting it failed |
+| `cluster_secret_user_label_sync` | Sharko put addon labels on a Secret you manage |
+| `cluster_secret_user_label_sync_failed` | That failed |
+| `cluster_secret_managed_self_heal` | Sharko put labels back on a Secret it manages |
+| `cluster_secret_managed_self_heal_failed` | That write failed, or the labels still don't match |
+| `cluster_secret_user_pending` | You manage the connection, and have not created the Secret yet |
+| `cluster_secret_reconcile` with action `schema_validation` | A cluster file in Git is not valid. Nothing was done in that check. |
+| `cluster_secret_reconcile` with action `git_read` | Sharko could not read Git. The check was skipped. |
+| `cluster_secret_reconcile` with action `list_secrets` | Sharko could not list the Secrets in ArgoCD. The check was skipped. |
+| `connection_credential_drift_detected` | A credentials check found a difference |
+| `connection_credential_drift_cleared` | A later check found the difference gone |
+| `connection_credential_check_failed` | The credentials check itself could not run |
+| `connection_credential_check_recovered` | A check that had been failing worked again |
+| `cluster_connection_repair_requested` | Someone asked for a repair |
+| `cluster_connection_repair` | A repair ran and wrote |
+| `cluster_connection_repair_refused` | A repair was refused before touching anything |
+| `cluster_connection_repair_failed` | A repair started and failed |
 
-Every name below is either a success or a failure, never both. A past-tense
-name (`cluster_secret_create`) is only written when the thing named really
-happened; anything that failed gets its own `_failed` name. So you can grep
-for trouble by name alone, without also reading `result`.
+A name without `_failed` is only written when the thing really happened.
+Anything that failed gets its own `_failed` name, or a `failure` result.
 
-| Action                                    | Meaning                                                 |
-| ----------------------------------------- | ------------------------------------------------------- |
-| `cluster_secret_create`                   | Reconciler created a Secret in argocd ns                 |
-| `cluster_secret_create_failed`            | Create attempt failed (per-cluster error isolated)       |
-| `cluster_secret_delete`                   | Reconciler deleted a labeled Secret                      |
-| `cluster_secret_delete_failed`            | Delete attempt failed                                    |
-| `cluster_secret_user_label_sync`          | Addon labels synced onto a self-managed connection       |
-| `cluster_secret_user_label_sync_failed`   | That label sync failed                                   |
-| `cluster_secret_managed_self_heal`        | Sharko re-applied labels on a connection it owns         |
-| `cluster_secret_managed_self_heal_failed` | That self-heal write failed or did not converge          |
-| `cluster_secret_user_pending`             | Self-managed connection, Secret not created by hand yet  |
-| `connection_credential_drift_detected`    | A check ran to completion and found a difference         |
-| `connection_credential_drift_cleared`     | A later check found the difference gone                  |
-| `connection_credential_check_failed`      | The check itself could not run                           |
-| `connection_credential_check_recovered`   | A check that had been failing ran successfully again     |
-| `cluster_connection_repair_requested`     | A repair was asked for                                   |
-| `cluster_connection_repair`               | A repair ran and wrote                                   |
-| `cluster_connection_repair_refused`       | A repair was refused before touching anything            |
-| `cluster_connection_repair_failed`        | A repair started and failed                              |
-| `vault_get_failed`                        | Vault returned an error fetching cluster creds           |
-| `git_fetch_failed`                        | Git Contents API returned an error                       |
-| `schema_validation_failed`                | `managed-clusters.yaml` failed envelope/schema check     |
-
-Each entry also carries a `changes` field — `applied`, `none`,
-`not_applicable`, or absent. See
-[Audit log — retention model](audit-log.md#the-changes-field).
+Each entry also has a `changes` field: `applied`, `none`,
+`not_applicable`, or missing. See
+[Activity History → the `changes` field](audit-log.md#the-changes-field).
 
 ---
 
 ## Related reading
 
-- [Configuration reference](./configuration.md) — Helm values surface
-  (the reconciler is on-by-default; no operator opt-in required).
-- [Audit log](./audit-log.md) — query syntax for the events listed
-  above.
-- [Connection Doctor](./connection-doctor.md) — an on-demand,
-  per-cluster check that includes a `secret-ownership` check covering
-  the same label-fight failure mode this reconciler self-detects over
-  time.
-- [Managing Cluster Connections Yourself](./self-managed-connections.md)
-  — the self-managed connection mode this reconciler's two-direction
-  policy and label-fight detection both key off.
-- Architecture decision: cluster reconciler — the design discussion
-  that motivated this work
-  (`docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md`
-  in the Sharko repo). Not part of the published docs site.
+- [Configuration reference](./configuration.md) — the Helm values. The
+  reconciler is on by default. You don't need to turn it on.
+- [Activity History](./audit-log.md) — how to search for the entries
+  listed above.
+- [Connection Doctor](./connection-doctor.md) — a check you run on one
+  cluster when you want it. Its `secret-ownership` check looks for the same
+  label fight that the reconciler notices over time.
+- [Managing Cluster Connections Yourself](./self-managed-connections.md) —
+  connections you manage, and how the reconciler treats them.
