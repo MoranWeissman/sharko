@@ -21,7 +21,7 @@ Sharko and ArgoCD each own a different layer of the fleet-addon deployment flow.
 ```mermaid
 flowchart TB
     subgraph "Source of Truth"
-        Git["Git Repository<br/>configuration/managed-clusters.yaml"]
+        Git["Git Repository<br/>managed-clusters.yaml"]
     end
     
     subgraph "Sharko's Loop (Addon Assignment)"

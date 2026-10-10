@@ -152,7 +152,7 @@ cluster-addons/
   my-cluster.yaml                     # which addons are switched on for that cluster
 ```
 
-Repos in the older layout (v3) keep base values in `configuration/addons-global-values/<addon>.yaml` and one file per cluster, holding every addon, in `configuration/addons-clusters-values/<cluster>.yaml`.
+Repos in the older layout (v3) keep their values under a `configuration/` folder instead, with one file per cluster that holds every addon.
 
 Edit these files directly in your repo, or use the UI's values editor on the addon page (base values) or the cluster page (overrides for one cluster). The editor opens a PR for every change (`gitops.actions.enabled: true` is needed for this).
 

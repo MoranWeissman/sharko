@@ -97,6 +97,6 @@ To disable annotation for a single addon, use the per-addon opt-out toggle on th
 
 ## What's NOT cached
 
-Sharko does not cache LLM responses in a Kubernetes ConfigMap, BoltDB, or any other Sharko-side store. The annotated values file in your Git repo IS the cache — once an addon is generated, the file lives in `configuration/addons-global-values/<addon>.yaml` and subsequent reads serve from Git. A fresh LLM call only happens when the chart version changes (catalog pin moves) and the user clicks Refresh from upstream.
+Sharko does not cache LLM responses in a Kubernetes ConfigMap, BoltDB, or any other Sharko-side store. The annotated values file in your Git repo IS the cache — once an addon is generated, the file lives in `values/global/<addon>.yaml` (on a repo in the older v3 layout, under `configuration/`) and subsequent reads serve from Git. A fresh LLM call only happens when the chart version changes (catalog pin moves) and the user clicks Refresh from upstream.
 
 This is a deliberate design choice. The Git repo is the source of truth; Sharko is stateless w.r.t. annotation results.

@@ -94,7 +94,7 @@ described above, just sourced from this file instead of from
 !!! note "Repo still on the older layout?"
     If your repo has not gone through the [one-pull-request
     migration](migrating-to-the-new-format.md) yet, the cluster registry
-    lives at `configuration/managed-clusters.yaml` instead, and addon on/off
+    lives in the repo's `configuration/` folder instead, and addon on/off
     for a cluster is a label directly on that entry (`labels: {monitoring:
     enabled}`) rather than a separate `cluster-addons/` file. Everything
     else on this page — the guest philosophy, the secret shapes, the doctor
@@ -378,7 +378,7 @@ either way instead of leaving a stale one behind.
     reconciler only ever *merges* addon labels onto your secret and never
     removes one (there is no reliable way to tell "stale addon label" apart
     from "your own label that happens to look similar"), so removing an
-    addon's line from `labels:` on the old `configuration/managed-clusters.yaml`
+    addon's line from `labels:` in the old cluster list under `configuration/`
     does nothing — you have to set it to `disabled` and keep the line. Once
     the repo is migrated this caveat goes away.
 

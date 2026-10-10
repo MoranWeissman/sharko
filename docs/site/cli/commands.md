@@ -116,19 +116,19 @@ into, so `sharko validate-config .` in the repo root stays fast.
 - `0` — every Sharko-enveloped file validated; non-Sharko files were skipped.
 - `1` — at least one Sharko-enveloped file failed schema validation.
 
-**Example output (success):**
+**Example output (success)**, from `sharko validate-config .` at the root of a GitOps repo:
 
 ```
-✓ templates/bootstrap/configuration/addons-catalog.yaml
-✓ templates/bootstrap/configuration/managed-clusters.yaml
-skip: templates/bootstrap/configuration/bootstrap-config.yaml (not a Sharko-enveloped file)
+✓ cluster-addons/my-cluster.yaml
+✓ managed-clusters.yaml
+skip: sharko-engine.yaml (not a Sharko-enveloped file)
 ```
 
 **Example output (failure):**
 
 ```
-✘ configuration/managed-clusters.yaml: schema violations (kind: ManagedClusters)
-   ✘ /spec/clusters/0: missing required property "name"
+✘ managed-clusters.yaml: schema violations (kind: ManagedClusters)
+   ✘ /clusters/0: missing properties: 'name' (line 4)
    → for details: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 
 1 file(s) failed validation

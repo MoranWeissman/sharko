@@ -182,11 +182,12 @@ per-cluster values file:
 ```sh
 # Fetch the per-cluster values file Sharko opened the PR for:
 curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-  "https://api.github.com/repos/<org>/<repo>/contents/configuration/addons-clusters-values/prod-eu.yaml?ref=main" \
+  "https://api.github.com/repos/<org>/<repo>/contents/values/clusters/prod-eu/datadog.yaml?ref=main" \
   | jq -r .content | base64 -d
 ```
 
-Look for the addon-specific section (e.g. `datadog:` block). Common
+This file holds only the `datadog` values for `prod-eu`. The base
+values for every cluster are in `values/global/datadog.yaml`. Common
 problem shapes:
 
 - The `datadog.apiKey` is empty (the AddonSecretRef wasn't expanded;
@@ -263,7 +264,7 @@ happened" surface.
 
 2. **Fix the per-cluster values file.** If Diagnosis step 3 surfaced
    a missing or wrong value, open a PR fixing the
-   `configuration/addons-clusters-values/<cluster>.yaml` file. Then
+   `values/clusters/<cluster>/<addon>.yaml` file. Then
    either auto-merge (default) or merge manually; ArgoCD picks the
    change up on the next sync.
 

@@ -282,7 +282,7 @@ reconciler tick — see
    ```sh
    # Read the cluster's entry from the git base branch:
    curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-     "https://api.github.com/repos/<owner>/<repo>/contents/configuration/managed-clusters.yaml?ref=main" \
+     "https://api.github.com/repos/<owner>/<repo>/contents/managed-clusters.yaml?ref=main" \
      | jq -r .content | base64 -d | yq '.clusters[] | select(.name == "prod-eu")'
    ```
 

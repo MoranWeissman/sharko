@@ -45,7 +45,7 @@ What an operator sees when this fires:
   `GET /api/v1/clusters` lists the cluster with `managed: true`.
 - **PR merged**: the audit log entry `event=pr_merged` for the
   cluster's PR shows `result=success`. The Git repo's
-  `configuration/managed-clusters.yaml` contains the cluster's entry on
+  `managed-clusters.yaml` contains the cluster's entry on
   `main`.
 - **ArgoCD cluster Secret does NOT exist** in the `argocd` namespace
   for the cluster:
@@ -100,7 +100,7 @@ CLUSTER=<cluster-name>
 # Fetch the canonical managed-clusters.yaml from main:
 curl -sS \
   -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  "https://api.github.com/repos/${ORG}/${REPO}/contents/configuration/managed-clusters.yaml?ref=main" \
+  "https://api.github.com/repos/${ORG}/${REPO}/contents/managed-clusters.yaml?ref=main" \
   | jq -r '.content' | base64 -d \
   | yq ".clusters[] | select(.name == \"${CLUSTER}\")"
 ```

@@ -241,7 +241,7 @@ runbook.
 
       ```sh
       cd <bootstrap-repo>
-      git log --oneline configuration/managed-clusters.yaml | head -5
+      git log --oneline managed-clusters.yaml | head -5
       # Identify the last-known-good commit
       git revert <bad-commit-sha>
       gh pr create --title "revert: managed-clusters.yaml" \

@@ -82,7 +82,7 @@ So the gate sits where the need actually is, not at registration:
 
 - **Register a cluster with no credentials source at all.** This
   succeeds for every connection mode — Sharko-managed and self-managed
-  alike. The cluster's entry goes into `configuration/managed-clusters.yaml`
+  alike. The cluster's entry goes into `managed-clusters.yaml`
   exactly like any other registration.
 - **Enable a secret-*less* addon on a credential-less cluster.** Also
   succeeds with zero friction — there was never anything for Sharko to
@@ -131,7 +131,7 @@ A registered cluster's "how do I connect to this" story is split across three pl
 
 | What | Lives in | How you fix a typo |
 |------|----------|---------------------|
-| Cluster name, labels, addon selections, `connectionManagedBy` mode, `secretPath`/`roleArn` pointer | `configuration/managed-clusters.yaml` in Git | Edit the file, open a PR (or let Sharko's UI/CLI/API do it for you) — the normal GitOps flow. |
+| Cluster name, labels, `connectionManagedBy` mode, `secretPath`/`roleArn` pointer, and which addons are on | `managed-clusters.yaml` and `cluster-addons/<cluster>.yaml` in Git | Edit the file, open a PR (or let Sharko's UI/CLI/API do it for you) — the normal GitOps flow. |
 | The actual sensitive bytes (kubeconfig, or a structured `{server, ca, role_arn}` JSON) | Your configured secrets backend (AWS Secrets Manager or a Kubernetes Secret) | Edit the secret in place. Sharko re-reads it on the next credential fetch — **no re-registration needed**. |
 | The ArgoCD cluster Secret in the `argocd` namespace | **Derived state** — Sharko's reconciler rebuilds it from the two rows above | **Never hand-edit it** (unless the cluster is in `connectionManagedBy: user` mode — see below). It self-heals: delete it, and the next reconcile tick (within 30s) recreates it. Hand edits to a Sharko-managed one just get overwritten. |
 
