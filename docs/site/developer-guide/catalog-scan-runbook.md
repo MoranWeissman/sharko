@@ -49,7 +49,7 @@ Design context: see [catalog extensibility design doc §7.3](https://github.com/
 - One open PR at a time. The concurrency guard skips opening if a `catalog-scan`-labeled PR is already open OR the target branch already exists.
 - Draft PR only. Labels `catalog-scan` + `needs-review` always applied.
 - No `automerge` permission, no `actions: write`, anywhere in the workflow.
-- Commit author is `Moran Weissman <moran.weissman@gmail.com>`; the PR is opened by `github-actions[bot]`.
+- Commit author matches the repository owner; the PR is opened by `github-actions[bot]`.
 
 ---
 
