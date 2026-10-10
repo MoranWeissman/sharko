@@ -19,8 +19,8 @@ touch, changes nothing) and **Open migration PR**.
 
 While the banner is up, you can still look at everything — clusters,
 addons, values, pull requests. Only writes are paused, because a migration
-raised against a repository that is still changing is a merge conflict
-waiting to happen.
+raised against a repository that is still changing would very likely
+end in a merge conflict.
 
 ## What happens to your catalog
 
@@ -34,9 +34,9 @@ shipped default to compare against any more. What you ran before, you keep
 running after, and it stays visible in your own repo.
 
 If an old entry had a `secrets:` block (the credentials the addon needs),
-that moves into the new entry too, as its needed-secrets list — same place
-the rest of the addon's install information now lives, and nothing is left
-behind in the pull request description.
+that moves into the new entry too, as its list of needed secrets. It sits
+in the same place as the rest of the addon's install details. Nothing is
+left behind in the pull request description.
 
 ## The part that isn't in the repository
 
@@ -83,6 +83,8 @@ see it before you merge.
 
 4. Sharko removes the old ApplicationSets.
 5. Then it applies `sharko-engine.yaml`, which starts the new engine.
+   (The engine is a small Helm chart that ArgoCD runs from your repo. It
+   creates one ApplicationSet per addon, and those deploy your addons.)
 
 The new engine creates its own ApplicationSets, which create Applications
 with **the same names as before** (`cert-manager-prod-eu`, and so on).

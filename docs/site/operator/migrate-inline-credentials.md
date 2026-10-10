@@ -1,70 +1,80 @@
 # Migrating Off Pasted (Inline) Credentials
 
-> **Verified:** 2026-08-18 — every door this page uses already exists and
-> was verified against Sharko as shipped: the credentials providers, the
-> schema-validated `managed-clusters.yaml` write, the read-only
-> connection check, and the guarded repair. The end-to-end playground walk
-> of this exact sequence is scheduled and not yet run — this header will
-> be updated when it has been.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
-
-A cluster registered with a **pasted (inline) kubeconfig** carries a
-credential that exists **only in the live ArgoCD cluster Secret**. It is never
-stored in Git, so Sharko cannot restore it from Git — if that Secret is lost,
-the connection is gone with it. On the connection page such a cluster shows
-**Verification incomplete** with the sentence:
+A cluster registered with a **pasted (inline) kubeconfig** has a
+credential that exists **only in the live ArgoCD cluster Secret**. It is
+never stored in Git, so Sharko cannot restore it from Git. If that Secret
+is lost, the connection is lost with it. On the connection page such a
+cluster shows **Verification incomplete** with the sentence:
 
 > This connection's credential exists only in the live Secret and cannot be
 > restored from Git.
 
-This page moves that cluster onto a **supported credentials provider**, where
-Git holds a durable reference and Sharko can verify and rebuild the full
-connection. Every step uses a door that already exists — a provider your
-backend already reads, a normal Git pull request, and the existing guarded
-repair action. No new tooling, no downtime for the cluster's addons (they
-deploy through Git → ArgoCD and never depend on Sharko's own cluster access).
+This page moves that cluster's credential into a secrets store Sharko can
+read: a Kubernetes Secret, or AWS Secrets Manager. After that, Git holds a
+pointer to the credential, and Sharko can check and rebuild the whole
+connection.
+
+You use only things Sharko already has: the secrets store, a normal pull
+request, and the **Repair connection** action. Your addons keep running
+the whole time. ArgoCD deploys them from Git, and that does not depend on
+Sharko's own access to the cluster.
+
+This exact sequence has not yet been tried end to end on a real cluster.
+Each step on its own is part of Sharko today.
 
 ## What you need to know before starting
 
-- **Sharko never exports the pasted value.** There is no button, API call, or
-  log line that returns the credential out of the live Secret — that is a
-  deliberate security rule. You supply the kubeconfig yourself: use your
-  original copy, or create a fresh one from the cluster if you no longer have
-  it (a fresh one is the better choice anyway).
-- **Nothing happens automatically.** Sharko does not migrate, convert, or
-  delete anything on its own. Every step below is yours, and the final write
-  is an explicit admin action pinned to a commit you reviewed.
-- **Nothing is deleted.** The live Secret is updated **in place** by the
-  repair — never deleted and recreated — and every label, annotation, or data
-  key that is not Sharko's own is preserved untouched.
+- **Sharko never gives the pasted value back.** No button, API call or log
+  line returns the credential from the live Secret. That is on purpose.
+  You supply the kubeconfig yourself: use your own copy, or make a fresh
+  one from the cluster. A fresh one is the better choice anyway.
+- **Nothing happens by itself.** Sharko does not move, convert or delete
+  anything on its own. You do every step below. The last step is an admin
+  action tied to a commit you reviewed.
+- **Nothing is deleted.** The repair changes the live Secret **in place**.
+  It does not delete it and create it again. Every label, annotation and
+  data key that is not Sharko's own stays as it is.
 
-## Step 1 — store the kubeconfig in a supported provider
+## Step 1 — store the kubeconfig in a secrets store
 
-Put a working kubeconfig for the cluster into one of the credential backends
-Sharko reads:
+Sharko reads cluster credentials from the backend set in
+`connection.provider.type`. Put a working kubeconfig for the cluster into
+that backend:
 
-- **A Kubernetes Secret** the configured backend can read, or
-- **AWS Secrets Manager**.
+- **`k8s-secrets`**: a Kubernetes Secret with the kubeconfig under the key
+  `kubeconfig`.
+- **`aws-sm`**: a secret in AWS Secrets Manager.
 
-The stored value is the raw kubeconfig YAML. For example, as a Kubernetes
-Secret:
+The stored value is the plain kubeconfig YAML.
+
+If `connection.provider.type` is empty or `argocd`, set it to one of
+these two first. You can do that in your Helm values or under
+**Settings → Secrets Provider**.
+
+For `k8s-secrets`, Sharko reads Secrets in the namespace set by the Helm
+value `connection.provider.namespace`. If that is empty, it reads the
+namespace `sharko`. Sharko also needs permission to read Secrets there:
+the release namespace is always allowed, and any other namespace must be
+listed in `rbac.k8sSecretsProviderNamespaces`.
+
+For example, with Sharko installed in `sharko` and the default namespace:
 
 ```bash
 kubectl create secret generic my-cluster-kubeconfig \
-  -n <the namespace your credentials backend reads> \
+  -n sharko \
   --from-file=kubeconfig=./my-cluster.kubeconfig
 ```
 
-If you no longer have the original kubeconfig, create a fresh one from the
-cluster itself (a service-account token with the permissions ArgoCD needs).
-The old pasted credential does not have to be recovered — it is being
-replaced.
+If you no longer have the original kubeconfig, make a fresh one from the
+cluster (for example with a service account token that has the
+permissions ArgoCD needs). You do not need to get the old pasted
+credential back. You are replacing it.
 
 ## Step 2 — point the cluster's Git entry at the stored credential
 
-Open a normal pull request on `managed-clusters.yaml` in your GitOps repo,
-changing that cluster's `credsSource` to `secret-kubeconfig` and setting
-`secretPath` to where you stored the kubeconfig in step 1:
+Open a normal pull request on `managed-clusters.yaml` in your GitOps repo.
+For that cluster, change `credsSource` to `secret-kubeconfig`, and set
+`secretPath` to the name you stored the kubeconfig under in step 1:
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
@@ -76,57 +86,59 @@ clusters:
     secretPath: my-cluster-kubeconfig
 ```
 
-This is the flat shape Sharko itself writes (`apiVersion`, `kind`, and
-`clusters` at the top level — no `spec:` wrapper). Keep it that way in your
-edit: Sharko validates the file against its JSON Schema whenever Sharko
-writes it and whenever it reads this flat shape, while a legacy
-`spec:`-wrapped body is read for compatibility but skips that validation.
-Your hand-edited PR is not validated at PR time by Sharko itself — the check
-happens when Sharko next reads the file. If you want validation before
-merging, run `sharko validate-config` on the changed file locally or in CI.
+Keep the file in this shape: `apiVersion`, `kind` and `clusters` at the
+top, with no `spec:` around them. That is the shape Sharko writes on v4.
 
-The change goes through your ordinary review process — this PR is the moment
-the connection's definition becomes fully durable in Git.
+Sharko checks the file against its schema when it next reads it, not when
+you open the pull request. To check it before you merge, run this on the
+changed file, on your machine or in CI:
 
-## Step 3 — check, then apply through the guarded repair
+```bash
+sharko validate-config managed-clusters.yaml
+```
 
-After the PR merges:
+The change goes through your normal review. Once it merges, the whole
+connection is defined in Git.
 
-1. Open the cluster's connection page and run the **connection check**
-   ("Check again"). The check is read-only. With the credential now stored in
-   a backend, the connection is checked at **full scope** — Sharko rebuilds
-   the expected Secret from the Git definition, resolving the credential
-   value from your provider, and compares it byte for byte, without
-   returning any value.
-2. The check will report the live connection (still carrying the old pasted
-   credential) as out of sync with what Git now defines. Review the
-   difference — sensitive fields show only their path and a status word,
-   never a value.
+## Step 3 — check, then apply with Repair connection
+
+After the pull request merges:
+
+1. Open the cluster's connection page and press **Check again**. The
+   check only reads; it changes nothing. Now that the credential is in a
+   secrets store, the check is complete: it covers every field of the
+   connection, the credential too. Sharko builds the Secret that Git
+   describes, reads the credential from your secrets store, and compares
+   the result with the live Secret, byte for byte. It never shows the
+   value.
+2. The check will report the live connection as out of sync, because it
+   still holds the old pasted credential. Look at the difference.
+   Sensitive fields show only their path and a status word, never a
+   value.
 3. An **admin** applies it with **Repair connection**. The repair uses the
-   exact commit shown at check time (it refuses if the branch has moved
-   since), updates the Secret **in place**, and preserves all foreign labels,
-   annotations, and data keys.
+   exact commit shown when you ran the check. If the branch has moved
+   since then, it refuses. It changes the Secret in place, and keeps every
+   label, annotation and data key that is not Sharko's own.
 
-When a following check comes back clean, the page shows **Connection synced**
-— the full connection, credential included, is now verified on every check
-against the Git definition with its credential reference resolved from your
-provider.
+When the next check comes back clean, the page shows **Connection
+synced**. From then on, every check covers the whole connection,
+credential included, against what Git says.
 
 ## What does NOT happen
 
-- **No automatic migration** — Sharko never moves a credential between
-  storage places by itself.
-- **No value is ever displayed** — not during the check, not in the repair
+- **No automatic move.** Sharko never moves a credential from one place
+  to another by itself.
+- **No value is ever shown.** Not during the check, not in the repair
   confirmation, not in any response or log.
-- **Nothing is deleted** — the live Secret is updated in place, and the
-  stored value in your provider is only ever read.
+- **Nothing is deleted.** The live Secret is changed in place. Sharko only
+  ever reads the value in your secrets store.
 
 ## Related pages
 
 - [Managing Cluster Connections](../user-guide/connections.md#allow-legacy-inline-credentials)
-  — the "Allow legacy inline credentials" setting and why new pasted
+  — the "Allow legacy inline credentials" setting, and why new pasted
   registrations are off by default.
-- [Security](security.md#secrets-management-recommendations) — the
-  recommendations this migration satisfies.
+- [Security](security-threat-model.md#secrets-management-recommendations) — the
+  advice this migration follows.
 - [Managing Clusters](../user-guide/clusters.md#adding-a-cluster) — the
-  credential sources available at registration.
+  ways to give Sharko a cluster's credentials when you register it.

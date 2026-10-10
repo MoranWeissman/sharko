@@ -1,10 +1,10 @@
 # Taking Over a Fleet That Is Already Running
 
-> **Verified on: (pending the maintainer's walkthrough).** Every step
-> below is implemented and covered by tests, but this recipe has not yet
-> been run end to end against a real brownfield fleet. Treat the timings
-> and the "what you will see" notes as expectations, not observations,
-> until that line is updated.
+> **Not yet tried on a real set of clusters.** Every step below is part
+> of Sharko today and has tests, but nobody has yet run this whole recipe
+> on a real fleet that was already running ("brownfield": a fleet set up
+> before Sharko came along). Treat the "what you will see" notes as what
+> we expect, not what we watched happen.
 
 Most people who find Sharko already have ArgoCD running. They have a
 cluster secret per cluster, a handful of ApplicationSets, and addons
@@ -104,8 +104,8 @@ Nothing has changed yet.
 
 ## Step 2 — Preflight
 
-Open the cluster and choose **Take over this cluster**. The dialog opens
-on four checks:
+Open the cluster and choose **Take ownership**. The dialog opens on four
+checks:
 
 | Check | What it answers |
 |---|---|
@@ -171,30 +171,35 @@ While it does that, Sharko writes down the exact list of labels it
 carried over, as an annotation on the same secret:
 `sharko.dev/takeover-preserved-labels`.
 
-That note is what keeps those labels safe. It is how everything else in
-Sharko knows those particular labels are not its own — so the drift view
-does not report them as something to fix, and a re-sync does not take
-them off. Please do not edit it or delete it by hand. If it does go
-missing, run the takeover again on that cluster: Sharko sees the note is
-gone, writes it back, and changes nothing else.
+That note is what keeps those labels safe. It is how the rest of Sharko
+knows those labels are not its own. So the connection check (the page that
+compares the live secret with Git) does not report them as something to
+fix, and a re-sync does not take them off. Please do not edit or delete
+the note by hand. If it does go missing, run the takeover again on that
+cluster. Sharko sees the note is gone, writes it back, and changes nothing
+else.
 
-Two things worth knowing about that re-run:
+Two things to know about that re-run:
 
-- It only writes the note back on a connection that came from somewhere
-  else — one Sharko adopted or took over. On a connection Sharko set up
-  itself there was no previous owner, so there is nothing to write down,
-  and a re-run leaves the note absent on purpose. This matters because a
-  v3-era addon label is written as the plain addon name (`datadog`),
-  which looks exactly like somebody else's label (`env`) — writing those
-  into the note would freeze Sharko's own addon labels as "hands off".
-- If a label ends up named in the note **and** Git declares the same
-  label, the two disagree about who owns that key. Sharko keeps its
-  promise and leaves the label alone, which means it neither compares
-  that label nor changes it — so the connection page lists it under
-  **Not checked** and stops short of saying the connection is synced.
-  That is Sharko telling you the truth rather than a warning you can
-  ignore. Fixing it means deciding who owns the key: either take the
-  label out of the note, or stop declaring it in Git.
+- **It only writes the note back on a connection that came from somewhere
+  else**, one Sharko adopted or took over. On a connection Sharko set up
+  itself there was no previous owner, so there is nothing to write down.
+  A re-run leaves the note out on purpose.
+
+    Why this matters: an addon label from an older (v3) Sharko is just the
+    addon name, like `datadog`. That looks exactly like somebody else's
+    label, like `env`. If Sharko wrote those into the note, it would mark
+    its own addon labels as "hands off". It would then stop switching
+    those addons on and off for that cluster.
+
+- **A label can end up both in the note and in Git.** Then the two
+  disagree about who owns that label. Sharko keeps its promise and leaves
+  the label alone: it does not compare it and does not change it.
+
+    So the connection page lists that label under **Not checked**, and
+    does not say the connection is synced. That is Sharko telling you the
+    truth, not a warning you can ignore. To fix it, decide who owns the
+    label. Either take it out of the note, or stop declaring it in Git.
 
 ### The ordering, and why
 
@@ -219,8 +224,8 @@ Two caveats worth stating plainly:
   Git, its next sync would fight Sharko over it. When the preflight can
   prove that is the case, it blocks the takeover outright; when it only
   suspects it, it warns. Either way: deal with it at the source — stop
-  the other application rendering this secret. Do **not** paper over it
-  with an `ignoreDifferences` rule on that application; that hides the
+  the other application rendering this secret. Do **not** hide it
+  with an `ignoreDifferences` rule on that application. That hides the
   fight without stopping it. See
   [Managing Cluster Connections Yourself → When another ArgoCD
   Application also renders this
@@ -317,10 +322,10 @@ curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
   "$SHARKO_URL/api/v1/clusters/prod-eu/takeover/legacy-labels/drop" | jq
 ```
 
-**This is the step where step 0 pays for itself.** If an ApplicationSet
+**This is the step where step 0 matters most.** If an ApplicationSet
 still selects one of these labels and you did not make it deletion-safe,
 removing the label is what deletes the workloads. Sharko warns you and
-names it; step 0 makes the warning academic.
+names it. With step 0 done, that warning cannot cost you anything.
 
 Some labels are never removable here: ArgoCD's own marker that makes the
 secret count as a cluster, Sharko's ownership marker, and Sharko's addon
