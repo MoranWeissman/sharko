@@ -1,456 +1,130 @@
-# Catalog Parse Failure on Startup
+# Sharko won't start because its built-in catalog is broken
 
-**Severity:** P1
+Sharko carries its own list of addons, built into the program. When Sharko starts, it reads that list. If the list can't be read, Sharko stops right away and the pod keeps restarting.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The error
-> message `"catalog: parse yaml: <reason>"` is verified verbatim; it fires
-> when the YAML decoder returns anything other than a clean end of input.
-> The same loader handles BOTH the embedded catalog and any third-party
-> catalog body fetched from a configured source, so the message alone does
-> not tell you which one broke — whether the pod starts at all does, and
-> that is the first thing the diagnosis below checks. The sibling message
-> `"no entries found under 'addons:'"` has the same operator surface.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** High. Sharko is down until you fix it. This should never happen with an official release image. It almost always means a self-built or damaged image.
 
-The catalog YAML parser failed. This runbook covers both flavours of
-the failure, which report the same message:
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-1. **Embedded catalog parse failure on startup** — extremely rare;
-   indicates a development bug or a build-time corruption of
-   `catalog/addons.yaml`. Without the embedded catalog, NO addons
-   surface in the marketplace and dependent flows break. **This is
-   the case that escalates toward P0** because it blocks every
-   downstream operation.
+## What you see
 
-2. **Third-party catalog source parse failure** — common; one of the
-   URLs in `SHARKO_CATALOG_URLS` returned a body that YAML-parsed
-   to garbage. The embedded catalog is unaffected; only entries
-   from the failing source are missing. This is closely related to
-   [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md)
-   — schema-validation is the next step after parse; this runbook
-   covers parse failure specifically.
+- The pod keeps restarting:
 
-The operator distinguishes the two cases by **whether Sharko pod
-starts at all** (case 1 → CrashLoopBackoff; case 2 → pod runs, one
-source failed). The diagnosis and mitigation paths diverge based on
-that signal.
-
-This runbook is the entry point for "catalog YAML wouldn't parse."
-For "catalog YAML parsed but the loader rejected an entry's
-schema," see
-[`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md).
-
----
-
-## Symptoms
-
-What an operator sees when this fires:
-
-### Case 1: Embedded catalog parse failure on startup
-
-- **Sharko pod fails to start** with the error in the pod logs:
-
-  ```
-  {"time":"...","level":"ERROR","msg":"catalog load failed","error":"catalog: parse yaml: yaml: line 247: did not find expected key"}
+  ```sh
+  kubectl -n "$SHARKO_NS" get pods -l app.kubernetes.io/name=sharko
   ```
 
-  The pod typically exits during startup initialization; Kubernetes
-  enters `CrashLoopBackoff`.
+  The `STATUS` column shows `CrashLoopBackOff` or `Error`, and `RESTARTS` keeps going up.
 
-- **`kubectl get pod -n <sharko-ns>`**:
+- `/api/v1/health` does not answer, because Sharko is not running.
+- The logs of the last failed start have a line that starts with `load curated catalog:`. This line is plain text, not JSON:
 
+  ```sh
+  kubectl -n "$SHARKO_NS" logs deploy/sharko --previous | grep 'load curated catalog'
   ```
-  NAME                       READY   STATUS             RESTARTS   AGE
-  sharko-7d8f9b6c5-x2k4t    0/1     CrashLoopBackoff   5          3m
+
+  You usually see it twice: once with `Error: ` in front (followed by the help text), and once on its own. For example:
+
+  ```text
+  Error: load curated catalog: catalog: parse yaml: yaml: line 247: did not find expected key
   ```
 
-- **No API surface available** — `/api/v1/health` returns connection
-  refused (Sharko isn't listening on the port).
+  Other forms you may see after `load curated catalog:`:
 
-- **No marketplace entries** — when Sharko eventually starts, the
-  `GET /api/v1/catalog/entries` endpoint returns empty.
+  | Text | What it means |
+  |---|---|
+  | `catalog: parse yaml: ...` | The list is not valid YAML. |
+  | `catalog: empty payload` | The list is empty. |
+  | `catalog: no entries found under 'addons:'` | The list has no addons in it. |
+  | `catalog: entry #N (name="x"): ...` | One entry breaks a rule. The text after the colon says which rule. |
+  | `catalog: duplicate entry name ...` | Two entries have the same name. |
 
-- **Alerts fire**: `SharkoServiceDown` (or equivalent
-  pod-availability alert) fires on Sharko being unreachable.
-  This may be the first signal an operator sees.
+When Sharko starts normally, it logs `curated catalog loaded` with the number of entries. If you see that line, this page is not your problem.
 
-### Case 2: Third-party catalog source parse failure
+A problem with a **third-party** catalog never stops Sharko. For those, see [A third-party catalog fails the format check](catalog-source-schema-validation-failed.md) or [A third-party catalog can't be downloaded](catalog-source-http-fetch-failed.md).
 
-- **Sharko logs a Warn line for the failing source**, which wraps the
-  parse error in the "schema validation failed" surface — see
-  [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md)
-  for the merged failure path).
+## Why it happens
 
-- **The pod is running** — `/api/v1/health` returns 200.
+The built-in catalog is the file `catalog/addons.yaml` in the Sharko source code. It is put inside the program when the image is built. Each official release is checked before it ships, so a broken built-in catalog points to one of these:
 
-- **The Marketplace UI** shows the failing source with **Failed**
-  status; the embedded catalog and other healthy sources continue
-  to surface entries.
+- **You built your own image** from changed source code, and the change broke `catalog/addons.yaml`.
+- **The image is damaged**, or it is not the image you think it is (a wrong tag, or a mirror that serves something else).
 
-- **No fleet-wide alert** unless multiple sources fail
-  simultaneously and the
-  [`SharkoCatalogScanFastBurn`](budget-burn-runbook.md#sharkocatalogscanfastburn)
-  alert fires.
+## How to fix it
 
-If you see Case 1 symptoms, this is the runbook entry point. If you
-see Case 2 symptoms specifically aligned with a single third-party
-source URL, the per-source runbook
-[`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md)
-is more targeted.
-
----
-
-## Diagnosis
-
-Three checks. Step 1 distinguishes the two cases (embedded vs
-third-party). Step 2 captures the exact parse error. Step 3
-identifies which line / structure of the YAML is malformed.
-
-### 1. Is this case 1 (embedded) or case 2 (third-party)?
+### 1. Check which image is running
 
 ```sh
-# If the pod is CrashLoopBackoff, this is case 1:
-kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount
-
-# If the pod is running, fetch the source-status report:
-curl -sS http://sharko/api/v1/catalog/sources \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.[] | select(.status=="failed") | {url, status, last_fetched}'
+kubectl -n "$SHARKO_NS" get deploy sharko -o jsonpath='{.spec.template.spec.containers[0].image}'; echo
 ```
 
-Case 1 (embedded) → pod is CrashLoopBackoff. Case 2 (third-party) →
-pod is running, one or more sources have `status: "failed"` with a
-parse error.
+An official image is `ghcr.io/moranweissman/sharko:<version>`. If you see another registry or a tag you don't know, that is the likely cause.
 
-### 2. Capture the exact parse error
+### 2. Go back to an image that worked
 
-**For Case 1**, read from the previous container's logs (the
-current one is still crash-looping):
+If this started after an upgrade, roll the Helm release back to the last version that ran:
 
 ```sh
-kubectl -n <sharko-ns> logs deploy/sharko --previous \
-  | jq -c 'select(.msg | test("catalog|parse yaml|load failed"; "i"))' \
-  | head -10
+helm -n "$SHARKO_NS" history sharko
+helm -n "$SHARKO_NS" rollback sharko <revision>
 ```
 
-Look for `"catalog: parse yaml: <yaml-library-error>"`. The
-`<yaml-library-error>` includes the line number and the kind of
-syntax issue (`did not find expected key`, `mapping values are not
-allowed in this context`, `could not find expected ':'`, etc.).
-
-**For Case 2**:
+Or point the chart at a known official image:
 
 ```sh
-curl -sS http://sharko/api/v1/catalog/sources \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq -r '.[] | select(.status=="failed") | "\(.url): \(.last_error)"'
+helm -n "$SHARKO_NS" upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --reuse-values \
+  --set image.repository=ghcr.io/moranweissman/sharko \
+  --set image.tag=<a released version>
 ```
 
-Same error shape — `"schema validation: catalog: parse yaml: ..."`
-(the source-fetcher wraps the loader error in `schema validation:`
-context).
+### 3. If you build your own image, check the file before you build
 
-### 3. Identify the YAML structure that's malformed
-
-The yaml library's error message includes a line number. For Case 1
-the embedded source file is in the Sharko repo; for Case 2 the
-source body needs to be fetched and inspected.
-
-**For Case 1** (embedded, when you're investigating a development bug):
-
-The embedded catalog source is `catalog/addons.yaml` in the Sharko
-repo. The error line number maps directly. Fetch the file from
-the version that crashed:
+In your copy of the source code, run Sharko's own check on the built-in catalog. It uses the same rules Sharko uses at startup, and it prints the exact problem:
 
 ```sh
-SHARKO_VERSION=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].image}' \
-  | awk -F: '{print $2}')
-git -C /path/to/sharko-repo show "v${SHARKO_VERSION}:catalog/addons.yaml" \
-  > /tmp/embedded-addons.yaml
-ERR_LINE=$(grep -oE 'line [0-9]+' /tmp/parse-error | head -1 | awk '{print $2}')
-sed -n "$((ERR_LINE-3)),$((ERR_LINE+3))p" /tmp/embedded-addons.yaml
+sharko validate-catalog catalog/addons.yaml
 ```
 
-The context window around the error line shows what's broken. For a
-shipped release, this should not happen — escalate immediately if it
-does (the catalog escaped CI somehow).
+It prints `OK   catalog/addons.yaml` when the file is good. Otherwise it prints `FAIL catalog/addons.yaml:` and the problem, for example:
 
-**For Case 2** (third-party):
-
-```sh
-FAILING_URL=<url-from-step-1>
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
-kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
-  wget -q -O - "$FAILING_URL" \
-  > /tmp/failing-catalog.yaml
-
-ERR_LINE=<from-error-message>
-sed -n "$((ERR_LINE-3)),$((ERR_LINE+3))p" /tmp/failing-catalog.yaml
+```text
+FAIL catalog/addons.yaml: catalog: entry #12 (name="my-addon"): missing required field: license
 ```
 
-Common parse failures:
+Fix the file, run the check again until it says `OK`, then build and push a new image.
 
-- Trailing tab in indentation (YAML rejects tabs)
-- Unescaped colon in a value (e.g. `description: prod: this`)
-- Unquoted string starting with `*` (alias-prefix collision)
-- BOM byte at file start (some editors save with BOM)
-- Mixed line endings (CRLF in some lines)
+## How to check it's fixed
 
----
-
-## Mitigation (try in order)
-
-1. **For Case 1 (embedded) — roll back the Sharko deploy to the
-   previous version.** A shipped Sharko binary with a broken
-   embedded catalog is an emergency; the fastest path back to
-   service is a rollback.
+1. The pod is running and ready:
 
    ```sh
-   helm rollback sharko -n <sharko-ns>
-   kubectl -n <sharko-ns> rollout status deployment/sharko
+   kubectl -n "$SHARKO_NS" get pods -l app.kubernetes.io/name=sharko
    ```
 
-   Verify the pod starts:
+2. The startup log shows the catalog was read:
 
    ```sh
-   kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko
-   curl -sS http://sharko/api/v1/health
+   kubectl -n "$SHARKO_NS" logs deploy/sharko --since=10m | grep 'curated catalog loaded'
    ```
 
-   File an immediate issue with the parse error and the broken
-   catalog version. This is Case 1's primary mitigation — the fix
-   is upstream in the Sharko repo, not operator-side.
-
-2. **For Case 2 (third-party) — remove the failing source from
-   the active set.** This is the lowest-friction path while you
-   wait for the source author to fix:
+3. Sharko answers and the Marketplace has addons:
 
    ```sh
-   helm upgrade --reuse-values \
-     --set "catalog.sources={<remaining-source-urls>}" \
-     sharko sharko/sharko -n <sharko-ns>
+   curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/health" | jq
+   curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/marketplace/addons" | jq '.total'
    ```
 
-   The fetcher drops the source on the next config reload. The
-   embedded catalog and other healthy sources continue to surface
-   entries.
+## If that didn't work
 
-3. **For Case 2 — notify the source author with the exact parse
-   error and the line context.** The source author has the most
-   leverage; their next release can fix the YAML, and the fetcher
-   picks up the fix automatically.
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
-   Capture the error context from Diagnosis step 3 and email or
-   file an issue against the source's repo. Include the YAML line
-   number and the surrounding 3-line context. Most parse failures
-   are 1-line fixes (rogue tab, missing colon).
+- the Sharko version (`sharko version`, or the image tag from step 1, since `/api/v1/health` won't answer while the pod is down)
+- the log lines that mention `load curated catalog`, from `kubectl logs --previous`
+- what you tried from this page
 
-4. **For Case 1 — if rollback isn't possible (the previous version
-   has a known critical bug, or the new version has a
-   non-catalog feature that's already in production use), patch
-   the catalog at runtime via a ConfigMap override (advanced).**
-   Sharko ships the embedded catalog as a Go embed; runtime
-   override isn't supported out-of-the-box. The advanced workaround
-   is to fork the Sharko image with a fixed `catalog/addons.yaml`
-   and rebuild:
+Related pages:
 
-   ```sh
-   # Local repair: fix the YAML, rebuild the image:
-   # 1. Apply the fix in catalog/addons.yaml in a private branch
-   # 2. Build with `make docker-build SHARKO_VERSION=<x>-hotfix`
-   # 3. Push to your private registry
-   # 4. Update Helm values to point at the hotfix image:
-   helm upgrade --reuse-values \
-     --set "image.repository=<private-registry>/sharko" \
-     --set "image.tag=<x>-hotfix" \
-     sharko sharko/sharko -n <sharko-ns>
-   ```
-
-   This is rare. Mitigation step 1 (rollback) is correct in almost
-   every realistic scenario.
-
-5. **Last resort — for Case 2 with embedded catalog also unhealthy
-   (e.g. the embedded catalog had a startup warning that the third-
-   party failure happened to surface), disable third-party catalogs
-   entirely.** This is the "isolate to embedded-only" lane:
-
-   ```sh
-   helm upgrade --reuse-values \
-     --set "catalog.sources={}" \
-     sharko sharko/sharko -n <sharko-ns>
-   ```
-
-   Only the embedded catalog surfaces. Restoration of third-party
-   sources is a follow-up action once each source author has
-   shipped a fix.
-
----
-
-## Root-cause patterns
-
-### Source author shipped malformed YAML
-
-The most common Case 2 cause. The source author hand-edited
-`catalog.yaml`, didn't run `yamllint` or `sharko validate-config`,
-and shipped a file with a syntax error. The fetcher's next run
-catches it; the schema-validation log line fires; the source goes
-Failed.
-
-Diagnostic signature: Diagnosis step 2 returns a parse error
-specifically mentioning a YAML-syntax issue (tab, missing colon,
-unbalanced quote); the source author's previous release was healthy.
-
-Fix is Mitigation step 3 (notify the author) plus Mitigation step 2
-(remove the source until fixed).
-
-### Hosting infrastructure injected content (proxy / WAF)
-
-The source URL returns a non-YAML body because an upstream system
-(a WAF, a proxy, a captive-portal) intercepted the request and
-returned HTML or a JSON error. The body parses as YAML to
-gibberish.
-
-Diagnostic signature: Diagnosis step 3 shows the body starts with
-`<!DOCTYPE html>` or `{"error":...}` instead of `addons:`. The
-fetcher's `recordSchemaFailure` is the path that fires.
-
-Fix is the infrastructure-side — the source URL's path through
-your network is being intercepted. See
-[`corporate-mitm-tls.md`](corporate-mitm-tls.md) for the proxy
-angle.
-
-### Sharko embedded catalog corrupted at build time (Case 1)
-
-A CI process or a manual `make build` step truncated the
-`catalog/addons.yaml` file or replaced it with a partial copy. The
-shipped Sharko image's embedded catalog is unparseable.
-
-Diagnostic signature: every freshly-deployed pod from the same
-image fails identically. CI didn't catch it because the catalog
-test fixture differs from the embedded source.
-
-Fix is Mitigation step 1 (roll back the deploy) plus an immediate
-issue against the build pipeline (Prevention).
-
-### YAML library version skew (Case 1)
-
-A Sharko dependency bump changed YAML-parsing behavior between
-patch releases (e.g. stricter handling of trailing whitespace, BOM
-rejection). The previous catalog version that parsed cleanly now
-rejects.
-
-Diagnostic signature: rare, but distinct — the embedded catalog
-file is unchanged across versions; only the binary differs.
-
-Fix is Mitigation step 1 (rollback) plus a Sharko-side dependency
-review.
-
-### Operator deployed with `SHARKO_CATALOG_URLS` pointing at a non-YAML URL
-
-The operator set `SHARKO_CATALOG_URLS=https://internal-tool/api/v1/catalog`
-where the endpoint actually returns JSON or HTML. The fetcher tries
-to YAML-parse it and fails consistently.
-
-Diagnostic signature: Diagnosis step 3 shows the body starts with
-`{` or `<`. The URL points at a non-YAML endpoint.
-
-Fix is Mitigation step 2 — correct the URL (typically point at the
-actual `.yaml` file rather than an API endpoint).
-
----
-
-## Prevention
-
-- **Monitoring — embedded catalog load gate.** Sharko does not export
-  this metric today. The alert below is a design sketch for a future
-  release, not something you can deploy now. The sketch: expose
-  `sharko_catalog_embedded_load_success` as a binary gauge so operators
-  could alert on Case 1 immediately. Today, the signal is the pod crash
-  itself; Kubernetes-level monitoring (CrashLoopBackoff) catches it but
-  doesn't identify the catalog as the cause.
-
-- **Gating — CI smoke test on the embedded catalog.** The Sharko CI
-  pipeline runs `go test ./internal/catalog/...` which includes a
-  smoke load of the embedded catalog. A future addition: run
-  `sharko validate-config catalog/addons.yaml` in CI as a separate
-  step so the failure mode is named clearly when it fires.
-
-- **Gating — source authors run `sharko validate-config` in CI.**
-  Document the contract: source authors who publish catalog YAML
-  should validate it in their own CI before merging. The Sharko
-  team can ship a validator-as-a-container image so source authors
-  don't need to build Sharko themselves.
-
-- **Documentation — schema reference + worked examples.** The
-  catalog-sources documentation
-  ([`catalog-sources.md`](catalog-sources.md)) should ship a
-  worked example: minimum-viable catalog YAML, full schema
-  reference, common syntax pitfalls. Most parse failures trace to
-  operators or source authors who didn't have a known-good template
-  to start from.
-
-- **Failover — embedded catalog acts as the safety net.** The
-  embedded catalog is intentionally built into the Sharko binary
-  so that third-party catalog failures cannot disable the
-  marketplace entirely. Preserve this invariant on refactors —
-  the embedded loader and the third-party fetcher should be
-  independent failure domains.
-
-- **Scheduled work — quarterly catalog schema audit.** Sharko's
-  embedded loader validates categories, the `curated_by` value and the
-  required fields. Quarterly, run `sharko validate-catalog` against the
-  catalog you ship and confirm third-party source authors have been told
-  about any tightening.
-
----
-
-## Related runbooks
-
-- [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md)
-  — the post-parse stage: YAML parses, but the entry fails the
-  schema check.
-- [`catalog-source-http-fetch-failed.md`](catalog-source-http-fetch-failed.md)
-  — adjacent fetch failure: HTTP didn't return a body at all.
-- [`catalog-sources.md`](catalog-sources.md) — configuration
-  reference for `SHARKO_CATALOG_URLS` / `catalog.sources`.
-- [`catalog-trust-policy.md`](catalog-trust-policy.md) — adjacent
-  signing-verification failure (parse-OK, signature-bad).
-- [`catalog-trust-root-unavailable.md`](catalog-trust-root-unavailable.md)
-  — P0 fleet-wide: trust-root infrastructure unreachable.
-- [`oom-restart-loop.md`](oom-restart-loop.md) — adjacent
-  pod-restart failure mode (Case 1 looks similar to OOM at the
-  Kubernetes level; the differentiator is the catalog parse error
-  in the logs).
-- [`budget-burn-runbook.md#sharkocatalogscanfastburn`](budget-burn-runbook.md#sharkocatalogscanfastburn)
-  — fleet-wide catalog-scan alert.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md#correlation-ids)
-  — `request_id` correlation pattern.
-
-## Escalation
-
-**For Case 1 (embedded catalog parse failure on a shipped Sharko
-version), escalate immediately.** This is a critical Sharko-side bug
-— a release escaped CI with a broken catalog. Email the maintainer:
-`moran.weissman@gmail.com`. Include:
-
-- This runbook URL
-- The Sharko version that's failing
-- The exact error from Diagnosis step 2
-- Whether the previous version starts cleanly
-- Whether you've rolled back already (Mitigation step 1)
-
-This is the only P1 failure mode in this set that flags as
-P0-adjacent — embedded catalog failure means no addons surface, no
-marketplace works, the whole platform-engineering value of Sharko
-disappears. Maintainer-side response should be the same business
-day; coordinate via the issue.
-
-**For Case 2 (third-party catalog parse failure), escalation is to
-the source author**, not the maintainer. Sharko's behavior is
-correct (skip the failed source, retain embedded). Only loop in
-the maintainer if you suspect Sharko is misreporting (i.e. the
-YAML looks correct to you but Sharko rejects it).
-
-The maintainer is a single human, not a 24×7 rotation.
+- [A third-party catalog fails the format check](catalog-source-schema-validation-failed.md)
+- [A third-party catalog can't be downloaded](catalog-source-http-fetch-failed.md)
+- [First checks](troubleshooting.md)

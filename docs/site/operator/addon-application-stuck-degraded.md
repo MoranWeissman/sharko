@@ -1,484 +1,206 @@
-# Addon ArgoCD Application Stuck Degraded
+# An addon is stuck Degraded on one cluster
 
-**Severity:** P1
+Use this page when Sharko turned an addon on for a cluster, the pull request
+merged, but the addon's ArgoCD Application on that cluster stays `Degraded`
+(or `Missing`, `Unknown` or `OutOfSync`).
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
-> Sharko-side audit codes `addon_enabled_on_cluster` and
-> `cluster_secret_create` success shape are verified against the
-> addon-cycle audit entries and the audit conventions in
-> [`../developer-guide/logging.md`](../developer-guide/logging.md). The
-> ArgoCD-side checks below use the standard ArgoCD CLI
-> (`argocd app get`) and the ApplicationSet pattern described in
-> [`../architecture/repo-structure.md`](../architecture/repo-structure.md).
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Depends on the addon. Only this one addon on this one
+cluster is affected. Other addons, and the same addon on other clusters, keep
+working.
 
-A single addon's ArgoCD Application is sitting in `Degraded` (or
-`Unknown` / `OutOfSync`) state on a specific cluster, even though
-Sharko's end of the cycle reported success: the PR opening the addon
-on the cluster was merged, the audit log shows
-`event=addon_enabled_on_cluster` with `result=success`, and
-(for addons with secret dependencies) the addon's K8s Secret was
-pushed to the remote cluster successfully.
+Before you start, set up the shell variables from
+[First checks](troubleshooting.md#set-up-once).
 
-The failure is **downstream of Sharko**: ArgoCD applied the addon's
-Helm chart against the cluster, and one or more resources came up
-unhealthy. The chart's values were wrong, the namespace clashed with
-another addon's resources, a required Secret was missing, RBAC denied
-the Helm hook, the upstream container image is broken, the cluster
-ran out of resource quota — anything in that lane.
+## What you see
 
-The blast radius is **one addon on one cluster**. Other addons on the
-same cluster are healthy; the same addon on other clusters is
-healthy. Mitigation is fundamentally **inspect the Application in
-ArgoCD directly** — Sharko's logs cannot diagnose a chart-render or
-chart-apply failure that happened inside ArgoCD's controller.
+- On the cluster's page in Sharko, the addon shows errors. Click the error
+  count to see them, along with ArgoCD's last sync message.
+- In ArgoCD, the Application named `<addon>-<cluster>` (for example
+  `datadog-prod-eu`) has health `Degraded`, `Missing` or `Unknown`.
+- Sharko's own part went fine. The **Audit Log** page shows
+  `addon_enabled_on_cluster_v4` (or `addon_enabled_on_cluster` on older repo
+  layouts) with result `success`.
 
----
-
-## Symptoms
-
-What an operator sees when this fires:
-
-- **ArgoCD Application status** for the affected cluster + addon
-  combination reports `Health: Degraded` (or `Health: Missing` /
-  `Health: Suspended` / `Health: Unknown`). The Application name
-  pattern is `<cluster>-<addon>` per the ApplicationSet template
-  (e.g. `prod-eu-datadog`).
-- **`argocd app get` output**:
-
-  ```sh
-  argocd app get prod-eu-datadog
-  ```
-
-  Returns something like:
-
-  ```
-  Name:               argocd/prod-eu-datadog
-  Project:            default
-  Server:             https://api.prod-eu.example.com
-  Namespace:          datadog
-  URL:                https://argocd.example.com/applications/prod-eu-datadog
-  Repo:               https://github.com/<org>/<repo>
-  Path:               apps/datadog
-  SyncWindow:         Sync Allowed
-  Sync Policy:        Automated (Prune)
-  Sync Status:        OutOfSync from main (abc123)
-  Health Status:      Degraded (1 of 2 components failed)
-  ```
-
-- **Sharko's audit log** shows the enable-on-cluster cycle completed
-  successfully:
-
-  ```sh
-  curl -sS -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-    "http://sharko/api/v1/audit?event=addon_enabled_on_cluster&limit=20" \
-    | jq -r '.[] | "\(.time) \(.resource) \(.result)"'
-  ```
-
-  Expected: a row matching the cluster + addon with `result=success`,
-  timestamped before the operator noticed the Degraded state.
-
-- **No Sharko-side error logs** for the cluster + addon combination
-  after the cycle completion. Grep for the cluster name:
-
-  ```sh
-  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
-    | jq -c "select(.cluster == \"prod-eu\" and .level == \"ERROR\")"
-  ```
-
-  Empty output = Sharko's view of the operation is "done, success." The
-  failure is entirely downstream.
-
-- **`kubectl get application` on the ArgoCD control plane** confirms
-  the Application exists with the expected source path:
-
-  ```sh
-  kubectl -n argocd get application prod-eu-datadog -o yaml \
-    | yq '.status.health.status, .status.sync.status'
-  ```
-
-- **No specific Prometheus alert fires for one addon-on-one-cluster
-  degradation today.** Sustained per-addon failure across multiple
-  clusters does fan into
-  [`SharkoAddonCycleSlowBurn`](budget-burn-runbook.md#sharkoaddoncycleslowburn).
-  A single Application stuck Degraded is detected by operators (via
-  the Fleet Dashboard's per-cluster health column) or by ArgoCD's
-  own alerting (out-of-scope for this runbook).
-
-If the symptom is **every addon on a specific cluster** stuck
-Degraded, this is **not** the runbook — the cluster itself is
-broken (network, RBAC, or registration). See
-[`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md)
-or
-[`cluster-reconciler.md`](cluster-reconciler.md). If the symptom is
-**the same addon on every cluster** stuck Degraded, the chart itself
-or the addon's catalog entry is broken — distinct failure mode (often
-visible at the catalog-source level; see
-[`catalog-parse-failure-on-startup.md`](catalog-parse-failure-on-startup.md)).
-
----
-
-## Diagnosis
-
-Four checks, narrowing from "what is the Application's actual health"
-to "what failed inside the chart."
-
-### 1. Get the Application's structured health status
+You can also look from your own machine:
 
 ```sh
-argocd app get prod-eu-datadog -o json \
-  | jq '{name: .metadata.name, sync: .status.sync.status, health: .status.health.status, resources: .status.resources}'
+kubectl -n argocd get application datadog-prod-eu \
+  -o jsonpath='{.status.health.status} {.status.sync.status}{"\n"}'
 ```
 
-Key fields:
-
-- `sync.status` — `Synced` means ArgoCD applied what it saw in Git;
-  `OutOfSync` means the chart rendered to something different from
-  what's running on the cluster.
-- `health.status` — `Healthy`, `Degraded`, `Suspended`,
-  `Missing`, `Unknown`, `Progressing`.
-- `resources` — per-resource breakdown. Find the offending resource
-  here.
-
-### 2. Identify the failing resource
-
-```sh
-argocd app get prod-eu-datadog -o json \
-  | jq '.status.resources[] | select(.health.status != "Healthy" and .health.status != null) | {kind, name, status, health}'
-```
-
-Expected output is a list of resources whose health is not Healthy.
-Common signatures:
-
-- `Deployment` with `health.status = Degraded` and
-  `health.message = "Deployment has 0 replicas available"` — pod
-  scheduling failure (image pull, resource quota, node selector).
-- `Pod` with `health.status = Degraded` and
-  `health.message = "Back-off pulling image ..."` — image-pull failure
-  (chart version pointing to a nonexistent tag).
-- `Pod` with `health.status = Degraded` and
-  `health.message = "CreateContainerConfigError: secret \"datadog-keys\" not found"`
-  — addon's secret dependency was not pushed to the remote cluster (this
-  is the [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
-  surface; cross-link).
-- `Job` with `health.status = Degraded` and
-  `health.message = "Job has reached the specified backoff limit"` —
-  Helm hook failed (commonly a migration job that needs a missing
-  Secret or ConfigMap).
-- `RoleBinding` / `ClusterRoleBinding` with sync errors — RBAC for
-  the addon's ServiceAccount conflicts with another addon (namespace
-  clash).
-
-### 3. Read the actual chart-render output
-
-```sh
-argocd app manifests prod-eu-datadog | head -100
-```
-
-Shows the post-render Kubernetes manifests that ArgoCD applied. Cross-
-reference with the chart's `values.yaml` rendered using the
-per-cluster values file:
-
-```sh
-# Fetch the per-cluster values file Sharko opened the PR for:
-curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-  "https://api.github.com/repos/<org>/<repo>/contents/values/clusters/prod-eu/datadog.yaml?ref=main" \
-  | jq -r .content | base64 -d
-```
-
-This file holds only the `datadog` values for `prod-eu`. The base
-values for every cluster are in `values/global/datadog.yaml`. Common
-problem shapes:
-
-- The `datadog.apiKey` is empty (the AddonSecretRef wasn't expanded;
-  the addon will fail to authenticate).
-- `datadog.namespace` clashes with another addon already deployed in
-  the same namespace.
-- A required-by-the-chart top-level key is missing entirely.
-
-### 4. Inspect the pod / event log on the remote cluster
-
-If the failing resource is a Pod, get the actual container event
-trail:
-
-```sh
-# Get the addon's namespace from the chart's values.
-ADDON_NS=datadog
-
-# Use the ArgoCD CLI to proxy through to the remote cluster:
-argocd app resources prod-eu-datadog \
-  --resource :v1:Pod \
-  | head -20
-
-# Or if you have direct kubeconfig access to the remote cluster:
-kubectl --kubeconfig <remote-kubeconfig> -n "$ADDON_NS" describe pod -l app.kubernetes.io/name=datadog | head -40
-kubectl --kubeconfig <remote-kubeconfig> -n "$ADDON_NS" get events --sort-by='.lastTimestamp' | tail -20
-```
-
-The event log is usually the **single most useful diagnostic**: image
-pull errors, FailedScheduling, ConfigMap-not-found, Secret-not-found,
-PVC-pending — all show up here with the exact resource name and the
-specific reason.
-
----
-
-## Mitigation (try in order)
-
-The first step is always to **read the Application's own error
-output** before making changes. ArgoCD's `OperationState.Message`
-contains the chart's apply error; that's the canonical "what
-happened" surface.
-
-1. **Read the Application's `OperationState` message.** ArgoCD records
-   the last sync operation's outcome in
-   `.status.operationState.message`. This is the chart-apply error,
-   verbatim:
-
-   ```sh
-   argocd app get prod-eu-datadog -o json \
-     | jq -r '.status.operationState.message'
-   ```
-
-   The message tells you whether the failure is a chart render error
-   (Helm rendering failed), a kube-apply error (kubectl apply failed
-   on a specific resource), or a sync-window block (ArgoCD's sync
-   window is closed). Read it before guessing.
-
-   Common messages and routing:
-
-   - `error validating data: ValidationError(...)` — the chart
-     rendered to invalid Kubernetes YAML. Fix the values file
-     (Mitigation step 2).
-   - `Error from server (Forbidden): ...` — RBAC denied on a
-     resource. Often namespace clash. Fix the namespace in the
-     values file or the chart-side RBAC.
-   - `Error from server (AlreadyExists): ...` — another addon
-     (or a non-Sharko-managed resource) already owns the resource.
-     Choose: rename the addon's namespace, change `ownerReferences`,
-     or remove the conflicting resource.
-   - `connection refused` to the cluster — the cluster Secret is
-     stale (token rotated). Cross-link to
-     [`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md)
-     or
-     [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md).
-
-2. **Fix the per-cluster values file.** If Diagnosis step 3 surfaced
-   a missing or wrong value, open a PR fixing the
-   `values/clusters/<cluster>/<addon>.yaml` file. Then
-   either auto-merge (default) or merge manually; ArgoCD picks the
-   change up on the next sync.
-
-   ```sh
-   # Example: bump the datadog namespace to avoid a clash.
-   cat > /tmp/values-patch.yaml <<EOF
-   datadog:
-     namespace: datadog-prod-eu
-     apiKey: <ref-to-secret>
-   EOF
-
-   # Open the PR via the Sharko PATCH endpoint:
-   curl -sS -X PATCH -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/clusters/prod-eu" \
-     --data-binary @/tmp/values-patch.yaml \
-     -H "Content-Type: application/yaml"
-   ```
-
-   Success indicator: after the PR merges and ArgoCD syncs, the
-   Application's `health.status` transitions to `Healthy`.
-
-3. **Force a sync from ArgoCD.** If the values file is already
-   correct but ArgoCD's last sync was a stale render (e.g. cache
-   issue, or you fixed the upstream chart and bumped the version),
-   force a fresh sync:
-
-   ```sh
-   argocd app sync prod-eu-datadog --force
-   ```
-
-   Or via Sharko's `POST /api/v1/clusters/{name}/refresh` endpoint
-   if you want the sync to flow through Sharko's audit path:
-
-   ```sh
-   curl -sS -X POST -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/clusters/prod-eu/refresh"
-   ```
-
-   Success indicator: `argocd app get` shows `sync.status: Synced`
-   and `health.status: Healthy` within ~60s.
-
-4. **Roll back the addon to the previous working version.** If the
-   degradation started immediately after an addon upgrade and the
-   error is in the chart itself (Diagnosis step 3 shows a values
-   shape that the previous version accepted but this one rejects),
-   roll back via the addon-upgrade endpoint with the old version:
-
-   ```sh
-   curl -sS -X POST -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/addons/datadog/upgrade" \
-     --data-binary '{"version":"3.74.0", "cluster":"prod-eu"}'
-   ```
-
-   This opens a PR pinning the per-cluster override to the previous
-   version. Other clusters running the new version are unaffected.
-
-   Success indicator: after the PR merges, ArgoCD syncs to the
-   previous version and `health.status` returns to `Healthy`.
-
-5. **Last resort — disable the addon on this cluster.** If Mitigation
-   steps 1-4 don't resolve the failure within ~30 minutes and the
-   addon is blocking other operations on the cluster, disable it
-   temporarily via `PATCH /api/v1/clusters/{name}`:
-
-   ```sh
-   curl -sS -X PATCH -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/clusters/prod-eu" \
-     --data-binary '{"remove_addon":["datadog"]}'
-   ```
-
-   This opens a PR removing the addon's label from the cluster.
-   ArgoCD's ApplicationSet deletes the Application; the broken state
-   clears. Re-enable when the underlying issue is fixed.
-
-   Success indicator: Application disappears from `argocd app list`;
-   audit log records `event=addon_disabled_on_cluster, result=success`.
-
----
-
-## Root-cause patterns
-
-Four common causes.
-
-### Wrong values in the per-cluster values file
-
-The single most common cause. The per-cluster values file lacks a
-required key, has a typo'd key, or carries a value the chart's
-schema rejects. ArgoCD's sync fails with a validation or apply error
-from kube-apiserver.
-
-Diagnostic signature: Diagnosis step 1 shows `sync.status: OutOfSync`
-with the failure message identifying a YAML / validation problem.
-Diagnosis step 3 shows the missing or wrong key in the rendered
-values file.
-
-Fix lane: Mitigation step 2 (fix the values file via PR). The fix
-is operator-side; Sharko's role is opening the PR, not authoring
-the values.
-
-### Addon's secret dependency was not pushed
-
-The addon declares a secret in the catalog (`secrets:` block; see
-[`../user-guide/addons.md`](../user-guide/addons.md))
-and the secret-push step on cluster registration failed silently.
-The chart deploys; the pod tries to mount the Secret; CreateContainer
-fails with `secret \"datadog-keys\" not found`.
-
-Diagnostic signature: Diagnosis step 4 (pod event log) shows
-`Failed to mount volume datadog-keys` or
-`CreateContainerConfigError: secret \"datadog-keys\" not found`.
-
-Fix lane: this is a cross-link to
-[`secret-push-silently-failed.md`](secret-push-silently-failed.md).
-The fix is in that runbook (re-push the addon secret to the cluster),
-not in this one.
-
-### Namespace clash with another addon
-
-Two addons configured for the same namespace claim conflicting
-resources (e.g. both want to own the `default` ServiceAccount, both
-want to install a `ClusterRoleBinding` with the same name). The
-second one to sync fails with `Forbidden` or `AlreadyExists`.
-
-Diagnostic signature: Diagnosis step 1's `OperationState.message`
-contains `AlreadyExists` or `Forbidden` referencing a resource owned
-by another addon. The two addons share `namespace` in the per-cluster
-values file.
-
-Fix lane: Mitigation step 2 (rename the namespace in the values file
-for one of the addons; rare cases require fixing the chart's
-hard-coded resource names).
-
-### ArgoCD sync window or self-heal disabled
-
-ArgoCD's Project sync window for the affected cluster is closed
-(maintenance window, deployment freeze) or the Application's
-`syncPolicy.automated` was manually unset.
-
-Diagnostic signature: Diagnosis step 1 shows `sync.status: OutOfSync`
-but `Sync Window: Sync Denied` or `Sync Policy: Manual` instead of
-`Automated`. The Application has been OutOfSync for hours without
-attempts.
-
-Fix lane: re-enable automated sync (one-off ArgoCD CLI command) or
-wait for the sync window to open. Not a Sharko issue — operator's
-sync policy.
-
----
-
-## Prevention
-
-How to make this failure mode less likely going forward. Three
-levers:
-
-- **Monitoring — alert on per-Application health degradation.**
-  ArgoCD already exposes per-Application health metrics
-  (`argocd_app_info{health_status="Degraded"}`). Operators should
-  alert on Application-level degradation independently of Sharko —
-  ArgoCD is the source of truth for "did the chart apply." Sharko's
-  audit-log surface complements this but isn't sufficient.
-
-- **Gating — schema-validate per-cluster values at PR time.** Sharko
-  could template-render the addon's chart with the proposed values
-  during PR review (Helm's `helm template`) and surface render
-  errors as PR comments. That would catch Root cause pattern 1
-  (wrong values) before the PR merges and ArgoCD attempts a sync.
-  Wiring this into the PR-open flow is planned, not built.
-
-- **Scheduled work — quarterly addon health audit.** Walk the Fleet
-  Dashboard and flag any Application that's been Degraded for
-  >24 hours. These accumulate and become operational tech debt —
-  treating them as routine work (not just incidents) keeps the
-  fleet honest. The audit lives next to the credential-freshness
-  audit from
-  [`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md).
-
----
-
-## Related runbooks
-
-- [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
-  — when the addon's secret dependency wasn't pushed; very common
-  cause of Degraded status (Root cause pattern 2).
-- [`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md)
-  — when all addons on the cluster are failing; the cluster's
-  credential is wrong, not the addon.
-- [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md)
-  — when ArgoCD can't reach the cluster at all (one symptom of which
-  is `Health: Unknown` rather than `Degraded`).
-- [`argocd-pr-merge-no-converge.md`](argocd-pr-merge-no-converge.md)
-  — the P0 escalation: PR merged but ArgoCD never sees the change
-  at all. Distinct from "ArgoCD sees the change and fails to apply
-  it" which is this runbook.
-- [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
-  — when the PR didn't actually merge in the first place.
-- [`budget-burn-runbook.md`](budget-burn-runbook.md) — when
-  Application degradation is widespread enough to consume the
-  addon-cycle error budget.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-
-## Escalation
-
-If the mitigations above do not resolve the failure within 4 hours,
-email the maintainer: `moran.weissman@gmail.com`. Include:
-
-- The runbook URL you used (this page)
-- The cluster + addon combination
-- The output of Diagnosis step 1 (Application's sync + health
-  status)
-- The output of Diagnosis step 2 (failing resource list)
-- The output of Mitigation step 1 (`OperationState.message`)
-- The Sharko version and ArgoCD version
-
-The maintainer is a single human, not a 24x7 rotation. Expect a
-business-day SLA, not a paged response. For ArgoCD-internal issues
-(chart render, kube-apply), the ArgoCD project is the upstream owner
-— Sharko's escalation is for Sharko-side mis-routing only.
+If **every** addon on the cluster is failing, the problem is the cluster, not
+the addon. See
+[Sharko can't read the sign-in details for one cluster](single-cluster-credential-fetch-failed.md)
+or [A cluster's ArgoCD Secret is broken](argocd-cluster-secret-corruption.md).
+If the **same addon fails on every cluster**, the chart or its catalog entry
+is the problem.
+
+## Why it happens
+
+Once the pull request merges, ArgoCD installs the addon's Helm chart. The
+problem is in that step, so Sharko's own logs usually show nothing. Common
+causes:
+
+- **Wrong values.** The per-cluster values file is missing a key the chart
+  needs, has a typo, or has a value the chart rejects.
+- **A Secret the addon needs is not on the cluster.** The pod fails with
+  `secret "..." not found`.
+- **Two addons fight over the same thing**, such as the same namespace or
+  the same ClusterRoleBinding name. ArgoCD answers `AlreadyExists` or
+  `Forbidden`.
+- **The new chart version is broken**, or does not accept values that the
+  old version did.
+- **The cluster can't run it**: no room on the nodes, a quota is full, or the
+  image can't be pulled.
+- **ArgoCD is not allowed to sync right now**: a sync window is closed, or
+  someone turned off automatic sync on the Application.
+
+On v4 repos, the addon's values come from two files in your Git repo:
+`values/global/<addon>.yaml` (for every cluster) and
+`values/clusters/<cluster>/<addon>.yaml` (for this cluster only). Both files
+are plain chart values. They are not wrapped under the addon name.
+
+## How to fix it
+
+1. **Read ArgoCD's own error first.** ArgoCD records the outcome of the
+   last sync. This message usually says exactly what went wrong:
+
+    ```sh
+    kubectl -n argocd get application datadog-prod-eu \
+      -o jsonpath='{.status.operationState.message}{"\n"}'
+    ```
+
+    Then list the parts of the addon that are not healthy:
+
+    ```sh
+    kubectl -n argocd get application datadog-prod-eu -o json \
+      | jq '.status.resources[] | select(.health.status != null and .health.status != "Healthy")
+            | {kind, name, namespace, health}'
+    ```
+
+    How to read the common messages:
+
+    | Message contains | Go to |
+    |---|---|
+    | `ValidationError`, `error validating data` | Wrong values. Step 2. |
+    | `secret "..." not found` | [An addon secret did not reach the cluster](secret-push-silently-failed.md) |
+    | `AlreadyExists`, `Forbidden` | Two addons fight. Step 2 (change the namespace or the name). |
+    | `Back-off pulling image`, `0 replicas available` | Look at the pods. Step 3. |
+    | `backoff limit` on a Job | A Helm hook failed. Step 3. |
+
+2. **Fix the values for this cluster.** You have three ways:
+
+    - **Edit the file in Git.** Open a pull request that changes
+      `values/clusters/<cluster>/<addon>.yaml`. This is also the only way
+      to remove a key.
+    - **Use the CLI.** `sharko enable-addon` merges the values you give into
+      that file and opens the pull request for you. It works when the addon is
+      already on:
+
+        ```sh
+        sharko enable-addon prod-eu datadog \
+          --values-json '{"replicaCount": 2}' --dry-run
+        sharko enable-addon prod-eu datadog \
+          --values-json '{"replicaCount": 2}'
+        ```
+
+        The API behind it is
+        `POST /api/v1/v4/clusters/{name}/addons/{addon}` with a body like
+        `{"values": {...}, "yes": true}`.
+
+    - **Change the namespace** through the cluster's addon settings
+      (`settings.namespace` in `cluster-addons/<cluster>.yaml`), not through
+      the chart values.
+
+    Note: on v4 repos, the values editor on the cluster page and
+    `PUT /api/v1/clusters/{cluster}/addons/{name}/values` do not save. They
+    answer `409` with a message that starts
+    `this editor doesn't support the v4 layout yet`. Use one of the ways
+    above.
+
+    ArgoCD picks up the change on its next sync once the pull request merges.
+
+3. **Look at the pods on the cluster.** If the message points at a pod or a
+   Job, look at its events. Use your own access to that cluster:
+
+    ```sh
+    kubectl --context <cluster> -n <addon-namespace> get pods
+    kubectl --context <cluster> -n <addon-namespace> get events --sort-by=.lastTimestamp | tail -20
+    ```
+
+    The events name the real cause: image pull errors, `FailedScheduling`,
+    a missing ConfigMap or Secret, a volume that is not ready.
+
+4. **Start the sync again.** If the values are already right but the last
+   sync is stuck or failed on old data, restart it. On the cluster's page,
+   open the addon's errors and click **Restart sync**. Or:
+
+    ```sh
+    curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+      "$SHARKO_URL/api/v1/clusters/prod-eu/addons/datadog/restart-sync"
+    ```
+
+    This stops any sync that is still running and starts a new one. Sharko
+    needs ArgoCD rights for this. See
+    [Letting Sharko restart a sync](security.md#letting-sharko-restart-a-sync).
+
+5. **Go back to the version that worked.** If it broke right after an
+   upgrade, pin the old chart version for this cluster only:
+
+    ```sh
+    sharko enable-addon prod-eu datadog --version <old-version>
+    ```
+
+    Other clusters keep the new version. Run
+    `sharko enable-addon prod-eu datadog --clear-version` later to follow the
+    catalog version again.
+
+6. **Last try: turn the addon off on this cluster.** This opens a pull
+   request. Once it merges, ArgoCD removes the Application:
+
+    ```sh
+    sharko disable-addon prod-eu datadog
+    ```
+
+    The entry, its version pin and its settings are kept, so turning it back
+    on later is easy. Turn it back on with `sharko enable-addon` once the
+    cause is fixed.
+
+7. **If a sync window or manual sync policy is the cause**, that is an
+   ArgoCD setting, not a Sharko one. Wait for the window, or change the
+   project's sync windows in ArgoCD.
+
+## How to check it's fixed
+
+- The Application is healthy and in sync:
+
+    ```sh
+    kubectl -n argocd get application datadog-prod-eu \
+      -o jsonpath='{.status.health.status} {.status.sync.status}{"\n"}'
+    # Healthy Synced
+    ```
+
+- The addon on the cluster's page in Sharko shows no errors.
+
+- If you watch ArgoCD with Prometheus, ArgoCD's own metric
+  `argocd_app_info{health_status="Degraded"}` no longer lists this
+  Application.
+
+## If that didn't work
+
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
+
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`) and the ArgoCD version
+- the addon, the cluster, and the chart version
+- ArgoCD's sync message from step 1, and the list of unhealthy parts
+- what you tried from this page
+
+If the problem is inside the chart itself, the chart's own project is the
+better place to ask.
+
+Related pages:
+
+- [An addon secret did not reach the cluster](secret-push-silently-failed.md)
+- [A cluster PR merged, but the cluster never shows up in ArgoCD](argocd-pr-merge-no-converge.md)
+- [Auto-merge failed after the pull request opened](auto-merge-failed-after-pr-opened.md)
+- [budget-burn-runbook.md](budget-burn-runbook.md), when many addons fail at once

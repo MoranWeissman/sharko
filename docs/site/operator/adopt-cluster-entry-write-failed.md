@@ -1,474 +1,148 @@
-# Adopt: Cluster Entry Write to managed-clusters.yaml Failed
+# Adopting a cluster failed or stopped part-way
 
-**Severity:** P1
+This page is for when you adopt a cluster that ArgoCD already knows about (`sharko adopt`, or
+`POST /api/v1/clusters/adopt`), and Sharko says that cluster `failed` or stopped `partial`.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The Error
-> log line `"failed to add cluster entry"` is verified verbatim: the
-> error is logged but the flow CONTINUES (the values file is committed
-> without the `managed-clusters.yaml` entry being updated). This is by
-> design for the "freshly-bootstrapped repo" carve-out (an empty
-> `managed-clusters.yaml` is bootstrapped to a bare `clusters:` key), but
-> for non-bootstrap cases it produces a **partial-state outcome**: the
-> ArgoCD Secret is labeled (post-merge), the cluster's values file
-> exists, but `managed-clusters.yaml` does NOT list the cluster. That
-> partial-state outcome is the symptom below.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Fix it today. Nothing is deleted. A cluster that failed is left as it was before.
+A cluster that stopped part-way may already have a pull request or a change in Git, and needs one
+more try.
 
-The adopt flow tried to add a new cluster entry to
-`configuration/managed-clusters.yaml` (the canonical "Sharko-managed
-clusters" list) but the YAML manipulation failed. Sharko logs Error,
-proceeds to open the PR **without** the managed-clusters.yaml update,
-and the operator sees an adoption that looks successful — the values
-file commits, the PR merges, the ArgoCD Secret gets labeled `sharko`.
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-The downstream consequence is **silent state inconsistency**:
+**A note on the old log line.** Older versions of this page were about the log line
+`failed to add cluster entry`. Only the old v3 repo format can print it. Sharko no longer writes
+to a v3-format repo: adopting on one is refused before anything is written (see the first case
+below). On a repo in the new format, the same problem shows up as the
+`adding "<cluster>" to managed-clusters.yaml: ...` error described below, and Sharko stops
+before it writes anything.
 
-1. The ArgoCD cluster Secret carries
-   `app.kubernetes.io/managed-by: sharko` (set by the post-merge
-   `argoSecretManager.SetAnnotation` step).
-2. The cluster's values file exists at
-   `configuration/addons-clusters-values/<cluster>.yaml`.
-3. `managed-clusters.yaml` does NOT contain a row for this cluster.
+## What you see
 
-The next reconciler tick reads `managed-clusters.yaml`, finds no
-entry for `<cluster>`, but finds a labeled-as-sharko Secret in
-ArgoCD with that name. **The reconciler then deletes the Secret**
-(the two-direction policy: "in ArgoCD but not in Git -> delete"
-per `cluster-reconciler.md`).
-
-So the adoption appears to succeed, then 30 seconds later the
-cluster's ArgoCD Secret is gone and the operator is left wondering
-what happened. The Error log line is the only forensic anchor.
-
-This runbook covers diagnosis (catch the partial state before
-the reconciler deletes the Secret) and repair (add the cluster
-entry to `managed-clusters.yaml` so reconciliation converges).
-
----
-
-## Symptoms
-
-What an operator sees when this fires:
-
-- **`kubectl logs` Error line** during the adopt flow:
-
-  ```
-  {"time":"...","level":"ERROR","msg":"failed to add cluster entry","cluster":"prod-eu","error":"<gitops error>"}
-  ```
-
-  Common error shapes:
-
-  ```
-  yaml: line 14: did not find expected key
-  yaml: did not find expected node content
-  cluster entry already exists: prod-eu
-  ```
-
-  Grep:
-
-  ```sh
-  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
-    | jq -c 'select(.msg == "failed to add cluster entry")'
-  ```
-
-- **`POST /api/v1/clusters/adopt`** returns `status: "success"` for
-  the affected cluster:
-
-  ```json
-  {
-    "results": [
-      {
-        "name": "prod-eu",
-        "status": "success",
-        "git": {"pr_url": "...", "merged": true}
-      }
-    ]
-  }
-  ```
-
-  The Error log line is the **only signal of partial state**. The
-  HTTP response is misleading.
-
-- **30 seconds later, the cluster's ArgoCD Secret is deleted**:
-
-  ```sh
-  kubectl -n argocd get secret prod-eu
-  # Error from server (NotFound): secrets "prod-eu" not found
-  ```
-
-  And the subsequent reconciler tick's audit log:
-
-  ```sh
-  curl -sS -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-    "http://sharko/api/v1/audit?event=cluster_secret_reconcile&resource=cluster:prod-eu&limit=20" \
-    | jq -r '.[] | "\(.time) \(.action) \(.result) \(.detail)"'
-  ```
-
-  Expected: an entry showing `action=cluster_secret_delete` with
-  `result=success` and `detail=in argocd but not in git`. That's the
-  "orphan delete" path firing on the labeled-but-not-listed Secret.
-
-- **PR shows the values file commit only** — there's no
-  `managed-clusters.yaml` change in the diff:
-
-  ```sh
-  curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-    "https://api.github.com/repos/<org>/<repo>/pulls/<id>/files" \
-    | jq -r '.[] | .filename'
-  ```
-
-  Expected after the failure: only
-  `configuration/addons-clusters-values/prod-eu.yaml`. Expected on a
-  healthy adopt: that file PLUS
-  `configuration/managed-clusters.yaml`.
-
-- **`managed-clusters.yaml`** does not contain the cluster:
-
-  ```sh
-  curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-    "https://api.github.com/repos/<org>/<repo>/contents/configuration/managed-clusters.yaml?ref=main" \
-    | jq -r .content | base64 -d | yq '.clusters[] | select(.name == "prod-eu")'
-  ```
-
-  Empty output = the cluster is not in the canonical list.
-
-- **No specific Prometheus alert fires today.** Sharko does not export
-  this metric today. The alert below is a design sketch for a future
-  release, not something you can deploy now. The sketch: surface
-  `sharko_adopt_partial_state_total` and alert on more than 0.
-
-If the symptom is **adopt failing with HTTP 502** during the PR
-creation (e.g. `creating pull request: ...`), the failure is
-upstream Git-side, not the YAML manipulation. See
-[`git-provider-unreachable.md`](git-provider-unreachable.md) or
-[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md).
-
-If the symptom is **the Warn-level label-read failure**, see
-[`adopt-managed-by-label-read-failed.md`](adopt-managed-by-label-read-failed.md)
-— the sibling adopt failure mode.
-
----
-
-## Diagnosis
-
-Three checks: detect the partial state, identify the
-`AddClusterEntry` failure reason, decide whether to repair via PR or
-back out the entire adoption.
-
-### 1. Detect partial state on the cluster
-
-The fastest detection is to compare three sources for the same
-cluster:
+Sharko answers HTTP 200 (or 207) even when a cluster failed. Always read the answer:
 
 ```sh
-CLUSTER=prod-eu
-
-# 1. Does the ArgoCD Secret exist?
-kubectl -n argocd get secret "$CLUSTER" \
-  -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' || echo "no-secret"
-
-# 2. Does the values file exist?
-curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-  "https://api.github.com/repos/<org>/<repo>/contents/configuration/addons-clusters-values/${CLUSTER}.yaml?ref=main" \
-  | jq -r '.name // "no-values-file"'
-
-# 3. Is the cluster in managed-clusters.yaml?
-curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-  "https://api.github.com/repos/<org>/<repo>/contents/configuration/managed-clusters.yaml?ref=main" \
-  | jq -r .content | base64 -d \
-  | yq ".clusters[] | select(.name == \"${CLUSTER}\") | .name"
+curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"clusters":["<cluster>"],"dry_run":true}' \
+  "$SHARKO_URL/api/v1/clusters/adopt" | jq '.outcome, .results[] | {name, status, error, message, warnings}'
 ```
 
-The three outputs together tell you the state:
+`outcome` has `total`, `completed`, `partly_completed` and `failed`. Anything other than
+`completed` equal to `total` means some work did not finish. The `dry_run` above changes nothing,
+so you can run it as often as you like.
 
-| Secret | Values file | managed-clusters.yaml | State |
-|---|---|---|---|
-| `sharko` | exists | exists | Healthy — adoption succeeded fully |
-| `sharko` | exists | missing | **This runbook's failure mode** |
-| `no-secret` | exists | missing | Reconciler already deleted the Secret |
-| `no-secret` | exists | exists | Reconciler hasn't run yet; will recreate Secret on next tick |
-| `no-secret` | missing | missing | Adopt failed earlier; safe to retry |
+What you can see, from earliest to latest:
 
-The "Secret labeled / values file exists / managed-clusters.yaml
-missing" pattern is the smoking gun.
+| Where | What it says | What it means |
+|---|---|---|
+| HTTP 409 | `this repo uses the v3 format — migrate to continue (one PR); reads keep working` | The repo is still in the old format. Nothing was written |
+| HTTP 502 | `Sharko stopped before adopting a cluster: could not read sharko-engine.yaml ...` | Sharko could not read Git to find out the repo format. Nothing was written |
+| HTTP 502 | `listing ArgoCD clusters: ...` | Sharko could not reach ArgoCD. Nothing was written |
+| `failed` | `cluster "<cluster>" not found in ArgoCD — cannot adopt` | The name is wrong, or the cluster is not in ArgoCD |
+| `failed` | `Sharko is not connected to the cluster it runs in ...` | Adopting needs Sharko installed in Kubernetes |
+| `failed` | `getting secret "<cluster>" in namespace "argocd": ...` | Sharko could not read the cluster's ArgoCD Secret. See [Sharko could not tell who owns a cluster's ArgoCD connection](adopt-managed-by-label-read-failed.md) |
+| `failed` | `<cluster> is not ready to take over yet: 1 thing to fix first.` | The checks found something that blocks the adoption. Nothing was written. Step 2 shows how to see which check |
+| `failed` | `adding "<cluster>" to managed-clusters.yaml: ...` | The cluster list file in Git can't be read. Nothing was written |
+| `failed` | `Git commit failed during adoption` | Sharko could not write to Git. Nothing was written |
+| `partial` | `PR created but merge failed for cluster <cluster>: <PR link>` | The pull request is open but did not merge |
+| `partial` | `Adoption PR merged but Sharko could not take ownership of the ArgoCD connection ...` | Git has the change, but the ArgoCD Secret was not updated |
+| `partial` | `Adoption PR merged, but <cluster>'s ArgoCD connection disappeared ...` | The ArgoCD Secret was removed while Sharko worked |
+| `partial` | `Adoption PR merged but failed to set adopted annotation on ArgoCD secret` | Almost done: only the last mark on the Secret is missing |
 
-### 2. Identify the AddClusterEntry failure reason
+The `partial` cases also write one of these lines to the Sharko log:
 
-The Error log line's `error` field tells you why the YAML
-manipulation failed:
+```text
+failed to take ownership of the ArgoCD cluster secret during v4 adoption
+failed to set adopted annotation on ArgoCD secret — reconciler will retry
+```
 
 ```sh
-kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
-  | jq -c "select(.msg == \"failed to add cluster entry\" and .cluster == \"$CLUSTER\")" \
-  | jq -r .error
+kubectl -n "$SHARKO_NS" logs deploy/sharko --since=1h | grep -E 'adoption|adopted annotation'
 ```
 
-Common shapes:
+## Why it happens
 
-- `yaml: line N: did not find expected key` — the existing
-  `managed-clusters.yaml` has a syntax error (manual edit corrupted
-  it). The parser bails before adding the new entry.
-- `cluster entry already exists: <name>` — the cluster is already in
-  `managed-clusters.yaml`. This is the **dry-run-twice or retry-
-  after-partial-success** path. The previous adoption did add the
-  entry; this attempt is idempotent-conflicting. Usually safe to
-  re-run as a no-op.
-- `unmarshal errors: ...` — incompatible schema (older
-  `managed-clusters.yaml` shape vs. the current schema envelope).
-- `failed to lookup clusters key in document` — the file exists but
-  doesn't have the expected top-level structure.
+- **The repo is still in the old v3 format.** Sharko only reads such a repo now. It does not
+  write to it.
+- **Sharko can't reach Git or ArgoCD**, or the Git token has no right to push or open pull
+  requests.
+- **The cluster list file in Git (`managed-clusters.yaml`) is broken**, for example after a
+  hand edit. Sharko will not write to a file it can't read. Most of the time this shows up as a
+  blocked check: "Sharko could not read its own list of clusters: ...".
+- **The checks block the cluster.** For example, another tool's name is in the
+  `app.kubernetes.io/managed-by` label of its ArgoCD Secret, another ArgoCD Application deploys
+  that Secret, or Sharko already has a different cluster with the same name.
+- **The pull request was made but did not merge**, for example because of a branch rule or a
+  required review.
+- **Sharko could not change the cluster's ArgoCD Secret** after the merge, most often because of
+  missing rights in the ArgoCD namespace.
 
-### 3. Decide repair vs. roll-back
+## How to fix it
 
-Two paths:
+1. **Read the `error` and `message` for each cluster** with the command under "What you see". Find
+   the line in the table.
 
-- **Repair**: open a follow-up PR adding the cluster to
-  `managed-clusters.yaml`. The ArgoCD Secret was deleted by the
-  reconciler 30s after the original adopt; the next tick after the
-  repair PR merges will recreate it from the provider. This is
-  usually the right path.
-- **Roll-back**: unadopt the cluster entirely, fix the
-  `managed-clusters.yaml` syntax error upstream, then re-adopt.
-  Cleaner state but more steps.
+2. **Fix the cause.**
 
-Choose repair if the operator wants the cluster managed and the
-underlying `managed-clusters.yaml` is otherwise healthy. Choose
-roll-back if the underlying file is broken (syntax errors that
-will affect future adoptions too).
+   - **v3 format (HTTP 409).** Move the repo to the new format first. See
+     [Migrating a repo to the new format](migrating-to-the-new-format.md). Then adopt again.
+   - **Git or ArgoCD can't be reached.** Follow [Sharko can't reach Git](git-provider-unreachable.md),
+     or test the ArgoCD connection in **Settings > Connection**.
+   - **Broken `managed-clusters.yaml`.** Open the file in your Git host and fix the YAML with a
+     normal pull request. If you are not sure what is wrong, run
+     `sharko validate-config managed-clusters.yaml` on a copy of the file on your own machine.
+   - **The checks block the cluster.** See each check and what to do about it:
 
----
+     ```sh
+     curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+       "$SHARKO_URL/api/v1/clusters/<cluster>/takeover/preflight" | jq '.summary, .findings[] | select(.status != "ok")'
+     ```
 
-## Mitigation (try in order)
+     Each finding has a `what_to_do` field. The
+     [Taking over a fleet that is already running](takeover-playbook.md) page explains them.
+   - **The pull request did not merge.** Open the link from `message`, and merge it by hand if it
+     looks right. See [auto-merge-failed-after-pr-opened.md](auto-merge-failed-after-pr-opened.md).
+   - **Sharko could not change the ArgoCD Secret.** Check that the chart's Role in the ArgoCD
+     namespace exists (`sharko-argocd-secrets` when the release is called `sharko`):
 
-1. **If the reconciler hasn't deleted the Secret yet, add the
-   cluster entry manually via a fresh PR.** When you catch the
-   partial state within ~30 seconds of the adopt completing, the
-   ArgoCD Secret is still in place. Opening a quick PR adding the
-   cluster to `managed-clusters.yaml` and merging it stops the
-   reconciler from deleting the Secret.
+     ```sh
+     kubectl -n argocd get role,rolebinding | grep argocd-secrets
+     ```
 
-   ```sh
-   # Clone the repo locally:
-   git clone https://github.com/<org>/<repo>.git
-   cd <repo>
+     If ArgoCD runs in another namespace, use that one, and make sure `rbac.argocdNamespace` in
+     your Helm values names it.
 
-   # Edit managed-clusters.yaml. Append the cluster under clusters:
-   cat >> configuration/managed-clusters.yaml <<EOF
-     - name: ${CLUSTER}
-       labels:
-         monitoring: "true"   # match the addons enabled at adopt time
-         logging: "true"
-   EOF
-
-   # Validate YAML before commit:
-   sharko validate-config configuration/managed-clusters.yaml
-
-   git checkout -b sharko-adopt-${CLUSTER}-add-entry
-   git commit -am "fix(adopt): add ${CLUSTER} to managed-clusters.yaml"
-   git push origin sharko-adopt-${CLUSTER}-add-entry
-   gh pr create --title "fix(adopt): add ${CLUSTER}" --body "Recovery for partial-adopt state. See [adopt-cluster-entry-write-failed.md](https://github.com/MoranWeissman/sharko/blob/main/docs/site/operator/adopt-cluster-entry-write-failed.md)." --base main
-   gh pr merge --squash --auto
-   ```
-
-   Success indicator: after the PR merges, the next reconciler tick
-   (within 30s) emits `cluster_secret_skip` for this cluster (Secret
-   exists, label OK, cluster listed). No further intervention needed.
-
-2. **If the reconciler has already deleted the Secret, add the
-   entry AND wait for the reconciler to recreate the Secret.** Same
-   PR as step 1, but recovery is a two-step process:
-
-   - PR merges -> reconciler reads `managed-clusters.yaml`, sees
-     the new entry, fetches the credential from the provider, creates
-     the ArgoCD Secret with the `sharko` label.
-   - Total recovery time: <60 seconds from PR merge.
+3. **Adopt again.** It is safe to repeat. If a pull request for this cluster is still open, Sharko
+   finds it and does not open a second one. Look at the dry run first:
 
    ```sh
-   # Verify the Secret recreated:
-   sleep 30
-   kubectl -n argocd get secret "$CLUSTER" \
-     -o jsonpath='{.metadata.labels}'
+   sharko adopt <cluster> --dry-run
+   sharko adopt <cluster>
    ```
 
-   Success indicator: Secret exists in ArgoCD with the
-   `app.kubernetes.io/managed-by: sharko` label.
+   Sharko only changes the cluster's ArgoCD Secret right after its own pull request merges. If you
+   merged the pull request by hand later, check the Secret (see the next section). If it still
+   does not carry the Sharko label, adopt again.
 
-3. **Fix the underlying YAML syntax error in managed-clusters.yaml.**
-   If Diagnosis step 2 showed
-   `yaml: line N: did not find expected key`, the file is corrupted
-   and any future adopt call will hit the same error. Repair the
-   syntax before re-adopting:
+## How to check it's fixed
 
-   ```sh
-   # Pull the current managed-clusters.yaml content:
-   curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-     "https://api.github.com/repos/<org>/<repo>/contents/configuration/managed-clusters.yaml?ref=main" \
-     | jq -r .content | base64 -d > /tmp/managed-clusters.yaml
+- The adopt answer shows `"status": "success"` for the cluster, and `outcome.completed` equals
+  `outcome.total`.
+- The cluster shows up in `GET /api/v1/clusters` and on the Clusters page in the UI.
+- The cluster's ArgoCD Secret carries the `app.kubernetes.io/managed-by: sharko` label. See
+  [Look at the cluster's ArgoCD Secret](argocd-cluster-secret-corruption.md#look-at-the-clusters-argocd-secret).
+- The log from the last 10 minutes has no new `adoption` errors.
 
-   # Inspect line N (from the error message):
-   sed -n "${N}p" /tmp/managed-clusters.yaml
+## If that didn't work
 
-   # Fix the syntax (commonly: trailing comma, unquoted special char,
-   # tab mixed with spaces). Then validate:
-   sharko validate-config /tmp/managed-clusters.yaml
-   ```
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
-   Then open a PR to commit the fixed file.
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the log lines from the last hour that mention `adoption` or `adopted annotation`
+- the `outcome` and `results` from the adopt answer (the `error` and `message` fields)
+- what you tried from this page
 
-   Success indicator: `sharko validate-config` reports the file is
-   valid; subsequent adoption attempts no longer hit the
-   `AddClusterEntry` failure.
+Related pages:
 
-4. **Last resort — unadopt and re-adopt.** If steps 1-3 are too
-   involved for the operator's situation (e.g. they want a clean
-   slate), unadopt the cluster, fix any underlying YAML issues,
-   then re-adopt:
-
-   ```sh
-   # Unadopt removes the cluster from managed-clusters.yaml (if
-   # present), deletes the values file, and clears the labeled
-   # Secret. Idempotent:
-   curl -sS -X POST -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/clusters/${CLUSTER}/unadopt"
-
-   # Fix managed-clusters.yaml underlying syntax if needed.
-
-   # Re-adopt:
-   curl -sS -X POST -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/clusters/adopt" \
-     --data-binary "{\"clusters\":[\"${CLUSTER}\"]}"
-   ```
-
-   Success indicator: re-adopt completes without the Error log line;
-   `managed-clusters.yaml` contains the cluster; ArgoCD Secret is
-   labeled.
-
----
-
-## Root-cause patterns
-
-Three common causes.
-
-### Manual edit corrupted managed-clusters.yaml
-
-The single most common cause. An operator manually edited
-`managed-clusters.yaml` in the GitHub UI or via a side PR and the
-edit introduced a YAML syntax error. The next Sharko adopt call hits
-the parser failure during `AddClusterEntry`.
-
-Diagnostic signature: Diagnosis step 2 shows
-`yaml: line N: did not find expected key`. The Git log shows a
-recent non-Sharko commit touching the file.
-
-Fix lane: Mitigation step 3 (fix the syntax) + step 1 (add the new
-entry after the fix lands).
-
-### Schema drift between the schema envelope and bare YAML
-
-The schema envelope (`apiVersion: sharko.dev/v1`) is the canonical
-shape for `managed-clusters.yaml`. If the existing file is a legacy
-bare-YAML shape, the AddClusterEntry path may fail to round-trip
-cleanly.
-
-Diagnostic signature: Diagnosis step 2 shows `unmarshal errors`. The
-file lacks the envelope (`apiVersion: sharko.dev/v1`).
-
-Fix lane: edit `managed-clusters.yaml` to wrap content in the
-envelope shape and re-run `sharko validate-config configuration/`
-to confirm the schema passes, then re-attempt the adopt.
-
-### Idempotent re-adoption of an already-listed cluster
-
-Less common, but seen during operator-side retry. The first adopt
-succeeded fully (entry added to managed-clusters.yaml); the operator
-re-ran the adopt thinking the first failed; the second attempt's
-AddClusterEntry returns "already exists."
-
-Diagnostic signature: Diagnosis step 2 shows
-`cluster entry already exists: <name>`. The cluster IS in
-managed-clusters.yaml from a prior successful adoption.
-
-Fix lane: no action needed — the prior adoption was complete. The
-Error log line is a benign "already done" signal. Consider it
-diagnostic-only.
-
----
-
-## Rollback plan
-
-If Mitigation step 4 (unadopt and re-adopt) was a mistake (e.g. the
-cluster was working fine and the unadopt deleted the Secret
-unnecessarily), the recovery path is:
-
-1. Re-run the adopt. It's idempotent — if the values file was
-   restored by the unadopt's PR-revert and the Secret was deleted,
-   the adopt re-creates everything from scratch.
-
-2. Verify the three-state matrix from Diagnosis step 1 shows all
-   three sources match.
-
-Mitigation steps 1, 2, 3 are non-destructive (PR-based fixes).
-
----
-
-## Prevention
-
-How to make this failure mode less likely going forward. Three
-levers:
-
-- **Monitoring — surface the failure as an Error-level audit
-  entry.** Today the failure is log-only; surfacing
-  `event=adopt_managed_clusters_yaml_write_failed,
-  result=partial` in the audit ring lets dashboards catch this
-  the moment it happens, not 30 seconds later when the reconciler
-  deletes the Secret. Planned, not built.
-
-- **Gating — bail the adopt early on `AddClusterEntry` failure.**
-  The current control flow logs Error then proceeds. The right
-  behavior is to **fail the per-cluster adopt** with HTTP 5xx so
-  the operator sees the failure as a failure. The reconciler's
-  destructive cleanup that happens 30s later is too late to be
-  user-actionable. The fix is for the adopt to report
-  `status: "failed"` instead of carrying on. Planned, not built; this
-  runbook is the operator-side recovery until that fix lands.
-
-- **Scheduled work — quarterly managed-clusters.yaml schema audit.**
-  Run `sharko validate-config configuration/managed-clusters.yaml`
-  in CI on every PR (already in place) and also
-  schedule it as a periodic check that runs against the deployed
-  main branch. Catches corruption from non-Sharko commits.
-
----
-
-## Related runbooks
-
-- [`adopt-managed-by-label-read-failed.md`](adopt-managed-by-label-read-failed.md)
-  — the sibling adopt failure mode at the start of the flow.
-- [`cluster-reconciler.md`](cluster-reconciler.md) — the two-direction
-  policy that turns the partial state into Secret deletion 30s after
-  the adopt.
-- [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
-  — the P0 sibling "Warn-but-proceed silently" pattern in the
-  orchestrator. Both are the same "log it and carry on" shape.
-- [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
-  — if the adopt PR doesn't merge at all, this isn't the runbook.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  `request_id` correlation pattern.
-
-## Escalation
-
-If the mitigations above don't restore the cluster to a healthy
-state, email the maintainer: `moran.weissman@gmail.com`. Include:
-
-- The runbook URL you used (this page)
-- The Error log line `error` field
-- The output of Diagnosis step 1 (three-state matrix)
-- The output of Diagnosis step 2 (parsing error)
-- The PR URL from the original adopt attempt
-- The Sharko version (`sharko version` or the Helm chart version)
-
-The maintainer is a single human, not a 24x7 rotation. Expect a
-business-day SLA. Because the recovery PR (Mitigation step 1) takes
-~5 minutes and the system is self-healing once the
-`managed-clusters.yaml` is consistent, the urgency is bounded.
+- [Sharko could not tell who owns a cluster's ArgoCD connection](adopt-managed-by-label-read-failed.md)
+- [Taking over a fleet that is already running](takeover-playbook.md)
+- [Migrating a repo to the new format](migrating-to-the-new-format.md)

@@ -1,464 +1,184 @@
-# AI Provider Misconfigured
+# AI features don't work
 
-**Severity:** P1
+Sharko's AI features (notes in values files, upgrade summaries, the assistant) need an AI provider such as OpenAI, Claude, Gemini or Ollama. Either no provider is set up, or the provider turns Sharko's requests down.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The 503
-> response body `"AI is not configured; configure a provider in
-> Settings -> AI"` is verified verbatim — Sharko returns 503 when no AI
-> provider is configured or the configured one is disabled. The same
-> shape surfaces from every AI-using endpoint (changelog summary, addon
-> catalog suggestions, smart-values annotation). The per-provider
-> auth-error variant is different: the provider's own 401/403 comes back
-> wrapped, and the failure surfaces as the `llm_error` outcome instead of
-> HTTP 503.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Low. AI features are optional. Clusters, addons and everything else keep working without them.
 
-The AI features in Sharko (smart-values annotation, addon changelog
-summaries, catalog discovery suggestions) are returning HTTP 503 or
-failing internally with provider-specific auth errors. Two causes,
-both deployment-time:
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-1. **No AI provider is configured at all.** `aiClient == nil` —
-   the Helm value `ai.enabled` is false or the provider type isn't
-   set. The handler returns HTTP 503 with the
-   `"AI is not configured"` message.
-2. **A provider is configured but the credential is wrong.**
-   `aiClient != nil` and `IsEnabled() == true`, but the actual LLM
-   call returns 401/403 from the provider (OpenAI, Anthropic, Google,
-   Ollama, or custom). The annotation outcome is `llm_error`; the
-   response is HTTP 200 with the addon enabled WITHOUT AI annotation.
+## What you see
 
-The blast radius is **the AI feature surface only**. Cluster
-registration, addon enable/disable, reconciliation, and all
-non-AI-touching endpoints continue working normally. Operators
-using Sharko without AI features see no impact.
+There are two different cases.
 
-This is distinct from
-[`ai-annotation-secret-blocked.md`](ai-annotation-secret-blocked.md)
-— that runbook is for HTTP 422 (the guard fired before the LLM
-call). This runbook is for HTTP 503 (no provider) or the
-`llm_error` SkipReason (provider rejected).
+**Case 1: no provider is set up.**
 
----
-
-## Symptoms
-
-What an operator sees when this fires:
-
-- **HTTP 503 from `POST /api/v1/addons/{name}/values/annotate`**:
+- **AI annotate** on an addon's values page fails. The API call `POST /api/v1/addons/{name}/values/annotate` answers with HTTP 503:
 
   ```json
-  {"error":"AI is not configured; configure a provider in Settings -> AI"}
+  {"error": "AI is not configured; configure a provider in Settings → AI"}
   ```
 
-  This is the "no provider" lane. The same handler returns 200
-  with the addon's annotated values when AI is configured.
-
-- **HTTP 503 from `GET /api/v1/addons/{name}/changelog?ai_summary=true`**
-  for the same reason.
-
-- **HTTP 200 with `ai=llm_error` on addon enable endpoints** when a
-  provider IS configured but the credential is wrong:
-
-  ```json
-  {
-    "status": "success",
-    "ai": "llm_error",
-    "git": {"pr_url": "..."}
-  }
-  ```
-
-  The addon enables; the smart-values file lacks AI-generated
-  description comments; an error is logged.
-
-- **`kubectl logs` Error line on the LLM-call path** (provider-
-  specific):
-
-  ```
-  {"time":"...","level":"ERROR","msg":"ai annotate: LLM call failed","chart":"datadog","version":"3.74.0","error":"OpenAI: 401 Unauthorized: Incorrect API key provided"}
-  ```
-
-  Or for Claude:
-
-  ```
-  {"time":"...","level":"ERROR","msg":"ai annotate: LLM call failed","chart":"datadog","version":"3.74.0","error":"anthropic: 401: invalid x-api-key"}
-  ```
-
-  Grep:
+- **Settings > AI Provider** shows **Not Configured**.
+- The test call answers with HTTP 503 and `AI not configured`:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
-    | jq -c 'select(.msg | test("ai annotate.*LLM call failed"; "i"))'
+  curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/ai/test" | jq
   ```
 
-- **`sharko_ai_annotate_total{outcome="..."}` Prometheus metric**
-  shows the outcome distribution:
+**Case 2: a provider is set up, but its calls fail.**
 
-  ```promql
-  sum by (outcome) (rate(sharko_ai_annotate_total[15m]))
+- **AI annotate** still opens a pull request, but the values file has no AI notes in it. The API answer has an `ai_skip_reason` of `llm_error`, or `timeout` when the provider took more than 30 seconds.
+- The logs show why:
+
+  ```sh
+  kubectl -n "$SHARKO_NS" logs deploy/sharko --since=1h | grep 'ai annotate fell through to heuristic-only'
   ```
 
-  Expected on a healthy deployment: `outcome=ok` dominates.
-  Expected on this failure: `outcome=not_configured` (no provider)
-  or `outcome=llm_error` (provider auth failure) accumulates.
+  Each line has `reason` (`llm_error` or `timeout`) and `error`. The `error` field holds the provider's own message, for example a wrong key or a used-up quota.
 
-- **UI symptom**: the operator clicks "Annotate values" in the
-  smart-values editor and sees a red banner: "AI is not configured.
-  Configure a provider in Settings -> AI." Or, with a misconfigured
-  provider: "AI annotation failed: <provider error message>."
+- The test call answers with HTTP 500 and the provider's error message:
 
-- **Settings UI** shows the AI provider as either `Not configured`
-  (the simple case) or `Configured but failing`.
-- **No specific Prometheus alert fires today.** Surfacing an alert
-  on `outcome=llm_error` rate >5% over 15 minutes is planned, not
-  built.
+  ```sh
+  curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/ai/test" | jq
+  ```
 
-If the symptom is **HTTP 422 with `"Secret-like content detected"`**,
-this is **not** the runbook — the guard hard-blocked. See
-[`ai-annotation-secret-blocked.md`](ai-annotation-secret-blocked.md).
+- The metric `sharko_ai_annotate_total` goes up with `outcome="llm_error"` or `outcome="timeout"`. Sharko does not ship an alert for it.
 
----
+If **AI annotate** answers with HTTP 422 and `secret_detected_blocked`, the provider is fine. See [AI notes were not added because the chart values look like they hold a secret](ai-annotation-secret-blocked.md).
 
-## Diagnosis
+## Why it happens
 
-Three checks: identify which lane (no provider vs. misconfigured
-provider), inspect the configuration, verify provider reachability.
+Sharko gets its AI settings from two places:
 
-### 1. Identify the lane
+- **The Helm chart.** The `ai` settings: `ai.enabled`, `ai.provider`, `ai.apiKey`, `ai.cloudModel`, `ai.baseURL`, `ai.authHeader`, `ai.maxIterations`, and `ai.ollama.*`. AI is off by default (`ai.enabled: false`).
+- **The UI**, on **Settings > AI Provider**. What you save there is kept, encrypted, in the Kubernetes Secret `sharko-ai-config`.
 
-Try a synthetic AI call. The response tells you which lane applies:
+When Sharko starts, it uses what was saved in the UI. But if the Helm chart also sets the provider, model or address, the Helm values win for those fields. The API key you saved in the UI is kept.
 
-```sh
-curl -i -sS -X POST -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  "http://sharko/api/v1/addons/datadog/values/annotate"
-```
+Common reasons it fails:
 
-Three possible responses:
+- **AI was never set up.** The chart default is off, and nobody set a provider in the UI.
+- **The API key is wrong, was deleted, or ran out of quota** at the provider.
+- **The model name is wrong**, or your account can't use that model.
+- **Ollama is chosen, but no Ollama is running** where Sharko looks for it. When `ai.ollama.deploy` is `false` and `ai.ollama.url` is empty, Sharko looks at `http://localhost:11434`, and there is no Ollama inside the Sharko pod.
+- **A network rule or company proxy blocks** the pod from reaching the provider.
 
-- **HTTP 503** with `"AI is not configured"` -> **No provider lane**.
-  Mitigation step 1 applies.
-- **HTTP 200** with `ai=llm_error` in the response body, AND a
-  per-call Error log line -> **Misconfigured provider lane**.
-  Mitigation step 2 applies.
-- **HTTP 200** with annotated values -> AI is working; this isn't
-  the failure mode (or it's intermittent — investigate timing).
+## How to fix it
 
-### 2. Inspect the AI provider configuration
-
-The Settings UI is the canonical source. Via the API:
+### 1. See what is set up now
 
 ```sh
-curl -sS -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  "http://sharko/api/v1/ai/config" \
-  | jq '{provider, enabled, model, has_api_key: (.api_key | length > 0)}'
+curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/ai/config" | jq
 ```
 
-Expected fields:
+You get `current_provider`, a list of `available_providers` (each with `id`, `configured` and `model`) and `annotate_on_seed`. The API key is never shown. An empty `current_provider`, or `none`, means Case 1.
 
-- `provider`: one of `openai`, `claude`, `gemini`, `ollama`,
-  `custom`.
-- `enabled`: `true` when the operator has flipped the toggle.
-- `model`: e.g. `gpt-4-turbo`, `claude-3-sonnet`, `gemini-1.5-pro`,
-  `llama3:70b`.
-- `has_api_key`: `true` when the operator pasted a key. Empty for
-  Ollama which uses a local endpoint.
-
-If `enabled: false` or `provider: null` -> no-provider lane.
-If `enabled: true` but `has_api_key: false` for a cloud provider ->
-misconfigured (missing key).
-If everything looks set but the synthetic call fails -> provider
-authentication or model availability problem.
-
-Also inspect the Helm values for the AI config defaults:
+Also look at the Helm values:
 
 ```sh
-helm get values <sharko-release> -n <sharko-ns> \
-  | yq '.ai // "unset"'
+helm -n "$SHARKO_NS" get values sharko | grep -A12 '^ai:'
 ```
 
-Per
-[`ai-config.md`](ai-config.md), the keys are
-`ai.enabled`, `ai.provider`, `ai.apiKey`, `ai.cloudModel`,
-`ai.ollama.deploy`, `ai.ollama.model`.
+### 2. Set up the provider in the UI
 
-### 3. Verify provider reachability
+1. Open **Settings > AI Provider** and click **Configure** (or **Edit**).
+2. Pick the provider: Gemini, Claude, OpenAI, Ollama, or Custom OpenAI-compatible.
+3. Paste the API key. For Ollama, give the Ollama address. For a custom provider, give the base URL.
+4. Pick the model.
+5. Click **Test AI**. It sends one short request and does not save anything. Fix what it complains about until it says **Connected**.
+6. Click **Save**.
 
-For cloud providers, probe the provider's auth endpoint from inside
-the Sharko pod:
+To change only the key, open **Edit** and paste the new key. Then test and save.
 
-**OpenAI**:
+### 3. Or set it up with the API
+
+`POST /api/v1/ai/config` replaces the whole AI setting. Always send the provider, the key and the model together. If you leave out `api_key`, the saved key is cleared. You need an admin token. Allowed `provider` values are `openai`, `claude`, `gemini`, `ollama`, `custom-openai` and `none`.
+
+First test the setting without saving it. Use the real key in place of `<your key>`:
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
-OPENAI_KEY=$(kubectl -n <sharko-ns> exec "$SHARKO_POD" -- env | grep '^OPENAI_API_KEY=' | cut -d= -f2)
-
-kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
-  curl -sS https://api.openai.com/v1/models \
-  -H "Authorization: Bearer ${OPENAI_KEY}" \
-  | jq '.data[0].id // .error.message'
+curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" -H "Content-Type: application/json" \
+  "$SHARKO_URL/api/v1/ai/test-config" \
+  -d '{"provider": "openai", "api_key": "<your key>", "model": "<model name>"}' | jq
 ```
 
-Expected: a model ID (auth OK) or an `error.message` (auth failure
-with explanation).
-
-**Anthropic**:
+`"status": "ok"` means it works. `"status": "error"` comes with the provider's message. Then save it:
 
 ```sh
-ANTHROPIC_KEY=$(kubectl -n <sharko-ns> exec "$SHARKO_POD" -- env | grep '^ANTHROPIC_API_KEY=' | cut -d= -f2)
-
-kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
-  curl -sS https://api.anthropic.com/v1/models \
-  -H "x-api-key: ${ANTHROPIC_KEY}" \
-  -H "anthropic-version: 2023-06-01" \
-  | jq '.data[0].id // .error.message'
+curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" -H "Content-Type: application/json" \
+  "$SHARKO_URL/api/v1/ai/config" \
+  -d '{"provider": "openai", "api_key": "<your key>", "model": "<model name>"}' | jq
 ```
 
-**Ollama** (local):
+For Ollama, send `"ollama_url"` instead of `"api_key"`. For `custom-openai`, also send `"base_url"`. No restart is needed. Keep the key out of your shell history if you can, for example by typing it into the UI instead.
+
+If saving fails with `failed to persist AI config`, see [Sharko's encryption key is missing or changed](encryption-key-not-configured.md).
+
+### 4. Or set it up in the Helm chart
+
+Put the settings in a values file. The key goes into the chart's Secret, not into the pod settings:
+
+```yaml
+ai:
+  enabled: true
+  provider: openai
+  apiKey: "<your key>"
+  cloudModel: "<model name>"
+```
+
+For Ollama run by the chart, use `provider: ollama` and `ollama.deploy: true`. The chart then starts an Ollama pod and points Sharko at it. For an Ollama you already run, set `ollama.url` instead.
 
 ```sh
-kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
-  curl -sS http://ollama:11434/api/tags \
-  | jq '.models[0].name // .error'
+helm -n "$SHARKO_NS" upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --reuse-values -f my-ai-values.yaml
 ```
 
-The probe results tell you whether the provider is reachable, the
-credential is correct, and the configured model is available.
+Remember: if a key was saved in the UI before, that saved key is still used after a restart. To use the Helm key instead, save the new key in the UI too, or save it once with the API as in step 3.
 
----
+### 5. Or turn AI off
 
-## Mitigation (try in order)
+If you don't want AI features, click **Disable** on **Settings > AI Provider**. This saves the provider as `none`. If your Helm values set `ai.enabled: true` with a provider, also set `ai.enabled: false`. If you don't, the Helm provider comes back at the next restart.
 
-1. **Configure an AI provider via the Settings UI.** This is the
-   simplest path for the no-provider lane:
+## How to check it's fixed
 
-   - Navigate to Settings -> AI in the Sharko UI.
-   - Choose a provider (OpenAI / Anthropic / Google / Ollama).
-   - Paste the API key (cloud providers) or the Ollama endpoint URL.
-   - Choose a model.
-   - Click Save -> Test connection.
-
-   Or via the API:
+1. The test call works:
 
    ```sh
-   curl -sS -X PUT -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/ai/config" \
-     --data-binary '{
-       "provider": "openai",
-       "model": "gpt-4-turbo",
-       "api_key": "sk-...",
-       "enabled": true
-     }'
+   curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/ai/test" | jq
    ```
 
-   The configuration is encrypted at rest using the
-   `SHARKO_ENCRYPTION_KEY` (see
-   [`encryption-key-not-configured.md`](encryption-key-not-configured.md)
-   if the save fails with a 500). After saving, the synthetic AI
-   call should return HTTP 200.
+   You get `"status": "ok"` and a short answer from the AI.
 
-   Success indicator: Diagnosis step 1's synthetic call returns
-   HTTP 200 with annotated values.
-
-2. **Rotate the AI provider credential.** When Diagnosis step 3
-   showed an auth error from the provider, the API key is wrong
-   (incorrect key, revoked, or scoped wrong). Generate a new key
-   at the provider's console and update Sharko:
+2. **AI annotate** on one addon opens a pull request, and the answer has no `ai_skip_reason`:
 
    ```sh
-   # OpenAI:
-   # https://platform.openai.com/api-keys -> Create new secret key
-   # Then update Sharko:
-   curl -sS -X PUT -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/ai/config" \
-     --data-binary '{"api_key": "sk-..."}'
+   curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/addons/<addon>/values/annotate" | jq '{pr_url, merged, ai_skip_reason}'
    ```
 
-   No Sharko restart is needed — the encrypted store reads the key
-   on each AI call.
+   Note that this opens a real pull request in your Git repo.
 
-   Success indicator: Diagnosis step 3's provider probe returns a
-   model list; Diagnosis step 1's synthetic call returns HTTP 200.
-
-3. **Switch to a different provider.** If the configured provider
-   is having an outage (visible at the provider's status page) or
-   the operator's account has hit a quota, switch providers as a
-   temporary mitigation:
+3. No new failures in the logs:
 
    ```sh
-   # Switch to Anthropic Claude as a fallback:
-   curl -sS -X PUT -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/ai/config" \
-     --data-binary '{
-       "provider": "claude",
-       "model": "claude-3-sonnet-20240229",
-       "api_key": "sk-ant-..."
-     }'
+   kubectl -n "$SHARKO_NS" logs deploy/sharko --since=10m | grep 'ai annotate fell through'
    ```
 
-   Or switch to Ollama for a self-hosted local fallback:
+If you turned AI off, **Settings > AI Provider** shows **Not Configured**, and that is the expected state.
 
-   ```sh
-   # First deploy Ollama via the Helm chart's sidecar:
-   helm upgrade <sharko-release> charts/sharko/ \
-     -n <sharko-ns> \
-     --reuse-values \
-     --set ai.ollama.deploy=true \
-     --set ai.ollama.model=llama3:70b
+## If that didn't work
 
-   # Then configure Sharko to use it:
-   curl -sS -X PUT -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/ai/config" \
-     --data-binary '{
-       "provider": "ollama",
-       "model": "llama3:70b"
-     }'
-   ```
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
-   Success indicator: the new provider responds; AI calls succeed.
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the log lines from the last hour that mention `ai annotate` or `ai config`
+- the output of `GET /api/v1/ai/config` (it has no key in it)
+- what you tried from this page
 
-4. **Last resort — disable AI features.** If the operator cannot
-   immediately fix any provider and just wants the user-facing
-   503s to stop, disable AI features entirely:
+Never paste your API key into the issue.
 
-   ```sh
-   curl -sS -X PUT -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/ai/config" \
-     --data-binary '{"enabled": false}'
-   ```
+Related pages:
 
-   With `enabled: false`, the AI-touching endpoints return a
-   different shape (HTTP 200 with `ai: disabled`) rather than
-   503. The UI surfaces a banner: "AI features are disabled.
-   Enable them in Settings -> AI."
-
-   Success indicator: the 503 responses stop; addons enable
-   without AI annotation.
-
----
-
-## Root-cause patterns
-
-Four common causes.
-
-### AI not configured during install
-
-The single most common cause. The operator installed Sharko with
-default Helm values (`ai.enabled: false`) and didn't run the
-Settings UI configuration step. Users hit the 503 when they try
-their first AI feature.
-
-Diagnostic signature: Diagnosis step 2 shows
-`enabled: false` or `provider: null`. The Helm values are
-defaults.
-
-Fix lane: Mitigation step 1 (configure the provider).
-
-### Cloud provider API key revoked
-
-The operator rotated the API key at the cloud provider's console
-(security review, periodic rotation) without updating Sharko. The
-401/403 surfaces on the next AI call.
-
-Diagnostic signature: Diagnosis step 3 shows `Unauthorized` or
-`Incorrect API key provided`. The Diagnosis step 1 synthetic call
-returns HTTP 200 with `ai=llm_error`.
-
-Fix lane: Mitigation step 2 (rotate the key into Sharko).
-
-### Cloud provider quota exhausted
-
-The operator's OpenAI / Anthropic / Google quota is exhausted (free-
-tier or paid-tier ceiling reached). The provider returns 429 or 402
-on every call.
-
-Diagnostic signature: Diagnosis step 3 succeeds for the `/models`
-endpoint (no quota involved) but the actual completion calls
-return 429. Sharko logs show `rate_limit_exceeded` or
-`insufficient_quota` in the error.
-
-Fix lane: upgrade the operator's plan at the cloud provider, OR
-switch providers (Mitigation step 3), OR throttle the AI feature's
-usage in Sharko.
-
-### Ollama deployment missing
-
-When the operator chose Ollama as the provider but didn't deploy
-the Ollama sidecar (`ai.ollama.deploy: false`), Sharko's calls to
-`http://ollama:11434` fail with connection refused.
-
-Diagnostic signature: Diagnosis step 2 shows
-`provider: ollama, enabled: true`. Diagnosis step 3's Ollama probe
-returns `Connection refused`. The Ollama Service / Pod doesn't
-exist in the Sharko namespace.
-
-Fix lane: deploy the Ollama sidecar via Helm
-(`ai.ollama.deploy: true`), then re-run the synthetic call.
-
----
-
-## Prevention
-
-How to make this failure mode less likely going forward. Three
-levers:
-
-- **Monitoring — alert on the `not_configured` and `llm_error`
-  outcome rates.** Per
-  [`metrics-naming.md`](metrics-naming.md), the
-  `sharko_ai_annotate_total{outcome="..."}` metric carries the
-  outcome label. Alert on sustained `not_configured > 0` for 1
-  hour (operators expect AI to work or to have explicitly
-  disabled it) and on `llm_error > 5%` over 15 minutes. Planned, not
-  built.
-
-- **Gating — Settings -> AI test-connection button.** The
-  Settings UI should provide a "Test connection" button that
-  invokes Diagnosis step 3's probe per provider. Operators see
-  a clear pass/fail at configuration time, not at first user-
-  facing 503. Already mostly in place; verify it covers all
-  providers and surfaces specific error messages.
-
-- **Scheduled work — quarterly AI key rotation drill.** AI provider
-  keys benefit from rotation just like Git PATs. A 90-day drill
-  generates a new key, updates Sharko, validates, archives the old
-  key. Aligns with the
-  [git-provider-rate-limited](git-provider-rate-limited.md) and
-  [argocd-account-token-expired](argocd-account-token-expired.md)
-  rotation drills.
-
----
-
-## Related runbooks
-
-- [`ai-annotation-secret-blocked.md`](ai-annotation-secret-blocked.md)
-  — when the guard fires (HTTP 422) before the LLM call. Different
-  HTTP code, distinct failure mode.
-- [`ai-config.md`](ai-config.md) — the AI configuration reference.
-  Documents Helm values, supported providers, and the Settings UI
-  flow.
-- [`encryption-key-not-configured.md`](encryption-key-not-configured.md)
-  — if the operator can't save the AI provider configuration, the
-  encryption key may be the underlying issue.
-- [`addon-application-stuck-degraded.md`](addon-application-stuck-degraded.md)
-  — when the addon enables (with AI failing) and then can't sync.
-  AI annotation is best-effort; the addon cycle still completes.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`metrics-naming.md`](metrics-naming.md) —
-  `sharko_ai_annotate_total{outcome="..."}` outcome label vocabulary.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  `request_id` correlation pattern.
-
-## Escalation
-
-If the mitigations above don't restore AI features, email the
-maintainer: `moran.weissman@gmail.com`. Include:
-
-- The runbook URL you used (this page)
-- The output of Diagnosis step 1 (synthetic call response)
-- The output of Diagnosis step 2 (`/ai/config`)
-- The output of Diagnosis step 3 (provider probe)
-- The provider name and model
-- The Sharko version (`sharko version` or the Helm chart version)
-
-The maintainer is a single human, not a 24x7 rotation. Expect a
-business-day SLA. Because AI features are optional and the rest of
-Sharko works without them, this isn't a pager-grade incident.
+- [AI configuration](ai-config.md)
+- [AI notes were not added because the chart values look like they hold a secret](ai-annotation-secret-blocked.md)
+- [Sharko's encryption key is missing or changed](encryption-key-not-configured.md)
+- [First checks](troubleshooting.md)

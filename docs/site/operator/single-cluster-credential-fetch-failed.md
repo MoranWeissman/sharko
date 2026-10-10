@@ -1,520 +1,303 @@
-# Single Cluster's Credential Fetch Failed
+# Sharko can't read the sign-in details for one cluster
 
-**Severity:** P1
+Sharko keeps each cluster's sign-in details (a kubeconfig, or the facts it
+needs to build one) in a secrets backend. This page is for when Sharko can't
+read them for **one** cluster, while other clusters still work.
 
-> **Verified:** Re-authored 2026-08-11 after the provider-error fix. The
-> per-cluster error isolation is unchanged: one cluster's credential
-> failure ends that cluster's turn and the tick carries on, and the audit
-> entry is still `action=get_credentials` with `result=failure`. What
-> changed: neither the log line nor the audit `error` field carries the
-> credentials backend's own error text any more. The log line now carries
-> `cluster`, `cred_key` and `step=get-credentials`; the audit `error`
-> field carries a fixed safe sentence, and the entry is sanitized as it is
-> stored, so nothing unsafe is ever kept — `GET /audit` is open to the
-> viewer role.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Fix it soon. Sharko can't connect to or update this one
+cluster until it's fixed. Other clusters keep working.
 
-One specific cluster's credential fetch from the configured secrets
-provider (AWS Secrets Manager, Kubernetes Secrets, or Vault) is failing
-on every reconciler tick. The reconciler logs an Error line per failed
-cluster, emits an audit entry with `action=get_credentials` and
-`result=failure`, then **continues** to the next cluster — so the rest
-of the fleet keeps converging. The affected cluster's ArgoCD Secret
-either was never created (cluster was just added) or is stale (the
-existing Secret carries an old token / CA / kubeconfig that does not
-match the current upstream cluster).
+If **every** cluster fails at once, the whole secrets backend is the problem.
+Go to [Sharko can't reach its secrets backend](secrets-provider-unreachable.md)
+instead.
 
-The blast radius is **one cluster**. The other clusters' reconciler
-ticks proceed normally; the dashboard surfaces the affected cluster
-with a stale `last_reconciled` timestamp and (if the addon is enabled)
-ArgoCD shows the cluster's Application drifting or failing to sync
-because the bearer token has rotated.
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-This is distinct from
-[`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
-— that is a fleet-wide failure (the provider is offline; every
-cluster's credential fetch fails). This runbook is for the case where
-**most clusters reconcile fine** but **one (or a small handful) keeps
-failing**.
+## What you see
 
----
+On every screen and in every API answer, Sharko shows the same fixed
+sentence. It does this on purpose, so the real error never leaks secret
+details:
 
-## Symptoms
+```text
+Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed.
+```
 
-What an operator sees when this fires:
+You may see it in these places:
 
-- **Per-tick error log** from the reconciler, named per cluster:
+- **The cluster's Test button** in the UI, or the test API. The answer has
+  `stage` set to `credentials` and `error_code` set to `ERR_AUTH`:
 
-  ```
-  {"time":"...","level":"ERROR","msg":"[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)","cluster":"prod-eu","cred_key":"prod-eu","step":"get-credentials"}
+  ```bash
+  curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+    "$SHARKO_URL/api/v1/clusters/prod-eu/test" | jq '{stage, error_code, error_message, suggestions}'
   ```
 
-  The `cluster` and `cred_key` fields identify which cluster failed.
-  When the cluster's `managed-clusters.yaml` entry sets
-  `secret_path: <override>`, `cred_key` is the override path; otherwise
-  it equals the cluster name.
+- **The cluster reconciler** skips this cluster and logs:
 
-  **There is no `error` field on this line any anymore, and there is no
-  provider error text anywhere in Sharko for you to read.** A
-  credentials backend's error text can carry credential material, so it
-  stays inside the process. What you work from is: **request id,
-  cluster, region where relevant, and step** — plus the provider's own
-  answer when you probe it directly in Diagnosis step 3, which is the
-  better source anyway.
-
-- **Per-tick audit entry**, and the `error` field is Sharko's own fixed
-  sentence:
-
-  ```json
-  {
-    "time": "...",
-    "level": "error",
-    "event": "cluster_secret_create",
-    "user": "sharko",
-    "action": "get_credentials",
-    "resource": "cluster:prod-eu",
-    "source": "reconciler",
-    "result": "failure",
-    "error": "Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed.",
-    "request_id": "recon-..."
-  }
+  ```text
+  [clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)
   ```
 
-  This matters more than it looks: `GET /api/v1/audit` is open to the
-  **viewer** role — the lowest one there is — and the SSE stream at
-  `GET /api/v1/audit/stream` sends the same entries. So the audit log is
-  a read-by-anyone surface, and a credentials backend's error text does
-  not belong in it. The entry is made safe before it is STORED, not on
-  the way out, so nothing unsafe is sitting in memory either.
+  ("vault" is only an old internal name. The line is the same for every
+  backend.) The audit log gets a failed entry with `action` set to
+  `get_credentials` and `resource` set to `cluster:<name>`.
 
-  What the entry still gives you, and what to do with it: `resource`
-  names the cluster, `action=get_credentials` names the failing stage,
-  `result=failure` is what to filter on, and `request_id` correlates it
-  with the log line above.
+- **The metric** `sharko_reconciler_item_failures_total` goes up, with
+  `reason="credentials"`.
 
-- **Other clusters reconcile successfully in the same tick**. Query
-  the audit ring for the same `request_id`:
+The fixed sentence does not say what went wrong. The server log does. The
+backend log lines don't carry a request id, so search by cluster name:
 
-  ```sh
-  curl -sS -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-    "http://sharko/api/v1/audit?event=cluster_secret_reconcile&limit=100" \
-    | jq -r '.[] | "\(.time) \(.action) \(.resource) \(.result)"' \
-    | head -30
+```bash
+kubectl -n "$SHARKO_NS" logs deploy/sharko --since=1h | grep '"cluster":"prod-eu"'
+```
+
+Replace `prod-eu` with your cluster's name. Each log line is JSON. Look at
+the `msg` and `step` fields, then find the matching section below.
+
+## Why it happens
+
+There are four common reasons. Each has its own section under
+[How to fix it](#how-to-fix-it):
+
+| Log line you find | Go to |
+|---|---|
+| `[provider] GetCredentials failed` with `"allMissing":true` | [The secret is not in AWS Secrets Manager](#the-secret-is-not-in-aws-secrets-manager) |
+| `[provider] GetCredentials failed` with `"allMissing":false`, or `[provider] SearchSecrets failed` | [Sharko is not allowed to read AWS Secrets Manager](#sharko-is-not-allowed-to-read-aws-secrets-manager) |
+| `[provider] GetCredentials failed (k8s)`, or `[provider] found similar secrets` | [The Kubernetes Secret is not in the namespace](#the-kubernetes-secret-is-not-in-the-namespace) |
+| `[auth] EKS token generation failed`, or `GetCredentials failed` with `"step":"sts"` | [Sharko can't make an EKS sign-in token](#sharko-cant-make-an-eks-sign-in-token) |
+
+To see which backend you use (`aws-sm`, `k8s-secrets` or `argocd`), plus its
+region and prefix:
+
+```bash
+curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/providers" | jq '.configured_provider'
+```
+
+## How to fix it
+
+### The secret is not in AWS Secrets Manager
+
+**What you see.** The log has a line like this (shown short; the real line
+is JSON):
+
+```text
+[provider] GetCredentials failed   cluster=prod-eu step=all-lookups tried="clusters/prod-eu, prod-eu" allMissing=true
+```
+
+`tried` lists every name Sharko looked for. Sharko first tries the prefix
+plus the cluster name (`clusters/prod-eu`), then the cluster name alone
+(`prod-eu`). `allMissing=true` means AWS said "not found" for every one.
+The Test answer may also carry a `suggestions` list: secrets with a similar
+name that Sharko found.
+
+**Why.** No secret has any of those names. Most often the secret was never
+made, it was made in a different region or AWS account, or its name has a
+typo or the wrong prefix.
+
+**Fix.** Run this from your own machine, with an AWS profile that can see
+the same account. Use the region from `GET /api/v1/providers`:
+
+```bash
+aws secretsmanager list-secrets --region eu-west-1 \
+  --filters Key=name,Values=prod-eu --query 'SecretList[].Name'
+```
+
+Then do one of these:
+
+- Create the secret under the name Sharko looks for (`clusters/prod-eu`).
+- Or, if the secret exists under another name, point the cluster at it. Set
+  `secretPath` on the cluster's entry in `managed-clusters.yaml` (at the
+  root of your Git repo). You can do this with your own pull request, or ask
+  Sharko to open one:
+
+  ```bash
+  curl -s -X PATCH -H "Authorization: Bearer $SHARKO_TOKEN" -H "Content-Type: application/json" \
+    -d '{"secret_path":"clusters/prod-eu-v2"}' \
+    "$SHARKO_URL/api/v1/clusters/prod-eu" | jq
   ```
 
-  Expected pattern: most rows show `action=cluster_secret_create` or
-  `cluster_secret_skip` with `result=success`; the affected cluster
-  shows `action=get_credentials` with `result=failure`.
+The secret value is either a whole kubeconfig, or JSON with these fields:
+`clusterName`, `host`, `caData` (base64), `accountId`, `region`, `project`,
+`environment`, and an optional `roleArn`. If `caData` is not valid base64,
+the error says `decoding caData`.
 
-- **Dashboard** displays the affected cluster with status `Stale` or
-  `Reconcile failed` and a tooltip reading "Sharko couldn't get
-  credentials for this cluster. Check that Sharko can reach that
-  cluster, then click Refresh." — Sharko's own sentence, never the
-  provider's error text. The fleet's
-  overall health stays Green because the other clusters are fine.
+**Check.** Run the cluster's Test again. The `stage` should move past
+`credentials`.
 
-- **ArgoCD-side symptom (downstream)**: if the affected cluster had
-  a working Secret previously and the credential rotated, ArgoCD's
-  cluster-controller starts seeing 401 on its own API calls to the
-  cluster, and the Application(s) for that cluster transition to
-  `Unknown` or `Degraded` health. This downstream symptom often
-  catches the operator's attention before the reconciler audit
-  entry does.
+### Sharko is not allowed to read AWS Secrets Manager
 
-- **No specific Prometheus alert fires for one cluster's credential
-  failure today.** Sustained per-cluster failure across multiple
-  clusters fans into
-  [`SharkoClusterRegistrationSlowBurn`](budget-burn-runbook.md#sharkoclusterregistrationslowburn)
-  once the error budget is consumed; a single isolated cluster
-  staying stuck is something you have to notice yourself; there is no
-  alert for it.
+**What you see.** One or both of these log lines:
 
-If the audit log shows `action=get_credentials` with `result=failure`
-**for every cluster** in the same tick — not just one — this is
-**not** the runbook. The provider itself is down. Jump to
-[`secrets-provider-unreachable.md`](secrets-provider-unreachable.md).
-
----
-
-## Diagnosis
-
-Three checks, built on what Sharko actually gives you: **request id,
-cluster, `cred_key`, and step**. Step 1 confirms the failure is
-per-cluster and not fleet-wide. Step 2 reads the `step` field to pick a
-lane. Step 3 probes the provider directly, which is where you get the
-provider's own reason first-hand.
-
-### 1. Confirm the failure is per-cluster, not fleet-wide
-
-A single cluster's credential failure ends that cluster's turn but does
-NOT abort the tick. Verify
-by looking at the same tick's audit entries — other clusters should
-have `action=cluster_secret_create` or `cluster_secret_skip` with
-`result=success`.
-
-```sh
-# Replace <ts> with the timestamp of a known-failing tick.
-SHARKO_NS=<sharko-ns>
-TS_PREFIX="2026-06-01T12:"
-kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=10000 \
-  | jq -c "select(.time | startswith(\"$TS_PREFIX\")) | select(.msg | test(\"clusterreconciler|cluster_secret\"; \"i\"))" \
-  | jq -r '"\(.time) \(.level) \(.cluster // .resource) \(.msg)"'
+```text
+[provider] GetCredentials failed   cluster=prod-eu step=all-lookups allMissing=false
+[provider] SearchSecrets failed (likely AccessDenied, returning empty)   query=prod-eu step=list-secrets
 ```
 
-You want to see a mix: most rows `INFO`, one row `ERROR` for the
-affected cluster. If all rows are `ERROR`, jump to the fleet-wide
-runbook above.
+`allMissing=false` means at least one lookup failed for a reason other than
+"not found". Most often that reason is "access denied". The Test answer has
+no `suggestions` list, because Sharko could not search.
 
-### 2. Work out WHICH provider step failed — from `step`, then by probing
+**Why.** The AWS role the Sharko pod runs as can't read this secret. Common
+causes:
 
-This step used to be "read the error string and match it against a table
-of substrings". That table is gone, because the error string is gone: a
-credentials backend's error text can carry credential material, so
-Sharko does not keep it. Here is what replaces it, and it is more
-reliable than substring matching ever was.
+- The role's policy doesn't allow `secretsmanager:GetSecretValue` on this
+  secret's name. For example, the policy only allows `clusters/*` and the
+  secret is outside it.
+- The policy doesn't allow `secretsmanager:ListSecrets`. Reads may still
+  work, but suggestions and the backend health check fail.
+- The secret is encrypted with your own KMS key, and the role is not allowed
+  `kms:Decrypt` on that key.
+- The secret has a resource policy that blocks the role.
 
-**First, the `step` field.** Every credential-path failure log line
-carries one, and it says which stage gave up:
+**Fix.** Find the role and check its policy. The steps are in
+[Check the AWS role](secrets-provider-unreachable.md#check-the-aws-role).
+Then look at the secret itself from your machine:
 
-```sh
-CLUSTER=prod-eu
-kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=15m \
-  | jq -c --arg c "$CLUSTER" 'select(.cluster == $c and .step != null)' \
-  | jq -r '"\(.time)  \(.step)  \(.msg)"'
+```bash
+aws secretsmanager describe-secret --region eu-west-1 --secret-id clusters/prod-eu \
+  --query '{Name:Name,KmsKeyId:KmsKeyId}'
+aws secretsmanager get-resource-policy --region eu-west-1 --secret-id clusters/prod-eu
 ```
 
-| `step` | What it means | Where to go |
-|---|---|---|
-| `get-credentials` | The reconciler's fetch for this cluster failed. Which backend, and why, is what the probe below answers. | continue here |
-| `all-lookups` | AWS-SM tried both secret paths and found nothing. The same line carries `tried` with the exact paths. | [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) |
-| `fetch` | The Kubernetes-Secrets backend could not read the Secret. The line carries the `namespace`. | [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) |
-| `sts` / `mint-eks-token` | The secret was found; minting the EKS sign-in token failed. | [`eks-token-generation-failed.md`](eks-token-generation-failed.md) |
-| `load-aws-config` / `presign-get-caller-identity` | The AWS credential chain itself. Pairs with `sts` above on the same request id. | [`eks-token-generation-failed.md`](eks-token-generation-failed.md) |
-| `find-cluster-secret` | The ArgoCD cluster-Secret reader could not find or read the Secret. | continue here; probe the argocd namespace |
+Add the missing permission to the role's policy, or fix the resource policy.
 
-**Then probe the provider directly** (Diagnosis step 3), which returns
-the provider's OWN current error to your terminal —
-`ResourceNotFoundException`, `AccessDeniedException`, `Forbidden`, a
-connection timeout — in AWS's or Kubernetes' own words. That is strictly
-better than reading a stale copy Sharko relayed: it is current, it is
-first-hand, and it is the same identity Sharko uses because you run it
-from the Sharko pod.
+**Check.** Run the cluster's Test again. The `GetCredentials failed` line
+should stop showing up for this cluster.
 
-The root-cause lanes are unchanged, they are just reached by `step` plus
-a probe now instead of by substring:
+### The Kubernetes Secret is not in the namespace
 
-| What the probe shows | Provider | Root cause lane |
-|---|---|---|
-| `ResourceNotFoundException` | AWS-SM | path mismatch — [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) |
-| `AccessDeniedException` on `GetSecretValue` | AWS-SM | IAM policy missing `secretsmanager:GetSecretValue` on the cluster's secret ARN |
-| `NotFound` on the Secret | K8s Secrets | wrong namespace or wrong name — [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) |
-| `Forbidden` on `secrets/<path>` | Vault (future) | Vault policy missing read on the path |
-| connection refused / timeout | Any | sub-case of [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md) — but only for THIS cluster's path, often a network policy carve-out |
-| the payload is there but malformed | AWS-SM (raw kubeconfig) | the upstream cluster operator stored a malformed kubeconfig at the cluster's secret path; Diagnosis step 3's last probe checks this |
+**What you see.** You use the `k8s-secrets` backend, and the log has one of:
 
-### 3. Inspect the provider-side state for this cluster
-
-Once you know which provider is failing, probe the provider directly
-from the Sharko pod (bypassing reconciler logic):
-
-**For AWS-SM**:
-
-```sh
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
-CLUSTER=prod-eu
-SECRET_PREFIX=clusters/   # match values.yaml secrets.prefix
-
-kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- \
-  aws secretsmanager describe-secret \
-  --secret-id "${SECRET_PREFIX}${CLUSTER}"
+```text
+[provider] GetCredentials failed (k8s)   cluster=prod-eu namespace=sharko step=fetch missing=true
+[provider] found similar secrets   query=prod-eu found=1
 ```
 
-Expected: a JSON describing the secret. If you get
-`ResourceNotFoundException`, the secret was deleted or renamed
-upstream. If you get `AccessDeniedException`, IRSA / IAM is the issue.
+The second line means Sharko found Secrets with a similar name. Their names
+show up in the Test `suggestions` list.
 
-**For K8s Secrets**:
+**Why.** Sharko reads a Secret named exactly like the cluster (or like the
+cluster's `secretPath`, if one is set). It looks in the namespace set in
+`connection.provider.namespace`. If that is empty, the namespace is
+`sharko`. The Secret needs a data key named `kubeconfig`. Common causes:
 
-```sh
-# Match values.yaml secrets.namespace (default: sharko-secrets)
-SECRETS_NS=sharko-secrets
+- The Secret is missing, has another name, or is in another namespace.
+- The Secret has no `kubeconfig` key. The error says
+  `secret "prod-eu" has no 'kubeconfig' key`.
+- The kubeconfig inside is broken. The error says `parsing kubeconfig from secret`.
+- Sharko is not allowed to read Secrets in that namespace. Then the log
+  says `missing=false`.
 
-kubectl -n "$SECRETS_NS" get secret "$CLUSTER" \
-  -o jsonpath='{.metadata.labels}' | jq
+**Fix.** Look from your machine:
+
+```bash
+SHARKO_SECRETS_NS=sharko   # the value of connection.provider.namespace
+kubectl -n "$SHARKO_SECRETS_NS" get secret prod-eu -o jsonpath='{.data}' | jq 'keys'
+kubectl auth can-i get secrets -n "$SHARKO_SECRETS_NS" \
+  --as=system:serviceaccount:"$SHARKO_NS":sharko
 ```
 
-Expected: a JSON map including
-`{"app.kubernetes.io/managed-by":"sharko"}` (the label selector the
-K8s provider scopes to). If the secret is missing or unlabeled, the
-secret was deleted upstream or a manual `kubectl edit` removed the
-label.
+Use your real service account name if it is not `sharko`.
 
-**For the kubeconfig content itself (any provider)**:
+- If the Secret is missing, create it from a kubeconfig file. This needs no
+  base64 step:
 
-The reconciler stops at the credential fetch step on failure; it
-never gets to validate the kubeconfig. If the credential fetch
-succeeds and the failure surfaces later (e.g. ArgoCD's cluster
-controller reports 401), check the existing ArgoCD Secret:
+  ```bash
+  kubectl -n "$SHARKO_SECRETS_NS" create secret generic prod-eu \
+    --from-file=kubeconfig=./prod-eu.kubeconfig
+  ```
 
-```sh
-kubectl -n argocd get secret "$CLUSTER" -o yaml \
-  | yq '.data.config' -r | base64 -d \
-  | jq '.bearerToken // .tlsClientConfig.caData' -r \
-  | head -c 50
+- If `can-i` says `no`, the namespace is not in Sharko's allowed list. Add it
+  to `rbac.k8sSecretsProviderNamespaces` in your Helm values and run
+  `helm upgrade`. The chart then makes a Role that lets Sharko get and list
+  Secrets in that namespace.
+- If the Secret lives in another namespace on purpose, change
+  `connection.provider.namespace` and add that namespace to
+  `rbac.k8sSecretsProviderNamespaces`.
+
+**Check.** `kubectl auth can-i` says `yes`, and the cluster's Test moves
+past `credentials`.
+
+### Sharko can't make an EKS sign-in token
+
+**What you see.** For EKS clusters, Sharko reads the secret and then makes a
+short-lived sign-in token. When that fails, the log has:
+
+```text
+[auth] EKS token generation failed   cluster=prod-eu region=eu-west-1 step=presign-get-caller-identity
+[provider] GetCredentials failed   cluster=prod-eu region=eu-west-1 step=sts
 ```
 
-A bearer token that's `null` or a CA blob that decodes to an empty
-string means the Secret was written incorrectly by an earlier
-reconciler tick — see
-[`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md).
+The `step` field on the first line tells you what broke:
 
----
+| `step` | What it means |
+|---|---|
+| `load-aws-config` | The AWS setup inside the pod is broken. This is rare. |
+| `presign-get-caller-identity` | Sharko had no AWS credentials to sign with, or could not take on the role in `roleArn`. |
 
-## Mitigation (try in order)
+If the cluster uses the `argocd` backend, the line is
+`[provider] EKS token mint failed for argocd cluster — Sharko has no usable AWS identity for this cluster`,
+and the Test answers with `error_code` set to `argocd_provider_iam_required`.
 
-1. **Verify the cluster's entry in `managed-clusters.yaml` is
-   accurate.** A common silent failure is an operator renaming a
-   cluster upstream (e.g. changing `clusterName` in AWS-SM from
-   `prod-eu` to `prod-eu-v2`) without updating Sharko's
-   `managed-clusters.yaml`. The reconciler still tries to read the
-   old path and fails forever.
+**Why.** Sharko picks a role in this order: the `roleArn` in the cluster's
+secret, then the `roleArn` on the cluster's entry in `managed-clusters.yaml`,
+then the default in `connection.provider.roleArn`. If one is set, Sharko
+must be allowed to take it on (`sts:AssumeRole`), and that role's trust
+policy must allow Sharko's own role. If none is set, Sharko uses its own pod
+role.
 
-   ```sh
-   # Read the cluster's entry from the git base branch:
-   curl -sS -H "Authorization: token ${GITHUB_PAT}" \
-     "https://api.github.com/repos/<owner>/<repo>/contents/managed-clusters.yaml?ref=main" \
-     | jq -r .content | base64 -d | yq '.clusters[] | select(.name == "prod-eu")'
+Making the token needs no extra IAM permission. So if the token is made but
+the cluster later answers 401, the identity is not let into the cluster.
+That is a different problem, covered in
+[AWS IAM cluster sign-in](aws-iam-cluster-auth.md).
+
+**Fix.** First check Sharko's own pod role with
+[Check the AWS role](secrets-provider-unreachable.md#check-the-aws-role).
+Then, if a `roleArn` is in use, check from your machine that the role exists
+and trusts Sharko's role:
+
+```bash
+aws iam get-role --role-name SharkoClusterAccess \
+  --query 'Role.AssumeRolePolicyDocument'
+```
+
+The trust policy must name Sharko's pod role, for example
+`arn:aws:iam::123456789012:role/SharkoIRSARole`. Sharko's own role policy
+must allow `sts:AssumeRole` on the target role. For roles in other accounts,
+see [EKS hub and spoke identity](eks-hub-and-spoke-identity.md).
+
+**Check.** The log shows `[provider] STS token generated` for this cluster,
+and the cluster's Test passes.
+
+## How to check it's fixed
+
+1. Run the cluster's Test (the button in the UI, or the `POST .../test` call
+   above). It should pass the `credentials` stage.
+2. Wait for the next reconciler pass. The `skipping cluster` line should
+   stop for this cluster:
+
+   ```bash
+   kubectl -n "$SHARKO_NS" logs deploy/sharko --since=15m \
+     | grep 'vault GetCredentials failed' | grep '"cluster":"prod-eu"'
    ```
 
-   Expected output includes either `secret_path: <override>` or the
-   default (cluster name). Confirm the path matches the actual
-   provider-side secret name from Diagnosis step 3.
+   No output means it's fixed.
+3. `sharko_reconciler_item_failures_total{reason="credentials"}` stops going up.
 
-   Fix: edit `managed-clusters.yaml` (open a PR) to align the cluster
-   entry with the actual provider path. Next reconciler tick (within
-   30s of merge) will retry successfully.
+## If that didn't work
 
-   Success indicator: audit entry transitions from
-   `action=get_credentials, result=failure` to
-   `action=cluster_secret_create, result=success` on the next tick.
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
-2. **Repair the provider-side secret.** If the cluster's entry is
-   correct but the provider-side secret is missing, malformed, or has
-   the wrong label, fix it at the source. For AWS-SM, this often means
-   re-uploading the kubeconfig blob or correcting the structured JSON
-   shape. For K8s Secrets, this means re-creating the secret with
-   the correct label and `kubeconfig` data key.
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the log lines from the last hour that mention the cluster name
+- what you tried from this page
 
-   **AWS-SM** (raw kubeconfig):
+Related pages:
 
-   ```sh
-   kubectl --context <admin> -n kube-system get serviceaccount sharko-reader \
-     -o yaml > /tmp/sa.yaml
-   # Use the cloud-cred tooling that originally produced the secret
-   # to generate a fresh kubeconfig, then:
-   aws secretsmanager put-secret-value \
-     --secret-id "clusters/prod-eu" \
-     --secret-string "$(cat /tmp/new-kubeconfig.yaml)"
-   ```
-
-   **K8s Secrets**:
-
-   ```sh
-   kubectl --context <admin> -n kube-system create token sharko-reader \
-     --duration=8760h > /tmp/token
-   # Build a kubeconfig referencing the new token, then:
-   kubectl -n "$SECRETS_NS" create secret generic prod-eu \
-     --from-file=kubeconfig=/tmp/new-kubeconfig.yaml \
-     --dry-run=client -o yaml \
-     | kubectl apply -f -
-   kubectl -n "$SECRETS_NS" label secret prod-eu \
-     app.kubernetes.io/managed-by=sharko --overwrite
-   ```
-
-   Success indicator: same as step 1 — next reconciler tick reports
-   success for this cluster.
-
-3. **Trigger an immediate reconciler tick.** After repairing the
-   underlying state, don't wait for the 30s safety-net tick. Use the
-   reconcile trigger to force an immediate pass:
-
-   ```sh
-   curl -sS -X POST -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     http://sharko/api/v1/secrets/reconcile
-   ```
-
-   (If the manual trigger endpoint is not exposed in your deployment,
-   either restart the Sharko pod to force an immediate boot-time tick
-   or wait the 30s.)
-
-   Success indicator: a fresh audit entry for the affected cluster
-   appears within 5 seconds with `result=success`.
-
-4. **If the cluster should no longer be managed, remove it.** Sometimes
-   the failure is the right answer — the cluster was decommissioned
-   upstream but its `managed-clusters.yaml` entry was never removed.
-   The reconciler will keep failing forever for an entry pointing at a
-   non-existent secret.
-
-   ```sh
-   curl -sS -X DELETE -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     http://sharko/api/v1/clusters/prod-eu
-   ```
-
-   This opens a PR removing the cluster from `managed-clusters.yaml`
-   and (after merge) deletes the corresponding ArgoCD Secret. Once the
-   PR merges, the failing audit entry stops.
-
-   Success indicator: audit log no longer surfaces the cluster's
-   failure; `managed-clusters.yaml` no longer contains the entry.
-
----
-
-## Root-cause patterns
-
-Three common causes.
-
-### Provider-side path / name drift
-
-The single most common cause. An operator changed the cluster's name,
-the secret's name, or the prefix at the provider, but didn't update
-`managed-clusters.yaml`. The reconciler still reads the old path.
-
-Diagnostic signature: Diagnosis step 3 returns
-`ResourceNotFoundException` / `NotFound`. The cluster's
-`managed-clusters.yaml` entry references a path that doesn't exist
-at the provider.
-
-Fix lane: Mitigation step 1 (update `managed-clusters.yaml`).
-
-### Provider-side credential rotated
-
-The cluster's credential (kubeconfig, bearer token, CA) was rotated
-at the source — common after a managed K8s service rotates its
-service-account tokens, an EKS cluster's CA rotates, or an admin
-re-issued the in-cluster ServiceAccount the Sharko-reader RBAC binds
-to. The credential is still present at the provider path, but it's
-invalid.
-
-Diagnostic signature: Diagnosis step 3 returns the secret successfully
-with the same shape as before, but the embedded token / CA doesn't
-authenticate against the upstream cluster's API server. The reconciler
-fetches the credential, builds the Secret, and writes it; ArgoCD
-then fails on its first API call to the cluster (401 from the cluster's
-API server, not from Sharko).
-
-In this case the reconciler's `get_credentials` step actually
-**succeeds** (the path read worked), but the audit may show a
-later-stage failure (e.g. `cluster_secret_create` with `result=success`
-but ArgoCD subsequently shows `Unknown`). Distinguish by checking
-the ArgoCD-side cluster connectivity:
-
-```sh
-kubectl -n argocd exec deploy/argocd-server -- \
-  argocd cluster get prod-eu
-```
-
-Fix lane: Mitigation step 2 (re-upload the credential at the provider
-with a freshly-issued token / CA).
-
-### Stale ArgoCD Secret blocking convergence
-
-The provider-side credential is correct, the reconciler's fetch
-succeeds, but the ArgoCD Secret in the `argocd` namespace was
-manually edited (or carries stale data from before the credential
-rotated). The reconciler treats the labeled Secret as "mine,
-already exists, skip" — never re-writing it.
-
-Diagnostic signature: Diagnosis step 3 shows the provider has a
-fresh credential; the audit shows
-`action=cluster_secret_skip, result=success`; but the Secret in
-`argocd` namespace has the old payload. ArgoCD itself surfaces the
-401.
-
-Fix lane: delete the labeled ArgoCD Secret manually (the reconciler
-will recreate it from the provider's fresh credential on the next
-tick). See
-[`cluster-reconciler.md`](cluster-reconciler.md#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete)
-for the recreate behavior.
-
-```sh
-kubectl -n argocd delete secret prod-eu
-# Wait 30s for the next reconciler tick.
-```
-
----
-
-## Prevention
-
-How to make this failure mode less likely going forward. Three
-levers:
-
-- **Monitoring — surface per-cluster reconciler status in the
-  dashboard.** The reconciler already emits an audit entry per
-  cluster per tick. Add a fleet-status panel that renders, per
-  cluster, the most-recent `cluster_secret_reconcile` audit
-  `result` and `error`. A red-row per stuck cluster catches Root
-  cause pattern 1 (path drift) at first-fail, not at error-budget
-  burn. Wiring this panel into the dashboard view is planned, not
-  built.
-
-- **Gating — pre-flight check on `add-cluster`.** When an operator
-  runs `sharko add-cluster <name>`, Sharko could probe the
-  provider for the credential before opening the PR. If the
-  credential isn't present, fail the call early — don't add the
-  cluster to `managed-clusters.yaml` and then have it stuck
-  forever. The existing connection-test endpoint (`POST /clusters/{name}/test`)
-  is the right shape; wiring it into the register flow as a
-  pre-flight is planned, not built.
-
-- **Scheduled work — periodic credential-freshness audit.** A
-  daily cron that walks `managed-clusters.yaml`, probes each
-  provider path, and reports per-cluster freshness catches
-  rotation drift before the reconciler does. Output to a Slack
-  notification or a Sharko audit entry of
-  `event=credential_freshness_audit` keeps the discipline of
-  rotation-aware operations visible.
-
----
-
-## Related runbooks
-
-- [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
-  — the fleet-wide variant. If multiple clusters fail at the same
-  time with the same error shape, the provider itself is the issue.
-- [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) —
-  specific AWS-SM "secret missing at any prefix" failure mode.
-- [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md)
-  — specific K8s Secrets "not found in namespace" failure mode.
-- [`eks-token-generation-failed.md`](eks-token-generation-failed.md)
-  — when the provider succeeds but the EKS STS step fails (per-cluster
-  IRSA / role-chain issue).
-- [`cluster-reconciler.md`](cluster-reconciler.md) — reconciler
-  reference: 30s tick cadence, error-isolation contract, recovery
-  behavior.
-- [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md)
-  — when the ArgoCD-side Secret is malformed (Root cause pattern 3
-  shape).
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  `request_id` correlation pattern used throughout.
-
-## Escalation
-
-If the mitigations above do not resolve the failure within 4 hours,
-email the maintainer: `moran.weissman@gmail.com`. Include:
-
-- The runbook URL you used (this page)
-- The cluster name(s) affected
-- The `step` value(s), request id and `cred_key` from Diagnosis step 2
-  (Sharko does not log the provider's error text, so these are what it
-  has)
-- The output of Diagnosis step 3 — the provider's OWN error from the
-  direct probe. This is the detail that used to be pasted out of the log
-  line, and it is better: first-hand and current.
-- The Sharko version (`sharko version` or the Helm chart version)
-- 5 minutes of relevant logs filtered by `request_id` per the
-  [correlation pattern](../developer-guide/logging.md#correlation-ids)
-
-The maintainer is a single human, not a 24x7 rotation. Expect a
-business-day SLA, not a paged response.
+- [Sharko can't reach its secrets backend](secrets-provider-unreachable.md)
+- [AWS IAM cluster sign-in](aws-iam-cluster-auth.md)
+- [EKS hub and spoke identity](eks-hub-and-spoke-identity.md)
+- [Look at a cluster's ArgoCD Secret](argocd-cluster-secret-corruption.md#look-at-the-clusters-argocd-secret)
+- [Failure mode index](failure-mode-index.md)

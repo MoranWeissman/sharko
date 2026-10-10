@@ -1,460 +1,207 @@
-# Orchestrator PR Merged but ArgoCD Never Converges
+# A cluster PR merged, but the cluster never shows up in ArgoCD
 
-**Severity:** P0
+Use this page when Sharko opened a pull request to add a cluster, the pull
+request was merged, and minutes later ArgoCD still has no connection for that
+cluster.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
-> audit-event shape (`pr_merged`, `cluster_secret_create`,
-> `cluster_secret_reconcile`) is verified against the audit codes in
-> [`../developer-guide/logging.md`](../developer-guide/logging.md) and
-> the reconciler behaviour described in
-> [`cluster-reconciler.md`](cluster-reconciler.md). A merged PR triggers
-> a reconcile immediately, rather than waiting for the next tick.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
-> Reviewed 2026-09-23 — wording only; no step in this runbook changed.
+**How urgent:** Fix it now. Git says the cluster is in the fleet, but ArgoCD
+does not know about it, so no addon reaches it.
 
-A cluster (or addon) registration's PR was merged. The audit log shows
-`pr_merged`. The Sharko API view of the cluster says `managed: true`.
-But ArgoCD's cluster Secret does not exist (or ArgoCD's Application
-controller has not picked up the cluster), and the fleet sits in a
-split-state: Git says "this cluster is registered," ArgoCD says "I've
-never heard of it." Page on-call.
+Before you start, set up the shell variables from
+[First checks](troubleshooting.md#set-up-once).
 
-This is a P0 because the failure indicates one of two **architectural
-breakdowns**: either the reconciler is stuck (a P0 in itself —
-see [`reconciler-crash-loop.md`](reconciler-crash-loop.md)) or the
-ArgoCD Application controller is degraded. The diagnosis path
-**distinguishes which side**, then routes to the side-specific runbook.
+If the pull request is still open and was never merged, this is not your page.
+Go to [Auto-merge failed after the PR opened](auto-merge-failed-after-pr-opened.md)
+or [Git provider unreachable](git-provider-unreachable.md).
 
-If you confirm via diagnosis that the failure is on the reconciler
-side, route to
-[`reconciler-crash-loop.md`](reconciler-crash-loop.md). If on the
-ArgoCD side, the partial-runbook coverage is
-[`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md)
-(when ArgoCD itself is unreachable) and ArgoCD's own runbook (when
-the Application controller is degraded). This page is the **router**
-between them.
+## What you see
 
----
+- Adding the cluster worked. The **Audit Log** page shows
+  `cluster_registered`, and then `pr_merged` once Sharko saw the merge.
+- No ArgoCD cluster Secret for the cluster appears in the ArgoCD namespace.
+  (Use the commands in
+  [Look at the cluster's ArgoCD Secret](argocd-cluster-secret-corruption.md#look-at-the-clusters-argocd-secret)
+  to look for it.)
+- There is no `cluster_secret_create` entry for the cluster after the
+  `pr_merged` one. The gap in the activity history is the canonical signal:
+  the merge worked, but the Secret was never made.
+- More than about two minutes have passed since the merge.
 
-## Symptoms
+How long it should take: Sharko checks open pull requests every 30 seconds.
+When it sees a merge, it starts a reconcile pass right away. The reconcile
+pass also runs by itself every 30 seconds. So the Secret normally appears
+within a minute of the merge, and often within seconds when Sharko merged the
+pull request itself. After two minutes, something is wrong.
 
-What an operator sees when this fires:
-
-- **API reports success**: `POST /api/v1/clusters` returned `201`, the
-  audit log shows `event=cluster_register` with `result=success`, and
-  `GET /api/v1/clusters` lists the cluster with `managed: true`.
-- **PR merged**: the audit log entry `event=pr_merged` for the
-  cluster's PR shows `result=success`. The Git repo's
-  `managed-clusters.yaml` contains the cluster's entry on
-  `main`.
-- **ArgoCD cluster Secret does NOT exist** in the `argocd` namespace
-  for the cluster:
-
-  ```sh
-  kubectl -n argocd get secret -l \
-    app.kubernetes.io/managed-by=sharko,sharko/cluster=<cluster-name>
-  # No resources found in argocd namespace.
-  ```
-
-  OR the Secret exists but the ArgoCD Application controller has not
-  recognised it (no Application list for the cluster's labels).
-
-- **Time elapsed since PR merge > 2 minutes**. The reconciler's
-  `Trigger()` should converge within seconds; the 30s safety-net tick
-  bounds the worst case. Two minutes without convergence is the
-  threshold for "this is broken, not slow."
-- **No matching `cluster_secret_create` audit event** for the same
-  cluster. The gap in the activity history is the canonical signal: PR
-  merge succeeded, secret creation never happened.
-- **Alerts that may fire**:
-  - `SharkoClusterRegistrationFastBurn` once registrations have
-    sustained-failed (5m+1h windows). See
-    [`budget-burn-runbook.md`](budget-burn-runbook.md#sharkoclusterregistrationfastburn).
-  - `SharkoReconcilerStalled` (if shipped — a Prevention follow-up
-    today).
-
-If the symptom is "PR was opened but not merged," the diagnosis path is
-entirely different — see
-[`git-provider-unreachable.md`](git-provider-unreachable.md) (Git
-provider issue) or
-[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md)
-(PR open, merge blocked). This runbook is for "PR confirmed merged but
-ArgoCD doesn't reflect it."
-
----
-
-## Diagnosis
-
-Three checks. The goal is to **distinguish reconciler-side from
-ArgoCD-side** in under 5 minutes.
-
-### 1. Confirm the PR actually merged into main
-
-Trust nothing — verify the Git state:
+Look at the audit entries for the cluster:
 
 ```sh
-ORG=<your-org>
-REPO=<your-bootstrap-repo>
-CLUSTER=<cluster-name>
-
-# Fetch the canonical managed-clusters.yaml from main:
-curl -sS \
-  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-  "https://api.github.com/repos/${ORG}/${REPO}/contents/managed-clusters.yaml?ref=main" \
-  | jq -r '.content' | base64 -d \
-  | yq ".clusters[] | select(.name == \"${CLUSTER}\")"
+curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+  "$SHARKO_URL/api/v1/audit?cluster=<cluster>&limit=50" \
+  | jq '.entries[] | {timestamp, event, action, result, reason, request_id}'
 ```
 
-If the cluster entry IS present in `main`, the PR was genuinely merged.
-If it's NOT, the audit log lies — the PR-tracker thinks the merge
-landed but the merge actually failed or was reverted out-of-band. In
-that case, this runbook does not apply; see
-[`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md),
-or treat it as a Git-provider or PR-tracker bug.
+A healthy run ends with `pr_merged` and then `cluster_secret_create` with
+`"result": "success"`.
 
-### 2. Determine which side is broken — reconciler vs. ArgoCD
-
-The pivotal check: are reconciler ticks running and seeing the new
-entry?
+The cluster's own page also shows the last reconcile result for it (the API
+field `last_reconcile`):
 
 ```sh
-SHARKO_NS=<sharko-ns>
-
-# Were there reconciler ticks since the PR merge?
-PR_MERGE_TIME="2026-06-01T12:00:00Z"  # from the audit log
-
-kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=10m \
-  | jq -c "select(.request_id // \"\" | startswith(\"recon-\"))" \
-  | jq -c "select(.time > \"$PR_MERGE_TIME\")" \
-  | head -10
+curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+  "$SHARKO_URL/api/v1/clusters/<cluster>" | jq .last_reconcile
 ```
 
-Three outcomes:
-
-- **No `recon-` lines at all since the merge** — the reconciler is dead
-  or stalled. Route to
-  [`reconciler-crash-loop.md`](reconciler-crash-loop.md). This is
-  Reconciler-Side.
-- **`recon-` lines present but no `recon-fanout-` lines** — the safety-
-  net tick is firing but the post-merge `Trigger()` never fired. The
-  PR tracker → reconciler wiring is broken. This is a Sharko-internal
-  bug; see Mitigation step 2.
-- **Both `recon-` and `recon-fanout-` lines present, ticking
-  normally** — the reconciler is doing its job. Check what it sees:
-
-  ```sh
-  kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=10m \
-    | jq -c "select(.request_id // \"\" | startswith(\"recon-\"))" \
-    | jq -c "select(.cluster == \"${CLUSTER}\")"
-  ```
-
-  If lines for the cluster show `action=cluster_secret_create` with
-  `result=failed`, the reconciler is trying and failing. Read the
-  `error` attribute — most common is ArgoCD-namespace write rejected.
-  This is ArgoCD-Side or RBAC; jump to step 3.
-
-### 3. Probe the ArgoCD Secret create path directly
-
-If Diagnosis step 2 indicates ArgoCD-side, verify the namespace and
-RBAC:
-
-```sh
-# Can Sharko's service account write secrets in argocd namespace?
-kubectl auth can-i create secrets -n argocd \
-  --as=system:serviceaccount:<sharko-ns>:sharko
-# Expected: yes
-```
-
-If `no`, the ArgoCD RBAC was tightened out-of-band and Sharko's SA no
-longer has the required permission. Fix: re-apply the Sharko Helm
-chart's `clusterrole` template (creates the role + binding for the SA).
-
-```sh
-# Try the write directly (as the SA):
-kubectl -n argocd create secret generic test-can-write \
-  --from-literal=test=value \
-  --as=system:serviceaccount:<sharko-ns>:sharko \
-  --dry-run=server
-# Expected: dry-run report (no error). Error means RBAC issue.
-```
-
-If the create succeeds at the API level but the ArgoCD Application
-controller doesn't notice, ArgoCD is unhealthy on the Application side:
-
-```sh
-kubectl -n argocd get pods -l app.kubernetes.io/component=application-controller
-kubectl -n argocd logs deploy/argocd-application-controller --tail=200 \
-  | grep -E "ERROR|cluster|secret" | head -30
-```
-
-Common: `argocd-application-controller` is OOMing, getting throttled, or
-the kube-apiserver watch on Secrets is rate-limited.
-
-### 4. Inspect the audit log around the merge
-
-```sh
-# All audit events for the cluster, sorted by time:
-curl -sS \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  "http://sharko/api/v1/audit?cluster=${CLUSTER}" \
-  | jq '.entries[] | {time, event, action, result, request_id}' \
-  | tail -20
-```
-
-Expected on a healthy registration:
-
-```
-{"time":"...","event":"cluster_register","result":"success","request_id":"req-..."}
-{"time":"...","event":"pr_opened","result":"success","request_id":"req-..."}
-{"time":"...","event":"pr_merged","result":"success","request_id":"req-..."}
-{"time":"...","event":"cluster_secret_reconcile","action":"cluster_secret_create","result":"success","request_id":"recon-fanout-..."}
-```
-
-On a failure, the last `cluster_secret_*` entry is either absent
-(reconciler never converged) or present with `result=failed` (reconciler
-tried, ArgoCD rejected).
-
----
-
-## Mitigation (try in order)
-
-The order routes you to the correct side-specific runbook for steps 3-5;
-steps 1-2 are Sharko-internal recovery.
-
-1. **Force a reconcile tick by restarting Sharko.** Cheapest recovery
-   path and clears in-memory state issues:
-
-   ```sh
-   kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
-   kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
-   ```
-
-   On startup, the reconciler runs a fresh `pollOnce` that re-reads
-   `managed-clusters.yaml` from Git and reconciles to ArgoCD. If the
-   cluster entry is in Git but the Secret is missing, the tick will
-   create it.
+If `outcome` is `failed`, the `message` says why.
+
+## Why it happens
+
+- **The reconciler is not running.** The loop that writes ArgoCD connections
+  has stopped, or never started. The `SharkoReconcilerPassAge` alert fires
+  when it has not finished a pass for 5 minutes.
+- **The reconciler can't read the cluster's sign-in details** from your
+  secrets backend, so it skips that cluster and tries again next pass.
+- **Sharko can't write Secrets in the ArgoCD namespace.** Someone removed or
+  changed the Role Sharko uses there, or ArgoCD lives in a namespace the chart
+  was not told about.
+- **A Secret with the same name already exists and Sharko does not own it.**
+  Sharko will not overwrite it. That cluster has to be adopted instead.
+- **The connection is self-managed.** Sharko never makes the Secret for a
+  self-managed connection. It waits for you to create it.
+- **The Git file is not what you think.** The merge went to a different
+  branch, or someone changed `managed-clusters.yaml` by hand and broke it.
+  A broken file stops the whole pass, for every cluster.
+- **ArgoCD has the Secret but does not use it.** The ArgoCD application
+  controller is unhealthy.
+
+## How to fix it
+
+1. **Look at what the reconciler logged.** This one command covers most of
+   the causes above:
+
+    ```sh
+    kubectl -n "$SHARKO_NS" logs deploy/sharko --since=15m | grep '\[clusterreconciler\]'
+    ```
+
+    What the lines mean:
+
+    | Log line | What to do |
+    |---|---|
+    | `cluster Secret created` | It worked. Check ArgoCD (step 6). |
+    | `vault GetCredentials failed — skipping cluster` | Sharko can't read this cluster's sign-in details. See [Sharko can't read the sign-in details for one cluster](single-cluster-credential-fetch-failed.md). |
+    | `Secret Create failed — skipping cluster` | The write was refused. Go to step 3. |
+    | `same-name Secret exists without sharko label — skipping (Adopt territory)` | A Secret Sharko does not own is in the way. Adopt the cluster, or remove that Secret if nothing uses it. |
+    | `self-managed connection: ArgoCD cluster Secret not created yet — waiting for the user` | Create the Secret yourself. See [Self-managed connections](self-managed-connections.md). |
+    | `managed-clusters file rejected — aborting tick` | The Git file is broken. Go to step 4. |
+    | `git read failed — aborting tick` | Sharko can't read Git. See [Git provider unreachable](git-provider-unreachable.md). |
+    | no `[clusterreconciler]` lines at all | Go to step 2. |
+
+2. **If the reconciler is silent, check that it started.** Look for the
+   start-up line:
+
+    ```sh
+    kubectl -n "$SHARKO_NS" logs deploy/sharko | grep 'cluster reconciler started'
+    ```
+
+    It shows the ArgoCD `namespace`, the Git `branch` and the
+    `managed_clusters_path` Sharko uses. Check that all three are what you
+    expect. If the line is missing, or the reconciler stopped, follow
+    [Sharko's background jobs stopped finishing their passes](reconciler-crash-loop.md). A restart
+    also starts a fresh pass:
+
+    ```sh
+    kubectl -n "$SHARKO_NS" rollout restart deploy/sharko
+    kubectl -n "$SHARKO_NS" rollout status deploy/sharko --timeout=120s
+    ```
+
+3. **Check that Sharko may write Secrets in the ArgoCD namespace.** Find
+   Sharko's service account, then ask Kubernetes:
+
+    ```sh
+    SA=$(kubectl -n "$SHARKO_NS" get deploy sharko -o jsonpath='{.spec.template.spec.serviceAccountName}')
+    kubectl auth can-i create secrets -n argocd \
+      --as="system:serviceaccount:$SHARKO_NS:$SA"
+    ```
+
+    You want `yes`. If the answer is `no`, put the chart's Role back with
+    `helm upgrade` and your usual values file. If ArgoCD is not in the
+    `argocd` namespace, set both `rbac.argocdNamespace` and
+    `clusterTest.argocdNamespace` to the right namespace. See
+    [What Sharko needs from ArgoCD](security.md#what-sharko-needs-from-argocd).
+
+4. **Check the Git file.** Open `managed-clusters.yaml` on the base branch
+   of your Git repo (at the root of the repo on v4 repos; older repos keep it
+   at `configuration/managed-clusters.yaml`). Check that:
+
+    - the cluster is listed,
+    - the merge went to the branch shown in the `cluster reconciler started`
+      line,
+    - the file is valid YAML.
+
+    If the file is broken, fix it with a normal pull request. See
+    [Cluster reconciler](cluster-reconciler.md).
+
+5. **Start a pass now.** Once you have fixed the cause, you do not need to
+   wait. On the cluster's page, click **Refresh** in the **Argo CD cluster
+   connection** box, or call:
+
+    ```sh
+    curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+      "$SHARKO_URL/api/v1/clusters/<cluster>/reconcile"
+    ```
+
+    It answers `202` straight away. The pass runs in the background.
+
+6. **If the Secret exists but ArgoCD ignores it**, look at ArgoCD:
 
-   Success indicator: within ~60 seconds of the pod becoming ready,
-   `kubectl -n argocd get secret -l sharko/cluster=<cluster-name>`
-   returns the Secret.
+    ```sh
+    kubectl -n argocd get pods
+    kubectl -n argocd logs statefulset/argocd-application-controller --tail=200
+    ```
 
-2. **If Sharko ticks but the post-merge `Trigger()` didn't fire** — a
-   Sharko-internal bug (`prTracker.SetOnMergeFn` not wired or
-   `recon.Trigger()` channel full). Force a synthetic trigger via the
-   API (if a manual trigger endpoint exists; today this is a
-   restart):
+    If the application controller is restarting or out of memory, fix it on
+    the ArgoCD side. If ArgoCD itself can't be reached, see
+    [Sharko can't reach ArgoCD](argocd-upstream-unreachable.md).
 
-   ```sh
-   kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
-   ```
+## How to check it's fixed
 
-   Capture the goroutine dump first if pprof is enabled — see
-   [`reconciler-crash-loop.md`](reconciler-crash-loop.md#3-capture-a-goroutine-dump-if-pod-is-still-alive).
+- The audit log shows `cluster_secret_create` with `"result": "success"` for
+  the cluster.
+- `last_reconcile.outcome` is `succeeded`:
 
-   File a P1 bug with the goroutine dump attached.
+    ```sh
+    curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+      "$SHARKO_URL/api/v1/clusters/<cluster>" | jq .last_reconcile
+    ```
 
-3. **If diagnosis identified the reconciler as crashed or stalled** —
-   route to [`reconciler-crash-loop.md`](reconciler-crash-loop.md) and
-   follow its mitigation. This runbook does not duplicate that work.
+- ArgoCD lists the cluster in its UI under **Settings > Clusters**.
 
-4. **If diagnosis identified ArgoCD as unreachable** — route to
-   [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md)
-   and follow its mitigation. Again, no duplication here.
+### Monitoring — alert on the gap in the activity history
 
-5. **If diagnosis identified RBAC missing (Sharko SA can't write to
-   `argocd` namespace)** — re-apply the Sharko Helm chart so the
-   ClusterRole / RoleBinding template lands:
+Sharko has no metric that counts merges against Secrets made. What you can
+use today:
 
-   ```sh
-   helm upgrade --reuse-values sharko sharko/sharko -n "$SHARKO_NS"
-   ```
+- the `SharkoReconcilerPassAge` alert, which fires when the reconciler has
+  not finished a pass in 5 minutes (see
+  [budget-burn-runbook.md](budget-burn-runbook.md) and [metrics.md](metrics.md));
+- the audit log. Your log tooling can watch for a `pr_merged` entry with no
+  `cluster_secret_create` entry for the same cluster within a few minutes.
+  The live feed is at `GET /api/v1/audit/stream`. See
+  [Audit log](audit-log.md).
 
-   Verify the RBAC:
+## If that didn't work
 
-   ```sh
-   kubectl auth can-i create secrets -n argocd \
-     --as=system:serviceaccount:<sharko-ns>:sharko
-   ```
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
-   Success indicator: the dry-run create succeeds; the next reconcile
-   tick (within 30s) creates the cluster Secret successfully.
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the audit entries for the cluster (the command above)
+- the `[clusterreconciler]` log lines from around the merge
+- the `cluster reconciler started` line
+- what you tried from this page
 
----
+Related pages:
 
-## Root-cause patterns
-
-### Reconciler goroutine dead (crash or deadlock)
-
-The reconciler's goroutine has stopped ticking — either panicked
-without recovery, deadlocked on a sub-call, or exited from `Start()`
-unexpectedly. Symptoms manifest as "PR merged, no convergence" because
-nothing is doing the convergence work.
-
-Diagnostic signature: Diagnosis step 2 returned "no `recon-` lines at
-all since the merge." Pod is alive (HTTP API still answers) but the
-reconciler thread is gone.
-
-This is the canonical
-[`reconciler-crash-loop.md`](reconciler-crash-loop.md) case. The
-runbook there explains why the goroutine died.
-
-### Post-merge trigger wiring broken
-
-The 30s safety-net tick is firing (`recon-<ts>` lines present), but the
-low-latency post-merge `Trigger()` from `prTracker.SetOnMergeFn` is
-not firing (`recon-fanout-<ts>` lines absent). The reconciler will
-eventually converge — within 30s — but the operator sees a longer
-window than expected.
-
-Diagnostic signature: `recon-` lines yes, `recon-fanout-` lines no.
-The convergence happens, just slower than the design intends.
-
-Why it happens: `prTracker.SetOnMergeFn` may not have been wired at
-startup (e.g. PR tracker disabled by Helm value, or a partial Helm
-upgrade left state inconsistent). Alternative: the `Trigger()` channel
-buffer is full from a previous high-burst event and the send is
-non-blocking-dropped.
-
-Fix is a Sharko restart. Long-term: add a metric for "trigger sends"
-vs "trigger receives" so the wiring break is detectable. File as P1
-bug.
-
-### ArgoCD Application controller degraded
-
-The reconciler creates the cluster Secret successfully, but ArgoCD's
-Application controller doesn't notice — either because it's
-OOM-killed, throttled by kube-apiserver, or its watch on Secrets is
-stalled.
-
-Diagnostic signature: `kubectl -n argocd get secret` shows the Secret
-exists with the correct labels, but `argocd cluster list` doesn't show
-the new cluster. The `argocd-application-controller` logs show errors,
-high memory usage, or no recent activity.
-
-Why it happens: ArgoCD's Application controller has a watch on Secrets
-in the `argocd` namespace; high churn (mass cluster registration, mass
-addon enable) can overwhelm the watch's resync queue. Memory pressure
-during the resync triggers OOMKill.
-
-Fix is on the ArgoCD side: restart the Application controller, raise
-its memory limit, reduce the cluster onboarding rate. See ArgoCD's
-own operator runbook.
-
-### Sharko service account lost RBAC to argocd namespace
-
-The Sharko SA had `create secrets` permission in the `argocd`
-namespace; an out-of-band RBAC tightening (security review, OPA
-policy, manual cleanup) removed it. The reconciler tick fails at the
-kube API with 403, logs the error, and continues — but the cluster
-Secret never lands.
-
-Diagnostic signature: Diagnosis step 3's `kubectl auth can-i` probe
-returns `no`. The Sharko logs show `"argocd secret create failed"`
-with `"forbidden"` in the error.
-
-Why it happens: the Sharko Helm chart's ClusterRole was deleted
-(operator cleanup), or a higher-priority OPA policy denied the action.
-
-Fix is Mitigation step 5 (re-apply Helm chart). Long-term: add a
-startup probe that checks RBAC and refuses to start if Sharko cannot
-write Secrets in `argocd` namespace. Prevents silent failure mode.
-
----
-
-## Rollback plan
-
-This failure is read-only in nature — no destructive mitigation steps
-exist. The mitigations either restart Sharko (idempotent) or re-apply
-Helm (idempotent) or route to a downstream runbook.
-
-If Mitigation step 5 (Helm re-apply) accidentally reverts a config
-change you intended to keep:
-
-1. Restore the desired Helm values:
-   ```sh
-   helm upgrade --values <your-values.yaml> sharko sharko/sharko \
-     -n "$SHARKO_NS"
-   ```
-
-2. Verify Sharko is healthy and the reconciler is converging.
-
----
-
-## Prevention
-
-- **Monitoring — alert on the gap in the activity history.** Sharko
-  does not export this metric today. The alert below is a design sketch
-  for a future release, not something you can deploy now. The sketch: a rule
-  that watches for `pr_merged` events without a corresponding
-  `cluster_secret_create` within 90 seconds —
-
-  ```
-  sum(rate(sharko_audit_events_total{event="pr_merged"}[5m]))
-    -
-  sum(rate(sharko_audit_events_total{event="cluster_secret_create",result="success"}[5m]))
-  > 0
-  ```
-
-  — paging when it stays non-zero for more than 90 seconds. It would
-  catch both the reconciler-side and ArgoCD-side cases. Wiring requires
-  Sharko to emit `sharko_audit_events_total` as a Counter labelled by
-  `event` and `result`, which it does not do today.
-
-- **Gating — startup RBAC probe.** Sharko at startup should call
-  `kubectl auth can-i create secrets -n <argocd-ns>` against its own
-  SA, and refuse to start if the answer is no. Catches the
-  "RBAC was tightened" cause before any registration silently fails.
-  It belongs in Sharko's startup checks.
-
-- **Gating — startup `Trigger()` wiring probe.** Sharko at startup
-  should send a no-op `Trigger()` and verify the reconciler receives
-  it within 1s. Catches the "wiring broken" cause before any
-  PR-merge happens.
-
-- **Scheduled work — quarterly chaos drill.** Simulate a stalled
-  reconciler in staging. There is no pause hook in the shipped binary and
-  no environment variable that adds one, so either run a staging build
-  with a deliberate sleep in `pollOnce`, or cut the reconciler off from
-  Git (point the connection at an unreachable host) so ticks run and
-  never converge. Verify the monitoring alert fires. Verify the operator can follow this runbook
-  to diagnose and mitigate. Trains the procedure before a real
-  incident.
-
----
-
-## Related runbooks
-
-- [`reconciler-crash-loop.md`](reconciler-crash-loop.md) —
-  reconciler-side failure path. This runbook routes to it.
-- [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md) —
-  ArgoCD-side failure path. This runbook routes to it.
-- [`cluster-reconciler.md`](cluster-reconciler.md) — the reference
-  page for the reconciler and for the reconcile-on-merge trigger.
-- [`secret-push-silently-failed.md`](secret-push-silently-failed.md) —
-  adjacent silent-failure mode (addon secret push failed). Symptoms
-  feel similar; the diagnosis is different.
-- [`budget-burn-runbook.md`](budget-burn-runbook.md) — the burn-rate
-  alerts that fire when this is sustained.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  `request_id` correlation pattern; `recon-` and `recon-fanout-`
-  ID shapes.
-
-## Escalation
-
-If the mitigations don't restore convergence within 30 minutes — or if
-the same failure recurs across multiple cluster registrations
-(suggesting a fleet-wide issue) — email the maintainer:
-`moran.weissman@gmail.com`. Include:
-
-- This runbook URL
-- The cluster name(s) affected
-- The PR URL(s)
-- The merge timestamp(s)
-- The audit-log events for each cluster (Diagnosis step 4 output)
-- The reconciler-tick log lines around the merge time (Diagnosis step 2)
-- Output of Diagnosis step 3's RBAC probe
-- The Sharko version
-
-The maintainer is a single human, not a 24×7 rotation. Convergence
-bugs are P0 — expect a same-business-day investigation.
+- [Cluster reconciler](cluster-reconciler.md)
+- [Sharko's background jobs stopped finishing their passes](reconciler-crash-loop.md)
+- [Sharko can't reach ArgoCD](argocd-upstream-unreachable.md)
+- [An addon secret did not reach the cluster](secret-push-silently-failed.md)

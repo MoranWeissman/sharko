@@ -1,505 +1,176 @@
-# Auth Bypass
+# Someone may be getting into Sharko without a real sign-in
 
-**Severity:** P0
+This page is for when you think Sharko lets someone in who should be refused: a wrong password
+works, a revoked or made-up API token works, or a call with no token at all works.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The
-> `login_failed` audit code documented here matches the audit-log
-> surface in
-> [`../developer-guide/logging.md`](../developer-guide/logging.md). The
-> token-hash collision described further down is fixed in current
-> Sharko; it is kept here because it is the worked example of what this
-> class of failure looks like from the operator's side.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Act now. This is a security problem. Anyone who gets in can register and remove
+clusters, turn addons on and off, and push secrets to your clusters.
 
-The login endpoint is accepting invalid credentials, OR a session
-cookie remains honored after its expiry timestamp, OR an API token
-that was revoked is still being honored. Any of these three failure
-modes constitutes an **auth bypass** — an unauthenticated or
-unauthorized user can exercise Sharko's full write surface (cluster
-registration, addon enable, secret refresh, cluster delete) against
-the fleet.
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-This is the most-severe P0 in Sharko's failure-mode inventory. **An
-auth bypass is a security incident, not a reliability incident.** The
-moment you suspect this is real, treat it as a CVE-class event: stop
-serving traffic, capture forensic state, rotate every credential,
-notify downstream consumers. The on-call procedure here is
-incident-response shaped, not diagnose-and-mitigate shaped.
+**If you think this is real, do these four things first, in this order:**
 
-The token-hash collision class (where an API token's hash collision
-let a fake token authenticate) is the canonical reference; the
-remediation pattern below applies to it and to the broader category.
+1. Save the evidence (step 1 below). Sharko keeps its activity history in memory only, so it is
+   gone the moment the pod stops.
+2. Stop Sharko: scale it to 0 (step 2).
+3. Report it privately as described in
+   [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md). Do not open a
+   public issue.
+4. Change every password and token Sharko holds (step 4).
 
----
+## What you see
 
-## Symptoms
+What Sharko should do, and what tells you something is wrong:
 
-What an operator sees when this fires:
+| You send | Sharko should answer | Something is wrong if |
+|---|---|---|
+| A wrong password to `POST /api/v1/auth/login` | HTTP 401 `invalid credentials` (HTTP 429 after 5 tries in a minute from one address) | HTTP 200 with a `token` |
+| A call to `/api/v1/clusters` with no token | HTTP 401 `unauthorized` | HTTP 200 |
+| A made-up or revoked API token | HTTP 401 `unauthorized`, right away | HTTP 200 |
+| An expired API token | HTTP 401 that names the token and says it expired | HTTP 200 |
 
-- **`POST /api/v1/auth/login` returns 200 with a valid Set-Cookie**
-  for credentials that should be rejected. Common detection: the
-  `login_failed` audit-event count drops to zero (or near-zero) while
-  traffic continues — meaning every login is being accepted.
+Other signs:
 
-  ```sh
-  # Compare login_failed event rate to login traffic rate:
-  curl -sS http://sharko/api/v1/audit?event=login_failed&since=1h \
-    -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-    | jq '.entries | length'
-  # Expected on a healthy system: non-zero (typos, expired creds, brute-force probes)
-  # Bypass signal: 0 while web traffic continues
-  ```
+- The activity history (the **Audit Log** page in the UI, or `GET /api/v1/audit`) shows `login`, `token_created`,
+  `user_created`, `user_updated`, `password_reset` or `connection_updated` entries that nobody on
+  your team did.
+- Clusters were registered or removed, or addons turned on or off, and nobody claims the change.
+- Pull requests from Sharko in your GitOps repo that nobody asked for.
 
-- **An expired session cookie continues to authenticate.** The cookie's
-  `Expires` field is in the past, but Sharko still returns 200 for
-  authenticated routes when the cookie is presented:
+Sharko has no metric that counts failed sign-ins. `sharko_auth_login_total` is listed in the code
+but Sharko never adds to it, so it stays empty. Use the activity history instead.
+`sharko_active_sessions` does work: it shows how many people are signed in right now.
 
-  ```sh
-  EXPIRED_COOKIE="<session-cookie-from-yesterday>"
-  curl -sS -H "Cookie: session=${EXPIRED_COOKIE}" \
-    http://sharko/api/v1/clusters | jq '.clusters | length'
-  # Expected: 401 Unauthorized (expired cookie rejected)
-  # Bypass signal: 200 with cluster list
-  ```
+## Why it happens
 
-- **A revoked API token still authenticates.** The token was created
-  via `POST /api/v1/tokens`, then explicitly revoked via
-  `DELETE /api/v1/tokens/{id}`. The token continues to authenticate
-  beyond the documented 60s cache TTL:
+- **A bug in Sharko's sign-in checks.** This is a code problem, not a setting. Only a fixed Sharko
+  version closes it.
+- **A password or token leaked.** Someone has a real password or a real API token. Sharko is
+  working as it should, but the wrong person holds the key.
+- **Sharko is open to more of the network than you think.** For example, an Ingress with no
+  limit on who can reach it.
 
-  ```sh
-  REVOKED_TOKEN="sharko_<base64>"
-  sleep 90  # exceed the cache TTL
-  curl -sS -H "Authorization: Bearer ${REVOKED_TOKEN}" \
-    http://sharko/api/v1/clusters
-  # Expected: 401 (revocation propagated)
-  # Bypass signal: 200 (cache never invalidated)
-  ```
+Sharko itself refuses every call to `/api/` without a valid sign-in, except `/api/v1/health`,
+`/api/v1/auth/login` and the Git webhook. The Git webhook refuses every call unless it carries a
+valid signature made with the webhook secret.
 
-- **Audit-log anomalies**:
-  - `event=login_succeeded` from IP addresses that don't match any
-    known operator
-  - `event=token_created` from sessions with no preceding
-    `login_succeeded`
-  - `event=cluster_register` / `event=cluster_delete` from API tokens
-    that were revoked earlier in the same audit window
-- **Unexpected fleet state changes**: clusters registered or deleted
-  outside any known operator action; addon-enable changes for which
-  no operator can claim ownership.
+## How to fix it
 
-There is **no Prometheus alert today** that triggers on these patterns
-— the detection is human-driven via the audit log. Adding such an
-alert is in Prevention.
-
----
-
-## Diagnosis
-
-This is a security incident. **The diagnosis goal is to confirm the
-bypass, scope its blast radius, and capture forensic state — in that
-order.** Do not skip the forensic capture.
-
-### 1. Confirm the bypass against a known-bad credential
-
-Three quick tests, in order. Run all three; stop only if you have
-strong evidence the bypass is not real (e.g. the operator who reported
-it was confused by a stale cookie).
-
-**Test A — login with invalid password should return 401:**
-
-```sh
-curl -sS -X POST http://sharko/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"this-is-definitely-wrong-12345"}' \
-  -i | head -20
-```
-
-Expected: HTTP/1.1 401 Unauthorized. Bypass signal: HTTP/1.1 200 OK
-with a Set-Cookie header.
-
-**Test B — expired session cookie should return 401:**
-
-```sh
-# Forge an expired cookie shape (or use yesterday's real expired cookie):
-curl -sS -H "Cookie: session=fake-or-expired-cookie-value" \
-  http://sharko/api/v1/clusters -i | head -20
-```
-
-Expected: HTTP/1.1 401 Unauthorized. Bypass signal: HTTP/1.1 200 OK.
-
-**Test C — revoked API token should return 401:**
-
-```sh
-# Create a token, revoke it, then immediately use it (after cache TTL):
-TOKEN_RESPONSE=$(curl -sS -X POST http://sharko/api/v1/tokens \
-  -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"bypass-test","role":"operator"}')
-TOKEN_VALUE=$(echo "$TOKEN_RESPONSE" | jq -r .token)
-TOKEN_ID=$(echo "$TOKEN_RESPONSE" | jq -r .id)
-
-curl -sS -X DELETE \
-  -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
-  http://sharko/api/v1/tokens/"$TOKEN_ID"
-
-sleep 90  # exceed token-cache TTL (60s default)
-
-curl -sS -H "Authorization: Bearer ${TOKEN_VALUE}" \
-  http://sharko/api/v1/clusters -i | head -20
-```
-
-Expected: HTTP/1.1 401. Bypass signal: HTTP/1.1 200.
-
-### 2. Capture forensic state BEFORE any mitigation
-
-The instant you take a mitigation action (rotate keys, restart pods),
-you lose evidence. Capture first.
-
-```sh
-SHARKO_NS=<sharko-ns>
-INCIDENT_TS=$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p /tmp/sharko-incident-"$INCIDENT_TS"
-cd /tmp/sharko-incident-"$INCIDENT_TS"
-
-# Pod logs (everything from the last 24h):
-kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=24h --tail=-1 \
-  > pod-logs.json
-
-# Audit log dump:
-curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
-  "http://sharko/api/v1/audit?since=24h" \
-  > audit-log.json
-
-# Active sessions / tokens:
-curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
-  "http://sharko/api/v1/tokens" \
-  > tokens.json
-
-# Pod environment + secrets state:
-kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o yaml > pod-spec.yaml
-kubectl -n "$SHARKO_NS" get secrets -o yaml > secrets-current.yaml
-# Note: secrets-current.yaml contains credential material. Encrypt at rest.
-
-# Network connections at the moment of incident:
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
-kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- netstat -tn 2>/dev/null \
-  > connections.txt || true
-
-# Server clock — for cookie-expiry analysis:
-kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- date -u > server-time.txt
-```
-
-**Encrypt or move this directory to a secure store.** It contains
-credentials, kubeconfig contents, and active session material.
-
-### 3. Scope the blast radius
-
-What did the attacker do? Read the audit log starting from the
-earliest suspicious entry:
-
-```sh
-jq '.entries[] | select(
-  .event == "login_succeeded" or
-  .event == "token_created" or
-  .event == "cluster_register" or
-  .event == "cluster_delete" or
-  .event == "addon_enabled_on_cluster" or
-  .event == "addon_disabled_on_cluster" or
-  .event == "user_created" or
-  .event == "user_role_changed"
-) | {time, event, action, user, ip, request_id}' \
-  audit-log.json \
-  | jq -s 'sort_by(.time)' \
-  | head -100
-```
-
-Build a timeline:
-
-- **First suspicious login** — what IP, what user, what auth method?
-- **Tokens created during the bypass window** — these are persistent
-  even after a session is killed; must be revoked individually.
-- **Fleet writes during the window** — cluster registrations, addon
-  enables, delete operations. Each represents an action you may need
-  to revert.
-- **User/role changes** — the most dangerous; an attacker who creates
-  an admin user can return after the bypass is patched. Audit all
-  users.
-
-### 4. Identify the bypass vector
-
-Three patterns map to three distinct bugs. The detection method
-points to the fix.
-
-- If Test A (invalid password accepted) — login handler is broken.
-  This is a Sharko bug, not a configuration problem. Likely cause:
-  the password comparison returning true for
-  empty / malformed inputs; admin-init code path running on every
-  login and overwriting verification result.
-- If Test B (expired cookie honored) — session validation is broken.
-  Also a Sharko bug. Likely cause: the expiry check reading the wrong
-  timestamp, or the session cache not honouring the expiry it was
-  given.
-- If Test C (revoked token honored) — token-revocation propagation is
-  broken. The 60s cache TTL should bound the staleness; longer-than-60s
-  indicates the cache is not being invalidated on revocation, or the
-  token hash is being looked up incorrectly.
-
-The worked example: a token-hash collision allowed a forged token
-to authenticate as a legitimate one. Operator-side detection was the
-audit-log anomaly (token_created without preceding login_succeeded);
-fix was a hash-format change.
-
----
-
-## Mitigation (try in order)
-
-The order is incident-response shaped: stop bleeding first, restore
-trust second, return to service third.
-
-1. **Stop new authentication immediately by scaling Sharko to zero.**
-   This kills active sessions and prevents new logins:
+1. **Save the evidence before you change anything.** Keep these files somewhere safe and private.
 
    ```sh
-   kubectl -n "$SHARKO_NS" scale deployment/sharko --replicas=0
+   mkdir sharko-incident && cd sharko-incident
+   kubectl -n "$SHARKO_NS" logs deploy/sharko --since=24h > sharko-logs.json
+   curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+     "$SHARKO_URL/api/v1/audit?limit=1000" > audit.json
+   curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/tokens" > tokens.json
+   curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/users" > users.json
    ```
 
-   Communicate the planned downtime to operator-team channels. This is
-   the only way to guarantee no new bypass-driven action lands while
-   you remediate.
+   The activity history holds the last 1000 entries and is lost when the pod stops. The token
+   list has no token values in it. Do not save `kubectl get secrets -o yaml`: that prints every
+   secret in clear text.
 
-   Forensic state from Diagnosis step 2 must be captured before this
-   step; the pod's logs / in-memory session table will be gone after
-   scale-to-zero.
-
-2. **Rotate every credential the compromised instance touched.**
-   Treat all of these as compromised because you don't know what the
-   attacker did:
-
-   - **Admin password**: regenerate via the bootstrap procedure (rotate
-     the admin-init Secret, restart with the new value).
-   - **All API tokens**: revoke every token in the database. After
-     restart, force operators to re-create their tokens.
-   - **ArgoCD account token**: rotate via `argocd account
-     generate-token`; update the Sharko secret.
-   - **Git provider PAT**: rotate via the provider's PAT UI; update
-     the Sharko secret.
-   - **Secrets-provider credentials**: rotate the AWS access key / IRSA
-     role / Vault token Sharko uses.
-   - **Connection encryption key**: rotate via Helm value
-     `config.connectionSecretName`'s key field; users will need to
-     re-enter personal tokens after rotation.
-   - **Webhook secret**: rotate `SHARKO_WEBHOOK_SECRET` and update the
-     Git provider's webhook configuration.
-
-   Each rotation goes into a tracking ticket so the incident review
-   can confirm completeness.
-
-3. **Apply the bypass fix.** This depends on what Test A/B/C
-   identified:
-
-   - For Test A (login accepts invalid): upgrade Sharko to a version
-     with the auth bug fixed. If no fixed version exists yet, the only
-     safe mitigation is **keep Sharko at replicas=0** and contact the
-     maintainer.
-   - For Test B (expired cookie honored): same — upgrade or stay
-     scaled to zero.
-   - For Test C (revoked token honored): if the hash format is the
-     issue (the token-hash collision pattern), the fix is in the
-     released version;
-     upgrade. If the cache invalidation is the issue, a restart
-     clears the in-memory cache and resumes correct behavior — but
-     verify after restart that revoked tokens are now rejected.
-
-4. **Restore service with all credentials rotated and the bypass
-   fixed.** Scale back up:
+2. **Stop Sharko.** This ends every open session, because sessions live only in memory.
 
    ```sh
-   kubectl -n "$SHARKO_NS" scale deployment/sharko --replicas=1
-   kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
+   kubectl -n "$SHARKO_NS" scale deploy/sharko --replicas=0
    ```
 
-   Run the three Diagnosis tests (A/B/C) against the restored
-   instance to confirm the bypass is closed:
+3. **Report it privately** as described in
+   [SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md). Say which check in
+   the table above failed, your Sharko version, and what the activity history shows.
+
+4. **Change every password and token Sharko holds.** Treat all of them as known to the attacker.
+
+   - **The admin password.** This works while Sharko is stopped. It writes a new random password
+     and prints it:
+
+     ```sh
+     sharko reset-admin --namespace "$SHARKO_NS" --secret sharko
+     ```
+
+   - **Other users' passwords.** Reset them in **Settings > Users** once Sharko is back. Remove
+     users nobody knows (`sharko user list`, `sharko user delete`).
+   - **API tokens.** These are saved, so a restart does not remove them. Once Sharko is back,
+     revoke every one (`sharko token list`, then `sharko token revoke <name>`), and make new ones
+     only for what you really need.
+   - **The Git token** on the connection. Make a new token on your Git host, remove the old one
+     there, then see [Put in a new Git token](git-provider-unreachable.md#put-in-a-new-git-token).
+   - **The ArgoCD token** on the connection. See
+     [argocd-account-token-expired.md](argocd-account-token-expired.md).
+   - **The secrets store access**, for example the AWS role or keys Sharko uses. Change them in
+     your cloud account.
+   - **The webhook secret** (`secrets.webhookSecret` in your Helm values). Set a new one, then put
+     the same value in the webhook settings on your Git host.
+   - **The AI provider key** (`ai.apiKey`), if you use AI.
+
+5. **Close the hole before you start Sharko again.**
+
+   - If a wrong password, a missing token or a revoked token got in, this is a Sharko bug.
+     Upgrade to a version that fixes it (see
+     [upgrading-and-rollback.md](upgrading-and-rollback.md)). Until there is one, keep Sharko at 0.
+   - If a real password or token leaked, step 4 already closes it.
+   - Limit who can reach Sharko: a private Ingress, or no Ingress and only `kubectl port-forward`.
+
+6. **Start Sharko again**, still with only one pod:
 
    ```sh
-   # Same Test A/B/C from Diagnosis step 1
+   kubectl -n "$SHARKO_NS" scale deploy/sharko --replicas=1
+   kubectl -n "$SHARKO_NS" rollout status deploy/sharko --timeout=120s
    ```
 
-   Expected: all three return 401. If any returns 200, scale back to
-   zero — the bypass is not closed.
+7. **Undo what the attacker did.** Go through the saved `audit.json`, oldest first. For each
+   cluster, addon, user or connection change nobody claims, put it back. Also check your own audit
+   trails outside Sharko for the same time window: your Git host, ArgoCD, your cloud account and
+   your Kubernetes clusters. Tell the teams whose clusters Sharko manages, so they can check their
+   own audit trails too.
 
-5. **Audit the fleet state changes made during the bypass window.**
-   For each cluster registered or deleted, each addon enabled or
-   disabled, each user created or role-changed during the window, decide:
+## How to check it's fixed
 
-   - Was this a legitimate operator action? (Verify with the operator.)
-   - Was this an attacker action? (Reverse it.)
+Run each check from the table above. All of them must answer 401.
 
-   Cluster registrations: verify the cluster's kubeconfig is the
-   expected one and the secret push went to the expected target.
-   Addon enables: verify the addon's secret config wasn't tampered
-   with (a hostile addon could exfiltrate cluster credentials).
+```sh
+# A wrong password
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$SHARKO_URL/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"wrong-on-purpose"}'
 
----
+# No token at all
+curl -s -o /dev/null -w '%{http_code}\n' "$SHARKO_URL/api/v1/clusters"
 
-## Root-cause patterns
+# A made-up token
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer sharko_notarealtoken" "$SHARKO_URL/api/v1/clusters"
 
-### Login-verification bug
+# A token you just revoked (there is no wait: revoking works at once)
+TEST_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name":"revoke-check","role":"viewer"}' \
+  "$SHARKO_URL/api/v1/tokens" | jq -r .token)
+curl -s -X DELETE -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/tokens/revoke-check"
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "Authorization: Bearer $TEST_TOKEN" "$SHARKO_URL/api/v1/clusters"
+```
 
-The password comparison code returns true for an input it shouldn't.
-Common causes: bcrypt comparison short-circuits on empty input, the
-admin-init code path runs on every login and treats an unset password
-as "default-allow," or an HTTP header bypasses the verification
-(forgotten authn middleware).
+If any of them answers 200, scale Sharko back to 0 and add that to your private report.
 
-Diagnostic signature: Test A (Diagnosis step 1) returns 200. The
-audit log shows `login_succeeded` events for users whose
-`login_failed` count is zero.
+Then, for the next few days, look at the activity history every day for `login` and
+`token_created` entries you can't explain.
 
-Why it happens: a regression in Sharko's password verification, where
-a refactor introduced a fallback "allow" branch. Caught by Test A. The
-fix is in code, not in configuration — upgrade Sharko.
+## If that didn't work
 
-### Session expiry bug
+Do not open a public issue. Report it privately as described in
+[SECURITY.md](https://github.com/MoranWeissman/sharko/blob/main/SECURITY.md). Include:
 
-The session-cookie validation checks the wrong field, or the in-memory
-session table doesn't honor expiry. Common causes: `time.Now().Before(
-sess.Created)` instead of `Before(sess.Expires)`; the in-memory map
-never gets purged of expired entries.
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- which check from the table failed, and what it answered
+- the activity history entries you can't explain
+- what you tried from this page
 
-Diagnostic signature: Test B (Diagnosis step 1) returns 200 for a
-cookie whose `Expires` is in the past. The audit log shows
-`api_call` events from sessions that should have expired hours/days
-ago.
+Never put a password, a token or the data of a Secret into the report.
 
-Fix is upgrade Sharko. As a short-term mitigation, scale Sharko to
-zero on a schedule (e.g. nightly) which clears all sessions; this is
-ugly but prevents long-running stale sessions.
+Related pages:
 
-### Token revocation not propagating
-
-A token was revoked via `DELETE /api/v1/tokens/{id}`, but the in-memory
-token-validation cache wasn't invalidated. Sharko keeps serving the
-token for up to 60s by design; longer than 60s indicates the cache
-was never invalidated.
-
-Diagnostic signature: Test C (Diagnosis step 1) returns 200 for a
-revoked token. The cache TTL has elapsed.
-
-Why it happens: the revoke handler doesn't call the cache-invalidate
-hook; or the cache is keyed on token-hash and the revoke handler
-clears by token-ID, missing the hash entry.
-
-Fix is upgrade Sharko. Short-term mitigation: restart Sharko after
-every token revoke (clears the cache). Document this expectation
-explicitly while waiting for the fix.
-
-### Token-hash collision (HISTORICAL)
-
-A token-hash format issue let a forged value pass the hash comparison
-as a legitimate token. The forged value never appeared in the activity
-entry for `POST /api/v1/tokens` — its first appearance in the activity
-history was the API call that used it. Fixed in v1.25; documented here as the
-canonical reference for "credential collision class."
-
-Diagnostic signature: audit log contains `api_call` events with a
-`token_id` that has no corresponding `token_created` event.
-
-Fix shipped. If Sharko is below v1.25, upgrade immediately.
-
----
-
-## Rollback plan
-
-The mitigations are incident-response — scale-to-zero, rotate
-credentials, upgrade. The "rollback" concept doesn't cleanly apply.
-However:
-
-- If Mitigation step 3 (upgrade) introduces a new bug, you can
-  downgrade — but only to a version that does not have the bypass.
-  Downgrading to a bypass-affected version is **not acceptable** even
-  to recover service.
-- If Mitigation step 2 (credential rotation) breaks downstream
-  integrations (e.g. CI/CD using API tokens), the integration
-  re-onboards by creating new tokens. The old tokens are gone for a
-  reason; don't roll back rotations.
-
----
-
-## Prevention
-
-- **Monitoring — login_failed rate-zero alert.** Sharko does not export
-  these metrics today. The alert below is a design sketch for a future
-  release, not something you can deploy now. The sketch: a rule that
-  pages when `rate(sharko_login_failed_total[15m]) == 0` and
-  `rate(sharko_login_attempts_total[15m]) > 0`. That pattern would catch
-  Test A's "every login is accepted" signal automatically. Wiring
-  requires the `sharko_login_*_total` metrics, which Sharko does not
-  export today.
-
-- **Monitoring — token-created-without-login alert.** Sharko does not
-  export this metric today. The alert below is a design sketch for a
-  future release, not something you can deploy now. A `token_created`
-  audit event with no preceding `login_succeeded` for the same session
-  is the fingerprint of a forged token, and the sketch detects it like
-  this —
-
-  ```
-  sum(rate(sharko_audit_events_total{event="token_created"}[5m]))
-    -
-  sum(rate(sharko_audit_events_total{event="login_succeeded"}[5m]))
-  > 0
-  ```
-
-  — alerting when non-zero. It requires audit metrics that do not exist
-  yet.
-
-- **Gating — auth integration test in CI.** Add a CI test that runs
-  the three Diagnosis tests (A/B/C) against every PR. If a code
-  change breaks any of them, the PR is blocked. The tests run in
-  ~5 seconds against a local Sharko instance with sqlite backend.
-
-- **Gating — auth surface coverage gate.** Add a coverage gate on
-  `internal/auth/` of >= 90%. Auth-surface regressions are the most
-  expensive class of bug; coverage is the cheapest defense.
-
-- **Scheduled work — quarterly auth red-team drill.** Once per quarter,
-  you or someone you designate attempts to bypass Sharko's auth in a
-  staging instance. Write down what was tried and what happened. Forces explicit confirmation that the bypass
-  surface is closed.
-
----
-
-## Related runbooks
-
-- [`credential-leak-in-logs.md`](credential-leak-in-logs.md) —
-  adjacent class of security failure (credentials leaked in logs
-  rather than auth bypassed). Both are P0 security incidents.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  audit-event codes referenced in this runbook.
-
-## Escalation
-
-This runbook's escalation is **immediate, not 30-minute-window**.
-
-The moment Diagnosis step 1 confirms a bypass, email the maintainer:
-`moran.weissman@gmail.com` with subject `[SHARKO][P0][SECURITY] auth
-bypass`. Include:
-
-- This runbook URL
-- The specific test (A, B, or C) that confirmed the bypass
-- The full output of the test
-- The Sharko version
-- The forensic-state directory location (from Diagnosis step 2)
-- The blast-radius timeline (from Diagnosis step 3)
-
-The maintainer is the security contact until a separate security@
-channel is published. For confirmed auth bypass, the maintainer's
-expected SLA is **same-day investigation and a private upgrade-path
-recommendation** — not a multi-day backlog item.
-
-If the bypass affects production fleet at scale, also notify
-downstream operators (the platform teams whose clusters Sharko
-manages) so they can audit their own audit trails for unauthorized
-actions during the bypass window.
+- [A password or token showed up in the logs](credential-leak-in-logs.md)
+- [Security](security.md)
+- [Activity history](audit-log.md)
