@@ -60,7 +60,7 @@ A list of everything a piece of software is built from. Each Sharko release publ
 
 ## Sigstore and cosign
 
-Sigstore is a free, public service for signing software. cosign is its command-line tool. Each Sharko release signs its container image and its Helm charts with cosign, so you can check that they really came from this project. See [Supply chain](operator/supply-chain.md).
+Sigstore is a free, public service for signing software. cosign is its command-line tool. Sharko's container image and Helm charts are signed with cosign, so you can check that they really came from this project. See [Supply chain](operator/supply-chain.md).
 
 ## SLO (Service Level Objective)
 
