@@ -158,27 +158,6 @@ var knownOpenFindings = map[string]string{
 	// --- named as an alert to add, with no such metric registered.
 	// --- Most carry a hedge in the same paragraph; two do not, and
 	// --- catalog-trust-root-unavailable.md even names a wiring file ---
-	"UNKNOWN-METRIC | docs/site/operator/catalog-trust-root-unavailable.md | sharko_catalog_verifier_initialized":           "asserts the wiring is in internal/catalog/signing/verify.go init — there is no such metric",
-	"UNKNOWN-METRIC | docs/site/operator/adopt-cluster-entry-write-failed.md | sharko_adopt_partial_state_total":            "adoption partial-state counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/adopt-managed-by-label-read-failed.md | sharko_adopt_label_read_failed_total":      "adoption label-read counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/argocd-account-token-expired.md | sharko_argocd_token_expires_in_seconds":          "ArgoCD token expiry gauge, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/argocd-cluster-secret-corruption.md | sharko_cluster_test_status":                  "cluster-test status gauge, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/argocd-exec-plugin-auth-unsupported.md | sharko_cluster_test_errors_total":         "cluster-test error counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/argocd-pr-merge-no-converge.md | sharko_audit_events_total":                        "audit-event counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/auth-bypass.md | sharko_login":                                                     "from the wildcard mention `sharko_login_*_total`; the page says the wiring is future work",
-	"UNKNOWN-METRIC | docs/site/operator/auth-bypass.md | sharko_login_attempts_total":                                      "login-attempt counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/auth-bypass.md | sharko_login_failed_total":                                        "login-failure counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/auto-merge-failed-after-pr-opened.md | sharko_pr_auto_merge_failed_total":          "auto-merge failure counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/catalog-parse-failure-on-startup.md | sharko_catalog_embedded_load_success":        "embedded-catalog load gauge, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/catalog-source-schema-validation-failed.md | sharko_catalog_source_failed_seconds": "catalog-source failure timestamp, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/cluster-reconciler-dependency-missing.md | sharko_reconciler_ticks_skipped_total":  "skipped-tick counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/reconciler-crash-loop.md | sharko_reconciler_ticks_total":                          "reconciler tick counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/eks-token-generation-failed.md | sharko_provider_eks_token_errors_total":           "EKS token error counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/encryption-key-not-configured.md | sharko_personal_token_500_total":                "personal-token 500 counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/git-provider-rate-limited.md | sharko_github_rate_limit_remaining":                 "GitHub rate-limit gauge, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/init-operation-abandoned.md | sharko_init_abandoned_total":                         "abandoned-init counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/secret-push-silently-failed.md | sharko_addon_secret_push_failures_total":          "addon-secret push failure counter, never registered",
-	"UNKNOWN-METRIC | docs/site/operator/webhook-handler-failures.md | sharko_webhook_requests_total":                       "webhook request counter, never registered",
 }
 
 // TestPublishedMetricsContract is the check.

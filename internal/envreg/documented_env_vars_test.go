@@ -151,13 +151,9 @@ var knownUndocumentedClaims = map[string]documentedClaim{
 	// --- shell-local: the runbook assigns the variable itself, in the
 	// --- snippet the reader is about to run. Never a Sharko setting ---
 	"SHARKO_NS":                  {why: "shell-local: the namespace the operator types once and reuses across a runbook's commands"},
-	"SHARKO_POD":                 {why: "shell-local: SHARKO_POD=$(kubectl get pod …) before the next command uses it"},
 	"SHARKO_URL":                 {why: "shell-local: the Sharko base URL in runbook and smoke-test curl commands"},
 	"SHARKO_TOKEN":               {why: "shell-local: the caller's own API token, held for curl"},
-	"SHARKO_ADMIN_TOKEN":         {why: "shell-local: an admin API token, held for curl"},
-	"SHARKO_PREFIX":              {why: "shell-local: holds the value read out of SHARKO_CONN_PROVIDER_PREFIX"},
 	"SHARKO_SECRETS_NS":          {why: "shell-local: namespace with a ${VAR:-default} fallback"},
-	"SHARKO_VERSION":             {why: "shell-local: the image tag parsed off the deployment"},
 	"SHARKO_EKS_TEST_ACCOUNT_ID": {why: "shell-local: the EKS runbook exports the reader's own AWS account id for scripts/eks-live-test.sh"},
 	"SHARKO_GITHUB_TOKEN":        {why: "shell-local: the EKS runbook exports the reader's own GitHub token for the same script"},
 	"SHARKO_GITOPS_REPO_URL":     {why: "shell-local: the third export in that same block; scripts/eks-live-test.sh reads all three as shell variables and Sharko reads none of them. It was recorded as a defect when this list was written, because it was the example that proved a shell variable under scripts/ must not count as a read site — but the name itself is honest where it stands"},
