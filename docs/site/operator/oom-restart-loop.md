@@ -34,7 +34,7 @@ What an operator sees when this fires:
 - **`kubectl get pod` shows CrashLoopBackOff and Restarts > 3:**
 
   ```sh
-  kubectl -n <sharko-ns> get pod -l app=sharko
+  kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko
   # NAME                       READY   STATUS             RESTARTS      AGE
   # sharko-748d6f9bc8-xyz      0/1     CrashLoopBackOff   5 (32s ago)   12m
   ```
@@ -74,7 +74,7 @@ What an operator sees when this fires:
     long-running degradation
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --previous --tail=200
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --previous --tail=200
   ```
 
 - **HTTP API is unavailable** — `curl http://sharko/api/v1/health`
@@ -99,7 +99,7 @@ startup panic (read the panic line), or liveness-probe regression
 ```sh
 SHARKO_NS=<sharko-ns>
 
-kubectl -n "$SHARKO_NS" describe pod -l app=sharko \
+kubectl -n "$SHARKO_NS" describe pod -l app.kubernetes.io/name=sharko \
   | grep -A 10 "Last State\|Reason\|Exit Code"
 ```
 
@@ -117,7 +117,7 @@ Three terminal-state buckets:
 Get the configured limit:
 
 ```sh
-kubectl -n "$SHARKO_NS" get pod -l app=sharko \
+kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].spec.containers[0].resources.limits.memory}'
 # Expected: e.g. "512Mi" or "1Gi"
 ```
@@ -138,7 +138,7 @@ managed-clusters.yaml), the limit is too low.
 Inspect the heap usage trend if `/debug/pprof/heap` is enabled:
 
 ```sh
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n "$SHARKO_NS" port-forward "$SHARKO_POD" 6060:6060 &
 go tool pprof -top -unit mb "http://localhost:6060/debug/pprof/heap"
 ```
@@ -155,7 +155,7 @@ hot spots:
 ### 3. Startup panic diagnosis
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --previous --tail=500 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --previous --tail=500 \
   | grep -E "panic|fatal|FATAL|error during startup" \
   | head -30
 ```
@@ -292,7 +292,7 @@ panic, fix probe if probe, then capture state for post-mortem.
    The dump is the evidence needed to find the leak:
 
    ```sh
-   SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+   SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
    kubectl -n <sharko-ns> port-forward "$SHARKO_POD" 6060:6060 &
 
    # Heap dump:

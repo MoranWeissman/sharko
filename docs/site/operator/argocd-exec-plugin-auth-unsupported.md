@@ -151,7 +151,7 @@ pattern (see
 
 ```sh
 REQ_ID=req-<id-from-failed-response>
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c --arg id "$REQ_ID" 'select(.request_id == $id)'
 ```
 

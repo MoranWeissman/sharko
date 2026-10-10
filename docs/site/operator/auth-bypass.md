@@ -162,7 +162,7 @@ mkdir -p /tmp/sharko-incident-"$INCIDENT_TS"
 cd /tmp/sharko-incident-"$INCIDENT_TS"
 
 # Pod logs (everything from the last 24h):
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=24h --tail=-1 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=24h --tail=-1 \
   > pod-logs.json
 
 # Audit log dump:
@@ -176,12 +176,12 @@ curl -sS -H "Authorization: Bearer ${SHARKO_ADMIN_TOKEN}" \
   > tokens.json
 
 # Pod environment + secrets state:
-kubectl -n "$SHARKO_NS" get pod -l app=sharko -o yaml > pod-spec.yaml
+kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o yaml > pod-spec.yaml
 kubectl -n "$SHARKO_NS" get secrets -o yaml > secrets-current.yaml
 # Note: secrets-current.yaml contains credential material. Encrypt at rest.
 
 # Network connections at the moment of incident:
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- netstat -tn 2>/dev/null \
   > connections.txt || true
 

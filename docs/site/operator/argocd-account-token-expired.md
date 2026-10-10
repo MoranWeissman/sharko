@@ -113,7 +113,7 @@ Step 4 inspects the Sharko pod's current token secret.
 ### 1. Confirm the failure is 401/403, not connection-level
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 
 # What ArgoCD server URL does Sharko have configured? Ask Sharko — the URL
 # lives on the active connection, and the pod env only carries it when the

@@ -141,7 +141,7 @@ Grep the Sharko logs for the 403 + `rate limit` shape, joined by
 
 ```sh
 SHARKO_NS=<sharko-ns>
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=5000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=5000 \
   | jq -c 'select(.msg | test("git|github"; "i")) | select(.error | test("rate limit|403"; "i"))' \
   | head -20
 ```
@@ -163,7 +163,7 @@ Read the PAT Sharko is using from the secret and probe GitHub's
 `/rate_limit` endpoint:
 
 ```sh
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 GITHUB_PAT=$(kubectl -n "$SHARKO_NS" get secret <sharko-release> \
   -o jsonpath='{.data.GITHUB_TOKEN}' | base64 -d)
 

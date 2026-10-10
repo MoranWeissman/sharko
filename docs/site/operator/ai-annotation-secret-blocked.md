@@ -70,7 +70,7 @@ What an operator sees when this fires:
   Grep:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=5000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
     | jq -c 'select(.msg | test("ai annotate hard-blocked"; "i"))'
   ```
 
@@ -141,7 +141,7 @@ the audit entry, per the
 
 ```sh
 REQUEST_ID=req-<from operator's response headers>
-kubectl -n <sharko-ns> logs -l app=sharko --tail=5000 \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
   | jq -c "select(.request_id == \"$REQUEST_ID\")" \
   | jq -r '"\(.time) \(.level) \(.msg) \(.chart // \"\") \(.match_count // \"\")"'
 ```

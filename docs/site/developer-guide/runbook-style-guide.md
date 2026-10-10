@@ -187,7 +187,7 @@ Each diagnosis step includes the exact command. Operators are pasting,
 not typing.
 
 ```sh
-kubectl logs -n <ns> -l app=sharko --tail=500 \
+kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --tail=500 \
   | jq 'select(.level == "ERROR" and (.msg | test("register|cluster"; "i")))'
 ```
 

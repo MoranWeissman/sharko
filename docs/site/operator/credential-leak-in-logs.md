@@ -54,7 +54,7 @@ What an operator sees when this fires:
   value** (not as `[REDACTED]`):
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=10000 \
     | grep -E '"[a-zA-Z_]+":\s*"eyJ[A-Za-z0-9._-]{20,}"' \
     | head -5
   ```
@@ -67,7 +67,7 @@ What an operator sees when this fires:
 - **Kubeconfig YAML appears in a log line:**
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=10000 \
     | grep -E "apiVersion: v1|kind: Config|current-context:" \
     | head -5
   ```
@@ -81,7 +81,7 @@ What an operator sees when this fires:
 - **Base64 blob >100 chars in a log line:**
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=10000 \
     | grep -oE '"[A-Za-z0-9+/=]{100,}"' \
     | head -5
   ```
@@ -90,7 +90,7 @@ What an operator sees when this fires:
   failure mode):
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=10000 \
     | grep -E "admin.*password|initialPassword" \
     | grep -vE "REDACTED|\\[redacted\\]|<<REDACTED>>" \
     | head -5
@@ -105,7 +105,7 @@ What an operator sees when this fires:
   line:**
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=10000 \
     | grep -oE '(ghp_|github_pat_|ghs_)[A-Za-z0-9_]{20,}' \
     | head -5
   ```
@@ -166,7 +166,7 @@ the two cases apart from the logs themselves. Count the redaction marker
 in the same window:
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --tail=10000 | grep -c '\[REDACTED\]'
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=10000 | grep -c '\[REDACTED\]'
 ```
 
 - **Some `[REDACTED]` values, and your leaked key is not one of the names
@@ -210,7 +210,7 @@ Logs ship to multiple places. Each is now compromised. Identify:
 
 ```sh
 # Pod logs — kubectl-readable, retained per pod lifecycle.
-kubectl -n <sharko-ns> get pod -l app=sharko -o jsonpath='{.items[0].metadata.creationTimestamp}'
+kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o jsonpath='{.items[0].metadata.creationTimestamp}'
 
 # Container log driver — Fluent Bit, Fluentd, Vector, etc.
 kubectl -n <log-ns> get pods -l app.kubernetes.io/component=log-shipper

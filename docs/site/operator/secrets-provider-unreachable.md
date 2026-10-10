@@ -145,7 +145,7 @@ Verify, in order:
 **Is AWS Secrets Manager itself up?**
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 AWS_REGION=$(kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AWS_REGION")].value}')
 
@@ -171,11 +171,11 @@ means the API responded). Failure signals:
 
 ```sh
 # What service account is Sharko using?
-kubectl -n <sharko-ns> get pod -l app=sharko \
+kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}'
 
 # Is the SA annotated with the IAM role ARN?
-SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+SA=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}')
 kubectl -n <sharko-ns> get sa "$SA" \
   -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'
@@ -208,7 +208,7 @@ Verify, in order:
 ```sh
 NS=$(kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_CONN_PROVIDER_NAMESPACE")].value}')
-SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+SA=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}')
 
 kubectl auth can-i list secrets -n "$NS" \
@@ -264,7 +264,7 @@ Mitigation step 3).
 
 ```sh
 SHARKO_NS=<sharko-ns>
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=30m \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=30m \
   | jq -c 'select(.step != null)' \
   | jq -r '"\(.time)\t\(.level)\t\(.step)\t\(.cluster // "-")\t\(.msg)"' \
   | head -30
@@ -274,7 +274,7 @@ And the fleet-wide question in one line — how many DISTINCT clusters are
 failing at the same step:
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=30m \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=30m \
   | jq -r 'select(.step != null and .level == "ERROR") | "\(.step)\t\(.cluster // "-")"' \
   | sort -u | awk -F'\t' '{c[$1]++} END {for (s in c) print c[s], "cluster(s) failing at step", s}'
 ```

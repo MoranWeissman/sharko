@@ -82,7 +82,7 @@ What an operator sees when this fires:
   after the cycle completion. Grep for the cluster name:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=2000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
     | jq -c "select(.cluster == \"prod-eu\" and .level == \"ERROR\")"
   ```
 

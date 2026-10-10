@@ -58,7 +58,7 @@ What an operator sees when this fires:
   Grep:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=2000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
     | jq -c 'select(.msg == "could not read managed-by label — proceeding with adoption")'
   ```
 
@@ -129,7 +129,7 @@ K8s API. The common shapes:
 | `Unauthorized` | Sharko's token isn't authenticated; deeper issue |
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --tail=2000 \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
   | jq -c 'select(.msg == "could not read managed-by label — proceeding with adoption")' \
   | jq -r .error \
   | head -5
@@ -177,7 +177,7 @@ If `secrets` is missing the `get` verb, that's the cause. The
 Test the actual RBAC from inside the Sharko pod:
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   kubectl auth can-i get secrets -n argocd

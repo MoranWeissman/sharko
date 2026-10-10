@@ -172,7 +172,7 @@ Three outcomes:
 If the Secret might exist but Sharko can't see it:
 
 ```sh
-SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+SA=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}')
 
 # Can Sharko list Secrets in the target namespace?

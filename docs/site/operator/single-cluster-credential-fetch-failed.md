@@ -156,7 +156,7 @@ have `action=cluster_secret_create` or `cluster_secret_skip` with
 # Replace <ts> with the timestamp of a known-failing tick.
 SHARKO_NS=<sharko-ns>
 TS_PREFIX="2026-06-01T12:"
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=10000 \
   | jq -c "select(.time | startswith(\"$TS_PREFIX\")) | select(.msg | test(\"clusterreconciler|cluster_secret\"; \"i\"))" \
   | jq -r '"\(.time) \(.level) \(.cluster // .resource) \(.msg)"'
 ```
@@ -178,7 +178,7 @@ carries one, and it says which stage gave up:
 
 ```sh
 CLUSTER=prod-eu
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=15m \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c --arg c "$CLUSTER" 'select(.cluster == $c and .step != null)' \
   | jq -r '"\(.time)  \(.step)  \(.msg)"'
 ```
@@ -220,7 +220,7 @@ from the Sharko pod (bypassing reconciler logic):
 **For AWS-SM**:
 
 ```sh
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 CLUSTER=prod-eu
 SECRET_PREFIX=clusters/   # match values.yaml secrets.prefix
 

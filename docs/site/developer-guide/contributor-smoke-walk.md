@@ -652,8 +652,8 @@ Run each step individually so you can see exactly where it breaks. Substitute `s
   sharko-64c68b75d-sn6p6   1/1     Running   0          13s   app.kubernetes.io/instance=sharko,app.kubernetes.io/name=sharko,pod-template-hash=64c68b75d
   ```
 
-  !!! warning "The pod label is `app.kubernetes.io/name=sharko`, NOT `app=sharko`"
-      A previous version of this runbook told you to use `kubectl logs -l app=sharko -n sharko`. That selector matches **zero pods**. The actual label set by the Helm chart is `app.kubernetes.io/name=sharko` (and `app.kubernetes.io/instance=sharko`). Use either — or use the deployment name directly: `kubectl logs -n sharko deployment/sharko`.
+  !!! warning "The pod label is `app.kubernetes.io/name=sharko`"
+      The chart does not set a plain `app` label, so a selector on `app` alone matches **zero pods**. The label the Helm chart sets is `app.kubernetes.io/name=sharko` (and `app.kubernetes.io/instance=sharko`). Use either, or use the deployment name directly: `kubectl logs -n sharko deployment/sharko`.
 
 - [ ] Confirm ArgoCD pods are running too
 

@@ -63,7 +63,7 @@ What an operator sees when this fires:
   dependency is missing. Grep:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=2000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
     | jq -c 'select(.msg | test("\\[clusterreconciler\\].*skipping reconcile"; "i"))' \
     | head -10
   ```
@@ -142,7 +142,7 @@ deployment surface:
 | `no Vault (cluster-credentials provider) configured` | Cluster-credentials provider (AWS-SM, K8s Secrets, etc.) | Set up at server start, from your Helm values |
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --tail=1000 \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=1000 \
   | jq -c 'select(.msg | test("\\[clusterreconciler\\]"; "i"))' \
   | tail -3
 ```
@@ -177,7 +177,7 @@ local dev mode) or the in-cluster config can't be loaded, the
 reconciler skips.
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   ls -la /var/run/secrets/kubernetes.io/serviceaccount/
 ```

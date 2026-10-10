@@ -122,7 +122,7 @@ curl -sS -X POST http://sharko/api/v1/clusters/typo-cluster-name/test \
   -H "Authorization: Bearer ${SHARKO_TOKEN}" &
 
 # In another shell:
-kubectl -n <sharko-ns> logs -l app=sharko --since=2m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=2m \
   | jq -c 'select(.msg | test("SearchSecrets|GetCredentials|ListSecrets|GetSecretValue"; "i"))' \
   | jq -c '{time, level, msg, cluster, query, prefix, step}'
 ```
@@ -150,7 +150,7 @@ which is a better answer anyway, because it is the identity Sharko is
 using right now:
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- aws sts get-caller-identity
 ```
 
@@ -177,7 +177,7 @@ Cross-check against the Service Account annotation, which is where the
 role is actually configured:
 
 ```sh
-SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+SA=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].spec.serviceAccountName}')
 kubectl -n <sharko-ns> get sa "$SA" \
   -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'

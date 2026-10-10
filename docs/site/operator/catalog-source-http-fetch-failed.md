@@ -137,7 +137,7 @@ their VPN / DNS) and the pod (with the cluster's kube-dns + egress
 NetworkPolicy). Always reproduce from the pod.
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 FAILING_URL=<url-from-step-1>
 ```
 
@@ -228,7 +228,7 @@ line 659). That isn't this runbook — but operators occasionally
 confuse the two. Confirm:
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c 'select(.msg | test("catalog source"; "i"))' \
   | jq -c '{time, msg, source, err}'
 ```

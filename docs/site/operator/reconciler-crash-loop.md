@@ -95,7 +95,7 @@ crashing in a recoverable way.
 
 ```sh
 SHARKO_NS=<sharko-ns>
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=5m \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=5m \
   | jq -c 'select(.request_id // "" | startswith("recon-"))' \
   | tail -20
 ```
@@ -108,14 +108,14 @@ Confirm against the pod's start time — a recently-restarted pod may not
 have ticked yet (first tick happens after `DefaultTickInterval = 30s`).
 
 ```sh
-kubectl -n "$SHARKO_NS" get pod -l app=sharko \
+kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko \
   -o jsonpath='{.items[0].status.startTime}'
 ```
 
 ### 2. Look for a panic in the pod logs
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=5000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=5000 \
   | grep -E "panic|reconciler panic recovered|goroutine .* \[running\]" \
   | head -50
 ```
@@ -142,7 +142,7 @@ restarting. Sharko exposes `/debug/pprof/goroutine?debug=2` (if pprof
 is enabled — verify with the operator team):
 
 ```sh
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n "$SHARKO_NS" port-forward "$SHARKO_POD" 6060:6060 &
 curl -sS "http://localhost:6060/debug/pprof/goroutine?debug=2" \
   > /tmp/sharko-goroutines.txt
@@ -170,8 +170,8 @@ even after pod restart.
 ### 4. Check pod resource pressure
 
 ```sh
-kubectl -n "$SHARKO_NS" top pod -l app=sharko
-kubectl -n "$SHARKO_NS" describe pod -l app=sharko \
+kubectl -n "$SHARKO_NS" top pod -l app.kubernetes.io/name=sharko
+kubectl -n "$SHARKO_NS" describe pod -l app.kubernetes.io/name=sharko \
   | grep -A 5 "Last State\|OOMKilled\|Restart"
 ```
 
@@ -200,7 +200,7 @@ runbook.
    ready, you see `"reconciler tick start"` lines in the log:
 
    ```sh
-   kubectl -n "$SHARKO_NS" logs -l app=sharko --since=2m \
+   kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=2m \
      | jq -c 'select(.request_id // "" | startswith("recon-"))' \
      | head -5
    ```
@@ -211,7 +211,7 @@ runbook.
    confirm a `recon-fanout-<ts>` line follows:
 
    ```sh
-   kubectl -n "$SHARKO_NS" logs -l app=sharko --since=2m \
+   kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=2m \
      | jq -c 'select(.request_id // "" | startswith("recon-fanout-"))'
    ```
 
@@ -226,7 +226,7 @@ runbook.
      > /tmp/sharko-goroutines-pre-restart.txt
 
    # Panic line:
-   kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=5000 \
+   kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=5000 \
      | jq -c 'select(.msg | test("panic"; "i"))' \
      > /tmp/sharko-panic.json
    ```

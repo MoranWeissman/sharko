@@ -183,7 +183,7 @@ Expected status codes:
 Exec into the Sharko pod and probe directly:
 
 ```sh
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- \
   wget -q -O - --no-check-certificate \
   "https://api.github.com/zen"
@@ -198,7 +198,7 @@ root cause "Egress / NetworkPolicy block" and the
 ### 5. Cluster log-driven check: `jq` the Sharko logs
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=2000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=2000 \
   | jq -c 'select(.msg | test("git|no active Git|rate limit"; "i"))' \
   | head -50
 ```
@@ -306,7 +306,7 @@ restores reachability — don't keep walking the list.
    spec:
      podSelector:
        matchLabels:
-         app: sharko
+         app.kubernetes.io/name: sharko
      policyTypes:
        - Egress
      egress:

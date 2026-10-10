@@ -111,7 +111,7 @@ OOMKill, ArgoCD itself is the failure. Page the ArgoCD owner.
 Exec into the Sharko pod and probe ArgoCD's `/api/v1/version` directly:
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   wget -q -O - "https://argocd-server.argocd.svc:443/api/v1/version" \
   --no-check-certificate
@@ -144,7 +144,7 @@ For log-driven diagnosis, the `request_id` pattern joins every
 handler's per-request lines into one stream:
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --tail=2000 \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
   | jq -c 'select(.msg | test("argocd|no active ArgoCD"; "i"))' \
   | head -50
 ```
@@ -247,7 +247,7 @@ first step that restores reachability — don't keep walking the list.
              kubernetes.io/metadata.name: <sharko-ns>
          podSelector:
            matchLabels:
-             app: sharko
+             app.kubernetes.io/name: sharko
        ports:
        - protocol: TCP
          port: 8080

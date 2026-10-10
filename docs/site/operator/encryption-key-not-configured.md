@@ -68,7 +68,7 @@ What an operator sees when this fires:
   middleware-level access log records the 500 status:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=2000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=2000 \
     | jq -c 'select(.path | test("github-token"; "i")) | select(.status == 500)'
   ```
 
@@ -113,7 +113,7 @@ wire the env-var reference correctly.
 
 ```sh
 SHARKO_NS=<sharko-ns>
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 
 kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- \
   env | grep '^SHARKO_ENCRYPTION_KEY='

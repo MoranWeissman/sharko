@@ -164,7 +164,7 @@ just filter by cluster and time):
 
 ```sh
 REQ_ID=req-<id-from-the-failed-response>
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c --arg id "$REQ_ID" 'select(.request_id == $id)' \
   | jq -r 'select(.step != null) | "\(.step)\t\(.cluster // "-")\t\(.region // "-")\t\(.msg)"'
 ```
@@ -173,7 +173,7 @@ No request id to hand? Filter by cluster instead — every one of these
 lines names it:
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c 'select(.cluster == "prod-eu" and .step != null)' \
   | jq -r '"\(.time)\t\(.step)\t\(.region // "-")"'
 ```
@@ -198,7 +198,7 @@ trustworthy than anything Sharko could have relayed.
 
 ```sh
 CLUSTER=<failing-cluster-name>
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 AWS_REGION=$(kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AWS_REGION")].value}')
 PREFIX=$(kubectl -n <sharko-ns> get deployment sharko \
@@ -262,7 +262,7 @@ Sharko pod's IRSA role to assume it (Mitigation step 3).
    Verify the pod's SA annotation:
 
    ```sh
-   SA=$(kubectl -n <sharko-ns> get pod -l app=sharko \
+   SA=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko \
      -o jsonpath='{.items[0].spec.serviceAccountName}')
    kubectl -n <sharko-ns> get sa "$SA" \
      -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'

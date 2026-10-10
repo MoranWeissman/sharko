@@ -151,7 +151,7 @@ being precise about the two ways to get there.
 
 ```sh
 REQ_ID=req-<id-from-the-failed-response>
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c --arg id "$REQ_ID" \
     'select(.request_id == $id and .msg == "[provider] GetCredentials failed")' \
   | jq -r '"cluster=\(.cluster)  step=\(.step)  tried=\(.tried)"'
@@ -162,7 +162,7 @@ lines names both:
 
 ```sh
 CLUSTER=<failing-cluster-name>
-kubectl -n <sharko-ns> logs -l app=sharko --since=30m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=30m \
   | jq -c --arg c "$CLUSTER" \
     'select(.cluster == $c and .step == "all-lookups")' \
   | jq -r '"\(.time)  tried=\(.tried)"'
@@ -199,7 +199,7 @@ Exec into the Sharko pod (so the IRSA chain matches what the provider
 sees) and search for the secret by cluster-name substring:
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 AWS_REGION=$(kubectl -n <sharko-ns> get deployment sharko \
   -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="AWS_REGION")].value}')
 

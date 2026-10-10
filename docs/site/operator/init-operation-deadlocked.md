@@ -147,7 +147,7 @@ Step 7 — Endpoint blocks until sync completes or times out (up to 2 minutes)
 Inspect the Sharko logs for the most recent init-step line:
 
 ```sh
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
+kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --since=15m \
   | jq -c "select(.session_id // \"\" | test(\"$OP_ID\"))" \
   | jq -c '{time, level, msg}' \
   | tail -20

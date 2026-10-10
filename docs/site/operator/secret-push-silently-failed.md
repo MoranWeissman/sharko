@@ -92,7 +92,7 @@ For a specific cluster registration where you suspect this failure:
 SHARKO_NS=<sharko-ns>
 REQUEST_ID=req-<id-from-audit-log>
 
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=10000 \
   | jq -c "select(.request_id == \"$REQUEST_ID\")" \
   | grep -E "failed to create secret|continuing"
 ```
@@ -117,7 +117,7 @@ If Sharko's log retention covers the full window, count failed pushes
 per cluster registration:
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=24h \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=24h \
   | jq -c 'select(.msg | test("failed to create secret, continuing"))' \
   | jq -c '{request_id, addon, error}' \
   | sort | uniq -c | sort -rn

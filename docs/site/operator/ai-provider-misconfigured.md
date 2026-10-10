@@ -87,7 +87,7 @@ What an operator sees when this fires:
   Grep:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=5000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
     | jq -c 'select(.msg | test("ai annotate.*LLM call failed"; "i"))'
   ```
 
@@ -189,7 +189,7 @@ the Sharko pod:
 **OpenAI**:
 
 ```sh
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 OPENAI_KEY=$(kubectl -n <sharko-ns> exec "$SHARKO_POD" -- env | grep '^OPENAI_API_KEY=' | cut -d= -f2)
 
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \

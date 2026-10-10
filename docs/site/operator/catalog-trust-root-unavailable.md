@@ -108,7 +108,7 @@ The Sigstore public-good TUF lives at
 
 ```sh
 SHARKO_NS=<sharko-ns>
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 
 kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- \
   wget -q -O /dev/null --no-check-certificate \
@@ -137,7 +137,7 @@ failure is local.
 ### 3. Inspect the startup log for the parse failure
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=10000 \
   | jq -c 'select(.msg | test("trusted_root|catalog signing"; "i"))' \
   | head -10
 ```
@@ -154,7 +154,7 @@ Two log shapes:
 ### 4. Check the startup log for the verifier initialization
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --tail=10000 \
   | jq -c 'select(.msg | test("verifier|signing.*init|signing.*ready"; "i"))' \
   | head -10
 ```
@@ -200,7 +200,7 @@ defaults to Unverified).
    spec:
      podSelector:
        matchLabels:
-         app: sharko
+         app.kubernetes.io/name: sharko
      policyTypes:
        - Egress
      egress:

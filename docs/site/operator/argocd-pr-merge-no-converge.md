@@ -123,7 +123,7 @@ SHARKO_NS=<sharko-ns>
 # Were there reconciler ticks since the PR merge?
 PR_MERGE_TIME="2026-06-01T12:00:00Z"  # from the audit log
 
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=10m \
+kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=10m \
   | jq -c "select(.request_id // \"\" | startswith(\"recon-\"))" \
   | jq -c "select(.time > \"$PR_MERGE_TIME\")" \
   | head -10
@@ -143,7 +143,7 @@ Three outcomes:
   normally** — the reconciler is doing its job. Check what it sees:
 
   ```sh
-  kubectl -n "$SHARKO_NS" logs -l app=sharko --since=10m \
+  kubectl -n "$SHARKO_NS" logs -l app.kubernetes.io/name=sharko --since=10m \
     | jq -c "select(.request_id // \"\" | startswith(\"recon-\"))" \
     | jq -c "select(.cluster == \"${CLUSTER}\")"
   ```

@@ -110,7 +110,7 @@ identifies which line / structure of the YAML is malformed.
 
 ```sh
 # If the pod is CrashLoopBackoff, this is case 1:
-kubectl -n <sharko-ns> get pod -l app=sharko -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount
+kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount
 
 # If the pod is running, fetch the source-status report:
 curl -sS http://sharko/api/v1/catalog/sources \
@@ -180,7 +180,7 @@ does (the catalog escaped CI somehow).
 
 ```sh
 FAILING_URL=<url-from-step-1>
-SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app=sharko -o name | head -1)
+SHARKO_POD=$(kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko -o name | head -1)
 kubectl -n <sharko-ns> exec "$SHARKO_POD" -- \
   wget -q -O - "$FAILING_URL" \
   > /tmp/failing-catalog.yaml
@@ -214,7 +214,7 @@ Common parse failures:
    Verify the pod starts:
 
    ```sh
-   kubectl -n <sharko-ns> get pod -l app=sharko
+   kubectl -n <sharko-ns> get pod -l app.kubernetes.io/name=sharko
    curl -sS http://sharko/api/v1/health
    ```
 

@@ -79,7 +79,7 @@ What an operator sees when this fires:
   Grep:
 
   ```sh
-  kubectl -n <sharko-ns> logs -l app=sharko --tail=5000 \
+  kubectl -n <sharko-ns> logs -l app.kubernetes.io/name=sharko --tail=5000 \
     | jq -c 'select(.msg | test("PR opened but auto-merge failed"; "i"))'
   ```
 
