@@ -51,7 +51,7 @@ You then confirm to actually open the PR, or cancel and adjust your input.
 When registering a cluster, the preview might show:
 
 ```diff
-~ configuration/managed-clusters.yaml
+~ managed-clusters.yaml
 + - name: prod-eu-west
 +   environment: prod
 +   connection:

@@ -150,7 +150,7 @@ If you haven't edited anything yet, the Diff tab shows a friendly "No changes ye
 
 ## Schema-aware editing (when available)
 
-If your addon ships a `values.schema.json`, you can publish it to the GitOps repo as `configuration/addons-global-values/<addon>.schema.json` (next to the values file) and Sharko will surface a hint banner above the editor listing the schema's top-level keys. This helps catch typos in key names without leaving the editor.
+If your addon ships a `values.schema.json`, you can publish it to the GitOps repo as `values/global/<addon>.schema.json` (next to the values file) and Sharko will surface a hint banner above the editor listing the schema's top-level keys. This helps catch typos in key names without leaving the editor.
 
 Full schema-driven autocomplete (Monaco-powered) is on the roadmap — the current editor is a textarea with YAML validation and the schema hint, kept intentionally light to avoid a multi-megabyte editor bundle.
 
