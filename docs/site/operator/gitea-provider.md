@@ -1,19 +1,25 @@
 # Reference — Gitea Provider
 
-Sharko can keep its GitOps repo on a self-hosted [Gitea](https://about.gitea.com/)
-server, alongside GitHub and Azure DevOps. This page covers how to point
-Sharko at one, what it needs, and where the rough edges are today.
+Sharko can keep its addons repository on a [Gitea](https://about.gitea.com/)
+server that you run yourself, as well as on GitHub or Azure DevOps. This page
+covers how to point Sharko at Gitea, what it needs, and what works a little
+differently there.
 
-## Choosing the Gitea provider type
+## Choosing Gitea
 
-Set `git.provider` to `"gitea"` when you create or edit the connection.
-Gitea can run on any hostname you like, so — unlike GitHub or Azure DevOps —
-Sharko cannot guess "this is Gitea" from the URL alone. You have to say so
-explicitly.
+Set the Git provider to `"gitea"` when you create or edit the connection.
+Gitea can run at any address, so Sharko cannot tell from the address alone
+that it is Gitea, the way it can for GitHub or Azure DevOps. You have to say
+so.
 
-**Via the UI:** Settings → Connection → Git → **Provider: Gitea**.
+**In the UI:** Settings → Connection → Git → **Provider: Gitea**.
 
-**Via the API:**
+**In Helm values:** set `connection.git.provider: "gitea"` together with
+`connection.git.repoURL`. See
+[Git-Native Server Configuration](git-native-config.md). You still enter the
+Gitea token in the Settings UI.
+
+**Through the API:**
 
 ```bash
 curl -X POST https://sharko.example.com/api/v1/connections/ \
@@ -35,98 +41,71 @@ curl -X POST https://sharko.example.com/api/v1/connections/ \
   }'
 ```
 
-## Required fields
+## What you need to fill in
 
 | Field | Where | Notes |
 |-------|-------|-------|
-| `provider` | `git.provider` | Must be the literal string `"gitea"` — never inferred from the URL. |
-| Base URL | `git.repo_url` (scheme + host, e.g. `https://gitea.example.org`) | Sharko derives the Gitea API base URL from this — `/api/v1` is appended automatically by the Gitea SDK. **Always send `repo_url`**, even if you also send `owner`/`repo` explicitly (see [Honest limits](#honest-limits) below). |
-| Owner | `git.owner` (or the second-to-last path segment of `repo_url`) | The Gitea organization or user that owns the repo. |
-| Repo | `git.repo` (or the last path segment of `repo_url`) | The repository name. |
-| Token | `git.token` | A Gitea [access token](https://docs.gitea.com/development/api-usage#authentication) with read/write on the repository — the same field name GitHub uses (Azure DevOps calls its field `pat` instead). |
+| Provider | `git.provider` | Must be exactly `"gitea"`. Sharko never guesses it from the address |
+| Repository address | `git.repo_url` | The full address of the repository. Sharko works out the Gitea server address from it (the scheme and host, for example `https://gitea.example.org`). **Always fill this in**, even if you also fill in `owner` and `repo` (see [below](#things-that-work-differently-on-gitea)) |
+| Owner | `git.owner` (or read from `repo_url`) | The Gitea organization or user that owns the repository |
+| Repo | `git.repo` (or read from `repo_url`) | The repository name |
+| Token | `git.token` | A Gitea [access token](https://docs.gitea.com/development/api-usage#authentication) that can read and write the repository. The field has the same name as for GitHub (Azure DevOps calls it `pat`) |
 
-`owner` and `repo` are optional **if** `repo_url` is a full
-`https://host/owner/repo` (or `.git`) URL — Sharko parses them out of the
-path the same way it does for GitHub. Give them explicitly if your Gitea
-instance uses a URL shape that path-parsing can't split cleanly (a repo
-behind a non-standard base path, for example).
+You can leave out `owner` and `repo` when `repo_url` is a full
+`https://host/owner/repo` address (with or without `.git` at the end). Sharko
+reads them from the address, the same way it does for GitHub. Fill them in
+yourself if your Gitea uses an address that cannot be split that way, for
+example a server that sits under an extra path.
 
-For local development, `SHARKO_DEV_MODE=true` plus a `GITEA_TOKEN`
-environment variable lets Sharko pick up a token without storing one in a
-connection record — the same fallback GitHub (`GITHUB_TOKEN`) and Azure
-DevOps (`AZURE_DEVOPS_PAT`) already have.
+When you run Sharko on your own machine, you can set `SHARKO_DEV_MODE=true`
+and a `GITEA_TOKEN` environment variable. Sharko then uses that token
+without you saving one in a connection. GitHub (`GITHUB_TOKEN`) and Azure
+DevOps (`AZURE_DEVOPS_PAT`) work the same way. Do not do this on a shared
+Sharko.
 
-## The local playground uses Gitea by default
+Sharko's local playground uses Gitea. See
+[Local Playground](../developer-guide/playground.md).
 
-`make playground-up` provisions a real, in-cluster Gitea server as the
-default Git backend (`PLAYGROUND_GIT_BACKEND=gitea`; set it to `gitfake` for
-the lighter-weight alternative). It creates a `gitea`-typed Sharko
-connection the same way the example above does — `repo_url` pointing at the
-in-cluster Gitea Service, `provider: "gitea"`, and a token minted from
-Gitea's own API — then drives the whole register/enable/merge loop through
-Gitea's real REST API, including merging the pull requests Sharko opens.
-See [Local Playground](../developer-guide/playground.md) for the full walk
-and the Gitea admin login it prints (`http://localhost:13000`).
+## Who is shown as the author of commits
 
-## Commit attribution on Gitea
+Sharko writes commits on Gitea the same way it does on GitHub. See
+[Git Attribution](../user-guide/attribution.md) for the whole picture.
+Every commit Sharko makes names an author and a committer, and its message
+ends with a `Signed-off-by:` line. When the person who asked for the change
+is not the author, there is also a `Co-authored-by:` line.
 
-Sharko's [tiered attribution model](../user-guide/attribution.md) works the
-same way on Gitea as it does on GitHub: every write sets an explicit commit
-author and committer, and the commit message carries a `Signed-off-by:`
-trailer (plus a `Co-authored-by:` trailer when the acting user isn't the
-commit author).
+- **When you have saved a personal Gitea token** in Settings → My Account,
+  Sharko uses it for changes to settings and configuration. The commit
+  then shows you as the author and committer.
+- **When you have not**, the commit shows Sharko's own account as author and
+  committer: `Sharko Bot <sharko-bot@users.noreply.github.com>`. Every Git
+  provider uses that same address. The `.github.com` part does not mean the
+  commit went to GitHub. For changes to settings and configuration, the API
+  answer also carries `attribution_warning: "no_per_user_pat"`, and you show
+  up only in the `Co-authored-by:` line.
 
-- **With a resolved per-user identity**, the commit's author and committer
-  are that identity — mirroring exactly how the GitHub provider does it.
-  Both providers read the same commit attribution off the request and
-  resolve it the same way, for the same
-  (name, email) pair).
-- **Without one**, both author and committer fall back to Sharko's service
-  identity (`Sharko Bot <sharko-bot@users.noreply.github.com>` — the same
-  constant every provider falls back to; the `.github.com` domain in that
-  address is a historical accident, not a claim about which provider is in
-  use), and the response carries `attribution_warning: "no_per_user_pat"`
-  for Tier 2 (configuration) writes.
+## Things that work differently on Gitea
 
-## Honest limits
-
-- **No per-user Gitea token yet.** Settings → My Account's personal-token
-  field (`internal/auth.Store.SetUserGitHubToken` /
-  `GetUserGitHubToken`) is GitHub-only today — there is no equivalent
-  "personal Gitea token" storage. On a Gitea connection, Tier 2 writes
-  always take the fallback path: the service token authors the commit, and
-  the acting user shows up only as the `Co-authored-by:` trailer. If you
-  have configured a personal *GitHub* token on an account whose active
-  connection is Gitea, don't expect it to be used here — the tiered
-  resolver has no Gitea-specific lookup to reach for instead, so a Gitea
-  connection behaves as if no personal token exists.
-- **`repo_url` is the field that actually matters at write time**, even
-  though connection validation accepts `owner` + `repo` alone. Sharko
-  builds the Gitea API client's base URL exclusively from `repo_url`, so
-  a connection saved with only `owner`/`repo` and no `repo_url` passes
-  validation but fails the
-  first time Sharko actually tries to talk to Gitea, with "repo_url is
-  empty". Always send `repo_url`.
-- **No native batch-commit API.** `BatchCreateFiles` falls back to one
-  commit per file (sequential `CreateOrUpdateFile` calls) — GitHub and
-  Azure DevOps write a whole batch as a single tree/commit. A multi-file
-  Sharko write (registering a cluster, adding an addon to the catalog)
-  still opens exactly one pull request on Gitea, it's just made of more
-  than one commit on the branch before that PR is opened.
-- **Merge readiness is polled, not instant.** Gitea computes whether a pull
-  request is mergeable asynchronously after it's opened; `MergePullRequest`
-  polls (up to 10 attempts, a couple of seconds apart) until Gitea reports
-  the PR mergeable before attempting the merge. Auto-merge on Gitea can
-  take a few seconds longer than on GitHub as a result — this is normal,
-  not a stuck PR.
+- **Always fill in `repo_url`.** Sharko saves a connection that has only
+  `owner` and `repo`. But it builds the Gitea server address from
+  `repo_url` alone, so the first time it tries to write to Gitea, it fails
+  with "repo_url is empty".
+- **One commit per file.** GitHub and Azure DevOps write several files as a
+  single commit. Gitea gets one commit for each file. A change that touches
+  several files, like registering a cluster or adding an addon to the
+  catalog, still opens just one pull request. That pull request just has
+  more than one commit in it.
+- **Merging can take a few seconds.** After a pull request is opened, Gitea
+  takes a moment to work out whether it can be merged. Sharko asks up to 10
+  times, about 2 seconds apart, before it merges. So auto-merge on Gitea
+  can take a few seconds longer than on GitHub. That is normal. The pull
+  request is not stuck.
 
 ## Related pages
 
-- [Git Attribution](../user-guide/attribution.md) — the tiered model in full.
-- [Local Playground](../developer-guide/playground.md) — the Gitea-backed
-  local dev loop.
-- [Git-Native Server Configuration](git-native-config.md) — declaring the
-  connection's non-secret fields in Helm values (currently documents
-  `provider: "github" | "azuredevops"` only — Gitea connections still work,
-  configure them via the Settings UI or the API until that reference page
-  is extended).
+- [Git Attribution](../user-guide/attribution.md) — who is shown as the
+  author of each commit, in full.
+- [Git-Native Server Configuration](git-native-config.md) — setting the
+  connection's non-secret fields, Gitea included, in Helm values.
+- [Local Playground](../developer-guide/playground.md) — the local setup
+  that runs Gitea.

@@ -1,71 +1,113 @@
-# AI configuration (v1.21)
+# AI configuration
 
-Sharko's AI integration powers two features:
+Sharko can use an AI model for two things:
 
-- **Upgrade analysis** (v1.18+): summarises chart upgrades, flags risk, lists action items.
-- **Smart-values AI annotation** (v1.21+): adds inline `# description` comments to generated values files and improves cluster-specific field detection. The annotation pass is an optional second pass on top of the deterministic [smart-values pipeline](../user-guide/smart-values.md) — the heuristic split runs whether or not AI is configured.
+- **Upgrade analysis.** It sums up what changes in a chart upgrade, points
+  out what could go wrong, and lists what you need to do.
+- **Notes on values files.** When Sharko writes a values file for a new
+  addon, the AI can add a short `# description` comment to each field, and
+  help find the fields that differ from cluster to cluster. This runs on
+  top of the normal [smart values](../user-guide/smart-values.md) steps.
+  Those steps run whether or not AI is set up.
 
-Both run against the same configured provider. This guide is for operators wiring the provider, sizing token budgets, and watching cost.
+Both use the same AI provider. This page is for the person setting up the
+provider and keeping an eye on cost. The Helm values for AI are listed in
+[Configuration → AI Provider](configuration.md#ai-provider).
 
-## Configuring a provider
+## Setting up a provider
 
-Settings → AI exposes the supported providers:
+**Settings → AI** lists the providers you can pick:
 
-| Provider | Key field | Notes |
+| Provider | What you enter | Notes |
 | --- | --- | --- |
-| Gemini (Google) | `AIza...` API key | Default; cheapest for Sharko's prompt sizes (Flash tier). |
-| Claude (Anthropic) | `sk-ant-...` API key | Higher quality on annotation, ~3× cost. |
-| OpenAI | `sk-...` API key | GPT-4o or GPT-4o-mini. |
-| Ollama (local) | URL only | No API key. Runs in-cluster or on a sidecar. |
-| Custom OpenAI-compatible | API key + base URL | For self-hosted gateways. |
+| Gemini (Google) | API key (starts with `AIza`) | The first one in the list. The UI suggests `gemini-2.5-flash` |
+| Claude (Anthropic) | API key (starts with `sk-ant-`) | The UI suggests `claude-sonnet-4-20250514` |
+| OpenAI | API key (starts with `sk-`) | The UI suggests `gpt-4o` |
+| Ollama (local) | Address only | No API key. Runs in the cluster or next to Sharko. The UI suggests `llama3.2` |
+| Custom OpenAI-compatible | API key and base address | For a gateway you run yourself |
 
-The configuration is persisted as an encrypted Kubernetes Secret named `sharko-ai-config` in the namespace where Sharko runs. The secret is encrypted with the same key Sharko uses for connection credentials (the `SHARKO_ENCRYPTION_KEY` env var). Rotating the key requires re-saving the AI config.
+No provider is picked until you pick one. The Helm default for
+`ai.provider` is empty.
 
-## The "Annotate values on generate" toggle
+Sharko saves these settings in a Kubernetes Secret called
+`sharko-ai-config`, in the namespace Sharko runs in. They are encrypted with
+the same key Sharko uses for connection tokens, which is
+`SHARKO_ENCRYPTION_KEY`. Saving AI settings is written to Activity History
+as `ai_config_updated`.
 
-A toggle in the AI section controls whether the annotate pass runs on Add Addon and Refresh from upstream. Default-ON when AI is configured for the first time. Toggling OFF disables annotation globally; per-addon opt-out is a separate finer-grained control.
+Use the **Test** button in Settings → AI to check that Sharko can reach the
+provider with the saved settings. **Test AI** in the form checks the
+settings you are typing before you save them.
 
-When the toggle is OFF, the values file's header carries `# AI annotation: disabled`. Operators can grep for this state across the addons repo if they want to find files that haven't been annotated.
+## The "Annotate values on generate" switch
 
-## Cost considerations
+This switch in Settings → AI decides whether the AI adds notes when you
+add an addon or click **Refresh from upstream**. It is on by default.
+Turning it off stops the notes for every addon. You can also turn them off
+for one addon only (see [below](#turning-the-notes-off)).
 
-Sharko's annotation prompt is bounded but not tiny — typical chart `values.yaml` files run 2-15 KB, and the LLM response is similar. With Gemini Flash:
+The first lines of each values file say which way it was made:
+`# AI annotation: enabled` or `# AI annotation: disabled`. You can search
+your addons repository for these lines to find the files that have no AI
+notes.
 
-- ~1500 tokens input per chart (5 KB upstream values).
-- ~1000 tokens output per chart (annotations + cluster-specific paths).
-- ~$0.0002 per addon-add at current Gemini Flash pricing.
+## Cost
 
-Multiplied across a typical 20-50 addon catalog, the bootstrap cost is ~$0.02. Refresh-from-upstream re-runs the call, so the steady-state cost depends on how often you refresh — typically a few times a year per addon. Most operators see total annotation spend under $1/year.
+Each time the notes run, Sharko sends the chart's own `values.yaml` to the
+AI provider and gets back about the same amount of text. Most chart values
+files are 2 to 15 KB. That is a small request, so the cost per addon is
+very low on every provider. Check your provider's price list for real
+numbers.
 
-If your chart `values.yaml` is significantly larger (50 KB+), Sharko skips the LLM call entirely and falls back to heuristic-only output. The 50 KB cap keeps a single addon-add from blowing through your token budget.
+It runs once when you add an addon, and again each time you click
+**Refresh from upstream**. So the total cost depends on how many addons you
+have and how often you refresh them.
 
-## Latency cap
+If a chart's `values.yaml` is bigger than 50,000 bytes, Sharko does not
+call the AI for it at all. You get the file without AI notes. This stops
+one very large chart from using up your budget.
 
-The annotation pass has a 30-second latency cap. If the LLM doesn't respond within 30s, Sharko aborts and uses heuristic-only output. This bound keeps Add Addon non-blocking on flaky LLM providers.
+## Time limit
 
-For Ollama operators: the latency cap is the same regardless of model size. Heavyweight local models may consistently time out — track the `sharko_ai_annotate_total{outcome="timeout"}` counter and switch to a faster model if the rate exceeds ~10%.
+Sharko waits at most 30 seconds for the AI to answer. If there is no answer
+by then, Sharko stops waiting and writes the file without AI notes. This
+way a slow provider never holds up adding an addon.
 
-## Secret-leak hard block
+If you use Ollama, the 30 seconds is the same whatever model you run. A big
+local model may run out of time again and again. Watch the
+`sharko_ai_annotate_total{outcome="timeout"}` counter, and switch to a
+faster model if more than about 1 in 10 calls time out.
 
-A regex pre-scan runs **before** any values bytes leave Sharko. The scanner looks for AWS keys, GitHub PATs, JWTs, Google API keys, Slack tokens, PEM private keys, and generic `apiKey: <16+ chars>` / `password: <16+ chars>` / `token: <16+ chars>` assignments.
+## Secrets are never sent to the AI
 
-On any match, the LLM call is **hard-blocked**. There is no "send anyway" override. The annotation pass falls through to heuristic-only output and the operator sees a redacted match summary in the audit log:
+Before any part of a values file leaves Sharko, Sharko scans it for
+anything that looks like a secret. It looks for AWS keys, GitHub tokens,
+JWTs, Google API keys, Slack tokens, PEM private keys, and lines like
+`apiKey: <16 or more characters>`, `password: <16 or more characters>` or
+`token: <16 or more characters>`.
 
-```
-audit_log: {"event": "ai_annotate_blocked", "addon": "demo-chart", "detail": "chart=demo version=1.0 matches=3"}
-```
+If it finds anything, the AI call is **refused**. There is no way to send
+it anyway. You get the file without AI notes, and Activity History gets two
+entries:
 
-The actual secret values never appear in audit, logs, or HTTP responses — fields are masked with `***`.
+- `ai_annotate_blocked`, with a detail like `chart=demo version=1.0 matches=3`
+- `secret_leak_blocked`, so you can search for every blocked leak in one
+  place
 
-The locked design choice is that any chart shipping real secrets in `values.yaml` should be fixed at the chart level (move the secret to a SealedSecret / ExternalSecret reference). Sharko's job is to refuse to make the leak worse.
+The secret values themselves never show up in Activity History, in logs or
+in API answers. They are replaced with `***`.
+
+If a chart really ships secret values in its `values.yaml`, the fix is in
+the chart: move the secret to a SealedSecret or an ExternalSecret. Sharko
+will not make the leak worse by sending it to an AI provider.
 
 ## Metrics
 
-Prometheus metrics for AI annotation:
+Prometheus metrics for the AI notes:
 
 ```
-# Total calls by outcome. These eight are every value the running
-# server writes.
+# Calls, counted by how they ended. These eight are every value the
+# running server writes.
 sharko_ai_annotate_total{outcome="ok"}
 sharko_ai_annotate_total{outcome="not_configured"}
 sharko_ai_annotate_total{outcome="empty_input"}
@@ -75,28 +117,42 @@ sharko_ai_annotate_total{outcome="timeout"}
 sharko_ai_annotate_total{outcome="llm_error"}
 sharko_ai_annotate_total{outcome="parse_error"}
 
-# Latency histogram, partitioned by outcome.
+# How long calls take, split by how they ended.
 sharko_ai_annotate_latency_seconds_bucket{outcome="ok"}
 sharko_ai_annotate_latency_seconds_count{outcome="ok"}
 sharko_ai_annotate_latency_seconds_sum{outcome="ok"}
 ```
 
-The metric's own help text also names `opted_out` and `disabled`. Nothing in Sharko ever writes either one, so do not write an alert that expects them. If you see them in the help text and not in your data, that is the help text being out of date, not your scrape being broken.
+The metric's own help text also names `opted_out` and `disabled`. Nothing in
+Sharko ever writes either one, so do not write an alert that expects them.
+If you see them in the help text and not in your data, the help text is out
+of date. Your scrape is fine.
 
-### Suggested alerts
+### Alerts worth having
 
-- **High `secret_blocked` rate** (>5/hour): a chart in your catalog is shipping secret-like values. Inspect recent Add Addon attempts and clean the chart.
-- **High `timeout` rate** (>10% of calls): your LLM provider is degraded. Switch providers or disable annotation temporarily.
-- **`llm_error` spike**: usually an API key issue (rotated, quota exceeded). Test from Settings → AI → Test.
+- **Many `secret_blocked`** (more than 5 an hour): a chart in your catalog
+  ships values that look like secrets. Look at recent addon adds and fix
+  the chart.
+- **Many `timeout`** (more than 1 in 10 calls): your AI provider is slow or
+  having trouble. Switch providers, or turn the notes off for now.
+- **A jump in `llm_error`**: usually a problem with the API key, for
+  example it was changed or you ran out of quota. Press **Test** in
+  Settings → AI.
 
-## Disabling annotation entirely
+## Turning the notes off
 
-If you want AI annotation off globally without removing the AI config (the upgrade analysis still works), flip the **Annotate values on generate** toggle in Settings → AI. The audit log records `ai_config_updated` with the new state.
+To turn the AI notes off for every addon but keep the AI set up (upgrade
+analysis still works), turn off **Annotate values on generate** in
+Settings → AI. Activity History records `ai_config_updated`.
 
-To disable annotation for a single addon, use the per-addon opt-out toggle on the addon's Catalog tab — that's persisted as a `# sharko: ai-annotate=off` directive in the values file header and survives chart upgrades.
+To turn the notes off for one addon, use the switch for it on the addon's
+Catalog tab. Sharko writes a `# sharko: ai-annotate=off` line at the top of
+that addon's values file. It stays there when the chart is upgraded.
 
-## What's NOT cached
+## Sharko keeps no copy of AI answers
 
-Sharko does not cache LLM responses in a Kubernetes ConfigMap, BoltDB, or any other Sharko-side store. The annotated values file in your Git repo IS the cache — once an addon is generated, the file lives in `values/global/<addon>.yaml` (on a repo in the older v3 layout, under `configuration/`) and subsequent reads serve from Git. A fresh LLM call only happens when the chart version changes (catalog pin moves) and the user clicks Refresh from upstream.
-
-This is a deliberate design choice. The Git repo is the source of truth; Sharko is stateless w.r.t. annotation results.
+Sharko does not keep AI answers anywhere of its own. The values file in your
+Git repository is the only copy. Once an addon is added, its file lives at
+`values/global/<addon>.yaml` (in a repository with the older v3 layout, it
+is under `configuration/`), and Sharko reads it from Git after that. The AI
+is only called again when you click **Refresh from upstream**.
