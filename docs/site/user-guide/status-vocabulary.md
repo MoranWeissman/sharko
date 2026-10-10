@@ -1,12 +1,6 @@
 # Status Vocabulary
 
-This page is the contract for every status name and color in the Sharko UI.
-One name per state, one state per name, one color per severity. Future UI
-work follows this table — if a screen needs a new state, add it here first.
-
-The code-side source of truth for the cluster-connection states is
-`ui/src/lib/clusterStatus.ts`; the test ladder and addon states live in
-`ui/src/components/StatusBadge.tsx`.
+This page lists every status name and color you'll see in Sharko, and what each one means.
 
 ## Color law
 

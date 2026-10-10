@@ -1,5 +1,22 @@
 # Managing Clusters
 
+This page shows you how to register clusters with Sharko, enable addons on them, and test their connections.
+
+## What you'll do
+
+- Register new clusters
+- Enable and disable addons on clusters
+- Test cluster connectivity
+- View cluster health and status
+
+## What you need
+
+- Admin or Operator role in Sharko
+- Cluster credentials (kubeconfig or IAM role for EKS)
+- The cluster must be reachable from where Sharko runs
+
+---
+
 Clusters are the units of deployment in Sharko. Each registered cluster gets its own values directory in the addons repo, and ArgoCD manages addon deployments for it via the ApplicationSet.
 
 ![Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.](../assets/screenshots/cluster-detail.png){ loading=lazy }

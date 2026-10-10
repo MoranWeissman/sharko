@@ -1,5 +1,21 @@
 # Managing Addons
 
+This page shows you how to add addons to your catalog, enable them on clusters, and configure their values.
+
+## What you'll do
+
+- Add addons to your catalog
+- Enable addons on specific clusters
+- Configure Helm values (global and per-cluster)
+
+## What you need
+
+- Admin or Operator role in Sharko
+- The Helm chart's repository URL and version
+- Values you want to customize (optional)
+
+---
+
 The addon catalog is the source of truth for which Helm charts Sharko manages across your fleet. Adding an addon to the catalog makes it available to assign to clusters. To take an addon away, first switch it off on every cluster that has it, then remove it from the catalog.
 
 Adding to the catalog and enabling on a cluster are two separate operations, but enabling now requires catalog membership first — you cannot enable an addon on a cluster until it is already in the catalog. From the Marketplace, both steps can be done as one combined pull request if you want; nothing forces you to split them.

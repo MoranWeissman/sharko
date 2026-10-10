@@ -17,12 +17,12 @@ The rest of this page focuses on **Sharko-managed clusters** — that's where th
 
 ## What is OutOfSync?
 
-For a Sharko-managed cluster, Sharko reads the cluster entry from `configuration/managed-clusters.yaml` in your GitOps repository and compares the addon labels declared there against the addon labels on the live ArgoCD cluster Secret.
+For a Sharko-managed cluster, Sharko reads the cluster entry from `managed-clusters.yaml` in your GitOps repository and compares the addon labels declared there against the addon labels on the live ArgoCD cluster Secret.
 
 - **Synced**: the live addon labels match what Git declares (or the cluster has no addons enabled, so there's nothing to compare).
 - **OutOfSync**: one or more addon label keys were **added**, **removed**, or **changed** outside Git — for example, if someone edited the ArgoCD Secret directly via `kubectl` or the ArgoCD UI.
 
-**What gets compared:** only Sharko's addon label keys (the ones that say which addons are enabled — bare, unqualified keys like `cert-manager: "enabled"` or `datadog-version`). Ownership bookkeeping labels like `app.kubernetes.io/managed-by` are excluded from drift detection — they're Sharko internals, not part of your declared configuration.
+**What gets compared:** only Sharko's addon label keys (the ones under the `addons.sharko.dev/` prefix that say which addons are enabled). Ownership bookkeeping labels like `app.kubernetes.io/managed-by` are excluded from drift detection — they're Sharko internals, not part of your declared configuration.
 
 **What does NOT get compared:** Secret Data (the actual kubeconfig), annotations, or non-addon labels. Drift detection is scoped to addon labels only.
 
@@ -47,9 +47,9 @@ The **Sync** button (or the automatic reconciliation tick, if self-heal is enabl
 
 **What Sync does:**
 
-1. Reads the cluster entry from `configuration/managed-clusters.yaml` (the Git truth).
+1. Reads the cluster entry from `managed-clusters.yaml` (the Git truth).
 2. Computes which addon labels should exist based on that entry.
-3. Fully converges those labels onto the live ArgoCD cluster Secret — **only Sharko's addon label keys (bare, unqualified keys with no `/`) are touched**. This means addon labels that Git declares are added or updated, and addon labels that Git no longer declares are **deleted** from the live Secret (not left behind). Secret Data, annotations, and other labels remain unchanged.
+3. Fully converges those labels onto the live ArgoCD cluster Secret — **only Sharko's addon label keys (those under `addons.sharko.dev/`) are touched**. This means addon labels that Git declares are added or updated, and addon labels that Git no longer declares are **deleted** from the live Secret (not left behind). Secret Data, annotations, and other labels remain unchanged.
 
 **Honest reporting:** After a Sync (manual or automatic), Sharko re-reads the cluster Secret to verify the live state actually converged. It only reports **Synced** (or "drift corrected") if the live addon labels genuinely match what Git declares. If any drift remains after the write — for example, if a parallel process reverted the change, or if the ownership label was lost — Sharko reports **Sync failed** with the residual drift, never a false success.
 
