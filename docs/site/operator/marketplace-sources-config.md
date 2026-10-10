@@ -1,104 +1,80 @@
-# Marketplace Sources Configuration (git-native)
+# The marketplace-sources.yaml file
 
-Starting with **v3.0.0**, Sharko supports declaring third-party Marketplace sources in a Git file instead of (or in addition to) the `SHARKO_CATALOG_URLS` environment variable. This keeps your addon discovery sources in GitOps alongside your catalog and cluster config.
+You can list your extra Marketplace sources in a file in your GitOps
+repository, instead of in the `SHARKO_CATALOG_URLS` setting. Then adding
+or removing a source goes through a pull request like any other change.
 
-## File Location
+This page covers only the file. What a source is, how tokens work, and
+the address checks are all explained in
+[Extra Marketplace sources](catalog-sources.md).
+
+## Where it goes
 
 ```
 configuration/marketplace-sources.yaml
 ```
 
-This file lives in your GitOps repository next to `addons-catalog.yaml` and `managed-clusters.yaml`.
+The path is from the top of your GitOps repository. Sharko reads it from
+the base branch of your Git connection.
 
-## Schema
-
-The file is an enveloped document with the following structure:
+## What it looks like
 
 ```yaml
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: MarketplaceSources
 metadata:
   name: marketplace-sources
 spec:
+  refreshInterval: 1h
   sources:
     - url: https://catalogs.example.com/internal-addons.yaml
-    - url: https://catalogs.partner.com/curated-charts.yaml
+    - url: https://charts.partner.example.com/sharko-catalog.yaml
 ```
 
-- **`apiVersion`** (required): Must be `sharko.io/v1`.
-- **`kind`** (required): Must be `MarketplaceSources`.
-- **`metadata.name`** (required): Must be `marketplace-sources`.
-- **`spec.sources`** (required): A list of source objects. Each source must have a `url` field.
-- **`url`** (required): HTTPS URL pointing to a catalog YAML file that conforms to Sharko's catalog schema (see `catalog/schema.json`).
+| Field | Needed | What it is |
+|---|---|---|
+| `apiVersion` | yes | `sharko.dev/v1`. The older `sharko.io/v1` is still read. |
+| `kind` | yes | `MarketplaceSources` |
+| `metadata.name` | yes | Any name. `marketplace-sources` is the usual one. |
+| `spec.sources` | yes | The list of sources. Each one has a `url`: the `https://` address of a catalog file in Sharko's format. |
+| `spec.refreshInterval` | no | How often Sharko downloads each source again. Default `1h`. Must be between `1m` and `24h`. |
 
-## When to Use the Git File vs the Env Var
+## Never put a token in this file
 
-| Use Case | Recommended Approach |
-|----------|---------------------|
-| **Public or tokenless third-party sources** | Git file (`configuration/marketplace-sources.yaml`) |
-| **Private sources with auth tokens in the URL** | Env var (`SHARKO_CATALOG_URLS`) |
-| **Multiple public sources your team should track** | Git file — reviewable, auditable, versioned with your catalog |
-| **Temporary test source (dev/staging only)** | Env var — no Git commit needed |
+Anything in this file is in your Git history for good, even after you
+delete it. If a source needs a token, use `SHARKO_CATALOG_URLS` with a
+Kubernetes Secret instead. See
+[Sources that need a token](catalog-sources.md#sources-that-need-a-token).
 
-**CRITICAL: Token-Leak Caveat**
+## When Sharko reads it
 
-Marketplace source URLs can encode authentication tokens in the path or query string (e.g., `https://catalogs.example.com/addons.yaml?token=abc123`). If you commit a tokenized URL to the Git file, **you leak the token into your Git history**. Never commit URLs with embedded secrets.
+Sharko reads this file once, when it starts, and only if Git is already
+connected at that moment. So:
 
-For private/tokened sources, use the `SHARKO_CATALOG_URLS` environment variable instead. The env var is read from Sharko's runtime environment (Kubernetes Secret, Helm values, or container env) and is not committed to Git.
+- After you merge a change to the file, restart Sharko:
 
-## How Sharko Reads Sources
+  ```sh
+  kubectl rollout restart deployment/sharko -n sharko
+  ```
 
-At startup and on every refresh interval (default: 1 hour), Sharko:
+- If you connect Git for the first time after Sharko started, Sharko does
+  not read the file until the next restart.
 
-1. Reads `SHARKO_CATALOG_URLS` env var (comma-separated list of HTTPS URLs).
-2. Reads `configuration/marketplace-sources.yaml` from the GitOps repo (if present).
-3. Merges both lists (deduplicating by canonical URL).
-4. Fetches each source URL and loads the catalog entries into the Marketplace browse surface.
+If the file is there, Sharko uses it and ignores `SHARKO_CATALOG_URLS`
+completely. The two lists are never combined.
 
-If the Git file is absent, Sharko continues using only the env var. If both are absent, Sharko uses the embedded curated catalog only (no third-party sources).
+## When the file is wrong
 
-## Validation
+If the file has a mistake, Sharko does not start. That includes a
+missing field, an address that is not `https://`, or an address inside
+your own network. The error names the file and which entry is wrong, by
+its position. It does not print the address.
 
-Sharko validates every URL at startup:
+The private-address check is always on for this file.
+`SHARKO_CATALOG_URLS_ALLOW_PRIVATE` does not change it. If two entries
+are the same address, Sharko uses it once.
 
-- Must be `https://` (not `http://`, `file://`, or any other scheme).
-- Must not resolve to a private/loopback/link-local address (SSRF guard). See [Third-party Catalog Sources](catalog-sources.md#ssrf-guard) for details.
-- Duplicates are collapsed (case-insensitive host, trailing-slash-normalized path).
+## Related pages
 
-If any URL fails validation, Sharko logs an error and skips that source. The server continues running with the valid sources.
-
-## Example
-
-```yaml
-apiVersion: sharko.io/v1
-kind: MarketplaceSources
-metadata:
-  name: marketplace-sources
-spec:
-  sources:
-    # Internal curated catalog (public HTTPS, no auth)
-    - url: https://catalogs.example.com/internal-addons.yaml
-    # Partner-provided charts (public HTTPS, no auth)
-    - url: https://charts.partner.com/sharko-catalog.yaml
-```
-
-To add a new source:
-
-1. Edit `configuration/marketplace-sources.yaml` in your GitOps repo.
-2. Open a pull request.
-3. Review and merge.
-4. Sharko re-reads the file on the next refresh tick (within 1 hour by default) or on restart.
-
-## Backward Compatibility
-
-If you are upgrading from a version without this feature:
-
-- Your existing `SHARKO_CATALOG_URLS` env var continues to work unchanged.
-- The Git file is optional. You can migrate to it incrementally (or never).
-- Both approaches can coexist. Sharko merges the lists at runtime.
-
-## Related Pages
-
-- [Third-party Catalog Sources](catalog-sources.md) — env var reference, SSRF guard, refresh cadence
-- [Marketplace Architecture](marketplace-architecture.md) — the Marketplace / Catalog split and what each word means
-- [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — discovery bot that proposes new addons
+- [Extra Marketplace sources](catalog-sources.md)
+- [Marketplace and Catalog](marketplace-architecture.md)

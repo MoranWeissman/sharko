@@ -1,141 +1,194 @@
-# Third-party Catalog Sources
+# Extra Marketplace sources
 
-> **Reference page, not a runbook.** This page documents the
-> third-party catalog source configuration surface
-> (`SHARKO_CATALOG_URLS`, the git-native `configuration/marketplace-sources.yaml`, the SSRF guard, refresh cadence). If you are
-> diagnosing a fetcher failure, search
-> [`failure-mode-index.md`](failure-mode-index.md) — the failures that
-> surface during catalog source fetch are covered by
-> [`catalog-source-http-fetch-failed.md`](catalog-source-http-fetch-failed.md),
-> [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md),
-> and the SSRF-blocked variant tracked in the index. For the trust-policy
-> half of catalog sources, see
-> [`catalog-trust-policy.md`](catalog-trust-policy.md).
+Sharko comes with a built-in list of addons for the Marketplace. You can
+add more addons to the Marketplace from your own lists, for example a
+list of your company's internal charts, or a list a partner gives you.
+You do not need to change Sharko to do this.
 
-Sharko ships with an embedded curated addon catalog. Starting with **v1.23**
-operators can extend it with one or more HTTPS-served catalog
-YAML files — for internal charts, partner catalogs, or org-specific
-curation — without forking Sharko. Starting with **v3.0.0**, you can declare these sources in a git-native file (`configuration/marketplace-sources.yaml`) instead of (or in addition to) the `SHARKO_CATALOG_URLS` environment variable.
+An extra source is an `https://` address of a catalog file in Sharko's
+own format: the same format as Sharko's built-in list,
+[`catalog/addons.yaml`](https://github.com/MoranWeissman/sharko/blob/main/catalog/addons.yaml).
+A plain Helm chart repository index (`index.yaml`) is not a source.
+Sharko cannot read it.
 
-The embedded catalog is always the baseline. Third-party catalogs are
-additive, and the embedded entry wins on a name collision.
+Adding a source only adds addons to the Marketplace, where people can
+look at them. Nothing from a source runs anywhere until someone adds it
+to your Catalog through a reviewed pull request. See
+[Marketplace and Catalog](marketplace-architecture.md).
 
-## Configuration Options
+## How the extra entries fit with the built-in list
 
-Sharko reads third-party catalog sources from two places (you can use one or both):
+- The built-in list is always there. Extra sources only add to it.
+- If an extra source has an addon with the same name as a built-in one,
+  the built-in one is shown.
+- If two extra sources have an addon with the same name, the one from
+  the source whose address comes first in alphabetical order is shown.
+- If a source cannot be downloaded or read, its entries are left out
+  until it works again. The rest of the Marketplace keeps working.
 
-1. **Environment variable** `SHARKO_CATALOG_URLS` — comma-separated list of HTTPS URLs. Use this for private/tokened sources or temporary test sources.
-2. **Git file** `configuration/marketplace-sources.yaml` — enveloped YAML with `spec.sources[]`. Use this for public/tokenless sources your team should track in GitOps. See [Marketplace Sources Configuration](marketplace-sources-config.md) for the schema and examples.
+## Where to list your sources
 
-At startup and on every refresh interval, Sharko merges both lists (deduplicating by canonical URL) and fetches each source.
+There are two places. Sharko uses only one of them:
 
-### Environment variables
+1. **The Git file** `configuration/marketplace-sources.yaml` in your
+   GitOps repository. Good for sources with no password in the address,
+   because changes go through pull requests. See
+   [The marketplace-sources.yaml file](marketplace-sources-config.md).
+2. **The setting** `SHARKO_CATALOG_URLS`. Good for sources that need a
+   token, and for trying a source out.
 
-| Variable | Required | Default | Notes |
-|----------|----------|---------|-------|
-| `SHARKO_CATALOG_URLS` | No | *(unset)* | Comma-separated list of HTTPS URLs pointing at catalog YAML files. Unset or empty = **no env-var sources** (Git file or embedded-only mode). |
-| `SHARKO_CATALOG_REFRESH_INTERVAL` | No | `1h` | Go duration (e.g. `30m`, `2h`). Bounded to `[1m, 24h]`. Values outside that range fail at startup. Applies to both env-var and git-file sources. |
-| `SHARKO_CATALOG_URLS_ALLOW_PRIVATE` | No | `false` | Set to `true` only on trusted networks (home-lab, dev) to disable the SSRF guard. **See the warning below.** Applies to both env-var and git-file sources. |
+When Sharko starts, it first looks for the Git file. If Git is connected
+at that moment and the file is there, Sharko uses the file and ignores
+`SHARKO_CATALOG_URLS`. If Git is not connected yet, or the file is not
+there, Sharko uses `SHARKO_CATALOG_URLS`. The two lists are never
+combined.
 
-## Example
+Sharko reads the list only when it starts. After you change either one,
+restart Sharko:
 
-```bash
-# Production — public HTTPS catalog served by your org.
-SHARKO_CATALOG_URLS=https://catalogs.example.com/sharko/addons.yaml
-SHARKO_CATALOG_REFRESH_INTERVAL=30m
+```sh
+kubectl rollout restart deployment/sharko -n sharko
 ```
 
-Multiple sources are comma-separated:
+If anything in the list is wrong, for example an address that is not
+`https://`, Sharko does not start. The error says which entry is wrong
+by its position in the list, such as "the 2nd source". It does not print the
+address, because an address can hold a token.
 
-```bash
-SHARKO_CATALOG_URLS=https://catalogs.example.com/internal.yaml,https://catalogs.example.com/partner.yaml
-```
+If neither place lists any source, Sharko logs
+`no third-party catalogs configured, using embedded only` and shows only
+the built-in list. That is not an error.
 
-Via Helm (example fragment for `values.yaml`):
+## The settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `SHARKO_CATALOG_URLS` | not set | A comma-separated list of `https://` addresses of catalog files. |
+| `SHARKO_CATALOG_REFRESH_INTERVAL` | `1h` | How often Sharko downloads each source again, for example `30m` or `2h`. Must be between `1m` and `24h`, or Sharko does not start. |
+| `SHARKO_CATALOG_URLS_ALLOW_PRIVATE` | `false` | Set to `true` to turn off the private-address check below. Only on a network you fully trust. |
+
+These settings are used only when the sources come from
+`SHARKO_CATALOG_URLS`. When Sharko uses the Git file, the refresh time
+comes from the file, and the private-address check is always on.
+
+Set them with `extraEnv` in your Helm values:
 
 ```yaml
-env:
+extraEnv:
   - name: SHARKO_CATALOG_URLS
-    value: https://catalogs.example.com/sharko/addons.yaml
+    value: "https://catalogs.example.com/internal.yaml,https://catalogs.example.com/partner.yaml"
   - name: SHARKO_CATALOG_REFRESH_INTERVAL
-    value: 1h
+    value: "30m"
 ```
 
-## HTTPS-only rule
+## Sources that need a token
 
-Sharko refuses to load anything that is not `https://`:
+Some catalog hosts need a token to download the file. With Sharko, the
+token has to be part of the address path, for example:
 
-- `http://…` → rejected at startup.
-- `file:///…` → rejected at startup.
-- Any other scheme → rejected at startup.
+```
+https://catalogs.example.com/t/<your-token>/addons.yaml
+```
 
-The rationale is straightforward — Sharko pulls the catalog on behalf of
-every user in the cluster, and a plaintext catalog channel would let an
-on-path attacker swap chart repositories or images. If you need to serve
-a catalog internally, terminate TLS in front of the catalog file (internal
-load balancer, ingress, object-store pre-signed URL, etc.) and point
-`SHARKO_CATALOG_URLS` at the HTTPS endpoint.
+Sharko throws away three parts of every address before it uses it: a
+user name and password written before the host (`https://user:pass@host`),
+anything after a `?`, and anything after a `#`. So a token in any of
+those places is lost, and the download is made without it.
 
-## SSRF guard
+Keep a tokened address out of Git. Put it in a Kubernetes Secret and pass
+it in with `extraEnv`:
 
-At startup Sharko validates every configured URL against a blocklist of
-host ranges that a third-party catalog URL has no legitimate reason to
-point at:
+```sh
+kubectl create secret generic sharko-catalog-urls -n sharko \
+  --from-literal=urls='https://catalogs.example.com/t/<your-token>/addons.yaml'
+```
 
-- Loopback: `127.0.0.0/8`, `::1`
-- RFC1918 private: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-- IPv6 unique-local: `fc00::/7`
-- Link-local: `169.254.0.0/16`, `fe80::/10`
-- Unspecified: `0.0.0.0`, `::`
+```yaml
+extraEnv:
+  - name: SHARKO_CATALOG_URLS
+    valueFrom:
+      secretKeyRef:
+        name: sharko-catalog-urls
+        key: urls
+```
 
-Literal IPs in the URL are checked directly; hostnames are resolved via
-DNS and every resulting address is checked. If any match, the URL is
-rejected with a startup error. DNS failures are fail-open (the runtime
-fetcher will retry), so catalog hosts that are temporarily unresolvable
-do not block Sharko from starting — but a statically private-IP URL in
-your config will.
+Sharko never writes a source address to its logs, and never sends one
+back from the API. In logs and in `GET /api/v1/marketplace/sources`,
+every extra source shows as the word `redacted`.
 
-The guard folds in a v1.22 code-review concern: without it, a privileged
-catalog puller running inside the cluster could be aimed at the EC2 IMDS
-endpoint (`169.254.169.254`), an internal ArgoCD API, or a sibling
-Sharko instance, and manifest poisoning would become trivial.
+## Only https:// addresses
 
-### Escape hatch (home-lab / dev)
+Sharko refuses any address that does not start with `https://`.
+`http://`, `file://` and every other kind are refused when Sharko starts.
 
-For operators running Sharko against a home-lab or dev cluster where the
-catalog genuinely lives at an RFC1918 address, set:
+Sharko downloads catalogs for everyone who uses it. Over plain `http://`,
+anyone on the network path could change the file on the way, for example
+to point an addon at a different chart. If your catalog file is only on
+an internal server, put HTTPS in front of it (an internal load balancer,
+an ingress, or a storage service with HTTPS addresses) and use that
+address.
 
-```bash
-SHARKO_CATALOG_URLS_ALLOW_PRIVATE=true
+## The private-address check {#ssrf-guard}
+
+When Sharko starts, it checks that no source points at an address inside
+your own network. This stops someone who can change the source list from
+using Sharko to reach machines that should not be reachable from
+outside. (This kind of attack is called SSRF: making a server send
+requests for you.) Sharko refuses addresses in these ranges:
+
+- the machine itself: `localhost`, `127.0.0.0/8`, `::1`;
+- private networks: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+  `fc00::/7`;
+- link-local addresses: `169.254.0.0/16`, `fe80::/10`. This includes
+  `169.254.169.254`, the address where cloud machines get their own
+  passwords and keys (on AWS it is called IMDS);
+- empty addresses: `0.0.0.0`, `::`.
+
+If the address uses a host name, Sharko looks up the name and checks
+every address it gets back. If the lookup fails, Sharko still starts and
+tries the download later. An address that is clearly private always
+stops startup.
+
+### Turning the check off on a home lab
+
+If your catalog really is on a private address, for example in a home
+lab, set:
+
+```yaml
+extraEnv:
+  - name: SHARKO_CATALOG_URLS_ALLOW_PRIVATE
+    value: "true"
 ```
 
 !!! danger
-    Only enable this on a network you fully trust. Disabling the SSRF
-    guard lets any catalog URL point at cluster-local or cloud-metadata
-    endpoints, which opens a manifest-injection path if the catalog URL
-    is ever supplied by an untrusted party. Sharko logs a WARN on every
-    startup when this flag is enabled.
+    Only do this on a network you fully trust. With the check off, a
+    source can point at anything inside your cluster or at your cloud
+    machine's password address. Sharko logs a warning every time it
+    starts with this on. It works only for `SHARKO_CATALOG_URLS`. The Git
+    file always keeps the check on.
 
-## Refresh cadence
+## Checking your sources
 
-- Minimum: `1m` — sub-minute refresh would hammer the upstream on every
-  tick without changing anything meaningful.
-- Maximum: `24h` — staler than a day defeats the point of having a
-  refresh loop at all; fall back to a redeploy for catalogs that update
-  on a weekly cadence.
-- Default: `1h`.
+To see each source and whether it works, call
+`GET /api/v1/marketplace/sources` (you need to be logged in). The first
+row is always the built-in list. Each extra source has one row with:
 
-Values outside the `[1m, 24h]` range cause a startup error so the
-operator notices the misconfiguration immediately.
+- `url`: always `redacted`;
+- `status`: `ok`, `stale` or `failed`;
+- `last_fetched`: when it last downloaded without errors;
+- `entry_count`: how many addons it adds;
+- `verified`: whether its signature was checked and trusted. See
+  [Marketplace signature settings](catalog-trust-settings.md).
 
-## What happens when both env and Git file are absent?
+To download every source again now, an admin can call
+`POST /api/v1/marketplace/sources/refresh`. This does not re-read the
+list of sources. For that, restart Sharko.
 
-Sharko logs `no third-party catalogs configured, using embedded only`
-and skips the fetch loop entirely. The embedded curated catalog is the
-sole source of truth. No startup error.
+## Related pages
 
-## Related Pages
-
-- [Marketplace Sources Configuration](marketplace-sources-config.md) — git-native `configuration/marketplace-sources.yaml` schema and usage
-- [Marketplace Architecture](marketplace-architecture.md) — the Marketplace / Catalog split and what each word means
-- [Catalog Scan Runbook](../developer-guide/catalog-scan-runbook.md) — discovery bot that proposes new addons from configured sources
+- [The marketplace-sources.yaml file](marketplace-sources-config.md)
+- [Marketplace and Catalog](marketplace-architecture.md)
+- [Marketplace signature settings](catalog-trust-settings.md)
+- [Fixing Unverified Marketplace entries](catalog-trust-policy.md)
+- [A catalog source cannot be downloaded](catalog-source-http-fetch-failed.md)
+- [A catalog source fails its format check](catalog-source-schema-validation-failed.md)
