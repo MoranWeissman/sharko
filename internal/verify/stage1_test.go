@@ -29,7 +29,8 @@ func TestStage1_Success(t *testing.T) {
 }
 
 func TestStage1_NamespaceCreated(t *testing.T) {
-	// No pre-existing namespace — Stage1 should create it.
+	// No pre-existing namespace — Stage1 creates it for the test, and then
+	// removes it again, because this run made it.
 	client := fake.NewSimpleClientset()
 
 	result := Stage1(context.Background(), client, "sharko-test")
@@ -37,10 +38,18 @@ func TestStage1_NamespaceCreated(t *testing.T) {
 		t.Fatalf("expected success after namespace creation, got error: %s (%s)", result.ErrorMessage, result.ErrorCode)
 	}
 
-	// Verify the namespace was actually created.
+	writes := writeActions(client)
+	want := []string{
+		"create namespaces sharko-test",
+		"create secrets sharko-test",
+		"delete secrets sharko-test",
+		"delete namespaces sharko-test",
+	}
+	assertWrites(t, writes, want)
+
 	_, err := client.CoreV1().Namespaces().Get(context.Background(), "sharko-test", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("namespace should exist after Stage1: %v", err)
+	if err == nil {
+		t.Fatal("the namespace Stage1 created for this test is still there; it must be removed afterwards")
 	}
 }
 

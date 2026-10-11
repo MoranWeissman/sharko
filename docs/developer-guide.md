@@ -490,7 +490,8 @@ string the AI tools render — see `internal/ai/tools.go`'s `safeOperationMessag
 
 Connectivity verification for remote Kubernetes clusters. Runs a two-stage test:
 
-- **Stage 1** — Full secret CRUD cycle: ensure namespace exists, create a test secret, read it back, delete it. Exercises the permissions Sharko needs for addon secret delivery.
+- **Stage 1** — Full secret CRUD cycle: ensure namespace exists, create a test secret, read it back, delete it. Exercises the permissions Sharko needs for addon secret delivery. Afterwards it removes the test Secret if it is still there, and the namespace only if this run created it. A cleanup failure is a warning on the result, never a failure.
+- **Stage 1 preview** (`verify.Stage1Preview`) — used by register and adopt when `dry_run` is true. It reads the server version and gets the namespace, and makes no write. The write steps come back `skipped`, and `notes` says "Write access was not checked because this is a preview."
 - **Stage 2** — ArgoCD round-trip verification (stub, not yet implemented).
 
 Each stage returns a `Result` struct:
@@ -504,6 +505,9 @@ type Result struct {
     DurationMs    int64                  `json:"duration_ms"`
     ServerVersion string                 `json:"server_version,omitempty"`
     Details       map[string]interface{} `json:"details,omitempty"`
+    Steps         []Step                 `json:"steps,omitempty"`
+    Notes         []string               `json:"notes,omitempty"`    // what was not checked (a preview)
+    Warnings      []string               `json:"warnings,omitempty"` // test objects Sharko could not remove
 }
 ```
 

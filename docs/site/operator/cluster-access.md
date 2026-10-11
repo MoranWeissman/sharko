@@ -67,9 +67,16 @@ Sharko only does the things in this list.
   Sharko makes sure the test namespace exists (it creates it if it is
   missing), then writes a small test Secret there, reads it back and
   deletes it. The test namespace is `sharko-test` unless you set
-  `SHARKO_TEST_NAMESPACE`. Sharko leaves the namespace in place
-  afterwards. Registering and adopting run this check even when you only
-  ask for a preview.
+  `SHARKO_TEST_NAMESPACE`. If Sharko created the namespace in this check,
+  it deletes it again at the end. A namespace that was already there is
+  never deleted. If Sharko cannot remove what it made, the check still
+  passes, but the result says what was left behind so you can delete it
+  by hand.
+- **A preview only reads.** When you preview registering or adopting a
+  cluster, Sharko reads the Kubernetes version and checks whether the test
+  namespace is there. It writes nothing on the cluster. So a preview does
+  not check write access, and it says so: "Write access was not checked
+  because this is a preview."
 - **Diagnose** (`POST /api/v1/clusters/{name}/diagnose`) lists namespaces,
   reads the test namespace, and writes, reads and deletes a test Secret
   named `sharko-diagnose-test` there.
@@ -106,7 +113,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get", "list", "create"]   # the connection check and Diagnose
+    verbs: ["get", "list", "create", "delete"]   # the connection check and Diagnose
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["list"]                    # the leftover-secret scan and the secrets list

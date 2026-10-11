@@ -509,7 +509,7 @@ These endpoints are new in v1.0.0. Each is handled by the orchestrator (`interna
 
 ### POST /api/v1/clusters — Register a Cluster
 
-Register a new cluster: fetch credentials from the secrets provider, verify connectivity, register in ArgoCD, create values file, commit to Git as a PR.
+Register a new cluster: fetch credentials from the secrets provider, verify connectivity, register in ArgoCD, create values file, commit to Git as a PR. With `dry_run: true`, the connection check only reads from the cluster (its version and the test namespace) and writes nothing there; `verification.notes` then says "Write access was not checked because this is a preview."
 
 **Request:**
 ```json
@@ -705,7 +705,7 @@ List clusters available in the configured secrets provider that have not yet bee
 
 ### POST /api/v1/clusters/adopt — Adopt Existing Clusters
 
-Adopt clusters that already have ArgoCD cluster secrets but are not managed by Sharko. Runs Stage 1 connectivity verification, creates values files, adds to `managed-clusters.yaml`, and creates PRs.
+Adopt clusters that already have ArgoCD cluster secrets but are not managed by Sharko. Runs Stage 1 connectivity verification, creates values files, adds to `managed-clusters.yaml`, and creates PRs. With `dry_run: true`, the connection check only reads from the cluster and writes nothing there, the same as for register.
 
 **Request:**
 ```json

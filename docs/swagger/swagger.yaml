@@ -2388,6 +2388,14 @@ definitions:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.ErrorCode'
       error_message:
         type: string
+      notes:
+        description: |-
+          Notes says, in plain words, what this check did NOT cover. A preview
+          (dry run) of register or adopt only reads from the cluster, so it
+          carries "Write access was not checked because this is a preview."
+        items:
+          type: string
+        type: array
       server_version:
         type: string
       stage:
@@ -2398,6 +2406,16 @@ definitions:
         type: array
       success:
         type: boolean
+      warnings:
+        description: |-
+          Warnings lists things Sharko could not clean up after the check, such
+          as a test Secret or a test namespace it made and then could not
+          remove. A warning never turns a passing check into a failing one.
+          Every sentence is Sharko's own wording plus Sharko's own object names;
+          none of it is text the cluster sent back.
+        items:
+          type: string
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_verify.Step:
     properties:
@@ -4585,6 +4603,13 @@ definitions:
       success:
         type: boolean
       suggestions:
+        items:
+          type: string
+        type: array
+      warnings:
+        description: |-
+          Warnings lists test objects Sharko made for this check and could not
+          remove afterwards. A warning never turns a passing test into a failure.
         items:
           type: string
         type: array

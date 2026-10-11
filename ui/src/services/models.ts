@@ -1947,6 +1947,11 @@ export interface VerifyResult {
   duration_ms: number
   server_version?: string
   steps?: VerifyStep[]
+  /** What this check did not cover. A preview only reads from the cluster,
+   * so it says write access was not checked. */
+  notes?: string[]
+  /** Test objects Sharko could not remove after the check. Never a failure. */
+  warnings?: string[]
 }
 
 export interface APIToken {
@@ -2018,7 +2023,9 @@ export interface AdoptResult {
   // cluster's ArgoCD cluster secret turning out to be rendered by another
   // ArgoCD Application (V2-cleanup-89.5).
   warnings?: string[]
-  // Preview returned when dry_run is true
+  // Preview returned when dry_run is true. The server sends it as
+  // `dry_run`; `preview` is kept only for older mocks.
+  dry_run?: DryRunResult
   preview?: DryRunResult
 }
 

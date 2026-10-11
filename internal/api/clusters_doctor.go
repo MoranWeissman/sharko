@@ -677,10 +677,17 @@ func (s *Server) doctorCheckClusterAccess(ctx context.Context, clusterName strin
 
 	result := verify.Stage1(cctx, client, verify.TestNamespace())
 	if result.Success {
+		detail := fmt.Sprintf("Sharko created, read back, and deleted a test Secret on cluster %q — the connection works end to end.", clusterName)
+		// A cleanup that did not work keeps the check passing (the
+		// connection DID work end to end), but the person still needs to
+		// hear that something was left behind.
+		for _, w := range result.Warnings {
+			detail += " " + w
+		}
 		return doctorCheck{
 			ID:     doctorCheckClusterAccess,
 			Status: doctorStatusPass,
-			Detail: fmt.Sprintf("Sharko created, read back, and deleted a test Secret on cluster %q — the connection works end to end.", clusterName),
+			Detail: detail,
 		}
 	}
 

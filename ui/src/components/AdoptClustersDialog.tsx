@@ -218,9 +218,9 @@ export function AdoptClustersDialog({
         clusters: names,
         dry_run: true,
       })
-      // The backend returns the preview in the first result's preview field
-      // (adopt.go returns a single aggregated DryRunResult for all clusters)
-      const preview = response.results[0]?.preview
+      // The server puts the preview on the first result's `dry_run` field.
+      const first = response.results[0]
+      const preview = first?.dry_run ?? first?.preview
       if (!preview) {
         throw new Error('No preview data returned')
       }
