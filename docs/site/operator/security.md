@@ -303,6 +303,10 @@ instead.
 
 ## RBAC
 
+This section is about the cluster Sharko is installed in. For the clusters
+your addons run on, see
+[What access Sharko and ArgoCD need on your clusters](cluster-access.md).
+
 Sharko's default install gives it **no cluster-wide access to Secrets**.
 Every Secret the Sharko ServiceAccount reads on the main cluster sits in one
 of the few namespaces it really needs, never across the whole cluster.
@@ -419,6 +423,9 @@ The rest of the security topics are on their own pages:
   Sharko does with a secret value, what is not protected, advice for
   handling secrets (including pasted cluster credentials), who is named on
   Git commits, and the AI secret guard.
+- [What access Sharko and ArgoCD need on your clusters](cluster-access.md):
+  what Sharko does on the clusters your addons run on, and why it holds
+  the same access as ArgoCD there.
 - [A hardened install, step by step](security-hardened-example.md): the
   pod security settings, and one full example with Helm values, the AWS
   role and a network policy.

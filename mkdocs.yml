@@ -84,6 +84,7 @@ nav:
     - 'Reference — Sharko Events': operator/sharko-events.md
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md
+    - 'What Access Sharko and ArgoCD Need on Your Clusters': operator/cluster-access.md
     - 'Reference — Security Network and Addresses': operator/security-network-and-addresses.md
     - 'Reference — Security Threat Model': operator/security-threat-model.md
     - 'Reference — Security Hardened Example': operator/security-hardened-example.md

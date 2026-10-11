@@ -4,7 +4,7 @@ Sharko needs ArgoCD to deploy addons to your clusters. ArgoCD is the tool that a
 
 ## ArgoCD version
 
-Sharko is tested with **ArgoCD v3.3 to v3.5**. Install one of those versions. Nearby versions are expected to work.
+Sharko is tested with **ArgoCD v3.3 to v3.5**. Install one of those versions. The commands below install ArgoCD **v3.5.3**, the v3.5 release Sharko was last tested with. Newer ArgoCD versions are not tested with Sharko yet.
 
 You can check which version Sharko found after connecting to it. The **System** page in the Sharko UI shows the ArgoCD version and the tested range.
 
@@ -12,25 +12,30 @@ You can check which version Sharko found after connecting to it. The **System** 
 
 This is the recommended way. The Helm chart lets you change settings by editing your values file.
 
-Add the ArgoCD Helm repository and install the chart:
+Add the ArgoCD Helm repository and install the chart. Chart version `10.9.6` installs ArgoCD v3.5.3:
 
 ```bash
 helm repo add argo https://argoproj.github.io/argo-helm
 helm install argocd argo/argo-cd \
+  --version 10.9.6 \
   --namespace argocd --create-namespace
 ```
+
+The chart has its own version number, separate from the ArgoCD version. To see which chart version installs which ArgoCD version, run `helm search repo argo/argo-cd --versions` and read the **APP VERSION** column.
 
 For production use, set up a values file with your Ingress and resource settings. See the [argo-cd chart documentation](https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd) for all the values you can change.
 
 ## Install ArgoCD with a manifest
 
-If you prefer to install from a manifest instead of Helm, use the official install manifest:
+If you prefer to install from a manifest instead of Helm, use the official install manifest for v3.5.3:
 
 ```bash
 kubectl create namespace argocd
 kubectl apply -n argocd --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/install.yaml
 ```
+
+Do not use the `stable` address in place of `v3.5.3`. It always points at the newest ArgoCD release, which may be newer than what Sharko is tested with.
 
 **Why `--server-side --force-conflicts`?** Some ArgoCD custom resource definitions (CRDs) are bigger than the 262 KB limit that client-side `kubectl apply` enforces. Server-side apply does not have that limit. The `--force-conflicts` flag lets the apply operation take ownership of fields that might have been managed by a previous install. This is safe for a fresh install and required for upgrades.
 
@@ -54,6 +59,10 @@ You should see the ArgoCD server, repo-server, application controller, and other
 ## Do you need to add clusters to ArgoCD yourself?
 
 No. When you register a cluster with Sharko, Sharko writes the ArgoCD cluster secret for you. ArgoCD sees the secret and starts using the cluster. Clusters that ArgoCD already knows about (added by hand, or by another tool) show up in Sharko as discovered clusters — you can adopt them into Sharko's management in one click.
+
+## What access ArgoCD and Sharko get on your clusters
+
+ArgoCD needs wide access on every cluster it deploys to, and Sharko uses that same access for its own work there. [What access Sharko and ArgoCD need on your clusters](cluster-access.md) explains what each one does with it.
 
 ## What's next
 

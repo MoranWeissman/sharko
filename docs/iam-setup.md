@@ -172,43 +172,12 @@ eksctl create iamidentitymapping \
 
 ### 2.2 Kubernetes RBAC
 
-Create a Role and RoleBinding in the target cluster that grants Sharko the minimum permissions it needs: namespace creation and secret management in the test namespace.
+Do not give this role a small set of rights. Today Sharko has no login of its own for a target cluster, so the access you give here is not only Sharko's:
 
-```yaml
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: sharko-manager
-rules:
-  # Namespace creation for sharko-test
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list", "create"]
-  # Secret CRUD in sharko-test namespace (used for connectivity verification)
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "create", "update", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: sharko-manager-binding
-subjects:
-  - kind: Group
-    name: sharko-managers
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: ClusterRole
-  name: sharko-manager
-  apiGroup: rbac.authorization.k8s.io
-```
+- If ArgoCD's cluster Secret names a role (`awsAuthConfig.roleARN` or `--role-arn`), Sharko assumes that same role for its own calls. Sharko then has ArgoCD's access on the cluster, and the mapping above is not used for that cluster.
+- If the cluster's login is kept in AWS Secrets Manager, Sharko gets a token (with the role named in the secret, on the cluster or in the connection settings, or with `SharkoRole` itself when no role is named anywhere) and writes that token into ArgoCD's cluster Secret. ArgoCD then deploys addons with it. So the rights you give that role are also ArgoCD's rights. They must be enough to deploy your addons, which in practice is close to cluster admin. A small role here makes ArgoCD stop syncing.
 
-Apply to the target cluster:
-
-```bash
-kubectl apply -f sharko-rbac.yaml --context <target-cluster-context>
-```
+[What access Sharko and ArgoCD need on your clusters](site/operator/cluster-access.md) lists what Sharko itself does on a cluster, and shows the smallest access Sharko's own work would need, for planning only.
 
 ### 2.3 Verify Access
 

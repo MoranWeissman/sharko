@@ -167,6 +167,12 @@ how ArgoCD syncs**. Sharko never deploys addons to spoke clusters itself.
       that uses `awsAuthConfig` or `execProviderConfig` (see
       [Cluster Connectivity Model](cluster-connectivity-model.md)).
 
+Sharko's jobs are smaller than ArgoCD's, but its access is not. Because
+Sharko assumes the same spoke roles, it gets the same Kubernetes access on
+each spoke as ArgoCD. [What access Sharko and ArgoCD need on your
+clusters](cluster-access.md) lists everything Sharko does on a spoke, and
+how to protect the Sharko pod.
+
 Give Sharko its role with IRSA in Sharko's Helm values:
 
 ```yaml
