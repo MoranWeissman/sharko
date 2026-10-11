@@ -109,4 +109,29 @@ describe('DryRunPreview', () => {
 
     expect(screen.getByText(/cert-manager, external-dns/)).toBeInTheDocument();
   });
+
+  it('shows that write access was not checked in a preview', () => {
+    const result: DryRunResult = {
+      pr_title: 'Register cluster prod-eu',
+      files_to_write: [],
+      verification: {
+        success: true,
+        stage: 'stage1',
+        duration_ms: 5,
+        notes: ['Write access was not checked because this is a preview.'],
+      },
+    };
+
+    render(<DryRunPreview result={result} />);
+
+    expect(
+      screen.getByText('Write access was not checked because this is a preview.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no note when the preview has no connection check', () => {
+    render(<DryRunPreview result={{ pr_title: 'Update cluster config' }} />);
+
+    expect(screen.queryByText(/Write access was not checked/)).not.toBeInTheDocument();
+  });
 });

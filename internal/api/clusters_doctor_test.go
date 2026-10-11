@@ -586,6 +586,44 @@ func TestDoctorCheckClusterAccess_Pass(t *testing.T) {
 	}
 }
 
+// The doctor's check removes the namespace it made for the test, and keeps
+// one that was already there.
+func TestDoctorCheckClusterAccess_Pass_RemovesOnlyTheNamespaceItMade(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	client := fake.NewSimpleClientset() // no test namespace yet
+	srv.doctorK8sClientFn = func([]byte) (kubernetes.Interface, error) { return client, nil }
+
+	creds := &providers.Kubeconfig{Raw: []byte("unused-fake-seam-bypasses-parsing")}
+	check := srv.doctorCheckClusterAccess(context.Background(), "prod-eu", creds, false)
+	if check.Status != doctorStatusPass {
+		t.Fatalf("Status = %q, want pass (detail=%s)", check.Status, check.Detail)
+	}
+	if _, err := client.CoreV1().Namespaces().Get(context.Background(), "sharko-test", metav1.GetOptions{}); err == nil {
+		t.Fatal("the doctor left behind the test namespace it created")
+	}
+}
+
+// A cleanup that fails keeps the check passing and puts Sharko's own
+// sentence in the detail.
+func TestDoctorCheckClusterAccess_CleanupFailure_PassesWithWarning(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("delete", "namespaces", func(clienttesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("namespaces is Forbidden")
+	})
+	srv.doctorK8sClientFn = func([]byte) (kubernetes.Interface, error) { return client, nil }
+
+	creds := &providers.Kubeconfig{Raw: []byte("unused-fake-seam-bypasses-parsing")}
+	check := srv.doctorCheckClusterAccess(context.Background(), "prod-eu", creds, false)
+	if check.Status != doctorStatusPass {
+		t.Fatalf("Status = %q, want pass: a cleanup failure must not fail the check", check.Status)
+	}
+	want := `Sharko created the namespace "sharko-test" for this test but could not remove it afterwards. You can delete it by hand.`
+	if !strings.HasSuffix(check.Detail, " "+want) {
+		t.Errorf("Detail = %q, want it to end with %q", check.Detail, want)
+	}
+}
+
 // ----- check 5: secret-ownership (V2-cleanup-89.5) -----------------------
 
 func TestDoctorCheckSecretOwnership_NotApplicable_NoManagerConfigured(t *testing.T) {

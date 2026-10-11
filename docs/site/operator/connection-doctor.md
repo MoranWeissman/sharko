@@ -71,7 +71,8 @@ The whole run stops after about 30 seconds. Each check stops after about 10
 seconds, so one slow check can't hold up the others.
 
 Only check 4 changes anything: it creates a test Secret on the cluster,
-reads it back and deletes it. The other checks only read.
+reads it back and deletes it. If the test namespace was not there, it
+creates it and deletes it again at the end. The other checks only read.
 
 ### The doctor is not the same as "Check permissions"
 
@@ -165,6 +166,8 @@ setup.
 
 This does the same test as the **Test connection** button. **Pass** means
 Sharko created a test Secret on the cluster, read it back, and deleted it.
+If Sharko could not remove a test object afterwards, the check still
+passes and its detail says what was left behind.
 That proves the connection works all the way through, not just that the
 credentials exist. If check 1 failed, this check is skipped, because there
 is nothing to test with.

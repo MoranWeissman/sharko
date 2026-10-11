@@ -12434,6 +12434,13 @@
                 "error_message": {
                     "type": "string"
                 },
+                "notes": {
+                    "description": "Notes says, in plain words, what this check did NOT cover. A preview\n(dry run) of register or adopt only reads from the cluster, so it\ncarries \"Write access was not checked because this is a preview.\"",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "server_version": {
                     "type": "string"
                 },
@@ -12448,6 +12455,13 @@
                 },
                 "success": {
                     "type": "boolean"
+                },
+                "warnings": {
+                    "description": "Warnings lists things Sharko could not clean up after the check, such\nas a test Secret or a test namespace it made and then could not\nremove. A warning never turns a passing check into a failing one.\nEvery sentence is Sharko's own wording plus Sharko's own object names;\nnone of it is text the cluster sent back.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -14761,6 +14775,13 @@
                     "type": "boolean"
                 },
                 "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "warnings": {
+                    "description": "Warnings lists test objects Sharko made for this check and could not\nremove afterwards. A warning never turns a passing test into a failure.",
                     "type": "array",
                     "items": {
                         "type": "string"

@@ -298,12 +298,21 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).
 	// Only runs when the remote client factory is available (always in production,
 	// may be nil in legacy tests that don't call SetSecretManagement).
+	//
+	// A preview (dry run) uses the read-only form: it reads the server
+	// version and looks the test namespace up, and writes NOTHING on the
+	// cluster. The real registration runs the full write check, which
+	// cleans up after itself.
 	if o.remoteClientFn != nil && creds != nil && creds.Raw != nil {
 		remoteClient, clientErr := o.remoteClientFn(creds.Raw)
 		if clientErr != nil {
 			return nil, fmt.Errorf("building remote client for verification of cluster %q: %w", req.Name, clientErr)
 		}
-		verifyResult := verify.Stage1(ctx, remoteClient, verify.TestNamespace())
+		stage1 := verify.Stage1
+		if req.DryRun {
+			stage1 = verify.Stage1Preview
+		}
+		verifyResult := stage1(ctx, remoteClient, verify.TestNamespace())
 		result.Verification = &verifyResult
 		if verifyResult.ServerVersion != "" {
 			result.Cluster.ServerVersion = verifyResult.ServerVersion

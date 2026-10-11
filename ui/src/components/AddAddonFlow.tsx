@@ -70,6 +70,7 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
   const files = result.files_to_write ?? result.files ?? []
   const secrets = result.secrets_to_create ?? []
   const effectiveAddons = result.effective_addons ?? []
+  const verifyNotes = result.verification?.notes ?? []
 
   const renderDiffBody = (diff: string) => (
     <div className="ml-4 mt-1 overflow-x-auto rounded border border-[#6aade0] bg-white p-2 dark:border-gray-600 dark:bg-gray-800 min-w-0">
@@ -171,6 +172,11 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
             {secrets.join(', ')}
           </div>
         )}
+        {verifyNotes.map((note) => (
+          <p key={note} className="min-w-0">
+            {note}
+          </p>
+        ))}
       </div>
     </div>
   )

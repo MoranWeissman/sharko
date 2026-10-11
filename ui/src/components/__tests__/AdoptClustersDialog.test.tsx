@@ -520,14 +520,21 @@ describe('AdoptClustersDialog', () => {
         server_version: '1.29.3',
       })
 
-      // Dry-run returns the aggregated preview in the first result.
+      // Dry-run returns the preview on the first result's `dry_run` field,
+      // the same key the Go server sends.
       vi.mocked(api.adoptClusters).mockResolvedValue({
         results: [
           {
             name: 'prod-cluster',
             status: 'success',
-            preview: {
+            dry_run: {
               pr_title: 'Adopt cluster prod-cluster',
+              verification: {
+                success: true,
+                stage: 'stage1',
+                duration_ms: 5,
+                notes: ['Write access was not checked because this is a preview.'],
+              },
               files_to_write: [
                 { path: 'configuration/managed-clusters.yaml', action: 'update' },
                 { path: 'configuration/clusters/prod-cluster.yaml', action: 'create' },
@@ -568,6 +575,9 @@ describe('AdoptClustersDialog', () => {
       )
       expect(
         screen.getByText('configuration/clusters/prod-cluster.yaml'),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByText('Write access was not checked because this is a preview.'),
       ).toBeInTheDocument()
 
       // Preview must NOT have opened the PR — onSuccess is not called and the

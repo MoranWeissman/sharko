@@ -77,7 +77,7 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
 }
 
 type TestResult =
-  | { reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] }
+  | { reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[]; warnings?: string[] }
   | TestClusterUnavailable;
 
 interface TestConnectionModalProps {
@@ -193,6 +193,17 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Test objects Sharko could not remove. The test still passed. */}
+            {testResult.warnings && testResult.warnings.length > 0 && (
+              <div className="rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:ring-amber-800">
+                <ul className="space-y-1 text-sm text-amber-800 dark:text-amber-300">
+                  {testResult.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
               </div>
             )}
 

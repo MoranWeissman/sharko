@@ -21,6 +21,18 @@ type Result struct {
 	Details       map[string]interface{} `json:"details,omitempty"`
 	Steps         []Step                 `json:"steps,omitempty"`
 
+	// Notes says, in plain words, what this check did NOT cover. A preview
+	// (dry run) of register or adopt only reads from the cluster, so it
+	// carries "Write access was not checked because this is a preview."
+	Notes []string `json:"notes,omitempty"`
+
+	// Warnings lists things Sharko could not clean up after the check, such
+	// as a test Secret or a test namespace it made and then could not
+	// remove. A warning never turns a passing check into a failing one.
+	// Every sentence is Sharko's own wording plus Sharko's own object names;
+	// none of it is text the cluster sent back.
+	Warnings []string `json:"warnings,omitempty"`
+
 	// diagnostic is the real cause, kept for the server-side log and for
 	// nothing else.
 	//

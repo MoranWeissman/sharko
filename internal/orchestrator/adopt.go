@@ -162,7 +162,14 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 					result.Results = append(result.Results, cr)
 					continue
 				}
-				verifyResult := verify.Stage1(ctx, remoteClient, verify.TestNamespace())
+				// A preview (dry run) only reads from the cluster; the real
+				// adoption runs the full write check, which cleans up after
+				// itself.
+				stage1 := verify.Stage1
+				if req.DryRun {
+					stage1 = verify.Stage1Preview
+				}
+				verifyResult := stage1(ctx, remoteClient, verify.TestNamespace())
 				cr.Verification = &verifyResult
 				if !verifyResult.Success {
 					// The response carries the catalog sentence for the

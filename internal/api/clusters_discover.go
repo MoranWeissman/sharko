@@ -151,7 +151,10 @@ type testClusterResponse struct {
 	Details       map[string]interface{} `json:"details,omitempty"`
 	Suggestions   []string               `json:"suggestions,omitempty"`
 	Steps         []verify.Step          `json:"steps,omitempty"`
-	Result        verify.Result          `json:"result"`
+	// Warnings lists test objects Sharko made for this check and could not
+	// remove afterwards. A warning never turns a passing test into a failure.
+	Warnings []string      `json:"warnings,omitempty"`
+	Result   verify.Result `json:"result"`
 }
 
 // newTestClusterResponse builds a testClusterResponse from a verify.Result,
@@ -168,6 +171,7 @@ func newTestClusterResponse(name string, result verify.Result) testClusterRespon
 		ServerVersion: result.ServerVersion,
 		Details:       result.Details,
 		Steps:         result.Steps,
+		Warnings:      result.Warnings,
 		Result:        result,
 	}
 }
@@ -371,6 +375,9 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		slog.Info("[cluster-test] running Stage 2 (deep) verification", "name", name)
 		stage2Result := verify.Stage2(r.Context(), nil, name, 0)
 		resp = newTestClusterResponse(name, stage2Result)
+		// Stage 1 already ran and may have left something behind; keep
+		// saying so even though the response now describes Stage 2.
+		resp.Warnings = result.Warnings
 	}
 
 	// Record observation for cluster status tracking.

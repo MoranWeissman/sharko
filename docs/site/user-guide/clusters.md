@@ -49,6 +49,11 @@ Clicking **Preview changes** runs a server-side dry-run (no branch, no commit, n
 
 You then confirm to actually open the PR, or cancel and adjust your input.
 
+When you preview registering or adopting a cluster, Sharko also checks that
+it can reach the cluster, but it only reads. It writes nothing on the
+cluster, so the preview says: "Write access was not checked because this is
+a preview." The real register or adopt does the full check.
+
 ### Example preview
 
 When registering a cluster, the preview might show:
