@@ -106,9 +106,14 @@ different reasons. Nothing on this page changes how addon secrets work.
 
 **You never need connection credentials to register a cluster**, whoever
 manages its connection. Addons reach the cluster the normal way: Git, then
-ArgoCD, then the cluster. That needs no credentials from Sharko. The only
-time Sharko needs *its own* access to a cluster is to put addon secrets on
-it, because then Sharko writes to the cluster's API itself.
+ArgoCD, then the cluster. That needs no credentials from Sharko. Sharko
+only talks to a cluster's API itself for a few jobs: putting addon secrets
+on it, checking the connection (Test connection, the Connection Doctor,
+Diagnose, and the check that runs when you register or adopt a cluster
+with credentials), and looking for leftover addon secrets. For those jobs
+Sharko does not have a login of its own. It uses the same access ArgoCD
+has for that cluster. [What access Sharko and ArgoCD need on your
+clusters](cluster-access.md) lists exactly what Sharko does there.
 
 So Sharko only asks for credentials when it really needs them:
 
@@ -239,5 +244,7 @@ reading ArgoCD's Secrets needs access to the cluster's Kubernetes API.
 - [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) — the AWS
   roles and trust policies.
 - [Connection Doctor](connection-doctor.md) — the six checks.
+- [What access Sharko and ArgoCD need on your clusters](cluster-access.md)
+  — what Sharko does on each cluster, and with whose access.
 - [Managing Cluster Connections Yourself](self-managed-connections.md) —
   when you own the ArgoCD cluster Secret.
