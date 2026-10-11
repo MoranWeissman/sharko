@@ -1,5 +1,5 @@
-// LANDMINE 6 (sprint-wave2.5 plan, .bmad/output/architecture/2026-07-31-
-// catalog-approved-model.md decision 6): the null-entry crash guard used to
+// LANDMINE 6 (sprint-wave2.5 plan, docs/design/2026-07-30-v4-data-file-
+// format.md decision 6): the null-entry crash guard used to
 // live inside charts/sharko-engine/templates/_helpers.tpl's
 // sharko-engine.mergedAddons (the curated+delta merge helper this story
 // deletes along with the chart's baked curated block). It is relocated into

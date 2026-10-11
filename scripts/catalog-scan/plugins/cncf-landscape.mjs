@@ -50,7 +50,6 @@
  * reviewer dedupes (per V123-3.1 plugin contract).
  *
  * @see scripts/catalog-scan/plugins/README.md for the plugin contract.
- * @see .bmad/output/implementation-artifacts/V123-3-2-...md for AC.
  */
 import { parse as yamlParse } from 'yaml';
 
