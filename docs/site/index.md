@@ -12,7 +12,8 @@
     and read the [current limitations](technical-preview.md) before deploying it
     more widely.
 
-<!-- TODO: add a short GIF or video of the UI here once the demo video is published. -->
+![Adding kyverno from the Marketplace: search, select, preview file changes, and open a pull request.](assets/gifs/add-addon.gif){ loading=lazy }
+<figcaption>Adding kyverno from the Marketplace: search, select, preview file changes, and open a pull request.</figcaption>
 
 ## What is Sharko?
 

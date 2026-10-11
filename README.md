@@ -21,6 +21,10 @@
 
 **Sharko manages the addons on your Kubernetes fleet — cert-manager, monitoring, logging, and anything else you run everywhere — and puts an API in front of the whole thing.** Somebody asks for a change: a person clicking in the UI, or a portal, a pipeline, or a Terraform run calling the API. Sharko checks the request against your catalog and the file schema, shows you the exact file changes it would make, and then opens a Git pull request that somebody can review — and that records who asked for it. Nothing reaches a cluster until that pull request is merged, and even then Sharko is not the thing deploying: **ArgoCD does the deployment**, by syncing the merged files from Git.
 
+<p align="center">
+  <img src="docs/site/assets/gifs/add-addon.gif" alt="Adding kyverno from the Marketplace: search, select, preview file changes, and open a pull request" width="960">
+</p>
+
 Full documentation: **https://sharko.readthedocs.io/**
 
 Sharko's deploy logic lives in one place: [`sharko-engine`](charts/sharko-engine), a versioned, signed Helm chart published next to the server image. Your repo pins one version of it; when Sharko ships new deploy logic, you get a small pin-bump PR to review, not a migration. Everything else in your repo is small, readable data files — no template logic to write or maintain. Your repo, Sharko's format: read it any time, write through Sharko.

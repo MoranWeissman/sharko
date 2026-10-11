@@ -24,6 +24,9 @@ Sharko gives you three discovery paths. Pick the one that matches what you alrea
 
 All three paths land in the same place: a PR against your `catalog.yaml`, a generated global values file, and an `addon_added` entry in the in-memory activity history with a `source` detail field that records which path you used. The pull request is the durable record; the activity history is held in memory only and starts empty again after a restart.
 
+![Adding kyverno from the Marketplace: search, select, preview file changes, and open a pull request.](../assets/gifs/add-addon.gif){ loading=lazy }
+<figcaption>Adding kyverno from the Marketplace: search, select, preview file changes, and open a pull request.</figcaption>
+
 ## Browsing the catalog
 
 ![Marketplace Browse tab with OpenSSF tier, curator, and license filters.](../assets/screenshots/marketplace-browse.png){ loading=lazy }

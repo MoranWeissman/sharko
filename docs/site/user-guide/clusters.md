@@ -22,6 +22,9 @@ Clusters are the units of deployment in Sharko. Each registered cluster gets its
 ![Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.](../assets/screenshots/cluster-detail.png){ loading=lazy }
 <figcaption>Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.</figcaption>
 
+![Enabling datadog on cluster dev-us: select the addon, preview file changes, and open a pull request.](../assets/gifs/enable-on-cluster.gif){ loading=lazy }
+<figcaption>Enabling datadog on cluster dev-us: select the addon, preview file changes, and open a pull request.</figcaption>
+
 ## Managed vs Discovered Clusters
 
 Sharko distinguishes between two types of clusters:
