@@ -133,9 +133,6 @@ schema-valid but obviously synthetic so reviewers correct in the bot
 PR. Diff comparison only covers `chart`, `version`, `category`, `repo`
 (see `lib/diff.mjs`), so synthetic fields never churn updates.
 
-Acceptance criteria + design notes live in
-`.bmad/output/implementation-artifacts/V123-3-2-cncf-landscape-scanner-plugin.md`.
-
 ## Real plugin example: `aws-eks-blueprints.mjs`
 
 Shipped in V123-3.3. Walks the GitHub Contents API tree under
@@ -180,9 +177,6 @@ These are schema-valid but obviously synthetic so reviewers correct
 in the bot PR. The diff helper only compares `chart, version,
 category, repo` so synthetic placeholders never trigger spurious
 updates against curated catalog data.
-
-Acceptance criteria + design notes live in
-`.bmad/output/implementation-artifacts/V123-3-3-aws-eks-blueprints-scanner-plugin.md`.
 
 ## Workflow integration
 

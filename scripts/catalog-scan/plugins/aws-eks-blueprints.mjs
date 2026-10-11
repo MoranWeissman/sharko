@@ -75,7 +75,6 @@
  * never trigger spurious updates against existing catalog entries.
  *
  * @see scripts/catalog-scan/plugins/README.md for the plugin contract.
- * @see .bmad/output/implementation-artifacts/V123-3-3-...md for AC.
  */
 
 export const name = 'aws-eks-blueprints';
