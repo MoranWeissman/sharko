@@ -36,14 +36,14 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at **moran.weissman@gmail.com**. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement at **sharko.maintainer@gmail.com**. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
 > **Note:** Until the Sharko project has been accepted into the CNCF
 > Sandbox (or an equivalent neutral foundation home), Code of Conduct
 > reports go directly to the lead maintainer at
-> **moran.weissman@gmail.com**. See [GOVERNANCE.md](GOVERNANCE.md)
+> **sharko.maintainer@gmail.com**. See [GOVERNANCE.md](GOVERNANCE.md)
 > for the governance transition plan.
 
 ## Enforcement Guidelines

@@ -1,6 +1,6 @@
 ---
 title: "Sharko Threat Model — moved"
-author: "Moran Weissman <moran.weissman@gmail.com>"
+author: "Moran Weissman"
 date: "2026-08-08"
 status: "Pointer file. The document that used to live at this path was renamed."
 ---

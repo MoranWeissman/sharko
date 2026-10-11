@@ -8,7 +8,7 @@ issues, and the responsibility to review and merge pull requests.
 
 | Name           | GitHub                                            | Email                       | Role         |
 | -------------- | ------------------------------------------------- | --------------------------- | ------------ |
-| Moran Weissman | [@MoranWeissman](https://github.com/MoranWeissman) | moran.weissman@gmail.com    | Lead / BDFL  |
+| Moran Weissman | [@MoranWeissman](https://github.com/MoranWeissman) | sharko.maintainer@gmail.com | Lead / BDFL  |
 
 ## Emeritus Maintainers
 

@@ -1,6 +1,6 @@
 ---
 title: "Sharko v4 Threat Model"
-author: "Moran Weissman <moran.weissman@gmail.com>"
+author: "Moran Weissman"
 date: "2026-08-08"
 version: "v4.0.0 (pre-release, task #152 Secret Sync security closure)"
 status: "Replaces the v2.0.0 baseline threat model. Written against merged main after task #152 lanes A (refresh reads Git), B (backend boundary), C (destination TLS refusal) and F (least-privilege RBAC). All of these are merged and describe what is actually deployed."
@@ -536,12 +536,7 @@ use of that ArgoCD setting. Nothing in this section touches those.
 ## 12. Reporting a problem
 
 If you find a security problem in Sharko, follow the process in
-[SECURITY.md](../../SECURITY.md) — email
-**moran.weissman@gmail.com** with subject line
-`[Sharko Security] <summary>`, including the affected version and how
-to reproduce it. Do not open a public GitHub issue for a security
-problem. The maintainer is solo, so response times are best-effort,
-not a formal SLA — SECURITY.md states the current targets plainly.
+[SECURITY.md](../../SECURITY.md). Use GitHub's private vulnerability reporting first (https://github.com/MoranWeissman/sharko/security/advisories/new), or email **sharko.maintainer@gmail.com** with subject line `[Sharko Security] <summary>` if you cannot use GitHub. Include the affected version and how to reproduce it. Do not open a public GitHub issue for a security problem. The maintainer is solo, so response times are best-effort, not a formal SLA — SECURITY.md states the current targets plainly.
 
 ---
 
