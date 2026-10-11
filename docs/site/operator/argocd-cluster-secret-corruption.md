@@ -1,491 +1,272 @@
-# ArgoCD Cluster-Secret Corruption
+# A cluster's ArgoCD Secret is broken
 
-**Severity:** P1
+Use this page when one cluster fails its test because something inside its
+ArgoCD cluster Secret is wrong: the server address is empty, the certificate
+data is not valid, or the config is not valid JSON. This page is also the one
+place that shows how to look at a cluster's ArgoCD Secret without printing the
+token or password.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. Three
-> closely related parse-time failures all surface while Sharko builds a
-> kubeconfig from the ArgoCD cluster Secret: an empty server URL,
-> invalid base64 in `tlsClientConfig.caData`, and a kubeconfig that will
-> not parse on the round trip. All three come back as a generic HTTP 500
-> with the reason in the message — there is no distinct error code to
-> match on. They share one runbook because they share one diagnosis
-> (inspect the Secret YAML directly) and one mitigation (repair or
-> re-create the Secret).
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Fix it soon. Only this one cluster is affected. Sharko can't
+change addons on it until the Secret is fixed. Every other cluster keeps
+working.
 
-A single cluster's ArgoCD-shaped Secret in the `argocd` namespace is
-corrupt in one of three closely-related ways:
+Before you start, set up the shell variables from
+[First checks](troubleshooting.md#set-up-once).
 
-1. **Empty server URL** — `data["server"]` is missing or empty.
-2. **Invalid base64 in CA data** — `tlsClientConfig.caData` is not
-   valid base64.
-3. **Synthesized kubeconfig fails to parse** — the bearer-token
-   kubeconfig Sharko constructs from the Secret won't round-trip
-   when it is parsed back, typically because one of the strings
-   Sharko interpolated contains
-   characters that break YAML.
+## What you see
 
-All three look the same to the operator: `POST
-/api/v1/clusters/{name}/test` (and the equivalent
-addon-enable / refresh flows that touch the same cluster) returns
-500 with a wrapped parse error. The cluster is broken in Sharko's
-view; other clusters in the fleet continue to reconcile normally.
-This runbook covers all three because they share the same diagnosis
-path (`kubectl get secret` + inspect the JSON in `data["config"]`)
-and the same mitigation (repair or re-create the Secret). The
-per-failure detail differs only in which field of the parsed Secret
-to look at.
+- **Test** on the cluster (in the UI, or `POST /api/v1/clusters/{name}/test`)
+  fails at the first step, **Fetch credentials**. The answer has
+  `"error_code": "ERR_AUTH"` and this fixed sentence:
 
-Most of these failures originate **outside Sharko** — a manual
-`kubectl edit` mis-typed the base64 CA, a migration tool wrote an
-empty server URL, an external automation scrambled the JSON. The
-fix is always to repair the Secret; Sharko re-reads it on the next
-operation.
+    ```
+    Sharko could not read this cluster's sign-in details from the configured credentials source. The server log for this request id says which step failed.
+    ```
 
----
+- The log has this line at level `ERROR`, with `step=fetch-credentials`:
 
-## Symptoms
+    ```
+    [cluster-test] failed
+    ```
 
-What an operator sees when this fires:
+- Other clusters test fine.
 
-- **API: `POST /api/v1/clusters/{name}/test`** returns 500 with one
-  of three error strings, distinguishing the three sub-cases:
+Sharko does not say which field is wrong. On purpose, it never puts the
+text of a sign-in error in the API answer or the log, because that text can
+hold part of a secret. So you have to look at the Secret yourself. The next
+section shows how.
 
-  Empty server URL:
-
-  ```
-  HTTP/1.1 500 Internal Server Error
-  {"error":"argocd cluster secret for \"<name>\" has empty server URL"}
-  ```
-
-  Invalid CA base64:
-
-  ```
-  HTTP/1.1 500 Internal Server Error
-  {"error":"decoding tlsClientConfig.caData for cluster \"<name>\": illegal base64 data at input byte ..."}
-  ```
-
-  Kubeconfig round-trip parse failure:
-
-  ```
-  HTTP/1.1 500 Internal Server Error
-  {"error":"synthesized kubeconfig for cluster \"<name>\" failed to parse: yaml: unmarshal errors: ..."}
-  ```
-
-- **Sharko logs the parse failure at error level**:
-
-  ```
-  {"time":"...","level":"ERROR","msg":"[provider] argocd cluster secret not found","request_id":"req-...","cluster":"<name>","namespace":"argocd","error":"..."}
-  ```
-
-  Note: that "not found" line only fires when Sharko cannot find the
-  Secret at all. For the three corruption shapes above, the failure is
-  caught by the API handler instead — look for the wrapped error in the
-  handler's `request_id`-correlated logs (Diagnosis step 2).
-
-- **UI** shows the cluster row with status **Test failed** and the
-  parse error in the tooltip. Other clusters in the fleet show
-  **Healthy** — this is per-cluster.
-
-- **No specific Prometheus alert fires** for a single corrupted
-  cluster Secret. Fleet-wide propagation is impossible because the
-  failure is bounded to the specific Secret; the cluster shows red
-  in the dashboard but reconciliation of other clusters continues
-  normally.
-
-If the symptom is "every cluster fails" with parse errors, this is
-**not** the right runbook — investigate
-[`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
-(provider down) or the
-[`cluster-reconciler.md`](cluster-reconciler.md) schema-validation
-runbook (the upstream `managed-clusters.yaml` file is unparseable).
-
-If the failure includes the strings `argocd_provider_iam_required` or
-`argocd_provider_exec_unsupported`, those are typed AWS-auth-shape
-errors, not corruption — see
-[`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) (Sharko recognized
-the shape but couldn't mint a token) and
-[`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-(Sharko doesn't recognize the exec command at all).
-
----
-
-## Diagnosis
-
-Three checks. Step 1 confirms it's per-cluster (not fleet-wide). Step
-2 identifies which of the three sub-cases. Step 3 inspects the Secret
-directly to confirm the corruption.
-
-### 1. Confirm the failure is per-cluster, not fleet-wide
+Find the log line like this:
 
 ```sh
-curl -sS http://sharko/api/v1/fleet/status \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.clusters[] | {name, test_status, test_error}'
+kubectl -n "$SHARKO_NS" logs deploy/sharko --since=1h \
+  | grep -E '\[cluster-test\] failed|\[provider\] argocd cluster secret not found'
 ```
 
-Expected: one cluster shows `test_status: "failed"` with one of the
-three error strings above; the rest show `"healthy"` or `"untested"`.
-If every cluster fails with a parse error, jump to the provider-level
-runbooks linked above.
+If the log says `[provider] argocd cluster secret not found`, there is no
+Secret for this cluster at all. That is a different problem: see
+[Sharko can't read the sign-in details for one cluster](single-cluster-credential-fetch-failed.md).
 
-### 2. Identify which sub-case via the error string
+If instead the test answers `503` with an `error_code` like
+`argocd_provider_iam_required`, `argocd_provider_exec_unsupported` or
+`argocd_provider_unsupported_auth`, the Secret is readable but uses a sign-in
+type Sharko can't use. Sharko shows the reason in full in that case. See
+[AWS IAM cluster sign-in](aws-iam-cluster-auth.md) or
+[Exec-plugin sign-in is not supported](argocd-exec-plugin-auth-unsupported.md).
+(`argocd_provider_unsupported_auth` with the words `has no config field` means
+the Secret has no `config` key at all. Fix it as shown below.)
 
-The error message uniquely identifies which of the three sub-cases:
+If every cluster fails at once, this is not your page. Go to
+[Secrets provider unreachable](secrets-provider-unreachable.md).
 
-| Error substring | Sub-case | Mitigation step |
-|---|---|---|
-| `"empty server URL"` | Empty server URL | 1 |
-| `"decoding tlsClientConfig.caData"` + `"illegal base64"` | Invalid CA base64 | 2 |
-| `"synthesized kubeconfig"` + `"failed to parse"` | Kubeconfig round-trip parse failure | 3 |
+## Why it happens
 
-If you have the request_id from the failed
-`POST /api/v1/clusters/{name}/test`, correlate the full error chain
-(see [`../developer-guide/logging.md`](../developer-guide/logging.md#correlation-ids)):
+Sharko builds a connection to the cluster from three keys in the ArgoCD
+cluster Secret: `name`, `server` and `config`. The `config` key is JSON. Any
+of these breaks the build:
+
+- **`server` is empty or missing.**
+- **`config` is not valid JSON**, for example after a hand edit.
+- **Certificate data is not valid base64.** `tlsClientConfig.caData`,
+  `certData` or `keyData` inside `config` must each be base64.
+- **The token has a hidden character**, such as a newline at the end from a
+  copy and paste. Sharko then can't build a working connection from it.
+
+Most of the time the change came from outside Sharko: someone ran
+`kubectl edit`, a script or another GitOps tool wrote the Secret with a wrong
+value, or a migration tool left a field empty.
+
+### Look at the cluster's ArgoCD Secret
+
+These commands show you what is in the Secret without printing the token,
+the password or the private key. Run them from your own machine.
+
+Set the ArgoCD namespace (the Helm value `clusterTest.argocdNamespace`,
+`argocd` by default) and the cluster name:
 
 ```sh
-REQ_ID=req-<id-from-failed-response>
-kubectl -n <sharko-ns> logs -l app=sharko --since=15m \
-  | jq -c --arg id "$REQ_ID" 'select(.request_id == $id)' \
-  | jq -c '{time, level, msg, cluster, error}'
+ARGOCD_NS=argocd
+CLUSTER=<cluster-name>
 ```
 
-### 3. Inspect the cluster's ArgoCD Secret directly
+Find the Secret. ArgoCD cluster Secrets have the label
+`argocd.argoproj.io/secret-type=cluster`. Sharko matches the cluster by the
+`name` key first, then by the `server` key:
 
 ```sh
-CLUSTER=<failing-cluster-name>
-ARGOCD_NS=$(kubectl -n <sharko-ns> get deployment sharko \
-  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SHARKO_ARGOCD_NAMESPACE")].value}')
-ARGOCD_NS=${ARGOCD_NS:-argocd}
-
-# Find the Secret backing this cluster:
 SECRET_NAME=$(kubectl -n "$ARGOCD_NS" get secret \
   -l argocd.argoproj.io/secret-type=cluster -o json \
-  | jq -r --arg cluster "$CLUSTER" '
-    .items[]
-    | select(.data.name | @base64d == $cluster)
-    | .metadata.name
-  ')
+  | jq -r --arg c "$CLUSTER" \
+    '.items[] | select((.data.name // "" | @base64d) == $c) | .metadata.name')
+echo "$SECRET_NAME"
+```
 
-# Dump the three fields that drive the three sub-cases:
+If nothing comes back, list every cluster Secret with its name and server:
+
+```sh
+kubectl -n "$ARGOCD_NS" get secret -l argocd.argoproj.io/secret-type=cluster -o json \
+  | jq -r '.items[] | [.metadata.name, (.data.name // "" | @base64d), (.data.server // "" | @base64d)] | @tsv'
+```
+
+Show the safe fields: the name, the server, the labels, and only the
+**names** of the annotations. (Do not print annotation values. The
+`kubectl.kubernetes.io/last-applied-configuration` annotation can hold a full
+copy of the Secret, token included.)
+
+```sh
 kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json | jq '{
-  name: (.data.name | @base64d),
-  server: (.data.server | @base64d),
-  config: (.data.config | @base64d | fromjson),
-  managed_by_label: .metadata.labels."app.kubernetes.io/managed-by"
+  secret: .metadata.name,
+  name: (.data.name // "" | @base64d),
+  server: (.data.server // "" | @base64d),
+  has_config: (.data.config != null),
+  labels: .metadata.labels,
+  annotation_names: ((.metadata.annotations // {}) | keys)
 }'
 ```
 
-What to look for per sub-case:
+Show what is inside `config`, without the values that are secret:
 
-- **Empty server URL** — `server` is empty (`""`) or missing. The
-  field is required by the Sharko ArgoCDProvider; ArgoCD itself uses
-  it as the cluster's apiserver URL.
-- **Invalid CA base64** — `config.tlsClientConfig.caData` is set but
-  not valid base64. The `jq | @base64d | fromjson` decode succeeds
-  (the outer envelope is fine), but the inner `caData` will fail to
-  decode further. Test:
-  ```sh
-  CA=$(kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
-    | jq -r '.data.config | @base64d | fromjson | .tlsClientConfig.caData')
-  echo "$CA" | base64 -d | head -3
-  ```
-  Expected: a PEM certificate. Bad: `base64: invalid input`.
-- **Kubeconfig round-trip parse failure** — likely the bearer token,
-  the server URL, or the cluster name contains a character that the
-  synthesized YAML can't represent (a literal newline, an unescaped
-  `:`, a leading `-`). Render the synthesized kubeconfig manually:
-  ```sh
-  TOKEN=$(kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
-    | jq -r '.data.config | @base64d | fromjson | .bearerToken')
-  echo "Token preview: ${TOKEN:0:40}..."
-  # Look for embedded whitespace, newlines, control chars.
-  ```
+```sh
+kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json | jq '
+  .data.config | @base64d | fromjson | {
+    keys: keys,
+    tls_keys: ((.tlsClientConfig // {}) | keys),
+    token_length: ((.bearerToken // "") | length),
+    token_has_spaces_or_newlines: ((.bearerToken // "") | test("\\s")),
+    password_set: (.password != null),
+    exec_command: (.execProviderConfig.command // null)
+  }'
+```
 
-Note the `app.kubernetes.io/managed-by` label — if it's `sharko`, the
-Secret was originally written by Sharko — that is its ownership label.
-That's a strong signal the corruption happened AFTER Sharko wrote it
-(external `kubectl edit`, GitOps replay with wrong value, manual
-config script). If the label is absent or different, the Secret was
-externally created and Sharko is reading it without writing it.
+If this command fails with a jq error such as `cannot be parsed`, the
+`config` JSON itself is broken.
 
----
+Check that the CA certificate decodes. (The CA is public, so printing its
+first line is safe.)
 
-## Mitigation (try in order)
+```sh
+kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
+  | jq -r '.data.config | @base64d | fromjson | .tlsClientConfig.caData // empty' \
+  | base64 --decode | head -1
+```
 
-1. **For empty server URL — repair the Secret by patching
-   `data.server`.** This is the most clear-cut sub-case: a field
-   that's required is missing.
+Good: `-----BEGIN CERTIFICATE-----`. Bad: an error from `base64`, or nothing.
 
-   ```sh
-   CLUSTER=<failing-cluster-name>
-   ARGOCD_NS=<argocd-ns>
-   SECRET_NAME=<from-diagnosis-step-3>
-   CORRECT_SERVER=https://<cluster-apiserver>:443
+To check `certData` or `keyData`, test that they decode but send the result
+nowhere. Never print `keyData`:
 
-   kubectl -n "$ARGOCD_NS" patch secret "$SECRET_NAME" \
-     --type='json' \
-     -p="[{\"op\":\"replace\",\"path\":\"/data/server\",\"value\":\"$(echo -n "$CORRECT_SERVER" | base64)\"}]"
-   ```
+```sh
+kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
+  | jq -r '.data.config | @base64d | fromjson | .tlsClientConfig.keyData // empty' \
+  | base64 --decode > /dev/null && echo "keyData decodes"
+```
 
-   Recovery: re-run `POST /api/v1/clusters/<name>/test`. Success
-   indicator: 200 with `{"reachable": true, "version": "..."}`.
+What to look for:
 
-   If you don't know the correct server URL, the source of truth is
-   the cluster's own kubeconfig (`kubectl --context $CLUSTER config
-   view --raw -o jsonpath='{.clusters[0].cluster.server}'`).
+- `server` is empty: the server address is missing.
+- `has_config` is `false`: the `config` key is missing.
+- `token_has_spaces_or_newlines` is `true`: the token has a hidden character.
+- the CA or key does not decode: the certificate data is broken.
+- the label `app.kubernetes.io/managed-by: sharko` tells you Sharko wrote
+  this Secret. If it is missing, or the Secret has the annotation
+  `sharko.dev/adopted`, you (or another tool) look after it.
 
-2. **For invalid CA base64 — re-encode the CA correctly.** The CA
-   in the cluster's kubeconfig is already base64 (kubeconfig spec
-   requires it). Copy it verbatim into the Secret's
-   `config.tlsClientConfig.caData`:
+## How to fix it
 
-   ```sh
-   CLUSTER=<failing-cluster-name>
-   ARGOCD_NS=<argocd-ns>
-   SECRET_NAME=<from-diagnosis-step-3>
+1. **If Sharko owns the connection** (label `app.kubernetes.io/managed-by:
+   sharko`, and not adopted), let Sharko rewrite it. Sharko reads the sign-in
+   details fresh from your secrets backend, changes the Secret in place, and
+   never prints a value. Look first, then repair:
 
-   # Get the CA from the cluster's own kubeconfig:
-   CA_B64=$(kubectl --context "$CLUSTER" config view --raw \
-     -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+    ```sh
+    sharko repair-connection "$CLUSTER" --check-only
+    sharko repair-connection "$CLUSTER"
+    ```
 
-   # Read the current config JSON, swap caData, write it back:
-   CONFIG=$(kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
-     | jq -r '.data.config | @base64d')
-   NEW_CONFIG=$(echo "$CONFIG" | jq --arg ca "$CA_B64" \
-     '.tlsClientConfig.caData = $ca')
+    If the values in your secrets backend are the broken ones, fix them there
+    first, then run the repair.
 
-   kubectl -n "$ARGOCD_NS" patch secret "$SECRET_NAME" \
-     --type='json' \
-     -p="[{\"op\":\"replace\",\"path\":\"/data/config\",\"value\":\"$(echo -n "$NEW_CONFIG" | base64)\"}]"
-   ```
+2. **If you look after the Secret yourself**, fix the broken field directly.
+   Sharko only adds its addon labels to a connection like this. It does not
+   rewrite your sign-in details.
 
-   Recovery: re-run the cluster test. Success indicator: same as step
-   1.
+    Put in a missing server address:
 
-3. **For kubeconfig round-trip parse failure — identify the bad
-   character and re-write the field.** The bearer token is the most
-   common offender (some token-mint tools embed a literal newline
-   when copy-pasted). Re-mint:
+    ```sh
+    CORRECT_SERVER=https://<cluster-api-server>:443
+    kubectl -n "$ARGOCD_NS" patch secret "$SECRET_NAME" --type=merge \
+      -p "{\"stringData\":{\"server\":\"$CORRECT_SERVER\"}}"
+    ```
 
-   ```sh
-   CLUSTER=<failing-cluster-name>
-   ARGOCD_NS=<argocd-ns>
-   SECRET_NAME=<from-diagnosis-step-3>
+    Fix a field inside `config` (here, the token with a newline at the end).
+    This rewrites `config` without printing it:
 
-   # Re-mint a token on the target cluster:
-   NEW_TOKEN=$(kubectl --context "$CLUSTER" create token \
-     <sharko-sa> -n kube-system --duration=8760h)
+    ```sh
+    NEW_CONFIG=$(kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
+      | jq -c '.data.config | @base64d | fromjson
+               | .bearerToken |= gsub("\\s"; "")')
+    kubectl -n "$ARGOCD_NS" patch secret "$SECRET_NAME" --type=merge \
+      -p "$(jq -n --arg c "$NEW_CONFIG" '{stringData: {config: $c}}')"
+    ```
 
-   # Strip any trailing whitespace defensively:
-   NEW_TOKEN=$(echo "$NEW_TOKEN" | tr -d '\r\n ')
+    The same pattern works for the CA: set `.tlsClientConfig.caData` to the
+    base64 CA from the cluster's own kubeconfig
+    (`certificate-authority-data`).
 
-   CONFIG=$(kubectl -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
-     | jq -r '.data.config | @base64d')
-   NEW_CONFIG=$(echo "$CONFIG" | jq --arg t "$NEW_TOKEN" \
-     '.bearerToken = $t')
+    If another tool (a GitOps repo, Helm, kustomize) writes this Secret, fix
+    the value in that tool. Otherwise it puts the broken value back on its next
+    run.
 
-   kubectl -n "$ARGOCD_NS" patch secret "$SECRET_NAME" \
-     --type='json' \
-     -p="[{\"op\":\"replace\",\"path\":\"/data/config\",\"value\":\"$(echo -n "$NEW_CONFIG" | base64)\"}]"
-   ```
+3. **If the `config` JSON is beyond repair** and you have a good copy of the
+   Secret (in your GitOps repo or a backup), apply that copy. Check first that
+   its token, CA and address are still current.
 
-   If the bearer token is fine and the failing field is the cluster
-   name (rare — happens when the name has unescaped YAML special
-   characters), rename the cluster:
+4. **Last try: remove the cluster from Sharko and add it again.** This
+   rebuilds the connection from your secrets backend. ArgoCD loses the cluster
+   for a short time in between, so prefer steps 1 to 3 for important clusters.
 
-   ```sh
-   sharko remove-cluster "<bad-name>" --confirm
-   sharko add-cluster "<good-name>" --secret-path <provider-path>
-   ```
+    ```sh
+    sharko remove-cluster "$CLUSTER" --cleanup all -y
+    sharko add-cluster "$CLUSTER"
+    ```
 
-4. **If multiple fields are corrupt and you have a working backup of
-   the Secret, restore it.** ArgoCD's cluster Secrets are stateless
-   config; restoring an older copy is safe as long as the cluster's
-   real auth state hasn't changed (token still valid, CA still
-   current, server URL unchanged).
+    `--cleanup all` removes the ArgoCD connection only if Sharko owns it.
 
-   ```sh
-   # Restore from a previous declarative source (GitOps repo, backup):
-   kubectl -n "$ARGOCD_NS" apply -f /path/to/backup-secret.yaml
-   ```
+Sharko reads the Secret again on the next test. There is nothing to restart.
 
-5. **Last resort — delete the Secret and re-register the cluster
-   through Sharko.** This rebuilds the Secret from the provider
-   (AWS-SM, K8s-Secrets, etc.) with a known-good shape:
+## How to check it's fixed
 
-   ```sh
-   kubectl -n "$ARGOCD_NS" delete secret "$SECRET_NAME"
-   sharko remove-cluster "$CLUSTER" --confirm
-   sharko add-cluster "$CLUSTER" --secret-path <provider-path>
-   ```
+- Run **Test** on the cluster again. Every step passes, starting with
+  **Fetch credentials**:
 
-   This drops the cluster from ArgoCD briefly (between delete and
-   re-register), so deployed addons reconcile-from-current-state on
-   the next ArgoCD sync. Acceptable for non-critical clusters; for
-   critical clusters, prefer step 1-3 to avoid the gap.
+    ```sh
+    curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+      "$SHARKO_URL/api/v1/clusters/$CLUSTER/test" | jq '{success, error_code, steps}'
+    ```
 
----
+    You want `"success": true`.
 
-## Root-cause patterns
+- Run the commands in
+  [Look at the cluster's ArgoCD Secret](#look-at-the-clusters-argocd-secret)
+  again. Every check comes back good.
 
-### Manual `kubectl edit` of the Secret introduced a typo
+- No new `[cluster-test] failed` lines for this cluster in the last few
+  minutes.
 
-The most common cause. An operator edited the Secret to update one
-field (typically the token after rotation) and either pasted a value
-with an unescaped character, dropped a base64 padding byte, or
-deleted the wrong key. The `kubectl edit` flow doesn't validate the
-resulting `data["config"]` JSON against any schema — invalid base64
-or an empty server URL is accepted at apply time and only surfaces
-when Sharko (or ArgoCD) tries to use it.
+## If that didn't work
 
-Diagnostic signature: the `app.kubernetes.io/managed-by` label is
-`sharko` (Sharko wrote it originally) AND the cluster used to work
-(Sharko's own previous tests succeeded). The corruption is
-post-Sharko-write.
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
-Fix: Mitigation step 1, 2, or 3 depending on which field is broken.
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the `[cluster-test]` log lines for this cluster
+- the output of the safe commands above (never the token, password or key)
+- the value of the `app.kubernetes.io/managed-by` label
+- what you tried from this page
 
-### External automation rewrote the Secret with wrong values
+Related pages:
 
-A GitOps tool, helmfile, kustomize overlay, or custom controller
-re-applied a templated version of the Secret with an interpolation
-error (empty variable, missing CA file, malformed JSON). The Secret
-"applies cleanly" — Kubernetes accepts any `corev1.Secret` body —
-but the embedded JSON is broken.
-
-Diagnostic signature: the `app.kubernetes.io/managed-by` label is
-NOT `sharko` (external system owns the Secret); the corruption
-correlates with a deploy of the external system.
-
-Fix: repair the external automation's source (e.g. the Helm values
-file, the kustomize patch). Mitigation step 4 (restore from backup)
-is a hold-the-line fix until the upstream is corrected.
-
-### Token rotation tool concatenated trailing whitespace
-
-Some token-mint utilities (older `kubectl create token` variants,
-ad-hoc shell pipelines like `aws eks update-kubeconfig | ...`)
-include a trailing newline that gets embedded in the bearer token
-string. The synthesized YAML then has the token on a multi-line
-literal, which can break the round-trip parse depending on the
-YAML library version.
-
-Diagnostic signature: Diagnosis step 3's token-preview ends with a
-literal `\n` or whitespace; the original token-mint script piped
-into `tr -d '\n'` or `xargs` would have stripped it.
-
-Fix: re-mint with the whitespace-stripping pipeline (Mitigation step
-3 includes the `tr -d '\r\n '` step).
-
-### Cluster apiserver migrated and the server URL became stale
-
-EKS cluster recreated with the same name but a new apiserver endpoint;
-managed-K8s service migrated to a new region's endpoint URL; on-prem
-cluster moved behind a different load balancer. The Secret's `server`
-field still points at the old URL; the upstream is now wrong (the new
-URL doesn't have an empty server URL — the OLD URL is in the Secret
-but invalid for routing).
-
-Diagnostic signature: the `server` field IS populated (not the
-"empty server URL" sub-case), but TCP probes against it fail. This
-is technically NOT one of the three corruption sub-cases — it's a
-stale-URL failure that surfaces as a TCP / TLS error, not a parse
-error. If you reach this section, the failure is probably one of the
-parse sub-cases instead.
-
-Fix: Mitigation step 1 with the new server URL.
-
----
-
-## Prevention
-
-- **Monitoring — per-cluster `test_status` history.** Sharko does not
-  export this metric today. The alert below is a design sketch for a
-  future release, not something you can deploy now. The sketch:
-  `sharko_cluster_test_status{cluster, status}` as a gauge, alerting on
-  any cluster that flips from `healthy` to `failed` without a
-  corresponding Sharko write event — that is, external corruption.
-  Today, the only signal is the per-cluster `test_status` in
-  `/api/v1/fleet/status`.
-
-- **Gating — Sharko-side Secret-shape validation on every read.**
-  Sharko's ArgoCDProvider already validates the three corruption
-  sub-cases at fetch time (that's what produces the runbook's error
-  strings). A v2 follow-up adds a **proactive** validator that
-  scans every ArgoCD cluster Secret in the configured namespace on
-  startup and surfaces a warning summary ("2 of 12 cluster Secrets
-  have empty server URLs"). Today, the failure only surfaces on the
-  first operation that touches the cluster.
-
-- **Documentation — never `kubectl edit` a Sharko-managed ArgoCD
-  cluster Secret.** The operator guide should explicitly call this
-  out for Secrets Sharko owns: if the cluster needs new credentials,
-  update the referenced value in the credentials backend and apply it
-  through the guarded **Repair connection** action, or re-register
-  through Sharko (`sharko remove-cluster && sharko add-cluster`) so
-  the Secret is rebuilt from the Git definition plus the resolved
-  credential values. `kubectl edit` is the most common corruption
-  source per the root-cause patterns. (A **self-managed** connection
-  is different: there, you own the Secret and editing it yourself is
-  the supported workflow — Sharko only reconciles its addon-label
-  keys onto it.)
-
-- **Gating — webhook admission control on the Secret resource.**
-  Platform engineering teams that run their own admission webhook
-  could reject updates to `argocd.argoproj.io/secret-type=cluster`
-  Secrets that don't validate the embedded `data.config` JSON. This
-  is out-of-scope for Sharko itself but documented as a defensive
-  pattern.
-
-- **Scheduled work — quarterly Secret-shape audit.** A periodic
-  job (e.g. a CronJob in the Sharko namespace) that runs
-  `sharko validate-cluster-secrets` (when shipped) and reports any
-  corrupt Secret via your existing alerting catches drift before it
-  shows up as a dashboard red badge.
-
----
-
-## Related runbooks
-
-- [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) — adjacent
-  case: `awsAuthConfig` shape parses fine and returns a distinct typed
-  error only when Sharko can't mint a token with it (NOT a corruption
-  — by design).
-- [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-  — adjacent case: an `execProviderConfig` shape with a command Sharko
-  doesn't recognize returns a distinct typed error (NOT a corruption).
-- [`argocd-account-token-expired.md`](argocd-account-token-expired.md)
-  — sibling auth failure: Secret is well-formed, but the token is
-  revoked or expired upstream.
-- [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md)
-  — escalate here if every cluster's Secret read fails (provider
-  itself is down).
-- [`cluster-reconciler.md`](cluster-reconciler.md) — the reconciler
-  rebuilds these Secrets when the upstream
-  `managed-clusters.yaml` changes; if the reconciler is also stuck,
-  external repair is the only path.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md#correlation-ids)
-  — `request_id` correlation pattern.
-
-## Escalation
-
-If Mitigation steps 1-3 do not repair the Secret AND the cluster is
-critical-path, email the maintainer: `moran.weissman@gmail.com`.
-Include:
-
-- This runbook URL
-- The cluster name
-- The sub-case (empty server URL / invalid CA / kubeconfig parse)
-- The output of Diagnosis step 3 (the Secret YAML dump, REDACT the
-  bearer token before sending)
-- The `app.kubernetes.io/managed-by` label value
-- The Sharko version
-
-**Never paste a bearer token into the escalation.** Redact it with
-`s/bearerToken=.*\b/bearerToken=REDACTED/` before sending. The
-maintainer never needs the actual token to triage the parse failure.
-
-The maintainer is a single human, not a 24×7 rotation. Expect a
-business-day SLA, not a paged response.
+- [Sharko can't read the sign-in details for one cluster](single-cluster-credential-fetch-failed.md)
+- [AWS IAM cluster sign-in](aws-iam-cluster-auth.md)
+- [Exec-plugin sign-in is not supported](argocd-exec-plugin-auth-unsupported.md)
+- [Self-managed connections](self-managed-connections.md)
+- [Cluster reconciler](cluster-reconciler.md)

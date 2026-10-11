@@ -1,473 +1,134 @@
-# Secret Push to Remote Cluster Silently Failed
+# An addon secret did not reach the cluster
 
-**Severity:** P0
+Some addons need a Kubernetes Secret on the cluster, such as an API key. Sharko reads the value from your secrets store and writes the Secret onto the cluster. When that write fails, the addon starts without the Secret it needs and breaks, often some time later, when ArgoCD syncs it.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. The Error
-> log line `"[secrets] failed to create secret, continuing"` and the
-> failed-secret tally in the operation result are verified verbatim. The
-> "continuing" path is the canonical silent-data-loss surface — see
-> [`../developer-guide/logging.md`](../developer-guide/logging.md) for
-> the discipline it violates. Re-verify before changing the
-> `"continuing"` log string — it is what an operator greps for.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** high for the addon that is affected. It won't work until its Secret is there. Other addons and clusters are not affected.
 
-Sharko's API returned `201 Created` for a cluster registration. The
-operator received the success response, the PR was opened, the PR was
-merged, and the ArgoCD cluster Secret was created. But one or more of
-the addon secrets (Datadog API key, Grafana token, ESO credentials,
-etc.) that were supposed to be pushed to the remote cluster's namespace
-**were not actually pushed**. The user thinks the credential is in
-place; the addon will deploy and fail with `MissingSecret` /
-`Forbidden` / `401` once ArgoCD syncs it.
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-This is a P0 because the failure is **silent data loss from the
-operator's perspective**. The HTTP response is success, no exception
-propagates to the caller, and the audit log shows the cluster operation
-as `result=success`. The addon's failure shows up minutes-to-hours later
-when ArgoCD syncs, and the operator has to trace the failure backwards
-to the secret push — a slow, error-prone diagnosis.
+## What you see
 
-The bug shape underneath it is "log the error and carry on" — the
-failure is real, but nothing above it ever hears about it.
-
----
-
-## Symptoms
-
-What an operator sees when this fires:
-
-- **`POST /api/v1/clusters` returns 201** with the cluster object as
-  expected, but the response body's `addon_secrets` field (if surfaced)
-  shows partial population: `{"created": ["datadog-keys"], "failed":
-  ["external-secrets-creds"]}`. If the response shape doesn't surface
-  failures, operators only notice via downstream symptoms below.
-- **Addon ArgoCD Application is in `Degraded` state** after the next
-  sync — with the underlying error indicating a missing or invalid
-  Kubernetes Secret:
-
-  ```
-  Resource Health Check:
-    Pod some-addon-xyz: CreateContainerError
-    Reason: Secret "datadog-keys" not found in namespace "datadog"
-  ```
-
-- **Sharko logs show a per-addon ERROR line at the moment of cluster
-  registration**, but the overall registration is reported as
-  success:
-
-  ```
-  {"time":"...","level":"ERROR","msg":"[secrets] failed to create secret, continuing","request_id":"req-...","addon":"datadog","error":"unauthorized: kubeconfig token expired"}
-  ```
-
-- **Audit-log entry**: `event=cluster_register` with `result=success`,
-  but a per-addon secondary entry shows `event=secret_push`
-  `result=failed` for the same `request_id` — and the operator is
-  expected to correlate by request_id manually (today).
-- **The remote cluster's namespace does NOT contain the expected
-  secret**:
+- In ArgoCD, the addon's Application is `Degraded`. Its pods say a Secret was not found, or they fail to sign in to the service the addon talks to.
+- In the Sharko UI, open **Secrets**, then **Addon secrets**. The row for this cluster and addon is not in a good state, and it says why, for example:
+  - `Sharko couldn't connect to one of the clusters. Check that Sharko can reach that cluster, then click Refresh.`
+  - `Sharko couldn't fetch a secret's value from the secrets store. Click Refresh to try again.`
+  - `Sharko tried to write a secret on a cluster and the write failed. Click Refresh to try again.`
+  - `One of the clusters is set up to skip certificate checks, so Sharko refused to send it a secret. ...`
+  - `One of the secret definitions in the catalog is incomplete. Fix it in the catalog, then click Refresh.`
+- The logs show which cluster, addon and Secret failed:
 
   ```sh
-  kubectl --kubeconfig <remote-kubeconfig> -n <addon-ns> get secret <secret-name>
-  # Error from server (NotFound): secrets "<secret-name>" not found
+  kubectl -n "$SHARKO_NS" logs deploy/sharko --since=1h | grep '\[secrets\] reconcile failed'
   ```
 
-  …while Sharko's view of "secret was pushed" is green.
+- The last run's totals show errors:
 
-- **Alert** — there is currently no Prometheus alert specifically for
-  "addon secret push failed." This is part of the failure mode's
-  P0-ness: silent failure with no automated detection.
-
----
-
-## Diagnosis
-
-The single most important diagnostic: **don't trust the cluster
-registration's HTTP response. Look at the per-addon log line.**
-
-### 1. Grep the per-registration log for the failure line
-
-For a specific cluster registration where you suspect this failure:
-
-```sh
-SHARKO_NS=<sharko-ns>
-REQUEST_ID=req-<id-from-audit-log>
-
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
-  | jq -c "select(.request_id == \"$REQUEST_ID\")" \
-  | grep -E "failed to create secret|continuing"
-```
-
-If you don't know the `request_id`, find it from the audit log:
-
-```sh
-# Audit entries for the cluster registration:
-curl -sS http://sharko/api/v1/audit?event=cluster_register \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '.entries[] | select(.cluster == "<cluster-name>")'
-```
-
-Pull the `request_id` from the audit entry and run the grep above.
-
-A hit means: at least one addon secret push failed. Read the `addon`
-and `error` attributes for the specific failure.
-
-### 2. Enumerate the failures per addon
-
-If Sharko's log retention covers the full window, count failed pushes
-per cluster registration:
-
-```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --since=24h \
-  | jq -c 'select(.msg | test("failed to create secret, continuing"))' \
-  | jq -c '{request_id, addon, error}' \
-  | sort | uniq -c | sort -rn
-```
-
-Output groups by `(request_id, addon, error)` triple. Patterns:
-
-- **Multiple `request_id`s with the same `addon` + `error`** — a
-  consistent bug for that addon's secret push (kubeconfig path issue,
-  vault path stale, RBAC missing). Fleet-wide impact.
-- **One `request_id` with many `addon`s failing the same way** — one
-  cluster's kubeconfig is broken; the cluster's connectivity is the
-  issue.
-
-### 3. Verify the actual remote-cluster state
-
-For each failed push, verify the remote cluster:
-
-```sh
-# Get the remote cluster's kubeconfig from the secrets provider
-# (assuming AWS Secrets Manager backend; substitute your provider):
-aws secretsmanager get-secret-value --secret-id clusters/<cluster-name> \
-  --query SecretString --output text > /tmp/remote.kubeconfig
-
-# Now probe the namespace:
-NAMESPACE=<addon-ns>
-SECRET_NAME=<addon-secret-name>
-kubectl --kubeconfig /tmp/remote.kubeconfig -n "$NAMESPACE" \
-  get secret "$SECRET_NAME" -o yaml | head -10
-```
-
-Three outcomes:
-
-- **Secret exists with correct keys** — push actually succeeded; the
-  log is stale or the addon is failing for a different reason (chart
-  bug, RBAC). Stop here; this runbook does not apply.
-- **Secret does not exist** — push failed; the log is correct. Proceed
-  to Mitigation.
-- **Secret exists but is empty / wrong keys** — partial push; the
-  failure is in the `EnsureSecret` body. File a P0 bug; the
-  remote-write path corrupted state.
-
-### 4. Verify the upstream secret value (vault / AWS SM) is fetchable
-
-If the failure was `"fetching key X from path Y"`, the secrets provider
-was unreachable for that specific key, not the remote-cluster write.
-Verify the upstream:
-
-```sh
-# For AWS SM:
-aws secretsmanager get-secret-value --secret-id secrets/datadog/api-key \
-  --query SecretString --output text | head -c 20
-
-# For Kubernetes-Secrets provider:
-kubectl -n <provider-ns> get secret <vault-secret> -o yaml | grep <key>
-```
-
-If this fails, the failure is at the provider read, not the remote
-write — see
-[`secrets-provider-unreachable.md`](secrets-provider-unreachable.md).
-
----
-
-## Mitigation (try in order)
-
-The goal is to (a) get the secret onto the remote cluster, (b)
-re-trigger the addon's deployment, and (c) prevent the silent-failure
-mode from striking again on the next registration.
-
-1. **Re-push the secret manually for the affected cluster.** Sharko
-   exposes the `POST /api/v1/clusters/{name}/secrets/refresh` endpoint
-   which re-runs the secret push logic for all addons enabled on the
-   cluster — without re-running cluster registration:
-
-   ```sh
-   curl -sS -X POST \
-     -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     "http://sharko/api/v1/clusters/<cluster-name>/secrets/refresh"
-   ```
-
-   Read the response carefully — this endpoint returns `{"created":
-   [...], "failed": [...]}` so you can verify each push succeeded.
-   If `failed` is still non-empty, the per-addon failure is consistent
-   (not a transient blip); jump to step 2.
-
-   Success indicator: `failed: []` and the
-   `kubectl --kubeconfig ... get secret` probe from Diagnosis step 3
-   returns the secret.
-
-2. **Push the secret directly via `kubectl` as a temporary unblock.**
-   If the API path is also broken (e.g. the remote kubeconfig is
-   genuinely invalid), bypass Sharko and push manually:
-
-   ```sh
-   # Fetch the secret value from the provider:
-   SECRET_VALUE=$(aws secretsmanager get-secret-value \
-     --secret-id secrets/<addon>/<key> \
-     --query SecretString --output text)
-
-   # Create the secret on the remote cluster:
-   kubectl --kubeconfig /tmp/remote.kubeconfig -n <addon-ns> \
-     create secret generic <secret-name> \
-     --from-literal=<key>="$SECRET_VALUE" \
-     --dry-run=client -o yaml \
-     | kubectl --kubeconfig /tmp/remote.kubeconfig apply -f -
-   ```
-
-   Add the Sharko ownership label so the reconciler doesn't fight you:
-
-   ```sh
-   kubectl --kubeconfig /tmp/remote.kubeconfig -n <addon-ns> \
-     label secret <secret-name> \
-     app.kubernetes.io/managed-by=sharko --overwrite
-   ```
-
-   Success indicator: addon ArgoCD Application transitions from
-   `Degraded` to `Healthy` on the next sync.
-
-3. **Re-sync the affected ArgoCD Application** so it picks up the
-   newly-pushed secret:
-
-   ```sh
-   argocd app sync <addon-app-name> --prune --refresh
-   ```
-
-   Or via the ArgoCD UI: Application detail → Sync → Sync.
-
-   Success indicator: the Application's resource tree shows the
-   addon's Pods entering `Running` state.
-
-4. **If the failure is fleet-wide (multiple clusters' registrations are
-   silently failing)** — disable the affected addon globally to stop
-   bleeding into more clusters. From the addon catalog:
-
-   ```sh
-   # Disable the addon by removing it from cluster addons:
-   curl -sS -X PATCH \
-     -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     -H "Content-Type: application/json" \
-     -d '{"removeAddons":["<addon-name>"]}' \
-     "http://sharko/api/v1/clusters/<cluster-name>"
-   ```
-
-   Then file a bug against the addon's secret definition. Common
-   root causes: the secret definition path moved in the vault, the
-   addon's expected secret key name was renamed, or the addon's
-   target namespace was renamed in the chart.
-
-5. **Last resort — roll back the addon registration entirely.** If
-   the addon's secret push is fundamentally broken and ArgoCD has
-   already partially synced, deregister the addon for all clusters:
-
-   ```sh
-   # Mark addon as unavailable in the catalog (administrative action):
-   # Edit catalog YAML, set addon as PLANNED or remove the entry.
-   # Restart Sharko to pick up the change.
-   ```
-
-   This is destructive — the addon's existing deployments will be
-   pruned by ArgoCD on next sync. Coordinate with the addon owner
-   before proceeding.
-
----
-
-## Root-cause patterns
-
-### Remote cluster kubeconfig token expired
-
-The Sharko-side path to the remote cluster (kubeconfig fetched from the
-provider) has a token that expired between cluster registration and
-secret push. For EKS clusters with IRSA, the STS token is valid for
-15 minutes — if cluster registration takes longer than that or if
-Sharko caches the token across requests, the push fails with
-"unauthorized."
-
-Diagnostic signature: log shows `"error":"unauthorized"` or
-`"error":"401"` in the addon-specific failure line. The cluster
-itself is healthy and reachable from outside Sharko (e.g. you can
-`kubectl get pods` from your laptop with a fresh token).
-
-Why it happens: the cached kubeconfig in Sharko's in-memory provider
-cache is stale. Sharko does not currently re-mint the token on each
-request — a P1 bug worth tracking.
-
-Fix is Mitigation step 1 (`/clusters/{name}/secrets/refresh`), which
-forces a fresh token mint. Prevention is to set the secrets-refresh
-cadence to less than 10 minutes, or to switch to a long-lived bearer
-token if security constraints allow.
-
-### Vault / Secrets-Manager path moved
-
-The secret definition in the addon catalog points to a vault path that
-no longer resolves (the secrets-store admin moved it, the prefix
-changed, the key was renamed). Sharko's GetSecretValue fails, and
-because the failure happens in the per-addon inner loop, the cluster
-registration's outer try/catch swallows it and logs "continuing."
-
-Diagnostic signature: log shows `"error":"fetching key X from path Y:
-...not found"`. The vault path itself, when probed manually, indeed
-returns NotFound.
-
-Why it happens: out-of-band secrets-store admin changes (path moves,
-prefix changes, key renames) without coordinating with the Sharko
-catalog. Common after secrets-store migrations or RBAC restructures.
-
-Fix:
-- Short-term: update the catalog entry (the `secrets.keys` map) to point
-  at the new path, restart Sharko, re-trigger the cluster's
-  `/secrets/refresh`.
-- Long-term: add a CI check that validates every catalog entry's secret
-  paths against the actual vault tree before publishing. The path
-  validation is planned, not built.
-
-### Remote-cluster namespace doesn't exist
-
-The addon catalog specifies a target namespace (e.g. `datadog`,
-`external-secrets`), but the remote cluster doesn't have that
-namespace. `EnsureSecret` calls `Create` against a non-existent
-namespace and gets a NotFound from the API server.
-
-Diagnostic signature: log shows
-`"error":"namespaces \"<ns>\" not found"`. The remote cluster, when
-probed manually, indeed doesn't have the namespace.
-
-Why it happens: the cluster was registered fresh, the addon chart
-would normally create the namespace via Helm, but the secret push runs
-BEFORE the chart deploys. Race condition: Sharko expects the namespace
-to exist already because it's writing a secret into it.
-
-Fix:
-- Short-term: create the namespace manually:
   ```sh
-  kubectl --kubeconfig /tmp/remote.kubeconfig create namespace <ns>
+  curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+    "$SHARKO_URL/api/v1/secrets/status" | jq
   ```
-  Then re-trigger Mitigation step 1.
-- Long-term: change Sharko's secret-push logic to create the namespace
-  if missing, with a label noting Sharko created it. The logic is in
-  `EnsureSecret` in `internal/remoteclient/`.
 
-### Per-addon RBAC missing on the remote kubeconfig
+  Look at `errors` and `last_run`.
 
-The kubeconfig Sharko uses for the remote cluster has limited RBAC —
-enough to read cluster info, but not enough to write secrets in the
-addon's namespace. This happens when the cluster was registered with a
-read-only kubeconfig and then upgraded to "writable" out of band.
+- If you use the chart's Prometheus rules, the `SharkoManagedSecretsSustainedBadState` alert fires when a Secret stays missing or out of date for 30 minutes. The `sharko_reconciler_item_failures_total` counter, with `engine="addon_values"`, goes up on each failure.
 
-Diagnostic signature: log shows `"error":"secrets is forbidden: User
-... cannot create resource secrets"`. The cluster is reachable; the
-RBAC is the gate.
+## Why it happens
 
-Why it happens: the kubeconfig stored in the secrets provider has
-limited RBAC, but the addon catalog assumed full cluster-admin. Common
-when the operator migrated from a read-only fleet to a fully-managed
-fleet without updating the per-cluster kubeconfig.
+Sharko delivers addon secrets in the background. It reads what to deliver from the addon catalog in your Git repository, then writes each Secret onto each cluster that has the addon turned on. This runs every 5 minutes (`SHARKO_SECRET_RECONCILE_INTERVAL`), and right away after a signed Git webhook push.
 
-Fix:
-- Short-term: replace the kubeconfig in the secrets provider with one
-  that has the required RBAC. Re-trigger `/secrets/refresh`.
-- Long-term: document the minimum RBAC required by Sharko, and add a
-  startup probe that verifies the kubeconfig can write to the
-  expected namespaces.
+A write can fail because:
 
----
+- **Sharko can't reach the cluster,** or can't get the cluster's credentials.
+- **The secrets store can't be read,** or the path in the catalog no longer exists there.
+- **Sharko isn't allowed to write Secrets** in that namespace on the cluster, or the namespace does not exist yet.
+- **A Secret with that name is already there and Sharko did not make it.** Sharko never overwrites a Secret it did not create. The log says `leaving this secret alone — it exists on the cluster and Sharko did not create it`.
+- **The cluster's connection skips certificate checks.** Sharko won't send a secret over a connection it can't verify. The log says `refusing to deliver this secret — the cluster's connection is set up to skip certificate checks`.
+- **The catalog entry for the secret is incomplete.**
+- **Secret delivery is switched off.** The log then says `[secrets] addon-values engine is switched off — skipping reconcile`, and nothing is delivered until it is turned back on in Settings.
 
-## Rollback plan
+## How to fix it
 
-Mitigation steps 1-3 are non-destructive (they push or re-sync
-existing intent).
+### Find the reason
 
-For Mitigation step 4 (disable addon for one cluster):
+Read the row on the **Addon secrets** page, or the log line from above. The log line names the `cluster`, `addon` and `secret`. Then fix the cause:
 
-1. Re-enable the addon once the root cause is fixed:
-   ```sh
-   curl -sS -X PATCH \
-     -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     -d '{"addAddons":["<addon-name>"]}' \
-     "http://sharko/api/v1/clusters/<cluster-name>"
-   ```
+- **Can't reach the cluster or get its credentials:** test the cluster connection with [Connection doctor](connection-doctor.md).
+- **Secrets store problem:** see [Secrets provider unreachable](secrets-provider-unreachable.md). Check that the path in the catalog entry still exists in the store.
+- **Not allowed to write, or the namespace is missing:** give Sharko's access on that cluster the right to create and update Secrets in that namespace, or create the namespace.
+- **A Secret Sharko did not make is in the way:** check where it came from. If nobody needs it, delete it so Sharko can create its own:
 
-For Mitigation step 5 (catalog-level addon removal):
+  ```sh
+  kubectl --context <cluster-context> -n <namespace> get secret <secret-name> -o yaml
+  kubectl --context <cluster-context> -n <namespace> delete secret <secret-name>
+  ```
 
-1. Restore the catalog entry.
-2. Restart Sharko.
-3. Re-register the affected clusters' addons one by one, verifying
-   the secret push succeeds each time.
+- **Certificate checks are skipped:** fix the cluster's connection so its certificate can be checked.
+- **Incomplete catalog entry:** fix the secret definition in the addon catalog in Git.
 
----
+### Deliver the secrets again now
 
-## Prevention
+After you fix the cause, you don't have to wait for the next run. Ask Sharko to deliver this cluster's addon secrets right away:
 
-- **Code change — turn "continuing" into a hard failure**, or surface
-  it explicitly in the HTTP response. The `"continuing"` path is the
-  canonical silent-data-loss surface. The fix is one of:
-  - Return the failed secret push as part of the
-    `POST /api/v1/clusters` response body so the caller knows.
-  - Mark the cluster registration as partial success (HTTP 207
-    Multi-Status or 202 Accepted with a follow-up endpoint).
-  - Hard-fail the cluster registration and require the operator to
-    re-run after fixing the secret config.
-  This is the code-level prevention. Planned, not built.
+```sh
+curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+  "$SHARKO_URL/api/v1/clusters/<cluster-name>/secrets/refresh" | jq
 
-- **Monitoring — alert on per-addon secret-push failures.** Sharko does
-  not export this metric today. The alert below is a design sketch for a
-  future release, not something you can deploy now. The sketch: register
-  a counter `sharko_addon_secret_push_failures_total` and alert when its
-  rate exceeds 0 for any 5-minute window. That metric does not exist
-  today.
+# Only one addon:
+curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+  "$SHARKO_URL/api/v1/clusters/<cluster-name>/secrets/refresh?addon=<addon-name>" | jq
+```
 
-- **Scheduled work — daily reconciliation of secret state.** Sharko
-  already runs the cluster-secret reconciler at 30s cadence; add an
-  equivalent secrets-reconciler that probes each managed cluster's
-  expected addon secrets and re-pushes any missing/changed ones. This
-  brings eventual consistency to addon secrets, matching the existing
-  guarantee for cluster Secrets.
+- HTTP 200 with `secrets_refreshed` means every Secret was delivered.
+- HTTP 207 means some failed. `failed_secrets` lists them, and the **Addon secrets** page shows the reason for each one.
+- HTTP 404 means Git does not list this cluster, or does not define a secret for this addon on it.
 
----
+Sharko takes what to deliver only from Git. Anything you put in the request body is ignored.
 
-## Related runbooks
+To run delivery for every cluster now:
 
-- [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md) —
-  the related failure mode where the provider (AWS SM / vault / k8s
-  Secrets) is unreachable. Often the upstream cause of the
-  fetching-side failures here.
-- [`cluster-reconciler.md`](cluster-reconciler.md) — the reconciler for
-  ArgoCD cluster Secrets. The addon-secret reconciler
-  pattern modeled in Prevention would mirror this.
-- [`argocd-pr-merge-no-converge.md`](argocd-pr-merge-no-converge.md) —
-  related symptom (operator thinks the cluster is set up; ArgoCD
-  doesn't agree). When the symptom is "addon Application is Degraded"
-  rather than "ArgoCD didn't see the merge."
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  `request_id` correlation pattern.
+```sh
+curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" \
+  "$SHARKO_URL/api/v1/secrets/reconcile" | jq
+```
 
-## Escalation
+### Let the addon pick up the Secret
 
-If Mitigation steps 1-4 don't restore the addon to Healthy within 30
-minutes, or if the same failure recurs across multiple cluster
-registrations (suggesting a fleet-wide bug), email the maintainer:
-`moran.weissman@gmail.com`. Include:
+Some addons only read their Secret when they start. Once the Secret is there, sync the addon's Application in ArgoCD, or restart its pods.
 
-- This runbook URL
-- The cluster name(s) affected
-- The addon name(s) affected
-- The exact log line from Diagnosis step 1 (the
-  `"failed to create secret, continuing"` entry with `addon` and
-  `error` attributes)
-- The audit-log entry for the cluster registration
-- The Sharko version
+## How to check it's fixed
 
-The maintainer is a single human, not a 24×7 rotation. Silent
-data-loss bugs are prioritized — expect a same-business-day
-investigation.
+- The Secret is on the cluster and Sharko owns it:
+
+  ```sh
+  kubectl --context <cluster-context> -n <namespace> get secret <secret-name> \
+    -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}{"\n"}'
+  ```
+
+  This prints `sharko`.
+
+- The row on the **Addon secrets** page is in a good state.
+- `errors` is `0` in the status after the next run:
+
+  ```sh
+  curl -s -H "Authorization: Bearer $SHARKO_TOKEN" \
+    "$SHARKO_URL/api/v1/secrets/status" | jq '{errors, last_run}'
+  ```
+
+- The addon's Application in ArgoCD is `Healthy`.
+
+## If that didn't work
+
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
+
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the log lines from the last hour that mention `[secrets]`
+- the reason shown on the **Addon secrets** page for the row
+- the answer from the refresh call (it holds Secret names, not values)
+- what you tried from this page
+
+Related pages:
+
+- [Secrets provider unreachable](secrets-provider-unreachable.md)
+- [Connection doctor](connection-doctor.md)
+- [Metrics](metrics.md)
+- [Sharko can't reach your Git host](git-provider-unreachable.md)

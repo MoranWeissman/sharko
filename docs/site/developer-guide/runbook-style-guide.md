@@ -187,7 +187,7 @@ Each diagnosis step includes the exact command. Operators are pasting,
 not typing.
 
 ```sh
-kubectl logs -n <ns> -l app=sharko --tail=500 \
+kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --tail=500 \
   | jq 'select(.level == "ERROR" and (.msg | test("register|cluster"; "i")))'
 ```
 
@@ -408,15 +408,15 @@ Diagnosis section and there is no second-order metric worth surfacing.
 
 ### Escalation contacts
 
-Currently, Sharko's escalation contact is **the maintainer's email,
-`moran.weissman@gmail.com`**. The runbook should say this explicitly,
-and it should say it in one specific shape that all runbooks share:
+Sharko's escalation path is through GitHub issues. The runbook should say this explicitly in one specific shape that all runbooks share:
 
 ```markdown
 ## Escalation
 
 If the mitigations above do not resolve the failure within <window>,
-email the maintainer: `moran.weissman@gmail.com`. Include:
+open a GitHub issue: https://github.com/MoranWeissman/sharko/issues
+
+Include:
 
 - The runbook URL you used (this page)
 - The exact alert name (if applicable) or the error message
@@ -424,14 +424,15 @@ email the maintainer: `moran.weissman@gmail.com`. Include:
 - A 5-minute window of relevant logs (filtered by `request_id` per the
   [correlation pattern](../developer-guide/logging.md#correlation-ids))
 
-The maintainer is a single human, not a 24×7 rotation. Expect a
-business-day SLA, not a paged response. If the project grows a
-multi-maintainer team, this section will be replaced with on-call
-rotation details.
+For security issues, follow the process at
+https://github.com/MoranWeissman/sharko/security
+
+Sharko is solo-maintained. Expect a business-day response, not a paged
+on-call rotation.
 ```
 
 This is a **transition state**. The section as written acknowledges
-that Sharko is a small-maintainer project, sets a realistic SLA
+that Sharko is a small-maintainer project, sets a realistic response time
 expectation, and reserves a slot for a future multi-maintainer on-call
 rotation. Do not pretend Sharko has 24×7 escalation paths it does not
 have.

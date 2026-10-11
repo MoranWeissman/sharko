@@ -7,7 +7,7 @@ When you access Sharko for the first time, a setup wizard appears automatically.
 Have these ready:
 
 - **Git personal access token** — GitHub PAT with `repo` scope, or Azure DevOps PAT with `Code (Read & Write)` permissions
-- **Addons repo URL** — the Git repository where Sharko will store ApplicationSet and cluster configuration (can be an existing repo or a new empty one)
+- **Addons repo URL** — the Git repository where Sharko will store cluster configuration and addon assignments (can be an existing repo or a new empty one)
 - **ArgoCD account token** — an ArgoCD account token with at minimum `applications:get` and `projects:get` permissions
 
 ## Step 1: Welcome

@@ -1,461 +1,170 @@
-# Catalog Signing Trust Root Unavailable
+# Signed catalog entries all show as not verified
 
-**Severity:** P0
+When Sharko starts, it downloads a small file from Sigstore that it needs to check catalog signatures. If that download fails, Sharko still starts, but it can't check any signature. Every signed catalog entry then shows as not verified.
 
-> **Verified:** Authored 2026-06-01 against Sharko as shipped. Sharko
-> loads the Sigstore trust root by fetching the `trusted_root.json` target
-> over TUF; `"parse trusted_root.json"` is the exact parse-error string it
-> reports. Trust-policy semantics are on
-> [`catalog-trust-policy.md`](catalog-trust-policy.md).
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
+**How urgent:** Medium. Addons still work. Nothing is blocked. But "verified" no longer tells you anything until you fix this.
 
-Sharko cannot load Sigstore's `trusted_root.json` from the public-good
-TUF infrastructure. Every catalog entry that depends on signature
-verification — every cosign-keyless-signed third-party Helm chart in
-the marketplace — fails verification and surfaces as **Unverified** in
-the UI. Operators who configured a trust policy expecting verified
-sources see every entry as Unverified; they cannot distinguish a
-genuine signature failure (someone tampered with a chart) from a
-trust-root infrastructure failure.
+Before you start, set up the shell variables from [First checks](troubleshooting.md#set-up-once).
 
-This is P0 because the user-visible state is **wrong**: the marketplace
-is rendering "no entries can be trusted" when in fact the verification
-pipeline is broken upstream of any specific entry. The operator's trust
-decisions are based on bad data, and an operator paging on "the entire
-marketplace is unverified" will burn out fast unless this runbook
-routes them to the actual cause.
+## What you see
 
-This is **not** a per-entry signature failure (those are P1; see
-[`catalog-trust-policy.md`](catalog-trust-policy.md) for the
-per-entry runbook). This is the case where the **root of trust itself**
-is unreachable — Sigstore's TUF metadata can't be fetched, or the
-trusted-root target itself is unparseable.
+- In the Marketplace, the **Signature** filter has a **Signed only** box with a count next to it. That count drops to 0.
+- The API shows no verified entries, even though some entries are signed:
 
----
-
-## Symptoms
-
-What an operator sees when this fires:
-
-- **Every catalog entry in the Marketplace UI shows "Unverified" badge**
-  when the operator's trust policy expects them to be verified.
-  Single-entry failures don't fit this symptom — fleet-wide
-  Unverified is the signal.
-- **Sharko logs at startup show a TUF fetch failure**:
-
-  ```
-  {"time":"...","level":"ERROR","msg":"catalog signing: trusted_root.json load failed","error":"tuf GetTarget(trusted_root.json): ..."}
+  ```sh
+  curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/marketplace/addons" \
+    | jq '{total, verified: ([.addons[]|select(.verified)]|length), signed: ([.addons[]|select(.signature)]|length)}'
   ```
 
-  OR the parse error variant:
+  The problem is this one when `signed` is more than 0 and `verified` is 0.
 
-  ```
-  {"time":"...","level":"ERROR","msg":"catalog signing: trusted_root.json load failed","error":"parse trusted_root.json: ..."}
-  ```
+- The startup logs have this warning:
 
-- **`GET /api/v1/catalog/entries`** (or whatever the marketplace
-  read endpoint is) returns entries with `verified: false` and a
-  `signature_error` field containing strings like:
-  ```
-  "trusted material unavailable"
-  "no trust root configured"
-  "verifier not initialized"
+  ```sh
+  kubectl -n "$SHARKO_NS" logs deploy/sharko --since=1h | grep 'sigstore trust root unavailable'
   ```
 
-- **No specific Prometheus alert today.** Detection is via UI signal
-  ("everything is unverified") + log grep. Adding a startup-failure
-  metric is in Prevention.
+  ```json
+  {"level":"WARN","msg":"sigstore trust root unavailable; signed entries will surface as unverified","err":"tuf.New: ..."}
+  ```
 
-If the symptom is "**one** catalog entry is unverified" while others
-are verified, this is **not** the runbook — that's the per-entry
-signature failure case covered in
-[`catalog-trust-policy.md`](catalog-trust-policy.md). The single-page
-test: are ALL signed entries failing, or just one?
+  The `err` field holds the real reason. It starts with one of these:
 
----
+  | Start of `err` | What it means |
+  |---|---|
+  | `tuf.New: ...` | Sharko could not set up the download. Often the cache folder can't be written, for example `mkdir /tmp/sigstore-tuf: read-only file system`, or the Sigstore server can't be reached. |
+  | `tuf GetTarget(trusted_root.json): ...` | Sharko reached Sigstore but could not get the file. |
+  | `parse trusted_root.json: ...` | Sharko got the file but could not read it. |
 
-## Diagnosis
+- After that, each signed entry adds its own warning, `catalog entry signature verification errored`. Those are a result of this problem, not a separate one.
 
-Three checks. Each narrows whether the failure is upstream (Sigstore
-TUF down), network (Sharko can't reach the TUF URL), or local (the
-fetched trusted root won't parse).
+When the download works, Sharko logs `sigstore trust root loaded` at startup instead.
 
-### 1. Confirm the failure is fleet-wide (not per-entry)
+## Why it happens
 
-Compare verified counts to total counts:
+Catalog entries can carry a signature made with Sigstore, a free public service for signing software. To check a signature, Sharko needs Sigstore's list of trusted keys. It downloads that list once, at startup, from `https://tuf-repo-cdn.sigstore.dev` (TUF is the name of the safe-download method Sigstore uses). It saves a copy in a cache folder, `/tmp/sigstore-tuf` by default.
+
+The common reasons it fails:
+
+- **The cache folder can't be written.** The Sharko image has a read-only root filesystem. Helm chart versions v1.23 through v4.0.2 did not mount a writable `/tmp`, so the download always failed there. Chart v4.0.3 fixed this.
+- **A network rule blocks the pod** from reaching `tuf-repo-cdn.sigstore.dev` on port 443.
+- **A company proxy opens HTTPS traffic** and signs it with its own certificate, which Sharko does not trust. See [Corporate TLS inspection](corporate-mitm-tls.md).
+- **Sigstore itself has a problem** for a while.
+
+Sharko only tries at startup. Even after the cause is gone, the entries stay not verified until Sharko restarts.
+
+"Verified" is only shown as information. Sharko never blocks an addon because it is not verified, so there is nothing to switch off while you fix this.
+
+## How to fix it
+
+### 1. Read the reason
+
+Run the log command from [What you see](#what-you-see) and look at the `err` field. It tells you which of the steps below you need.
+
+### 2. If the cache folder can't be written
+
+You see `read-only file system` in `err`. Do one of these:
+
+- Upgrade to Helm chart v4.0.3 or later. It mounts a writable `/tmp`.
+- Or keep your chart, and point the cache at the data folder, which is always writable. Add this to your values file:
+
+  ```yaml
+  extraEnv:
+    - name: SHARKO_SIGSTORE_TUF_CACHE
+      value: /app/data/sigstore-tuf
+  ```
+
+  `extraEnv` is a list, and Helm replaces the whole list, so copy every other `extraEnv` entry you already use into the file too. Then upgrade:
+
+  ```sh
+  helm -n "$SHARKO_NS" upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
+    --reuse-values -f my-values.yaml
+  ```
+
+Do **not** set `SHARKO_TRUSTED_ROOT_PATH`, even if an older guide tells you to. Sharko does not read that name, and an unknown `SHARKO_` name stops Sharko from starting. If you set it before, remove it:
 
 ```sh
-curl -sS http://sharko/api/v1/catalog/entries \
-  -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-  | jq '{
-      total: (. | length),
-      verified: ([.[] | select(.verified == true)] | length),
-      unverified: ([.[] | select(.verified == false)] | length)
-    }'
+kubectl -n "$SHARKO_NS" set env deploy/sharko SHARKO_TRUSTED_ROOT_PATH-
 ```
 
-Expected on a healthy fleet: `verified` count > 0, roughly matching the
-count of signed entries. Bypass signal: `verified: 0` with
-`unverified` equal to the total signed count.
+If you set it through Helm `extraEnv`, take it out of your values file as well, or the next upgrade puts it back. The only Sigstore setting Sharko reads is `SHARKO_SIGSTORE_TUF_CACHE`. It names the cache folder. It can't replace the download.
 
-If a partial mix is present (some verified, some not), the failure is
-per-entry; this is not the runbook.
+### 3. If Sigstore can't be reached
 
-### 2. Confirm the TUF infrastructure is reachable
-
-The Sigstore public-good TUF lives at
-`https://tuf-repo-cdn.sigstore.dev`. Probe from the Sharko pod:
+First check from your own machine:
 
 ```sh
-SHARKO_NS=<sharko-ns>
-SHARKO_POD=$(kubectl -n "$SHARKO_NS" get pod -l app=sharko -o name | head -1)
-
-kubectl -n "$SHARKO_NS" exec "$SHARKO_POD" -- \
-  wget -q -O /dev/null --no-check-certificate \
-  "https://tuf-repo-cdn.sigstore.dev/1.root.json" \
-  && echo "TUF reachable" \
-  || echo "TUF UNREACHABLE"
+curl -sS -o /dev/null -w '%{http_code}\n' https://tuf-repo-cdn.sigstore.dev/timestamp.json
 ```
 
-Three possible outcomes:
+If that also fails, Sigstore may be having trouble. Wait a while, then restart Sharko (step 5).
 
-- **"TUF reachable"** — network and TLS both work. The failure is
-  local (parse error) or auth (corporate proxy stripping headers).
-  Jump to step 3.
-- **"TUF UNREACHABLE"** with timeout — egress NetworkPolicy blocks the
-  TUF CDN. Jump to Mitigation step 2.
-- **TLS handshake error / x509: unknown authority** — corporate
-  MITM TLS interception. See
-  [`corporate-mitm-tls.md`](corporate-mitm-tls.md) for the corporate
-  CA setup.
-
-Cross-reference Sigstore's status page
-(`https://status.sigstore.dev/`) for active TUF infrastructure
-incidents. They are rare but do happen; verify before assuming the
-failure is local.
-
-### 3. Inspect the startup log for the parse failure
+If it works from your machine, check from inside the cluster with a short-lived test pod. It deletes itself when it is done:
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
-  | jq -c 'select(.msg | test("trusted_root|catalog signing"; "i"))' \
-  | head -10
+kubectl -n "$SHARKO_NS" run sigstore-test --rm -i --restart=Never \
+  --image=curlimages/curl -- \
+  curl -sS -o /dev/null -w '%{http_code}\n' https://tuf-repo-cdn.sigstore.dev/timestamp.json
 ```
 
-Two log shapes:
+- A certificate error means a company proxy is in the way. Follow [Corporate TLS inspection](corporate-mitm-tls.md).
+- A timeout or a refused connection means the network blocks it. Ask your network team to allow outbound HTTPS (port 443) to `tuf-repo-cdn.sigstore.dev`.
 
-- `"tuf GetTarget(trusted_root.json): ..."` — the TUF fetch itself
-  failed. Network or service issue. Jump to Mitigation step 2.
-- `"parse trusted_root.json: ..."` — the fetch succeeded but the
-  body is malformed JSON. Either Sigstore shipped a bad metadata
-  version (very rare), or a corporate proxy is rewriting the JSON
-  body. Jump to Mitigation step 3.
-
-### 4. Check the startup log for the verifier initialization
+This test pod is not the Sharko pod, so a NetworkPolicy that only selects Sharko does not apply to it. If the test pod works, look at the NetworkPolicies that select `app.kubernetes.io/name=sharko`:
 
 ```sh
-kubectl -n "$SHARKO_NS" logs -l app=sharko --tail=10000 \
-  | jq -c 'select(.msg | test("verifier|signing.*init|signing.*ready"; "i"))' \
-  | head -10
+kubectl -n "$SHARKO_NS" get networkpolicy
 ```
 
-Expected on healthy: a line like `"catalog signing verifier ready"`
-emitted once at startup. Absence indicates the verifier never
-initialized — the trusted-root failure cascaded into the verifier
-init being skipped, so every subsequent verify is a no-op (and
-defaults to Unverified).
+They must allow outbound port 443 to that host.
 
----
+### 4. If the file can't be read
 
-## Mitigation (try in order)
+You see `parse trusted_root.json` in `err`. This is rare. It can be a short problem on Sigstore's side, or a proxy that changes the file on the way. Restart Sharko (step 5). If it keeps happening, check for a proxy, as in step 3.
 
-1. **Restart Sharko.** The trusted-root fetch happens at process
-   start; if the failure was a transient network blip, a fresh
-   start retries cleanly.
+### 5. Restart Sharko
 
-   ```sh
-   kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
-   kubectl -n "$SHARKO_NS" rollout status deployment/sharko --timeout=120s
-   ```
+Sharko only downloads the file at startup, so restart it after any fix. A Helm upgrade that changes the pod settings already does this for you.
 
-   Then verify the marketplace:
+```sh
+kubectl -n "$SHARKO_NS" rollout restart deploy/sharko
+kubectl -n "$SHARKO_NS" rollout status deploy/sharko
+```
+
+## How to check it's fixed
+
+1. The startup log says the file loaded:
 
    ```sh
-   curl -sS http://sharko/api/v1/catalog/entries \
-     -H "Authorization: Bearer ${SHARKO_TOKEN}" \
-     | jq '[.[] | select(.verified == true)] | length'
+   kubectl -n "$SHARKO_NS" logs deploy/sharko --since=10m | grep 'sigstore trust root'
    ```
 
-   Success indicator: non-zero `verified` count.
+   You should see `sigstore trust root loaded`, and no `unavailable` line.
 
-2. **Repair the egress path to Sigstore.** If Diagnosis step 2
-   showed TUF unreachable, allow egress in NetworkPolicy:
-
-   ```yaml
-   apiVersion: networking.k8s.io/v1
-   kind: NetworkPolicy
-   metadata:
-     name: allow-sharko-egress-to-sigstore
-     namespace: <sharko-ns>
-   spec:
-     podSelector:
-       matchLabels:
-         app: sharko
-     policyTypes:
-       - Egress
-     egress:
-       - to:
-           - ipBlock:
-               cidr: 0.0.0.0/0
-         ports:
-           - protocol: TCP
-             port: 443
-   ```
-
-   For more-restrictive environments, the Sigstore endpoints to allow
-   are:
-   - `tuf-repo-cdn.sigstore.dev` (TUF metadata + targets CDN)
-   - `rekor.sigstore.dev` (transparency log queries during verify)
-   - `fulcio.sigstore.dev` (cert chain validation)
-
-   Apply and restart Sharko.
-
-3. **If the TUF fetch returns a malformed body, you cannot point Sharko
-   at a trusted root on disk.** Sharko has no such override. The only
-   Sigstore path setting it reads is `SHARKO_SIGSTORE_TUF_CACHE`
-   (default `/tmp/sigstore-tuf`), and that names the directory TUF
-   *caches into* — it does not bypass TUF
-   and it will not accept a hand-placed `trusted_root.json` as a substitute
-   for a TUF fetch.
-
-   Earlier versions of this page told you to set `SHARKO_TRUSTED_ROOT_PATH`
-   to a mounted file. **Do not do that.** Sharko has never read that name,
-   and from this release a `SHARKO_` name Sharko does not recognise stops
-   the server at startup — so the command that was supposed to get you past
-   an unreachable TUF root now stops Sharko from starting at all.
-
-   What the cache setting IS good for: giving the cache a persistent,
-   writable home so a pod restart does not force a fresh network fetch,
-   and so a read-only root filesystem does not break the default
-   `/tmp/sigstore-tuf` path.
+2. Signed entries are verified again:
 
    ```sh
-   # Point the TUF cache at a writable, persistent location. On a Helm
-   # install with the chart defaults, use /app/data/sigstore-tuf (the
-   # /app/data mount is always writable). /var/lib/sharko is on the
-   # read-only root and will fail.
-   kubectl -n "$SHARKO_NS" set env deployment/sharko \
-     SHARKO_SIGSTORE_TUF_CACHE=/app/data/sigstore-tuf
+   curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/marketplace/addons" \
+     | jq '{total, verified: ([.addons[]|select(.verified)]|length), signed: ([.addons[]|select(.signature)]|length)}'
    ```
 
-   If the cache already holds a good, unexpired fetch, keeping that
-   directory across restarts buys you time while the upstream problem is
-   fixed. If it does not, go to mitigation 4 — turning signature
-   enforcement off temporarily is the supported way through, and it is
-   honest about what it costs.
+   `verified` is more than 0.
 
-4. **Mitigate user-visible state by disabling signature enforcement
-   temporarily.** If verification can't be restored quickly, the
-   operator can choose to allow Unverified entries to be used:
+3. The **Signed only** count in the Marketplace is back above 0.
 
-   ```sh
-   # Adjust the trust-policy regex to be permissive (NOT RECOMMENDED
-   # for production; document the rationale):
-   helm upgrade --reuse-values \
-     --set catalog.trustPolicy.mode=permissive \
-     sharko sharko/sharko -n "$SHARKO_NS"
-   ```
+If `verified` is still 0 for Sharko's own built-in entries, look for this warning at startup: `this build carries no release commit, so its own embedded catalog entries cannot be bound to a release and will surface as unverified`. That comes from a self-built image, not from Sigstore. Official releases log `embedded catalog signatures are bound to this build's release commit` instead.
 
-   This makes every catalog entry usable regardless of signature
-   state. **Security regression.** Acceptable only as a short-term
-   bridge while step 3 is being prepared. Re-tighten the trust policy
-   the moment the trusted root is restored.
+## If that didn't work
 
-5. **Last resort — corporate proxy CA installation.** If Diagnosis
-   step 2 showed an x509-unknown-authority error (TLS interception),
-   install the corporate CA cert into Sharko's trust store per
-   [`corporate-mitm-tls.md`](corporate-mitm-tls.md). The TUF client
-   then accepts the proxy's certificate and the fetch succeeds.
+Open an issue at <https://github.com/MoranWeissman/sharko/issues>. Include:
 
----
+- the Sharko version (`sharko version`, or the `version` field from `/api/v1/health`)
+- the log lines from the last hour that mention `sigstore`
+- what you tried from this page
 
-## Root-cause patterns
+Related pages:
 
-### Sigstore TUF infrastructure outage
-
-The Sigstore public-good TUF (`tuf-repo-cdn.sigstore.dev`) is
-unreachable or returning 5xx. Rare but possible — Sigstore is a CNCF
-project, not an AWS-grade SLA service.
-
-Diagnostic signature: Diagnosis step 2's wget returns timeout or 5xx.
-Sigstore's status page lists an active incident. Other Sigstore-
-dependent projects (cosign verify, in-toto attestations) are also
-failing globally.
-
-Fix is to wait it out, using a persistent TUF cache (Mitigation step 3)
-as a bridge if one is already warm, or turning enforcement off
-temporarily (Mitigation step 4) if it is not.
-
-### Corporate proxy / NetworkPolicy egress block
-
-Egress to `tuf-repo-cdn.sigstore.dev` is blocked. Common in restrictive
-enterprise environments where outbound HTTPS to public CDNs requires
-explicit allow-listing.
-
-Diagnostic signature: Diagnosis step 2's wget returns timeout or
-"connection refused"; `nslookup` from the pod resolves the hostname
-correctly. The egress firewall logs (if accessible) show a denied
-connection.
-
-Fix is Mitigation step 2 (NetworkPolicy allow) or the corporate
-firewall allow-list entry. Document in the install procedure.
-
-### Corporate TLS MITM without CA installed
-
-A corporate egress proxy intercepts TLS to inspect traffic. The
-proxy re-signs certificates with its own CA, which Sharko doesn't
-trust. The TUF fetch fails with `x509: unknown authority`.
-
-Diagnostic signature: Diagnosis step 2's wget fails with x509 /
-certificate error; Sigstore's status page shows no incidents; the
-operator confirms a corporate proxy is in place.
-
-Fix is to install the corporate CA per
-[`corporate-mitm-tls.md`](corporate-mitm-tls.md). One-time setup;
-once the CA is in the trust store, the fetch succeeds.
-
-### Malformed trusted root from a CDN cache
-
-Rare: the CDN returned a corrupted or partial body for
-`trusted_root.json`. Sharko's parse fails. A retry from a different
-edge node may succeed.
-
-Diagnostic signature: Diagnosis step 3 shows
-`"parse trusted_root.json: ..."`. The wget probe in step 2 either
-succeeds (returning garbled bytes) or returns 200 with a non-JSON
-body.
-
-Fix is a Sharko restart (Mitigation step 1). The TUF client retries on
-restart and typically lands on a healthy edge. If the malformed
-response is consistent across restarts, a persistent TUF cache
-(Mitigation step 3) keeps the last good fetch alive across that
-restart; if there is no good fetch to keep, go to Mitigation step 4.
-
----
-
-## Rollback plan
-
-Mitigation steps 1, 2, 5 are non-destructive (restart, NetworkPolicy
-update, CA install).
-
-For Mitigation step 3 (persistent TUF cache directory):
-
-1. To go back to the stock cache location once Sigstore is healthy:
-   ```sh
-   kubectl -n "$SHARKO_NS" set env deployment/sharko \
-     SHARKO_SIGSTORE_TUF_CACHE-
-   kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
-   ```
-
-   Keeping the mounted cache is fine too — it is a cache location, not a
-   trust decision.
-
-2. If someone set `SHARKO_TRUSTED_ROOT_PATH` on the deployment before
-   reading this, remove it — otherwise the server will refuse to start:
-
-   ```sh
-   kubectl -n "$SHARKO_NS" set env deployment/sharko SHARKO_TRUSTED_ROOT_PATH-
-   kubectl -n "$SHARKO_NS" rollout restart deployment/sharko
-   ```
-
-3. Verify the TUF path works (Diagnosis step 2 wget returns 200).
-
-For Mitigation step 4 (trust-policy permissive mode):
-
-1. Restore strict trust-policy:
-   ```sh
-   helm upgrade --reuse-values \
-     --set catalog.trustPolicy.mode=strict \
-     sharko sharko/sharko -n "$SHARKO_NS"
-   ```
-
-2. Verify marketplace shows verified entries again.
-
-3. Audit the catalog for any entries that were used during the
-   permissive window — they were not signature-validated and should
-   be re-validated against the now-strict policy.
-
----
-
-## Prevention
-
-- **Monitoring — startup failure metric.** Sharko does not export this
-  metric today. The alert below is a design sketch for a future release,
-  not something you can deploy now. The sketch: register
-  `sharko_catalog_verifier_initialized{result="success|failed"}` as a
-  Counter incremented once at startup, and alert when the failed-bucket
-  count is non-zero. Nothing in Sharko registers or writes it, so the
-  only startup signal available right now is the log line.
-
-- **Monitoring — TUF fetch reachability.** Sharko does not export this
-  metric today. The alert below is a design sketch for a future release,
-  not something you can deploy now. The sketch: a periodic background
-  check that re-validates TUF reachability and exposes a gauge —
-
-  ```
-  sharko_sigstore_tuf_reachable == 0
-  ```
-
-  — alerting when it sits at 0 for more than 5 minutes. It would catch
-  the slow-degradation case where TUF starts failing mid-runtime (rare,
-  but the verifier caches the trusted root and won't re-fetch until
-  restart).
-
-- **Gating — a trusted root that does not come from TUF. NOT BUILT.**
-  Sharko today can only get its trusted root from TUF; there is no code
-  path that reads one from disk. Shipping the chart with a bundled
-  `trusted_root.json` would make a TUF outage irrelevant, but it needs a
-  product change first, not a Helm value. Recorded here as the fix worth
-  having, explicitly not as something an operator can do now.
-
-- **Scheduled work — quarterly TUF-cache drill.** Once per quarter,
-  clear `SHARKO_SIGSTORE_TUF_CACHE`, restart, and confirm a cold fetch
-  still validates a known-signed catalog entry. Catches an egress rule
-  or a CA change that only bites on a cold start, before a real Sigstore
-  rotation forces one.
-
----
-
-## Related runbooks
-
-- [`catalog-trust-policy.md`](catalog-trust-policy.md) — per-entry
-  signature failures (P1). Covers cert-chain semantics, trust-policy
-  regex, workflow_ref assertions.
-- [`catalog-sources.md`](catalog-sources.md) — third-party catalog
-  source configuration. The trust root applies to entries from
-  these sources.
-- [`corporate-mitm-tls.md`](corporate-mitm-tls.md) — corporate proxy
-  TLS interception. Often the root cause of TUF reachability failures
-  in restricted environments.
-- [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
-- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
-  log-grep correlation patterns.
-
-## Escalation
-
-If Mitigation steps 1-3 do not restore verifier initialization within
-30 minutes — or if the trusted-root parse failure persists across
-restarts — email the maintainer: `moran.weissman@gmail.com`. Include:
-
-- This runbook URL
-- The output of Diagnosis steps 2 and 3
-- The Sigstore status-page snapshot (if a public incident is in
-  progress)
-- The Sharko version
-- The marketplace verified-count snapshot from Diagnosis step 1
-- Whether you applied Mitigation step 4 (permissive trust policy)
-  and the rationale
-
-The maintainer is a single human, not a 24×7 rotation. Catalog
-trust failures are P0 because they undermine the user's
-trust-policy decisions; expect a same-business-day investigation.
+- [Catalog trust policy](catalog-trust-policy.md)
+- [Third-party catalog sources](catalog-sources.md)
+- [Corporate TLS inspection](corporate-mitm-tls.md)
+- [First checks](troubleshooting.md)

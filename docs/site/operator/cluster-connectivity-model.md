@@ -1,190 +1,243 @@
 # Cluster Connectivity Model
 
-> **Reference page, not a runbook.** This page explains the credential
-> selection model behind the **Test connection** feature, where each
-> piece of "how does Sharko reach this cluster" truth actually lives,
-> and the two different things people mean when they say "secret." If
-> you are diagnosing a specific failure mode (Test returns 503,
-> exec-plugin auth refused, IAM token minting failed), search
-> [`failure-mode-index.md`](failure-mode-index.md) or jump directly to
-> [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) /
-> [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
-> / [`eks-token-generation-failed.md`](eks-token-generation-failed.md).
-> For the step-by-step IAM recipe (which roles, which trust policies),
-> see [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md).
+This page explains how Sharko gets the credentials it needs to reach a
+cluster, for example when you click **Test connection**. It covers what
+works with no extra setup, what needs more setup, and where each piece of
+"how do I reach this cluster" information is kept.
 
-How Sharko picks credentials for the **Test connection** feature, what just works, and what needs additional setup.
+If you are chasing a specific error, these pages are quicker:
 
-## What changed in v1.25
+- [AWS IAM Cluster Auth](aws-iam-cluster-auth.md): Test connection returns
+  `503` for an EKS cluster that uses AWS IAM.
+- [ArgoCD exec plugin auth unsupported](argocd-exec-plugin-auth-unsupported.md):
+  the cluster uses a login helper program Sharko does not support.
+- [EKS token generation failed](eks-token-generation-failed.md): Sharko's
+  own AWS identity is broken.
+- [Failure mode index](failure-mode-index.md): the full list.
 
-Before v1.25, the Test connection feature required an explicit **secrets backend** (Vault / AWS-SM / k8s-secrets) to be configured on the active connection — even for self-hosted Kubernetes installs where the credentials Sharko already wrote into ArgoCD's namespace would do. Operators with no separate secrets backend hit a 503 "no credentials provider configured" dead end.
+For the AWS roles and trust policies, see
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md).
 
-v1.25 introduces a built-in `argocd` provider that reads cluster credentials directly from the ArgoCD cluster Secret Sharko already creates during `sharko register-cluster` (or that you created yourself, in a self-managed connection). Test now routes by inspecting the Secret's `config` JSON shape — no extra configuration required for the production happy path.
+## Where Sharko reads the credentials
+
+By default, Sharko reads a cluster's credentials straight from its ArgoCD
+cluster Secret. That is the Secret in the `argocd` namespace that ArgoCD
+itself uses to reach the cluster. Sharko writes it when it registers a
+cluster, or you create it yourself when you
+[manage the connection yourself](self-managed-connections.md). Sharko looks
+at the shape of the Secret's `config` field to decide how to log in. You
+don't need a separate secrets backend for this.
 
 ## What just works today
 
-**Self-hosted Kubernetes** (EC2 / VMs / on-prem / bare-metal) registered via `sharko register-cluster` with a kubeconfig containing a static bearer token. ArgoCD stores the credentials with the `bearerToken` config shape; the `argocd` provider reads them back; the Test connection flow runs end-to-end.
+**Kubernetes you run yourself** (on VMs, on-prem or bare metal) with a
+bearer token. The ArgoCD Secret has a `bearerToken` in its `config`.
+Sharko reads it back and Test connection works.
 
-**Client-certificate clusters** (kubeadm / on-prem kubeconfigs using `tlsClientConfig.certData` + `keyData` instead of a token) — read back the same way.
+**Clusters with a client certificate** (kubeadm or on-prem kubeconfigs that
+use `tlsClientConfig.certData` and `keyData` instead of a token). Sharko
+reads them back the same way.
 
-**AWS-managed (EKS) clusters using IAM authentication** — this is also a happy path, not a limitation. If the ArgoCD cluster Secret uses the `awsAuthConfig` shape, or an `execProviderConfig` naming one of the two well-known AWS authenticators (`argocd-k8s-auth aws` or `aws-iam-authenticator`), Sharko parses the cluster name, role ARN, and region straight out of the Secret and mints a short-lived EKS token **using its own AWS identity** (IRSA / EKS Pod Identity / the default AWS credential chain) — assuming the named role first if one is set. Sharko never shells out to run the exec-plugin binary; it only reads the arguments that were meant for it. See [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for how to wire the IAM roles this depends on.
+**Amazon EKS clusters that use AWS IAM.** This works too. The ArgoCD Secret
+uses either the `awsAuthConfig` shape, or an `execProviderConfig` that names
+one of the two known AWS login helpers (`argocd-k8s-auth aws` or
+`aws-iam-authenticator`). Sharko reads the cluster name, role ARN and
+region from the Secret. It then gets a short-lived EKS token **using its own
+AWS identity** (IRSA, EKS Pod Identity, or the normal AWS credential chain).
+If a role is named, Sharko assumes it first. Sharko never runs the helper
+program. It only reads the arguments that were meant for it. See
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for the AWS
+roles this needs.
 
-This only fails when Sharko genuinely can't produce a usable token — no resolvable AWS region, or the mint attempt itself fails (no AWS identity on the Sharko pod, the assumed role's trust policy doesn't include Sharko's role, insufficient STS permissions). That failure surfaces as a `503` with `"error_code": "argocd_provider_iam_required"` — see [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) for the diagnosis path.
+This only fails when Sharko really can't get a working token. Either no AWS
+region can be found, or AWS refuses the request (for example, the Sharko
+pod has no AWS identity, or the role's trust policy does not include
+Sharko). Sharko then returns `503` with
+`"error_code": "argocd_provider_iam_required"`. See
+[AWS IAM Cluster Auth](aws-iam-cluster-auth.md) for what to do.
 
-This is the **primary production target**. No secrets-backend configuration needed for any of the three shapes above.
+None of these three shapes need a separate secrets backend.
 
 ## What still needs additional setup
 
-### Cloud-managed clusters using an exec plugin Sharko doesn't recognize
+### Clusters that use a login helper Sharko doesn't know
 
-If your kubeconfig uses an out-of-process exec plugin Sharko doesn't know how to parse — `gke-gcloud-auth-plugin`, `kubelogin`, a custom corporate helper script — Test surfaces a clear, typed error:
+Some kubeconfigs run a separate program to log in, like
+`gke-gcloud-auth-plugin`, `kubelogin`, or a script your company wrote. If
+the program is not one of the two AWS helpers above, Test connection shows
+this error:
 
-> *"cluster "\<name\>" uses exec-plugin auth (command "\<helper\>"). Sharko never executes exec-plugin binaries; only the known AWS authenticators (argocd-k8s-auth aws, aws-iam-authenticator) are parsed and minted with Sharko's own AWS identity — every other command stays unsupported."*
+> *"cluster "\<name\>" uses exec-plugin auth (command "\<helper\>"). Sharko
+> never executes exec-plugin binaries; only the known AWS authenticators
+> (argocd-k8s-auth aws, aws-iam-authenticator) are parsed and minted with
+> Sharko's own AWS identity — every other command stays unsupported."*
 
-This is a real, permanent limitation, not a v1.x-vs-v2 scope cut: Sharko has no way to authenticate as GCP or Azure (see [`azure-gcp-provider-unimplemented.md`](azure-gcp-provider-unimplemented.md)), and it deliberately never shells out to run an arbitrary binary. See [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md) for the workarounds (migrate to a bearer-token or AWS-SM-structured shape, or a static token for GCP/AKS clusters).
+This will not change. Sharko can't log in as a Google Cloud or Azure
+identity (see
+[Azure and GCP providers not implemented](azure-gcp-provider-unimplemented.md)),
+and it will never run a program it does not know. See
+[ArgoCD exec plugin auth unsupported](argocd-exec-plugin-auth-unsupported.md)
+for what to do instead. In short: switch the cluster to a bearer token or a
+client certificate.
 
-## Two names for two different secrets
+## Two different kinds of secret
 
-"Secret" gets used loosely enough in Kubernetes and ArgoCD conversations that it's worth being precise, because Sharko treats these as two entirely separate concerns with separate storage, separate providers, and separate failure modes:
+People say "secret" for two different things. Sharko keeps them fully
+apart. They are stored in different places, read by different parts of
+Sharko, and fail in different ways.
 
-- **Connection credentials** — what lets Sharko (and ArgoCD) *reach a cluster's API server at all*. This is the bearer token / client certificate / AWS IAM role everything on this page is about. It flows through the `ClusterCredentialsProvider` interface — the `argocd` provider described above, or one of `aws-sm` / `k8s-secrets` when Sharko needs to fetch a kubeconfig at registration time.
-- **Addon secrets** — the values an addon *deployed to* a cluster needs at runtime (a Datadog API key, a GitHub token for an ingress controller, anything referenced by a `secrets:` block in `addons-catalog.yaml`). These flow through the separate `SecretProvider` interface and get pushed onto the target cluster as a plain Kubernetes Secret, labeled `app.kubernetes.io/managed-by: sharko`.
+- **Connection credentials** let Sharko and ArgoCD *reach a cluster's API
+  at all*. This is the bearer token, client certificate or AWS role that
+  this page is about. Sharko reads them from the ArgoCD cluster Secret
+  (described above), or from a credentials backend (AWS Secrets Manager or
+  Kubernetes Secrets) when it needs a kubeconfig at registration.
+- **Addon secrets** are values that an addon needs *on* the cluster while
+  it runs, like a Datadog API key. An addon lists the secrets it needs in
+  its catalog entry. Sharko reads the values from your secrets backend and
+  puts them on the cluster as a normal Kubernetes Secret, with the label
+  `app.kubernetes.io/managed-by: sharko`. See
+  [Managing Addons → Addon Secrets](../user-guide/addons.md#addon-secrets).
 
-Each addon declares its own addon-secret paths directly in `configuration/addons-catalog.yaml` (hand-editable in Git, with API/UI equivalents):
-
-```yaml
-addons:
-  - name: datadog
-    chart: datadog
-    repo: https://helm.datadoghq.com
-    version: 3.74.0
-    secrets:
-      - secretName: datadog-keys
-        namespace: datadog
-        keys:
-          api-key: secrets/datadog/api-key
-          app-key: secrets/datadog/app-key
-```
-
-The two concerns can even use the same backend (AWS Secrets Manager, say) without being the same secret — a cluster's connection credentials and an addon's API key just happen to both live in AWS SM, under different paths, read by different code paths, for different reasons. Adding the `argocd` cluster-credentials provider, or the AWS IAM minting, changes nothing about how addon-secret resolution works.
+Both kinds can live in the same backend, for example AWS Secrets Manager.
+They are still different secrets, under different paths, read for
+different reasons. Nothing on this page changes how addon secrets work.
 
 ## Registration works with zero credentials (lazy credentials)
 
-**Registering a cluster never requires connection
-credentials at all**, regardless of which connection mode you pick.
-Addon workloads deploy the normal way — Git → ArgoCD → the cluster —
-and that path needs no credentials from Sharko whatsoever. The one and
-only place Sharko needs *its own* access to a spoke cluster is pushing
-addon secrets (the `secrets:` block on a catalog entry), because that's
-a direct Kubernetes API write Sharko itself performs.
+**You never need connection credentials to register a cluster**, whoever
+manages its connection. Addons reach the cluster the normal way: Git, then
+ArgoCD, then the cluster. That needs no credentials from Sharko. The only
+time Sharko needs *its own* access to a cluster is to put addon secrets on
+it, because then Sharko writes to the cluster's API itself.
 
-So the gate sits where the need actually is, not at registration:
+So Sharko only asks for credentials when it really needs them:
 
-- **Register a cluster with no credentials source at all.** This
-  succeeds for every connection mode — Sharko-managed and self-managed
-  alike. The cluster's entry goes into `configuration/managed-clusters.yaml`
-  exactly like any other registration.
-- **Enable a secret-*less* addon on a credential-less cluster.** Also
-  succeeds with zero friction — there was never anything for Sharko to
-  push, so there's nothing to gate.
-- **Enable a secret-*bearing* addon on a credential-less cluster.** This
-  is the one case that's rejected — `POST
-  /clusters/{name}/addons/{addon}` returns `422` with a plain message
-  naming exactly what's missing:
+- **Register a cluster with no credentials.** This works, whoever manages
+  the connection. The cluster's entry goes into `managed-clusters.yaml`
+  like any other.
+- **Turn on an addon that needs no secrets, on a cluster with no
+  credentials.** This works too. There is nothing for Sharko to put on the
+  cluster.
+- **Turn on an addon that needs secrets, on a cluster with no
+  credentials.** This is the one case Sharko refuses. Turning the addon on
+  (`POST /api/v1/v4/clusters/{name}/addons/{addon}`) returns `422` with the
+  code `validation_failed`, and a message that says exactly what is
+  missing:
 
-  > *"addon "datadog" needs 2 secrets pushed to the cluster, but Sharko
-  > has no credentials for cluster "prod-1" — add connection
-  > credentials (secret path or EKS role) to the cluster, or choose an
-  > addon without secrets."*
+  > *"addon "datadog" needs 2 secrets pushed to the cluster, but Sharko has
+  > no credentials for cluster "prod-1" — add connection credentials
+  > (secret path or EKS role) to the cluster, or choose an addon without
+  > secrets"*
 
-  The check performs a real credential-fetch attempt (the same
-  `credsRouter`-aware path the secret push itself uses) — a `nil`
-  result means the push can actually proceed, not just that the
-  cluster record *looks* configured.
+  Sharko really tries to fetch the credentials to decide this, the same
+  way it does when it puts the secrets on the cluster. So a pass means the
+  push can really happen, not just that the cluster looks set up.
 
-**In the UI**, a cluster with no resolvable credentials carries
-`addon_secrets_ready: false` on its read model (`GET
-/clusters/{name}`), and the cluster detail page uses that flag to
-pre-warn *before* you click Apply on a secret-bearing addon, instead of
-letting the request round-trip into the same 422 the API would return
-anyway.
-
-This changes nothing about the two-secret split above: addon secrets
-still flow through the same `SecretProvider` interface either way. What
-changed is *when* Sharko insists on being able to reach that interface
-for a given cluster — at the moment an addon that actually needs it is
-enabled, not upfront at registration.
+**In the UI**, a cluster with no usable credentials has
+`addon_secrets_ready: false` (in `GET /api/v1/clusters/{name}`). The
+cluster page uses it to warn you *before* you click Apply on an addon that
+needs secrets.
 
 ## Checking a connection end to end
 
-The [Connection Doctor](connection-doctor.md) runs five real-attempt
-checks against a cluster's connection in one call — credentials,
-addon-secret paths, IAM role assumption, cluster access, and (for
-self-managed connections) whether another ArgoCD Application is
-fighting Sharko over the connection secret. Use it when Test
-connection fails and you need to know *which* link in the chain broke,
-not just that one did.
+The [Connection Doctor](connection-doctor.md) runs six checks on a
+cluster's connection in one go: the credentials, the addon secret paths,
+the AWS role, access to the cluster, whether another ArgoCD Application
+also writes the connection Secret (only when you manage the connection),
+and the connectivity check app. Use it when Test connection fails and you
+want to know *which* part is broken.
 
-## Where each piece of connection truth lives
+## Where each piece of connection information lives
 
-A registered cluster's "how do I connect to this" story is split across three places on purpose — each piece lives where it's cheapest to fix a typo in it, and each has a different blast radius when it's wrong:
+What Sharko needs to reach a cluster is kept in three places, on purpose.
+Each piece is kept where a mistake in it is easiest to fix:
 
-| What | Lives in | How you fix a typo |
-|------|----------|---------------------|
-| Cluster name, labels, addon selections, `connectionManagedBy` mode, `secretPath`/`roleArn` pointer | `configuration/managed-clusters.yaml` in Git | Edit the file, open a PR (or let Sharko's UI/CLI/API do it for you) — the normal GitOps flow. |
-| The actual sensitive bytes (kubeconfig, or a structured `{server, ca, role_arn}` JSON) | Your configured secrets backend (AWS Secrets Manager or a Kubernetes Secret) | Edit the secret in place. Sharko re-reads it on the next credential fetch — **no re-registration needed**. |
-| The ArgoCD cluster Secret in the `argocd` namespace | **Derived state** — Sharko's reconciler rebuilds it from the two rows above | **Never hand-edit it** (unless the cluster is in `connectionManagedBy: user` mode — see below). It self-heals: delete it, and the next reconcile tick (within 30s) recreates it. Hand edits to a Sharko-managed one just get overwritten. |
+| What | Where it lives | How you fix a mistake |
+| --- | --- | --- |
+| Cluster name, labels, who manages the connection (`connectionManagedBy`), the `secretPath` or `roleArn`, and which addons are on | `managed-clusters.yaml` and `cluster-addons/<cluster>.yaml` in Git | Edit the file and open a pull request, or let Sharko's UI, CLI or API do it for you. |
+| The secret values themselves (a kubeconfig, or `{server, ca, role_arn}` JSON) | Your credentials backend (AWS Secrets Manager or a Kubernetes Secret) | Edit the secret where it is. Sharko reads it again the next time it fetches credentials. **You don't need to register the cluster again.** |
+| The ArgoCD cluster Secret in the `argocd` namespace | **Built by Sharko** from the two rows above | **Don't edit it by hand** (unless you manage the connection yourself, see below). If you delete it, Sharko creates it again within 30 seconds. Changes you make by hand are not saved anywhere else, so they are lost when Sharko builds it again. |
 
-The one edge that doesn't follow this split: **pasting a kubeconfig directly at registration time.** That kubeconfig's bytes get written straight into the secrets backend on your behalf — it's quick, and it works, but it's the one path where the "sensitive bytes live in the secrets backend, not in Git" separation happens automatically instead of being something you set up yourself. Everything else about the registration (name, labels, addons) still goes through Git like normal. Label this path "quick, but not GitOps-clean" if you're documenting your own fleet's setup — pointing at an already-stored secret, or minting an EKS token, keeps the sensitive bytes entirely out of any request Sharko receives.
+One way of registering does not follow this split: **pasting a kubeconfig
+when you register.** The pasted kubeconfig is written only into the ArgoCD
+cluster Secret. It is **not** saved in your credentials backend, and it is
+not in Git. So Sharko can't build that Secret again if it is lost. Pasting
+is off by default (the "Allow legacy inline credentials" setting,
+`settings.allowInlineCredentials` in the Helm values). Pointing at a stored
+secret, or using an EKS token, is the better way.
 
-If a cluster is in **`connectionManagedBy: user` mode** (see [Managing Cluster Connections Yourself](self-managed-connections.md)), the middle row doesn't apply — you own the ArgoCD Secret's contents entirely, and Sharko only ever merges addon labels onto it. The truth table above describes the default, Sharko-managed case.
+If **you** manage the cluster's connection (`connectionManagedBy: user`,
+see [Managing Cluster Connections Yourself](self-managed-connections.md)),
+the last row is different. The ArgoCD Secret is yours, and Sharko only adds
+addon labels to it. The table above is for the default case, where Sharko
+manages the connection.
 
-## Recommended AWS path: identity-based, nothing stored
+## Recommended for AWS: log in with an identity, store nothing
 
-For AWS, the recommended connectivity path is **identity-based**: Sharko mints short-lived tokens on demand using an IAM role (IRSA or EKS Pod Identity), rather than storing a kubeconfig or a static bearer token anywhere. Nothing to rotate, nothing to leak, nothing that outlives the request that needed it. This applies in two places:
+For EKS, the best way is to let Sharko get short-lived tokens with an AWS
+role (IRSA or EKS Pod Identity), instead of storing a kubeconfig or a token
+anywhere. There is nothing to rotate and nothing to leak. Choose the
+**Amazon EKS token** option when you register (see
+[Managing Clusters → Adding a Cluster](../user-guide/clusters.md#adding-a-cluster)).
+For clusters whose ArgoCD Secret already exists, the `awsAuthConfig` and
+known-helper reading described above does the same thing.
 
-- **At registration time**, choosing the **Amazon EKS token** credentials source (see [Managing Clusters](../user-guide/clusters.md#adding-a-cluster)) instead of pasting or pointing at a kubeconfig.
-- **For clusters whose ArgoCD Secret already exists** (adopted, or registered outside Sharko), the `awsAuthConfig` / known-exec-plugin parsing described above achieves the same thing automatically.
+For clusters outside AWS, a stored kubeconfig or a pasted one are the only
+ways today. The full AWS setup is on
+[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md#why-identity-based-access-is-the-recommended-path).
 
-Paste-a-kubeconfig and point-at-a-stored-secret remain fully supported fallbacks, and today they're the **only** path for non-AWS clusters — Sharko does not mint GCP or Azure identities natively (see [`azure-gcp-provider-unimplemented.md`](azure-gcp-provider-unimplemented.md)). If you're registering a GKE or AKS cluster, one of those two fallbacks is what you use.
+## Local test clusters
 
-See [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for the full IAM setup recipe — which roles, which trust policies, which EKS access entries — that makes the identity-based path work.
+For testing on your own machine, the bearer token case also covers:
 
-## Dev examples
-
-For local development, the bearer-token happy path also covers:
-
-- **kind** (`kind create cluster` produces a kubeconfig with a static bearer token)
+- **kind** (`kind create cluster` gives a kubeconfig with a fixed token)
 - **minikube**
 - **Docker Desktop Kubernetes**
 - **k3d**
 
-Same setup as self-hosted production — Sharko writes the ArgoCD Secret during `register-cluster`, the `argocd` provider reads it back, Test runs end-to-end. No secrets backend needed.
+It works the same as above: Sharko writes the ArgoCD Secret when you
+register the cluster (`sharko add-cluster`), reads it back, and Test
+connection works. No secrets backend is needed.
 
 ## Configuration
 
-The `argocd` provider type is the **auto-default** when:
+Sharko reads cluster credentials from the ArgoCD cluster Secrets
+(`argocd`) by default when both of these are true:
 
-- Sharko runs in-cluster (Kubernetes ServiceAccount available), AND
-- No provider is explicitly configured via env var or Helm value
+- Sharko runs inside a Kubernetes cluster, and
+- no credentials backend is set.
 
-To override, set one of:
-
-```bash
-# env var
-SHARKO_CONN_PROVIDER_TYPE=vault   # or aws-sm / gcp-sm / azure-kv / k8s-secrets / argocd
-```
+To choose a different one, set it in the UI under **Settings → Secrets
+Provider**, or in the Helm values:
 
 ```yaml
-# Helm value
-provider:
-  type: argocd      # or vault / aws-sm / gcp-sm / azure-kv / k8s-secrets
+connection:
+  provider:
+    type: argocd      # or aws-sm, or k8s-secrets
 ```
 
-When Sharko runs **outside Kubernetes** (local dev binary, no in-cluster ServiceAccount) and no provider is configured, Test surfaces the existing "no credentials provider configured" 503 — the auto-default cannot apply because the `argocd` provider needs in-cluster K8s API access.
+You can also set the environment variable `SHARKO_CONN_PROVIDER_TYPE` to
+the same values.
 
-## Future direction
+- `argocd` reads the ArgoCD cluster Secrets.
+- `aws-sm` reads from AWS Secrets Manager. Set `connection.provider.region`,
+  and `connection.provider.prefix` if your secret names start with one
+  (for example `clusters/`).
+- `k8s-secrets` reads a Kubernetes Secret named after the cluster, with the
+  kubeconfig under the key `kubeconfig`. Set `connection.provider.namespace`
+  (the default is `sharko`).
 
-The `argocd` provider already gains label-gated reads as defence in depth, keyed on the `app.kubernetes.io/managed-by: sharko` ownership label the cluster-Secret reconciler writes — Sharko reads only Secrets it provably wrote, or that a self-managed cluster's operator explicitly opted into. This does not change observable behavior for the production happy path; it tightens the read surface in adopt scenarios.
+If Sharko runs **outside Kubernetes** (for example the plain program on
+your laptop) and no backend is set, Test connection returns `503` with "no
+credentials provider configured". The default can't apply there, because
+reading ArgoCD's Secrets needs access to the cluster's Kubernetes API.
 
-For the AWS-identity minting described above, see [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md).
+## Related pages
+
+- [AWS IAM Cluster Auth](aws-iam-cluster-auth.md) — when Sharko can't get
+  an EKS token.
+- [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) — the AWS
+  roles and trust policies.
+- [Connection Doctor](connection-doctor.md) — the six checks.
+- [Managing Cluster Connections Yourself](self-managed-connections.md) —
+  when you own the ArgoCD cluster Secret.

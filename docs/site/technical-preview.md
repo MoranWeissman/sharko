@@ -59,54 +59,9 @@ what it found, and what it did not cover, is written up in
 
 ## 1. How Sharko keeps credentials out of what it says
 
-The design idea is short: **Sharko decides what is safe to say by the
-*type* of a value, never by looking at the words in it.** Checking the words
-is what fails — it stops working the day a cloud provider rephrases one of
-its error messages, and nobody notices because nothing goes red.
+Sharko classifies values by their type, not by reading what they say. Error messages from credential stores are replaced with safe fixed sentences. Repository addresses lose their entire sign-in section (both username and password). The logger blanks anything that looks like a credential.
 
-Four pieces do the work.
-
-**One place owns the safe sentence.** `internal/credsafe` is the only place
-that decides "did this come out of a credentials store?", and the only place
-that owns what Sharko says when it did. It answers by matching a marker on
-the error, not by reading the error's text. When an error is marked, the
-error's own `Error()` method returns the fixed safe sentence — so a piece of
-code that forgets to ask still gets the safe answer. The real cause stays
-reachable underneath for the code that needs to know what kind of failure it
-was; only the original *words* stop being reachable by accident.
-
-**Repository addresses lose their whole sign-in section, not just the
-password.** Go's standard library has a `Redacted()` method for URLs. It
-hides the password and keeps the username — which is exactly wrong here,
-because when a Git token is written into an address, the token is usually
-*in the username slot*. So `credsafe.SafeRepoURL` drops both halves, always,
-plus the query and the fragment. When it cannot parse the address well
-enough to be certain which part is the secret, it returns nothing at all and
-the caller says nothing about the repository. Blank is better than a guess.
-
-**Some helpers physically cannot be misused.** The two helpers that answer
-"there is no usable Git or ArgoCD connection" take neither an error nor a
-string. There is no parameter into which anyone could put an error's words.
-Passing one is a compilation failure, not something a reviewer has to
-notice. The same trick is used for ArgoCD's own progress text: the helper
-that formats it has no message field at all, so free-form text from a
-provider has nowhere to travel.
-
-**The log has the same rule at the sink, not at the call sites.** Around
-eighty-eight places in the code hand an error to the logger. Rather than fix
-eighty-eight places and hope nobody adds an eighty-ninth, there is one
-wrapper on the logger itself. When a value handed to the logger *is* a Go
-error, its words are replaced with a description built only from the error's
-Go type and from fixed markers in the standard library — never from its
-message. The same wrapper blanks values whose key looks like a credential
-name, values shaped like a JSON web token, and long blobs that are entirely
-base64.
-
-There is one honest gap here, and it is written into the code's own notes: a
-value that has already been flattened into a plain string before it reaches
-the logger has no type left to classify. Those are removed one at a time,
-and a check lists every place in the tree that hands a logger an error or a
-provider-supplied value, so a new one cannot be added quietly.
+For the technical details of how this works in the code, see the [Developer Guide](developer-guide/security-review-history.md).
 
 ### Private catalog repositories are not available in this preview
 

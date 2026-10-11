@@ -1,386 +1,173 @@
-# SLOs — Service Level Objectives for v2.0.0
-
-> **Verified:** 2026-05-24 — targets derived from the performance
-> baselines captured by the in-process end-to-end harness on a developer
-> workstation (see [`perf-baselines.md`](perf-baselines.md)). No
-> production data exists yet; targets are headroom-sized over the baseline
-> and will be re-tightened once CI baselines and the first 90 days of
-> production telemetry exist.
-> Reviewed 2026-08-29 — wording only; no step in this runbook changed.
-
-## v2.0.0 SLO commitment
-
-Sharko's v2.0.0 production launch ships with measurable Service Level
-Objectives on the **4 critical paths** that the performance harness
-instruments:
-
-1. `cluster_registration` — UI submit → ArgoCD Secret → ArgoCD
-   Application reachable
-2. `addon_cycle` — per-cluster enable / disable + global upgrade
-3. `catalog_scan` — catalog load + list-all + sources refresh
-4. `dashboard_read` — aggregated dashboard reads (pull requests,
-   fleet status, repo status)
-
-These are the **first** SLOs published for Sharko. They are
-deliberately framed as operational ceilings — not as the floor
-measured by the perf harness — so that operators have headroom to
-respond before users feel pain.
-
-### Sizing methodology
-
-Each per-phase p99 target is sized over the recorded baseline using
-this rule of thumb (from
-[`perf-baselines.md`](perf-baselines.md#downstream-consumers)):
-
-| Surface type | p99 headroom over baseline |
-|--------------|----------------------------|
-| In-process dispatch (no remote I/O) | ~3× (absorbs the dev→CI→prod gap; real prod adds HTTP round-trip) |
-| Real ArgoCD / kube-apiserver call | ~3× (CI runners are slower than dev workstations; production AWS API latency is higher than kind-on-Docker-Desktop) |
-| Real Git provider round-trip (GitHub / GitLab) | ~3× plus an absolute floor that covers third-party API latency |
-| User-blocking UI path | Steady-state baseline first; cold-start outliers absorbed by the rolling budget (see "First-register bootstrap" below) |
-
-Initial v2.0.0 targets carry **extra headroom (~3× p99 vs. the more
-typical 1.5×)** to accommodate the gap between developer-workstation
-baselines and the production runtime. Once a CI baseline gate exists and
-the first 90 days of production data is in hand, the targets get
-re-tightened (see "Re-baselining" at the bottom of this page).
-
-### Error budget framing
-
-Each path has a **rolling-30-day error budget** stated as a
-percentage of cycles that may breach any per-phase p99 target. The
-budget covers all phases jointly: a cycle that breaches `p99` on
-*any* phase counts against the same budget — operators don't need to
-track per-phase budgets in their head.
-
-### Burn-rate triggers
-
-Each path defines two burn-rate triggers following the Google SRE
-book's multi-window, multi-burn-rate pattern:
-
-- **Investigate** — engineering attention warranted; no page. Either
-  a moderately fast burn over a long window (slow leak) or a fast
-  burn over a short window (transient bump). Triage during business
-  hours.
-- **Page on-call** — wake someone up. Either a very fast burn over a
-  short window (sudden break) or a sustained moderate burn over a
-  longer window (steady degradation that will exhaust the budget).
-
-The concrete PromQL recording and alerting rules ship in the Helm chart
-— this page fixes the *thresholds*, the chart wires them into
-Prometheus.
-
----
-
-## 1. `cluster_registration`
-
-### What this measures
-
-The end-to-end "register a new cluster with Sharko" user journey: the
-UI submits the cluster definition, Sharko creates the corresponding
-ArgoCD cluster Secret, and the cluster becomes visible in the fleet
-listing. This is the path that determines whether a platform engineer
-can onboard their first cluster within the 10-minute time-to-first-
-value goal.
-
-### Phases
-
-| Phase | What happens |
-|-------|-------------|
-| `ui_submit` | The `POST /api/v1/clusters` request lands and returns. Approximates the latency the operator sees when they click "Register" in the UI. |
-| `argocd_secret_created` | Sharko transforms the submitted kubeconfig + bearer token into an in-cluster ArgoCD cluster Secret. Owned by `internal/clusterreconciler` in production (post-merge trigger + 30s drift safety-net). |
-| `argocd_application_reachable` | The cluster surfaces in `GET /api/v1/clusters` with `Managed=true` — the externally observable "Sharko sees it" gate. |
-
-### Targets
-
-| Phase | Baseline p50 / p95 / p99 (ms) | SLO target p50 / p95 / p99 (ms) |
-|-------|-------------------------------|---------------------------------|
-| `ui_submit` | 22 / 58 / 2151 | 100 / 500 / 3000 |
-| `argocd_secret_created` | 444 / 731 / 917 | 1000 / 2000 / 3000 |
-| `argocd_application_reachable` | 13 / 32 / 38 | 50 / 150 / 300 |
-
-### Sizing rationale
-
-- `ui_submit` p99 target of 3000ms accommodates the first-register
-  bootstrap outlier (see decision below) plus the dev→prod gap on a
-  surface that is otherwise sub-100ms steady-state.
-- `argocd_secret_created` p99 target of 3000ms gives ~3.3× headroom
-  over the 917ms baseline because the production path hits a real
-  ArgoCD API behind kube-apiserver and (commonly) an EKS control
-  plane; both add real-network latency the kind-on-Docker-Desktop
-  baseline does not see.
-- `argocd_application_reachable` p99 target of 300ms gives ~8×
-  headroom because the Eventually-loop polls a real-cluster watch
-  stream in production where event propagation is bounded by
-  kube-apiserver watch fan-out, not in-process channels.
-
-### First-register bootstrap decision (LOCKED — Option B)
-
-The `ui_submit` baseline p99 of 2150ms is dominated by iteration 0's
-one-time `bootstrap managed-clusters.yaml` cost. Steady-state
-operations are an order of magnitude faster (p50 = 22ms). Two options
-were considered:
-
-- **Option A** — treat first-register-after-install as a separate SLI
-  with its own (much higher) target
-- **Option B** — absorb the bootstrap cost into the registration
-  SLI's budget; the budget is wide enough to swallow ~1 first-time
-  hit per Sharko install
-
-**Decision: Option B.** First-register-after-install is a
-one-time-per-install event. Spending error budget on it is fine and
-avoids two parallel SLI definitions that operators would have to
-mentally context-switch between. The single registration SLI with a
-3000ms p99 target absorbs the one-time bootstrap cleanly while still
-constraining the steady-state path.
-
-### Error budget
-
-**≤1% of cluster-registration cycles may exceed any of the per-phase
-p99 targets in any rolling 30-day window.**
-
-A registration cycle = one `POST /api/v1/clusters` request through to
-the `Managed=true` gate. A cycle that breaches `p99` on any single
-phase consumes one budget slot.
-
-### Burn-rate triggers
-
-| Trigger | Burn rate | Window | Why |
-|---------|-----------|--------|-----|
-| Investigate | 5× normal | 1 hour | Slow leak likely; investigate during business hours. |
-| Page on-call | 14× normal | 1 hour **OR** 2× normal | 6 hours | Multi-window per Google SRE: fast break or sustained drag. |
-
-(Normal burn rate = 1× budget consumption that exhausts the 30-day
-budget exactly at day 30. At 14× normal burn the budget is gone in
-~2 days; at 2× sustained, the budget is gone in ~15 days — both
-warrant paging.)
-
----
-
-## 2. `addon_cycle`
-
-### What this measures
-
-Day-to-day addon lifecycle operations: previewing an enable, previewing
-a disable, and pushing a global upgrade across the fleet. The dry-run
-paths are the dominant interactive surface (operators preview before
-they commit); the global upgrade path is lower-frequency but higher-
-stakes (it rewrites the catalog and opens a PR).
-
-### Phases
-
-| Phase | What happens |
-|-------|-------------|
-| `enable_dry_run` | `POST /api/v1/clusters/{c}/addons/{a}` with `dry_run=true`. The per-cluster enable preview round-trip; no Git write, no ArgoCD dial. |
-| `disable_dry_run` | `DELETE /api/v1/clusters/{c}/addons/{a}` with `dry_run=true`. The per-cluster disable preview round-trip. |
-| `upgrade_global` | `POST /api/v1/addons/{a}/upgrade`. Live catalog rewrite + PR open path against the Git provider. |
-
-### Targets
-
-| Phase | Baseline p50 / p95 / p99 (ms) | SLO target p50 / p95 / p99 (ms) |
-|-------|-------------------------------|---------------------------------|
-| `enable_dry_run` | 0.25 / 0.33 / 0.38 | 100 / 300 / 500 |
-| `disable_dry_run` | 0.24 / 0.34 / 0.40 | 100 / 300 / 500 |
-| `upgrade_global` | 0.30 / 0.41 / 0.64 | 1500 / 3500 / 5000 |
-
-### Sizing rationale
-
-- `enable_dry_run` and `disable_dry_run` baselines are sub-millisecond
-  because the in-process harness short-circuits before any external
-  call. The 500ms p99 target is the *production* ceiling once an
-  HTTP round-trip from the UI is included; relative to baseline it
-  looks huge but absolute-wise it's still well under user-perceptible
-  for an interactive preview.
-- `upgrade_global` is sub-millisecond in the harness because the mock
-  Git provider is in-memory. The 5000ms p99 target reflects the
-  production reality: the path opens a PR against a real Git host
-  (GitHub / GitLab / Bitbucket), which is bounded by third-party API
-  latency.
-
-### Error budget
-
-**≤1% of addon-cycle operations may exceed any of the per-phase p99
-targets in any rolling 30-day window.**
-
-For lower-volume paths like `upgrade_global` (which fires only when
-an operator drives a fleet upgrade), the budget is computed against
-*all* `addon_cycle` operations in the window, not per-phase — this
-prevents the rare upgrade path from being budget-starved when
-dry-run traffic is high.
-
-### Burn-rate triggers
-
-| Trigger | Burn rate | Window | Why |
-|---------|-----------|--------|-----|
-| Investigate | 5× normal | 1 hour | The dry-run paths are interactive — a 5× burn signals UI sluggishness. |
-| Page on-call | 14× normal | 1 hour **OR** 2× normal | 6 hours | Sustained `upgrade_global` failures block fleet upgrades; page even if the slow-burn signal is moderate. |
-
----
-
-## 3. `catalog_scan`
-
-### What this measures
-
-The catalog read surface: loading the embedded curated catalog,
-listing all available addons (the dominant marketplace-tab read), and
-refreshing third-party catalog sources. The first two are
-high-frequency, low-latency interactive paths; the third is an
-admin-driven refresh that may legitimately take seconds because it
-hits external HTTP sources.
-
-### Phases
-
-| Phase | What happens |
-|-------|-------------|
-| `catalog_load` | `catalog.Load()` on the embedded curated catalog. Startup-time baseline; flags any future caching regression. |
-| `list_addons` | `GET /api/v1/catalog/addons` — the full list-all-curated response that backs the marketplace tab. |
-| `sources_refresh` | `POST /api/v1/catalog/sources/refresh` — admin-only refresh of the configured third-party fetchers. |
-
-### Targets
-
-| Phase | Baseline p50 / p95 / p99 (ms) | SLO target p50 / p95 / p99 (ms) |
-|-------|-------------------------------|---------------------------------|
-| `catalog_load` | 0.96 / 1.31 / 1.52 | 10 / 30 / 50 |
-| `list_addons` | 0.60 / 0.79 / 1.09 | 50 / 150 / 250 |
-| `sources_refresh` | 0.41 / 0.50 / 0.59 | 2000 / 6000 / 10000 |
-
-### Sizing rationale
-
-- `catalog_load` and `list_addons` are pure-memory dispatches once
-  the embedded YAML is parsed. The 50ms / 250ms p99 targets are well
-  above the baseline but stay comfortably below the 100ms perceptual
-  threshold for `catalog_load` and the 300ms threshold for
-  `list_addons`. The headroom allows the catalog to grow several
-  orders of magnitude in entry count without breaching the SLO.
-- `sources_refresh` has a 10000ms p99 target because the production
-  path fans out to third-party HTTP fetchers (GitHub raw URLs, OCI
-  registries, etc.). Each fetcher can legitimately take seconds; the
-  refresh is admin-driven and not user-blocking, so the higher
-  ceiling is acceptable.
-
-### Error budget
-
-**≤1% of catalog-scan operations may exceed any of the per-phase p99
-targets in any rolling 30-day window.**
-
-For `sources_refresh`, transient third-party failures (rate-limited
-GitHub raw URLs, OCI registry blips) are expected and *should* burn
-budget — the operator should know if the fetcher cadence is too
-aggressive or if a source is degraded.
-
-### Burn-rate triggers
-
-| Trigger | Burn rate | Window | Why |
-|---------|-----------|--------|-----|
-| Investigate | 5× normal | 1 hour | The marketplace tab is high-traffic; a sustained slow `list_addons` degrades the primary UI surface. |
-| Page on-call | 14× normal | 1 hour **OR** 2× normal | 6 hours | Standard multi-window pattern. |
-
----
-
-## 4. `dashboard_read`
-
-### What this measures
-
-The aggregated dashboard read surface: active PR listing, fleet
-status (clusters × addons join), and the bootstrap repo state. These
-are the read paths that determine whether the dashboard "feels fast"
-to operators monitoring the fleet.
-
-### Phases
-
-| Phase | What happens |
-|-------|-------------|
-| `pull_requests` | `GET /api/v1/dashboard/pull-requests` — active-PR list via the Git provider. |
-| `fleet_status` | `GET /api/v1/observability/fleet-status` — aggregated cluster + addon view; resilient handler reports Git + ArgoCD availability as flags. |
-| `repo_status` | `GET /api/v1/observability/repo-status` — bootstrap state of the managed repo. |
-
-### Targets
-
-| Phase | Baseline p50 / p95 / p99 (ms) | SLO target p50 / p95 / p99 (ms) |
-|-------|-------------------------------|---------------------------------|
-| `pull_requests` | 0.14 / 0.22 / 0.37 | 250 / 750 / 1500 |
-| `fleet_status` | 0.18 / 0.27 / 0.48 | 400 / 1000 / 2000 |
-| `repo_status` | 0.14 / 0.22 / 0.28 | 250 / 750 / 1500 |
-
-### Sizing rationale
-
-- All three phases baseline sub-millisecond because the in-process
-  harness boots with `N = M = 0` clusters × addons (the dispatch +
-  connection-lookup floor). The targets reflect the production
-  reality: `pull_requests` and `repo_status` round-trip to a real
-  Git provider; `fleet_status` joins Git availability + ArgoCD
-  availability + cluster slice.
-- `fleet_status` gets a slightly higher p99 target (2000ms vs.
-  1500ms) because its handler aggregates across more subsystems —
-  cardinality scales with `N × M`, and the absolute ceiling
-  accommodates moderately-large fleets (~50 clusters × 20 addons)
-  without breaching.
-- A populated-topology baseline (future story) will tighten these
-  numbers; the current targets are sized for the floor + production
-  remote-call cost without assumptions about fleet size.
-
-### Error budget
-
-**≤1% of dashboard-read operations may exceed any of the per-phase
-p99 targets in any rolling 30-day window.**
-
-### Burn-rate triggers
-
-| Trigger | Burn rate | Window | Why |
-|---------|-----------|--------|-----|
-| Investigate | 5× normal | 1 hour | Dashboard sluggishness is visible to every logged-in operator. |
-| Page on-call | 14× normal | 1 hour **OR** 2× normal | 6 hours | Standard multi-window pattern. |
-
----
-
-## Re-baselining
-
-The targets above are sized over **developer-workstation baselines**.
-Two events will shift the numbers:
-
-1. **A CI baseline gate.** When CI runs the performance harness on
-   shared GitHub Actions hardware, the recorded baselines will be
-   higher and noisier than the dev-workstation numbers. The current
-   targets carry extra headroom (~3× p99 vs. the more typical 1.5×)
-   precisely to absorb this shift without an SLO breach. Re-evaluate
-   the headroom multiplier when the CI baselines land.
-
-2. **First 90 days of production telemetry.** Once Sharko has 90 days of
-   real production
-   p50 / p95 / p99 data, the targets get re-tightened to match the
-   observed operational envelope. The aim is to converge on
-   ~1.5× p99 headroom over real production data, not the conservative
-   ~3× headroom over the dev baselines.
-
-The re-baselining cadence after that initial tightening is **annual**
-or **on major surface change** (whichever comes first). Mid-cycle
-target changes follow the same review path as any SLO change —
-sign-off from the maintainer, doc updated in a dedicated PR, no
-mixing with feature work.
-
-## Cross-references
-
-- [`docs/site/operator/perf-baselines.md`](perf-baselines.md) — the
-  measured baselines these targets are sized over.
-- [`docs/site/developer-guide/perf-harness.md`](../developer-guide/perf-harness.md) —
-  the locked phase boundaries the harness, baselines, and these
-  targets all consume.
-- [`budget-burn-runbook.md`](budget-burn-runbook.md) — what to do when a
-  burn-rate trigger fires.
-- [`metrics-naming.md`](metrics-naming.md) — the Prometheus exposition
-  for these SLI surfaces, and the recording and alerting rules that turn
-  the burn-rate triggers above into something Prometheus evaluates.
-
-## Refreshing this doc
-
-The SLO targets are a product decision and a published commitment;
-they are NOT refreshed automatically. Changes go through these steps:
-
-1. Open a dedicated PR for the SLO change (NOT mixed with feature
-   work).
-2. Cite the data motivating the change — baseline refresh, production
-   telemetry, surface change.
-3. Update the affected per-phase target table + the sizing rationale.
-4. Update the "Verified" header date to match the PR's merge date.
-5. Cross-link the PR from the v2.x release notes under "Operator-
-   visible changes" so adopters see the new commitment.
+# SLOs — the goals Sharko is measured against
+
+> **Checked:** 2026-10-10, against the Helm chart and the code of v4.0.5.
+> The numbers on this page are read from
+> `charts/sharko/templates/prometheusrules.yaml`. They were not tested on a
+> live cluster for this page.
+
+This page says which parts of Sharko are measured, what goal each part
+has, and which alerts the Helm chart can install to tell you when a goal
+is in danger. What to do when one of those alerts fires is on the
+[Budget-Burn Runbook](budget-burn-runbook.md).
+
+## What the words mean
+
+- **SLO** (service level objective) — a goal for how well one part of
+  Sharko should work. Here the goal is always the share of requests that
+  succeed.
+- **Error budget** — the small share of requests that is allowed to fail.
+  The goal is 99.9%, so the budget is 0.1%: 1 failed request in every
+  1,000, counted over 30 days.
+- **Burn rate** — how fast you are using up that budget. A burn rate of 1
+  uses up the whole budget in exactly 30 days. A burn rate of 14.4 uses it
+  up in about 2 days. A burn rate of 6 uses it up in about 5 days.
+- **p50, p95, p99** — speed numbers. p95 = 2 seconds means 95 out of 100
+  requests finished in 2 seconds or less. p50 is the middle request, p99
+  is the slow end.
+
+## The four parts of Sharko that are measured
+
+Sharko counts and times four kinds of requests. Each kind has a short name.
+That name shows up in the metric names, in the alert names and in the
+`sharko_path` label on the alerts.
+
+| Short name | What is counted | API route | `phase` label |
+|---|---|---|---|
+| `cluster_registration` | Registering a cluster | `POST /api/v1/clusters` | `total` |
+| `addon_cycle` | Turning an addon on or off for one cluster | `POST /api/v1/clusters/{name}/addons/{addon}` and `DELETE /api/v1/clusters/{name}/addons/{addon}` | `enable`, `disable` |
+| `catalog_scan` | Reading the addon catalog | `GET /api/v1/addons/catalog` | `total` |
+| `dashboard_read` | Loading the dashboard | `GET /api/v1/dashboard/stats`, `GET /api/v1/dashboard/attention`, `GET /api/v1/dashboard/pull-requests` | `fleet_status`, `attention`, `pull_requests` (in that order) |
+
+For each one Sharko exports three metrics. The
+[Metrics](metrics.md#slo-surface-metrics) page lists them.
+
+**What counts as a failed request.** Any reply with an HTTP status of 400
+or higher. That includes replies that say the request itself was wrong,
+such as a 400 or a 409. So a script that keeps sending the same bad
+request can use up the budget even when Sharko is working fine. When an
+alert fires, look at the `code` label first: a pile of 4xx codes points
+at the caller, 5xx codes point at Sharko or something it talks to.
+
+**Two gaps to know about in v4.0.5:**
+
+- On a v4 repository, the UI turns addons on and off through
+  `POST /api/v1/v4/clusters/{name}/addons/{addon}` and
+  `DELETE /api/v1/v4/clusters/{name}/addons/{addon}`. Those two routes are
+  **not counted**. So `addon_cycle` shows little or no traffic. And the
+  older routes in the table above now refuse a v4 repository with a 409,
+  so anything that still calls them adds a failure each time.
+- A refused permission (403) on registering a cluster or turning an addon
+  on or off is not counted. Sharko checks the permission before it starts
+  counting.
+
+## The goal and the alerts
+
+**The goal for all four parts is the same: 99.9% of requests succeed.**
+So the error budget is 0.1%.
+
+The Helm chart can install this goal as a `PrometheusRule`. It is off by
+default, because the `PrometheusRule` kind only exists on clusters that
+run prometheus-operator. To turn it on:
+
+```yaml
+monitoring:
+  prometheusRules:
+    enabled: true
+    # Optional. Empty means the namespace Sharko is installed in.
+    namespace: ""
+    # Optional. Add the labels your Prometheus uses to pick up rules.
+    labels: {}
+```
+
+Each of the four parts then gets two alerts:
+
+| Alert | Fires when | Held for | `severity` label |
+|---|---|---|---|
+| Fast burn | More than 1.44% of requests failed (burn rate 14.4) in **both** the last 5 minutes **and** the last hour | 2 minutes | `page` |
+| Slow burn | More than 0.6% of requests failed (burn rate 6) in **both** the last 30 minutes **and** the last 6 hours | 15 minutes | `ticket` |
+
+The alert names:
+
+| Part | Fast burn | Slow burn |
+|---|---|---|
+| `cluster_registration` | `SharkoClusterRegistrationFastBurn` | `SharkoClusterRegistrationSlowBurn` |
+| `addon_cycle` | `SharkoAddonCycleFastBurn` | `SharkoAddonCycleSlowBurn` |
+| `catalog_scan` | `SharkoCatalogScanFastBurn` | `SharkoCatalogScanSlowBurn` |
+| `dashboard_read` | `SharkoDashboardReadFastBurn` | `SharkoDashboardReadSlowBurn` |
+
+Every one of them also carries a `sharko_path` label (the short name), a
+`burn_rate` label (`fast` or `slow`), and a link to the matching section
+of the [Budget-Burn Runbook](budget-burn-runbook.md).
+
+**Why each alert looks at two time windows.** If only the short window
+counted, one short bad minute could wake someone up. If only the long
+window counted, the alert would keep firing for hours after the problem
+was fixed. Asking for both means the problem is real *and* still going on.
+
+**What the alerts do not do:**
+
+- They only look at failed requests. **No alert fires because a request
+  was slow.**
+- The chart has no setting to change the 99.9% goal. The number `0.001`
+  is written into the rule file itself.
+
+The chart installs two more alerts that have nothing to do with these
+goals: `SharkoReconcilerPassAge` and `SharkoManagedSecretsSustainedBadState`.
+They are explained on the [Metrics](metrics.md#reconciler-health-alerts)
+page.
+
+## The ready-made numbers the chart records
+
+With the rules turned on, Prometheus also works out five numbers for each
+part every 30 seconds, over the last 5 minutes. They are handy for graphs.
+Replace `<part>` with one of the four short names:
+
+| Recorded name | What it is |
+|---|---|
+| `sharko:<part>:request_rate_5m` | Requests per second |
+| `sharko:<part>:error_rate_5m` | Failed requests per second |
+| `sharko:<part>:success_rate_5m` | Share of requests that succeeded (1 = all of them) |
+| `sharko:<part>:latency_p95_5m` | p95 speed, in seconds, one line per `phase` |
+| `sharko:<part>:latency_p99_5m` | p99 speed, in seconds, one line per `phase` |
+
+These names are made by Prometheus from the rules. Sharko itself does not
+export them.
+
+**Read the speed lines with care.** A speed metric sorts each request into
+a set of fixed boxes ("under 10 ms", "under 25 ms" and so on). A request
+slower than the biggest box cannot be placed exactly. The biggest box is:
+
+| Part | Biggest box |
+|---|---|
+| `cluster_registration` | 5 seconds |
+| `addon_cycle` | 10 seconds |
+| `catalog_scan` | 50 milliseconds |
+| `dashboard_read` | 50 milliseconds |
+
+Reading the catalog or loading the dashboard usually means a call to your
+Git host, and that often takes longer than 50 milliseconds. When that
+happens, the p95 and p99 lines for those two parts sit flat at `0.05`.
+That means "slower than 50 milliseconds". It does not mean "exactly 50
+milliseconds".
+
+## Where the numbers came from
+
+The 99.9% goal and the burn rates 14.4 and 6 follow the usual pattern from
+Google's SRE book. Sharko has no long record of real use yet, so they are
+a starting point, not a measured promise.
+
+Sharko's own test setup also measures speed, step by step, on a single
+developer machine. Those numbers are on [Perf Baselines](perf-baselines.md).
+They are useful for spotting a change that made Sharko slower. They are not
+speed goals for your install, and the steps they name are not the `phase`
+values a running Sharko writes.
+
+## See also
+
+- [Metrics](metrics.md) — every metric Sharko exports, and what the other
+  two alerts mean
+- [Budget-Burn Runbook](budget-burn-runbook.md) — what to do when one of
+  the alerts on this page fires
+- [Metrics Naming](metrics-naming.md) — how the metric names are built
+- [Perf Baselines](perf-baselines.md) — speed numbers from Sharko's own
+  test setup

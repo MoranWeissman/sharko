@@ -1,5 +1,20 @@
 # Upgrades
 
+This page shows you how to upgrade addon versions across your clusters.
+
+## What you'll do
+
+- Check available addon versions
+- Upgrade one addon across all clusters
+- Upgrade one addon on specific clusters only
+
+## What you need
+
+- Admin or Operator role in Sharko
+- The new version number you want
+
+---
+
 Sharko provides flexible upgrade workflows: upgrade a single addon globally, upgrade per-cluster, or batch multiple addons in a single PR.
 
 ## How Upgrades Work

@@ -90,7 +90,7 @@ Page on-call.
    the `request_id` for that observation:
 
     ```sh
-    kubectl logs -n <ns> -l app=sharko --tail=500 \
+    kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --tail=500 \
       | jq 'select(.level == "ERROR" and (.msg | tostring | test("register|cluster"; "i")))'
     ```
 
@@ -117,7 +117,7 @@ Page on-call.
 2. **kube-apiserver health** — `kubectl get --raw /healthz` and
    `kubectl get --raw /readyz`. Cluster registration writes a Secret in
    the `argocd` namespace; a degraded apiserver shows up here first.
-3. **Cluster reconciler** — `kubectl logs -n <ns> -l app=sharko
+3. **Cluster reconciler** — `kubectl logs -n <ns> -l app.kubernetes.io/name=sharko
    --tail=500 | jq 'select(.request_id | startswith("recon-"))'`. If
    the post-merge `Trigger()` is firing but converging slowly, the
    30-second drift safety-net is bridging the gap (see
@@ -199,7 +199,7 @@ hours.
    "stuck" pattern — the same failure repeats on a cadence:
 
     ```sh
-    kubectl logs -n <ns> -l app=sharko --since=6h \
+    kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --since=6h \
       | jq 'select(.level == "ERROR" and (.msg | tostring | test("register|cluster"; "i"))) | {ts: .time, msg: .msg, error: .error}' \
       | sort | uniq -c | sort -rn | head
     ```
@@ -273,7 +273,7 @@ Page on-call.
     running server ever puts on the `phase` label. Two different
     vocabularies, same word.
 
-3. **PR tracker state** — `kubectl logs -n <ns> -l app=sharko --tail=500
+3. **PR tracker state** — `kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --tail=500
    | jq 'select(.request_id | startswith("prtrack-"))'`. Each cycle
    opens a PR; PR-tracker poll failures correlate with addon-cycle
    errors.
@@ -307,7 +307,7 @@ Page on-call.
 4. **PR auto-merge automation** — if the merge bot is down or rate
    limited, PRs open but never merge; the cycle never closes and the
    error increments after timeout. Check Mergify / auto-merge config.
-5. **Reconciler convergence** — `kubectl logs -n <ns> -l app=sharko
+5. **Reconciler convergence** — `kubectl logs -n <ns> -l app.kubernetes.io/name=sharko
    --tail=500 | jq 'select(.request_id | startswith("recon-"))'`
    followed by `select(.level == "ERROR" or .level == "WARN")` to
    surface convergence failures.
@@ -362,7 +362,7 @@ ticket for next-business-day triage.
    to find a single misbehaving entry:
 
     ```sh
-    kubectl logs -n <ns> -l app=sharko --since=6h \
+    kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --since=6h \
       | jq -r 'select(.level == "ERROR" and .addon) | .addon' \
       | sort | uniq -c | sort -rn | head
     ```
@@ -429,7 +429,7 @@ breaks addon discovery for every operator. Page on-call.
    surface recent failures with:
 
     ```sh
-    kubectl logs -n <ns> -l app=sharko --since=1h \
+    kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --since=1h \
       | jq 'select(.level == "ERROR" and (.msg | tostring | test("catalog"; "i")))'
     ```
 
@@ -576,7 +576,7 @@ sees an error state when they open the app. Page on-call.
 3. **Per-handler logs** — handler names match the phase IDs:
 
     ```sh
-    kubectl logs -n <ns> -l app=sharko --tail=500 \
+    kubectl logs -n <ns> -l app.kubernetes.io/name=sharko --tail=500 \
       | jq 'select(.level == "ERROR" and (.msg | tostring | test("dashboard|fleet|pull_requests|attention"; "i")))'
     ```
 

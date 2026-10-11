@@ -6,8 +6,8 @@ Sharko ships an in-app editor for the Helm values that drive every addon. You ca
 
 | Scope | What it changes | Where it lives in Git | File shape | Who's affected |
 |-------|-----------------|-----------------------|------------|----------------|
-| **Global** | Default values for an addon | `configuration/addons-global-values/<addon>.yaml` | **Top-level chart values** (no `<addon>:` wrapper) | Every cluster running this addon |
-| **Per-cluster overrides** | Just one addon on one cluster | `configuration/addons-clusters-values/<cluster>.yaml`, under the addon's section | Wrapped under `<addon>:` so one file holds many addons | Only the chosen cluster |
+| **Global** | Default values for an addon | `values/global/<addon>.yaml` | **Top-level chart values** (no `<addon>:` wrapper) | Every cluster running this addon |
+| **Per-cluster overrides** | Just one addon on one cluster | `values/clusters/<cluster>/<addon>.yaml` | **Top-level chart values** (no wrapper) | Only the chosen cluster |
 
 Per-cluster overrides win when both are set, exactly the way Helm value composition works.
 
@@ -37,34 +37,17 @@ If you'd rather use GitHub's web editor, click **Edit in GitHub** in the editor 
 1. Open the cluster detail page (Clusters → click any cluster).
 2. Click the **Config** tab in the left rail.
 3. At the top of the Config panel you'll find an **Addon picker**. Select the addon you want to override. A banner above the editor explains: *"Anything here overrides global values. Leave empty to use the global defaults."*
-4. The editor loads the addon's current overrides section (or stays empty if no overrides exist yet). The editor and submit flow are identical to the global editor — same YAML/Diff tabs, same diff preview, same nudge logic.
-5. Submit your changes — Sharko opens a PR titled `update <addon> overrides on cluster <cluster>` that touches only the section for this addon in that cluster's overrides file. Other addons and the cluster's `clusterGlobalValues:` block are preserved.
-6. To **clear** an override (return to the global default for this cluster), submit an empty editor. Sharko removes the addon's section from the cluster file in the same PR-based flow.
+4. The editor loads the addon's current overrides (or stays empty if no overrides exist yet). The editor and submit flow are identical to the global editor — same YAML/Diff tabs, same diff preview, same nudge logic.
+5. Submit your changes — Sharko opens a PR titled `update <addon> overrides on cluster <cluster>` that writes to `values/clusters/<cluster>/<addon>.yaml`.
+6. To **clear** an override (return to the global default for this cluster), submit an empty editor. Sharko removes the file in the same PR-based flow.
 
 Below the editor you'll find the existing **Cluster Override** diff panel — once your PR merges, refresh the page and the diff updates to show the new overrides applied.
 
-## Cluster-wide values (optional)
+## Shared values across addons (optional)
 
-Every generated cluster file starts with a `clusterGlobalValues:` block. It's a place to define a value once and reuse it in the addon sections further down the same file, using a plain YAML anchor — instead of typing the same value into three different addons.
+In v4, each addon's values sit in their own file (`values/clusters/<cluster>/<addon>.yaml`). If you want to share a value across multiple addons on the same cluster — like a region or an endpoint — you can use YAML anchors in a shared file that other files reference.
 
-This is a Git-editing convenience, not a Sharko feature: `clusterGlobalValues:` is just a regular YAML key, and anchors/aliases are YAML syntax, not something Sharko interprets. It's meant for people editing the file directly in Git (or via **Edit in GitHub**). The in-app per-addon editor above only ever manages one addon's section at a time, so it doesn't read from or write to `clusterGlobalValues:`.
-
-It's entirely optional. If you don't need it, delete the block — nothing in Sharko depends on it.
-
-**Example** — define an anchor once under `clusterGlobalValues`, then reference it (`*name`) from any addon section in the same file:
-
-```yaml
-clusterGlobalValues:
-  region: &region eu-west-1
-
-podinfo:
-  location: *region
-
-cert-manager:
-  location: *region
-```
-
-`&region` defines the anchor when you write it; `*region` reuses it. If you edit one addon's values through the in-app editor afterward, the anchor and every place that references it are left untouched — only that one addon's section changes.
+This is a Git-editing pattern, not a Sharko feature. YAML anchors are standard YAML syntax. You can create a `values/clusters/<cluster>/_shared.yaml` file with your anchors, then reference them from each addon's file using `<<: *anchor` syntax. Sharko's in-app editor does not manage this file — it's for people who edit Git directly.
 
 ## Refreshing values from upstream
 
@@ -72,13 +55,13 @@ A contextual banner appears when there's a real version mismatch between the cat
 
 ### When it appears
 
-Sharko stamps every generated values file with a `# Generated by Sharko from <chart>@<version>` header (see [Generated values files](#generated-values-files) below). When the chart version pinned in `addons-catalog.yaml` is ahead of the version stamped in the values file, the Values tab shows a yellow banner:
+Sharko stamps every generated values file with a `# Generated by Sharko from <chart>@<version>` header (see [Generated values files](#generated-values-files) below). When the chart version pinned in `catalog.yaml` is ahead of the version stamped in the values file, the Values tab shows a yellow banner:
 
 > ⚠ Chart upgraded to **v1.20.2** — values were generated for v1.19.0. Refresh values from upstream?
 >
 > [Refresh now] [Dismiss]
 
-Click **Refresh now** to pull the upstream chart's `values.yaml` for the catalog-pinned version, run the smart-values pipeline (heuristic split + per-cluster template + header), and open a Tier 2 PR titled `Refresh upstream values for <chart>@<version>`. The cluster-level overrides files in `configuration/addons-clusters-values/` are **not touched** — only the global file is regenerated.
+Click **Refresh now** to pull the upstream chart's `values.yaml` for the catalog-pinned version, run the smart-values pipeline (heuristic split + per-cluster template + header), and open a Tier 2 PR titled `Refresh upstream values for <chart>@<version>`. The cluster-level overrides files in `values/clusters/` are **not touched** — only the global file is regenerated.
 
 Click **Dismiss** to hide the banner for the current session — it'll come back if the catalog version moves again.
 
@@ -96,7 +79,7 @@ The mechanism: `GET /addons/{name}/values-schema` returns a `values_version_mism
 
 The refresh action calls the same `PUT /api/v1/addons/{name}/values` endpoint as a manual edit, with `{"refresh_from_upstream": true}` in the body. The handler:
 
-1. Reads the chart version from `addons-catalog.yaml`.
+1. Reads the chart version from `catalog.yaml`.
 2. Fetches upstream `values.yaml` for that version via the chart's Helm repo.
 3. Runs the smart-values split (cluster-specific fields commented out at their original position; full template block at the bottom).
 4. Stamps the generated file with the smart-values header (chart, version, AI-annotation status, `sharko: managed=true`).
@@ -125,7 +108,7 @@ cert-manager:
     # requests: <cluster-specific>
 
 # --- per-cluster overrides template ---
-# Copy under the addon's stanza in configuration/addons-clusters-values/<cluster>.yaml.
+# Copy under the addon's stanza in values/clusters/<cluster>/<addon>.yaml.
 # cert-manager:
 #   "ingress.host": <set per cluster>
 #   replicaCount: <set per cluster>
@@ -167,7 +150,7 @@ If you haven't edited anything yet, the Diff tab shows a friendly "No changes ye
 
 ## Schema-aware editing (when available)
 
-If your addon ships a `values.schema.json`, you can publish it to the GitOps repo as `configuration/addons-global-values/<addon>.schema.json` (next to the values file) and Sharko will surface a hint banner above the editor listing the schema's top-level keys. This helps catch typos in key names without leaving the editor.
+If your addon ships a `values.schema.json`, you can publish it to the GitOps repo as `values/global/<addon>.schema.json` (next to the values file) and Sharko will surface a hint banner above the editor listing the schema's top-level keys. This helps catch typos in key names without leaving the editor.
 
 Full schema-driven autocomplete (Monaco-powered) is on the roadmap — the current editor is a textarea with YAML validation and the schema hint, kept intentionally light to avoid a multi-megabyte editor bundle.
 

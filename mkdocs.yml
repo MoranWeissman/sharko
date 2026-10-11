@@ -43,6 +43,7 @@ nav:
   - Home: index.md
   - 'Current Limitations and Supported Use': technical-preview.md
   - Release Notes: release-notes.md
+  - Glossary: glossary.md
   - Getting Started:
     - Quick Start: getting-started/quickstart.md
     - Installation: getting-started/installation.md
@@ -82,6 +83,9 @@ nav:
     - 'Reference — Sharko Events': operator/sharko-events.md
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md
+    - 'Reference — Security Network and Addresses': operator/security-network-and-addresses.md
+    - 'Reference — Security Threat Model': operator/security-threat-model.md
+    - 'Reference — Security Hardened Example': operator/security-hardened-example.md
     - 'Reference — Supply Chain': operator/supply-chain.md
     - 'Reference — Marketplace Architecture (Catalog vs. Marketplace)': operator/marketplace-architecture.md
     - 'Reference — Catalog Sources (env vars)': operator/catalog-sources.md
@@ -94,6 +98,7 @@ nav:
     - 'Reference — Metrics, Alerts, and Grafana Dashboard': operator/metrics.md
     - 'Reference — Metrics Naming': operator/metrics-naming.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
+    - Catalog Trust Settings: operator/catalog-trust-settings.md
     - 'AWS IAM Cluster Auth — Sharko Identity Needed': operator/aws-iam-cluster-auth.md
     - Corporate TLS MITM: operator/corporate-mitm-tls.md
     - Budget-Burn Runbook: operator/budget-burn-runbook.md

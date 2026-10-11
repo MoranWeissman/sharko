@@ -1,40 +1,41 @@
 # Managing Cluster Connections Yourself
 
-Sharko is a guest on **your** ArgoCD. By default, when Sharko registers a
-cluster it also creates the ArgoCD cluster secret for it and keeps its
-credentials up to date. If you would rather own that connection yourself —
-because your cluster secrets come from Terraform, an external-secrets
-pipeline, or plain `kubectl` — turn on the per-cluster mode
-**"connection managed by: me"**.
+Sharko is a guest on **your** ArgoCD. ArgoCD reaches each cluster through a
+Kubernetes Secret called the ArgoCD cluster Secret. By default, when Sharko
+registers a cluster, it creates that Secret and keeps its credentials up to
+date.
 
-In that mode, for that cluster:
+You may want to own that Secret yourself. Maybe it comes from Terraform,
+from an external-secrets setup, or from plain `kubectl`. If so, set the
+cluster to **"connection managed by the user"**. This is a setting per
+cluster.
 
-- **Sharko never writes, rotates, or deletes the ArgoCD cluster secret.**
-  Not at registration, not from the reconcilers, not when you remove the
+For a cluster in this mode:
+
+- **Sharko never writes, rotates or deletes the ArgoCD cluster Secret.** Not
+  at registration, not in its regular checks, and not when you remove the
   cluster from Sharko.
-- **Sharko only manages the addon labels on it.** The reconciler works out
-  which addons should be running on the cluster — from its entry in
-  `cluster-addons/<cluster>.yaml`, the file that says which addons are on
-  for this cluster — and merges just those labels onto the secret you
-  created, touching nothing else. The labels are the only thing ArgoCD's
-  ApplicationSet selector needs to deploy addons.
-- **Credentials become optional.** If you give Sharko a kubeconfig at
-  registration it only uses it to test connectivity; if you don't,
-  registration skips the test and goes straight to the Git record.
+- **Sharko only manages the addon labels on it.** Sharko reads which addons
+  are on for the cluster in `cluster-addons/<cluster>.yaml`. It then adds
+  one label per addon to your Secret, and touches nothing else. These labels
+  are all ArgoCD needs to deploy the addons.
+- **Credentials are optional.** If you give Sharko a kubeconfig at
+  registration, it only uses it to test the connection. If you don't,
+  registration skips the test and goes straight to writing the Git record.
 
-![Two ownership modes both converge at the ApplicationSet: sharko-managed, where Sharko creates and rotates the ArgoCD cluster Secret and the reconciler writes credentials plus addon labels; and self-managed, where you create the Secret by hand and the reconciler only ever merges addon labels onto it.](../assets/diagrams/05-connection-ownership.drawio.svg)
+![Two ownership modes, both ending at the ApplicationSet. When Sharko manages the connection, Sharko creates and rotates the ArgoCD cluster Secret and writes credentials plus addon labels. When you manage it, you create the Secret by hand and Sharko only ever adds addon labels to it.](../assets/diagrams/05-connection-ownership.drawio.svg)
 
-Clusters you **adopt** from an existing ArgoCD get this mode automatically
-— they already have a secret you (or your tooling) created, and that is
-the whole point of adopting.
+Clusters you **adopt** from an existing ArgoCD get this mode on their own.
+They already have a Secret that you or your tools created. That is the
+whole point of adopting.
 
 ## How to turn it on
 
-**In the UI:** in *Clusters → Add Cluster*, the first question is
-*"Who manages the ArgoCD connection?"* Pick
-*"I do — Sharko only manages addon labels"*.
+**In the UI:** go to **Clusters → Add Cluster**. In the **Connection
+managed by** list, pick **Manage a cluster ArgoCD already connects to**.
+The default choice is **Sharko (default)**.
 
-**Via the API:**
+**Through the API:**
 
 ```bash
 curl -X POST https://sharko.example.com/api/v1/clusters \
@@ -46,35 +47,30 @@ curl -X POST https://sharko.example.com/api/v1/clusters \
   }'
 ```
 
-Registration is addon-free by design: turn addons on afterward, one at a
-time, through `POST /api/v1/v4/clusters/prod-us/addons/<name>` — the same
-door every cluster (self-managed or not) uses. If you send an `addons`
-field on this request anyway, Sharko logs that it ignored it; nothing about
-addon enablement happens at registration time any more.
+Registering a cluster never turns on any addons. After registration, turn
+addons on one at a time with
+`POST /api/v1/v4/clusters/prod-us/addons/<addon>`. Every cluster uses this
+same call, whoever manages its connection. If you send an `addons` field
+when you register, Sharko ignores it and writes a note in the server log.
 
-**In Git:** the connection mode is recorded on the cluster's entry in
-`managed-clusters.yaml`, a root file in your GitOps repo:
+**In Git:** the mode is saved on the cluster's entry in
+`managed-clusters.yaml`, at the root of your GitOps repo:
 
 ```yaml
 apiVersion: sharko.dev/v1
 kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-us
-      connectionManagedBy: user   # omit the field (or use "sharko") for the default
-      labels:
-        team: payments             # your own labels — never an addon name
+clusters:
+  - name: prod-us
+    connectionManagedBy: user   # leave it out (or use "sharko") for the default
+    labels:
+      team: payments            # your own labels, never an addon name
 ```
 
-An absent `connectionManagedBy` means Sharko-managed — every file written
-before this field existed keeps working unchanged.
+If `connectionManagedBy` is missing, Sharko manages the connection.
 
-`managed-clusters.yaml`'s own `labels` block is for labels **you** put
-there — team, region, anything that isn't an addon. It is not where addons
-get turned on any more. Which addons run on `prod-us` lives in its own
-file, `cluster-addons/prod-us.yaml`:
+The `labels` block in `managed-clusters.yaml` is for **your** own labels,
+like team or region. It is not where you turn addons on. Which addons run
+on `prod-us` lives in its own file, `cluster-addons/prod-us.yaml`:
 
 ```yaml
 apiVersion: sharko.dev/v1
@@ -85,39 +81,36 @@ addons:
     enabled: true
 ```
 
-The reconciler reads that file, turns `monitoring: enabled: true` into the
-label ArgoCD's selector matches on, and merges just that label onto the
-secret you created — the same "merge, never touch anything else" promise
-described above, just sourced from this file instead of from
-`managed-clusters.yaml` itself.
+Sharko reads this file and adds the label
+`addons.sharko.dev/monitoring: enabled` to your Secret. ArgoCD's
+ApplicationSet looks for that label to decide where to deploy the addon.
 
 !!! note "Repo still on the older layout?"
-    If your repo has not gone through the [one-pull-request
-    migration](migrating-to-the-new-format.md) yet, the cluster registry
-    lives at `configuration/managed-clusters.yaml` instead, and addon on/off
-    for a cluster is a label directly on that entry (`labels: {monitoring:
-    enabled}`) rather than a separate `cluster-addons/` file. Everything
-    else on this page — the guest philosophy, the secret shapes, the doctor
-    check — is unchanged either way.
+    If your repo has not been through the
+    [migration](migrating-to-the-new-format.md) yet, the cluster list lives
+    in the repo's `configuration/` folder. On that layout you turn an addon
+    on with a plain label right on the cluster's entry
+    (`labels: {monitoring: enabled}`), not with a `cluster-addons/` file.
+    The rest of this page is the same on both layouts.
 
 ## The secret you create
 
-ArgoCD discovers a cluster through a Kubernetes Secret in the `argocd`
-namespace that carries the label `argocd.argoproj.io/secret-type: cluster`.
-You create it once; Sharko finds it **by name** — the secret's name must be
-exactly your cluster's name as registered in Sharko.
+ArgoCD finds a cluster through a Kubernetes Secret in the `argocd`
+namespace that has the label `argocd.argoproj.io/secret-type: cluster`. You
+create it once. Sharko finds it **by name**: the Secret's name must be
+exactly the cluster's name in Sharko.
 
-Three common shapes, briefly. The full reference is ArgoCD's own
+Here are three common shapes. ArgoCD's own
 [declarative setup — clusters](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters)
-documentation.
+page has the full reference.
 
-**Bearer token** (service-account token — kind, generic Kubernetes):
+**Bearer token** (a service account token, for kind or any Kubernetes):
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: prod-us                      # MUST match the Sharko cluster name
+  name: prod-us                      # MUST match the cluster name in Sharko
   namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: cluster
@@ -135,7 +128,7 @@ stringData:
     }
 ```
 
-**Client certificate** (kubeadm / on-prem kubeconfigs):
+**Client certificate** (kubeadm or on-prem kubeconfigs):
 
 ```yaml
 stringData:
@@ -152,10 +145,10 @@ stringData:
     }
 ```
 
-**EKS / IAM** (`argocd-k8s-auth` exec plugin — Sharko parses this shape and
-mints a token with its own AWS identity; see
-[EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md) for the IAM
-roles this depends on):
+**EKS with AWS IAM** (the `argocd-k8s-auth` helper). Sharko reads the
+cluster name and role out of this shape, and gets a token with its own AWS
+identity. See [EKS Hub-and-Spoke Identity](eks-hub-and-spoke-identity.md)
+for the AWS roles this needs.
 
 ```yaml
 stringData:
@@ -175,181 +168,181 @@ stringData:
     }
 ```
 
-Apply with:
+Apply it with:
 
 ```bash
 kubectl apply -n argocd -f prod-us-cluster-secret.yaml
 ```
 
-## Which labels Sharko manages — and which it never touches
+## Which labels Sharko manages, and which it never touches
 
-On a self-managed connection, the reconciler converges **addon labels
-only**, one label per addon that is on, mirrored from the cluster's
-`cluster-addons/<cluster>.yaml` file — a disabled or missing addon simply
-has no label. Everything else is yours, verbatim:
+When you manage the connection, Sharko only manages **addon labels**. There
+is one label for each addon that is on in `cluster-addons/<cluster>.yaml`.
+An addon that is off, or not in the file, gets no label. Everything else on
+the Secret is yours, and Sharko leaves it exactly as it is:
 
-| On your secret                              | Sharko's behavior                     |
-| ------------------------------------------- | ------------------------------------- |
-| `stringData` / `data` (server, config, credentials) | Never read for writes, never modified |
-| `argocd.argoproj.io/secret-type: cluster`   | Never added, never removed — you set it |
-| Your own labels (`team: payments`, …)       | Kept as-is                            |
-| Annotations                                 | Never modified                        |
-| Addon labels (`monitoring: enabled`, …)     | **Managed by Sharko** — merged on every reconcile tick |
-| `app.kubernetes.io/managed-by: sharko`      | Never added; a leftover from an earlier Sharko-managed life is **removed** (see mode switching) |
+| On your Secret | What Sharko does |
+| --- | --- |
+| `stringData` / `data` (server, config, credentials) | Never changes it |
+| `argocd.argoproj.io/secret-type: cluster` | Never adds or removes it. You set it. |
+| Your own labels (`team: payments`, …) | Leaves them as they are |
+| Annotations | Never changes them |
+| Addon labels (`addons.sharko.dev/monitoring: enabled`, …) | **Managed by Sharko.** Checked and fixed every 30 seconds. |
+| `app.kubernetes.io/managed-by: sharko` | Never adds it. If it is left over from a time when Sharko managed this connection, Sharko **removes** it (see [Switching modes](#switching-modes)). |
 
-Sharko also never stamps its `sharko.dev/connectivity-check` label on a
+Sharko also never adds its `sharko.dev/connectivity-check` label to a
 connection it does not own.
 
 ## When another ArgoCD Application also renders this secret
 
-Some teams manage cluster secrets by committing them to Git and letting a
-separate ArgoCD Application sync them into the cluster — Terraform writing
-the secret manifest into a repo, with an Application pointed at that path,
-is a common shape. If that's how *your* secret gets to the cluster, watch
-for two failure modes:
+Some teams keep cluster Secrets in Git and let a separate ArgoCD
+Application put them into the cluster. For example, Terraform writes the
+Secret file into a repo, and an Application points at that folder. If your
+Secret gets to the cluster this way, watch out for two problems:
 
-- **`syncOptions: [Replace=true]` on that Application.** A `Replace` sync
-  overwrites the whole object on every sync of that Application, wiping
-  Sharko's addon labels along with it. Sharko re-applies them on its next
-  tick, so you won't lose addon deployment forever, but the two will keep
-  stepping on each other.
-- **The Application's manifest defines one of Sharko's addon-label keys.**
-  If the committed manifest sets, say, `monitoring: disabled` on the
-  secret and Sharko wants `monitoring: enabled`, ArgoCD's self-heal keeps
-  reverting Sharko's write back to the manifest's value — a silent fight
-  that repeats every ~30 seconds.
+- **The Application uses `syncOptions: [Replace=true]`.** A `Replace` sync
+  writes the whole Secret again every time that Application syncs. That
+  wipes Sharko's addon labels. Sharko puts them back within 30 seconds, so
+  your addons do not go away for good, but the two keep undoing each other's
+  work.
+- **The Application's file sets one of Sharko's addon label keys.** Say the
+  file sets `addons.sharko.dev/monitoring: disabled` and Sharko wants
+  `enabled`. ArgoCD keeps putting back the value from the file, and Sharko
+  keeps writing its own value. This fight repeats about every 30 seconds,
+  and nothing tells you unless you look.
 
-Sharko surfaces both cases without asking you to go digging first:
+Sharko tells you about both problems in three places:
 
-- **At adopt or registration**, if the secret already carries an ArgoCD
-  tracking marker (the `argocd.argoproj.io/tracking-id` annotation, or the
-  `app.kubernetes.io/instance` label, depending on your ArgoCD's
-  `trackingMethod`), Sharko names the owner it found. When the marker is
-  hard proof that another Application really renders this exact secret —
-  or the secret carries another tool's ownership label — the operation is
-  refused until that other manager is stopped. When the marker is only a
-  hint (it may just be a leftover, or a plain Helm release label), Sharko
-  warns and asks you to confirm before going ahead.
-- **The [connection doctor](connection-doctor.md)** (`POST
-  /clusters/{name}/doctor`) runs a `secret-ownership` check for
-  self-managed connections: pass when no foreign marker is found, fail
-  with the owning Application's name and the same fix text when one is.
-- **The reconciler** keeps a running count of consecutive ticks where a
-  label it just wrote comes back with a different value than the one it
-  wrote — not merely "changed" (an addon toggle in
-  `cluster-addons/<cluster>.yaml` changes what Sharko wants too, and that's
-  never flagged). After 2 ticks in a row of the SAME reverted value, the
-  cluster's `last_reconcile` outcome stays `succeeded` (Sharko is still
-  re-applying its labels every tick) but the message tells you something
-  keeps overwriting them.
+- **When you adopt or register the cluster.** ArgoCD marks the things an
+  Application renders. The mark is the `argocd.argoproj.io/tracking-id`
+  annotation, or the `app.kubernetes.io/instance` label, depending on how
+  your ArgoCD is set up. If the Secret has such a mark, Sharko names the
+  owner it found.
+    - If the mark clearly shows that another Application renders this exact
+      Secret, or the Secret has another tool's ownership label, Sharko
+      refuses. Stop the other tool first.
+    - If the mark is only a weak sign (it may be left over, or it may be a
+      plain Helm release label), Sharko warns you and asks you to confirm
+      first.
+- **In the [connection doctor](connection-doctor.md).** Its
+  `secret-ownership` check looks for these marks on Secrets you manage. It
+  passes when there is no mark. It fails, and names the Application, when
+  the mark clearly shows another owner. It warns when the sign is weak.
+- **In Sharko's regular check.** Every 30 seconds Sharko compares the
+  Secret in ArgoCD with what Git says (this is called a
+  [reconcile](../glossary.md#reconcile)). Sharko notices when a label it
+  just wrote comes back with a different value. A change you made yourself
+  in `cluster-addons/<cluster>.yaml` does not count. If the same label is
+  undone two checks in a row, the cluster's last check result still says
+  `succeeded`, because Sharko is still putting its labels back. But the
+  message says that something keeps overwriting them.
 
-The fix, in every case, is on the OTHER Application: either drop
-`Replace=true` from its `syncOptions`, or stop defining Sharko's addon
-label keys in the manifest it renders — let Sharko own those keys and let
-the other Application own everything else on the secret.
+In every case the fix is on the OTHER Application. Either remove
+`Replace=true` from its `syncOptions`, or stop setting Sharko's addon label
+keys in the file it renders. Let Sharko own those keys, and let the other
+Application own everything else on the Secret.
 
 !!! warning "`ignoreDifferences` is not the fix"
-    It can be tempting to make the fight go quiet by adding an
-    `ignoreDifferences` rule to the other Application, so ArgoCD stops
-    looking at the fields the two tools disagree on. Do not do that for
-    a secret-ownership conflict. It does not stop the fight — both tools
-    keep writing, whoever writes last wins, and the disagreement just
-    stops being visible. The only real fix is the one above: make ONE
-    tool the owner of each part of the secret. (`ignoreDifferences` has
-    a legitimate job elsewhere — addon resources that rewrite their own
-    fields, like autoscaled replica counts. Secrets that two tools are
-    writing is not that.)
+    You may want to make the fight go quiet with an `ignoreDifferences`
+    rule on the other Application, so ArgoCD stops looking at the fields the
+    two tools disagree on. Do not do that here. It does not stop the fight.
+    Both tools keep writing, the last one to write wins, and you just stop
+    seeing it. The only real fix is the one above: make ONE tool the owner
+    of each part of the Secret. (`ignoreDifferences` is fine for other
+    things, like addons that change their own replica counts. A Secret that
+    two tools write is not one of them.)
 
 ## Registered but no secret yet?
 
-You can register the cluster in Sharko before creating the secret. Until
-the secret exists, the cluster shows as unreachable in ArgoCD and the
-reconciler logs a visible waiting state (audit event
-`cluster_secret_user_pending`: *"connection is managed by the user;
-create the ArgoCD cluster Secret by hand"*). Nothing errors and nothing
-retries destructively — the next reconcile tick (every 30 seconds) picks
-the secret up as soon as you create it and syncs the addon labels onto it.
+You can register the cluster in Sharko before you create the Secret. Until
+the Secret exists, ArgoCD shows the cluster as unreachable. Sharko writes a
+`cluster_secret_user_pending` entry in Activity History that says: *"connection
+is managed by the user; create the ArgoCD cluster Secret by hand"*. Nothing
+fails and nothing gets deleted. Within 30 seconds of you creating the
+Secret, Sharko finds it and adds the addon labels.
 
 ## Switching modes
 
-Both directions are a one-line Git edit to the cluster's entry in
-`managed-clusters.yaml` (via a PR, like every other Sharko change).
+Both ways are a one-line change to the cluster's entry in
+`managed-clusters.yaml`, made through a pull request like every other
+Sharko change.
 
-**Sharko-managed → self-managed:** add `connectionManagedBy: user` to the
-entry. On the next reconcile tick Sharko releases the existing secret: it
-removes its `app.kubernetes.io/managed-by: sharko` ownership label (so no
-Sharko cleanup can ever delete the secret) and from then on only syncs
-addon labels. The credential material Sharko last wrote stays in place —
-replace it with your own whenever you like.
+**From Sharko-managed to managed by you:** add `connectionManagedBy: user`
+to the entry. Within 30 seconds, Sharko lets go of the existing Secret. It
+removes its `app.kubernetes.io/managed-by: sharko` label, so no Sharko
+cleanup can ever delete the Secret. From then on it only manages addon
+labels. The credentials Sharko last wrote stay in place. Replace them with
+your own whenever you like.
 
-**Self-managed → Sharko-managed:** remove the `connectionManagedBy: user`
-line. Sharko only takes over a connection it can rebuild, so two things
-must be true:
+**From managed by you back to Sharko-managed:** remove the
+`connectionManagedBy: user` line. Sharko only takes over a connection it
+can rebuild, so two things must be true:
 
-1. The cluster's credentials are available to Sharko — stored in your
-   configured secrets backend under the cluster name (or the entry's
+1. Sharko can get the cluster's credentials. They must be stored in your
+   credentials backend under the cluster name (or under the entry's
    `secretPath`).
-2. Your hand-made secret is deleted
-   (`kubectl delete secret -n argocd <cluster-name>`). Sharko deliberately
-   refuses to overwrite a same-name secret it does not own — that
-   protection is what keeps your secrets safe in the other direction.
+2. You have deleted your own Secret
+   (`kubectl delete secret -n argocd <cluster-name>`). Sharko will not
+   overwrite a Secret with the same name that it does not own. That same
+   rule is what keeps your Secrets safe the other way round.
 
-Within one reconcile tick of the delete, Sharko recreates the secret from
-the backend credentials with the right addon labels.
+Within 30 seconds of the delete, Sharko creates the Secret again from the
+stored credentials, with the right addon labels.
 
-## Removing a self-managed cluster
+## Removing a cluster whose connection you manage
 
-`DELETE /api/v1/clusters/{name}` with `cleanup: all` removes the cluster
-from `managed-clusters.yaml` and cleans up Sharko's own artifacts, but
-**leaves your ArgoCD cluster secret in place** — the response says so
-explicitly. Delete the secret yourself if you no longer want ArgoCD
-connected to that cluster.
+`DELETE /api/v1/clusters/{name}` (with `cleanup=all`, the default) removes
+the cluster from `managed-clusters.yaml` and cleans up what Sharko made.
+But it **leaves your ArgoCD cluster Secret in place**, and the response
+says so. Delete the Secret yourself if you no longer want ArgoCD connected
+to that cluster.
 
-## Switching to self-managed and then removing? Flip, wait for a sync, then remove
+## Switching to managed by you and then removing? Switch, wait, then remove {#switching-to-self-managed-and-then-removing-flip-wait-for-a-sync-then-remove}
 
-If you plan to take over a connection **and** remove the cluster from
-Sharko, do it in two steps with a pause in between — never in one Git PR:
+If you want to take over a connection **and** remove the cluster from
+Sharko, do it in two steps with a short wait between them. Never do both in
+one pull request.
 
-1. **Flip the mode:** add `connectionManagedBy: user` to the cluster's
-   entry and merge that PR.
-2. **Wait for one reconcile tick** (up to 30 seconds). This is when Sharko
-   removes its `app.kubernetes.io/managed-by: sharko` ownership label from
-   the secret — the handover that makes the secret delete-proof. Verify:
+1. **Switch the mode:** add `connectionManagedBy: user` to the cluster's
+   entry and merge that pull request.
+2. **Wait up to 30 seconds.** In that time Sharko removes its
+   `app.kubernetes.io/managed-by: sharko` label from the Secret. After that,
+   Sharko can no longer delete it. Check it:
 
    ```bash
    kubectl get secret -n argocd <cluster-name> \
      -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}'
    ```
 
-   Empty output means the handover happened.
-3. **Then remove the cluster** (via the UI, the API, or a Git PR).
+   If this prints nothing, the label is gone.
+3. **Then remove the cluster** (in the UI, through the API, or with a
+   pull request).
 
-**Why the pause matters:** the label handover runs when a reconcile tick
-sees the entry in Git with `connectionManagedBy: user`. If one PR both
-flips the mode and removes the entry, no tick ever sees the flip — the
-entry is just *gone*, and Sharko's orphan sweep sees a secret that still
-carries the Sharko ownership label with no Git entry behind it. That is
-exactly the pattern the sweep deletes. Your connection would go down with
-it.
+**Why the wait matters.** Sharko removes its label when its regular check
+sees the entry in Git with `connectionManagedBy: user`. If one pull request
+switches the mode and removes the entry at the same time, no check ever sees
+the switch. The entry is just gone. Sharko then finds a Secret that still
+has its label but no entry in Git, and it deletes Secrets like that. Your
+connection would go down with it.
 
-Two safety nets soften this, but don't skip the pause:
+Two safety nets help, but don't skip the wait:
 
-- **Removal through Sharko** (`DELETE /api/v1/clusters/{name}` or the UI)
-  reads the mode from the entry *before* removing it and strips the
-  ownership label at removal time (the removal response lists a
-  `strip_sharko_ownership_label` step). A direct Git edit that deletes the
-  entry bypasses this — nothing strips the label, and the sweep can still
-  take the secret.
-- **Sharko never deletes a secret without its ownership label.** A removal
-  retried after its PR merged (entry already gone) refuses the delete and
-  reports `skip_argocd_secret_not_sharko_labeled` with a plain-English
-  explanation instead — your hand-made secret is not deleted just because
-  the entry that said "managed by me" no longer exists.
+- **Removing through Sharko** (`DELETE /api/v1/clusters/{name}` or the UI)
+  reads the mode from the entry *before* it removes it, and removes Sharko's
+  label at that moment. The response lists a `strip_sharko_ownership_label`
+  step. Deleting the entry straight in Git skips this. Nothing removes the
+  label, and Sharko can still delete the Secret.
+- **Sharko never deletes a Secret that does not have its label.** Say you
+  try a removal again after its pull request merged, so the entry is
+  already gone. Sharko refuses to delete, reports
+  `skip_argocd_secret_not_sharko_labeled`, and explains why in plain words.
+  Your own Secret is not deleted just because the entry that said "managed
+  by the user" is gone.
 
-## Turning off an addon on a self-managed cluster
+## Turning off an addon on a cluster whose connection you manage
 
-Edit `cluster-addons/prod-us.yaml` — either delete the addon's block, or set
-`enabled: false` and keep it:
+Edit `cluster-addons/prod-us.yaml`. Either delete the addon's block, or set
+`enabled: false`:
 
 ```yaml
 apiVersion: sharko.dev/v1
@@ -357,39 +350,36 @@ kind: ClusterAddons
 cluster: prod-us
 addons:
   monitoring:
-    enabled: false   # or just remove this block entirely — both work
+    enabled: false   # or remove this block. Both work.
   logging:
     enabled: true
 ```
 
-Either way, the next reconcile tick removes the `monitoring` label from your
-secret, the ApplicationSet selector stops matching, and the addon's
-Application prunes — the same outcome as a Sharko-managed cluster. Unlike
-`managed-clusters.yaml`'s own `labels:` block (which the reconciler only
-ever merges onto your secret, and never removes a key from), a cluster's
-addon file is the one source of truth for which addons it runs: an addon
-missing from `addons:` and an addon present with `enabled: false` mean the
-exact same thing, so the reconciler removes the label from your secret
-either way instead of leaving a stale one behind.
+Either way, within 30 seconds Sharko removes the
+`addons.sharko.dev/monitoring` label from your Secret. The ApplicationSet
+then stops matching the cluster, and ArgoCD removes the addon. This is the
+same as on a cluster Sharko manages.
+
+An addon that is missing from `addons:` and an addon with `enabled: false`
+mean the same thing. So Sharko removes the label in both cases. (The
+`labels:` block in `managed-clusters.yaml` works differently. Sharko only
+ever adds those labels to your Secret, and never removes one.)
 
 !!! note "Repo still on the older layout?"
-    On a repo that has not gone through the
-    [migration](migrating-to-the-new-format.md) yet, this is different: the
-    reconciler only ever *merges* addon labels onto your secret and never
-    removes one (there is no reliable way to tell "stale addon label" apart
-    from "your own label that happens to look similar"), so removing an
-    addon's line from `labels:` on the old `configuration/managed-clusters.yaml`
-    does nothing — you have to set it to `disabled` and keep the line. Once
-    the repo is migrated this caveat goes away.
+    On a repo that has not been [migrated](migrating-to-the-new-format.md)
+    yet, this is different. Sharko only ever *adds* addon labels to your
+    Secret and never removes one, because it cannot tell an old addon label
+    apart from one of your own labels. So deleting an addon's line from
+    `labels:` in the old cluster list does nothing. Set it to `disabled` and
+    keep the line instead. Once the repo is migrated, this goes away.
 
 ## Related pages
 
-- [If You Remove Sharko (no lock-in)](removing-sharko.md) — the same
-  guest philosophy applied to the whole installation.
-- [Connection Doctor](connection-doctor.md) — the `secret-ownership`
-  check (and the other five) in full, plus how to run them.
-- [Cluster Reconciler reference](cluster-reconciler.md) — how the label
-  sync loop works, and where `last_reconcile` visibility + "Sync now"
-  live.
+- [If You Remove Sharko (no lock-in)](removing-sharko.md) — the same "guest
+  on your ArgoCD" idea, for the whole install.
+- [Connection Doctor](connection-doctor.md) — all six checks, including
+  `secret-ownership`, and how to run them.
+- [Cluster Reconciler](cluster-reconciler.md) — how Sharko's regular check
+  works, and the **Refresh** and **Sync addon labels** buttons.
 - [ArgoCD declarative setup — clusters](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters)
-  — the authoritative cluster-secret reference.
+  — ArgoCD's own reference for cluster Secrets.

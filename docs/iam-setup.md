@@ -419,7 +419,7 @@ kubectl get sa sharko -n sharko -o yaml | grep eks.amazonaws.com/role-arn
 - Verify the pod has the projected token volume:
 
 ```bash
-kubectl get pod -n sharko -l app=sharko -o jsonpath='{.items[0].spec.volumes}' | jq .
+kubectl get pod -n sharko -l app.kubernetes.io/name=sharko -o jsonpath='{.items[0].spec.volumes}' | jq .
 ```
 
 #### ERR_AWS_ASSUME

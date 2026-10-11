@@ -58,7 +58,7 @@ Operation ID: op_a1b2c3d4
 [10:01:30] Done. Root application is Healthy.
 ```
 
-With auto-merge disabled (`SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false`, or `connection.gitops.prAutoMerge: "false"` in Helm values), the init completes after the PR is created. Merge the PR manually, then re-run `sharko init --resume <operation-id>` to continue ArgoCD bootstrap.
+With auto-merge disabled (`SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false`, or `connection.gitops.prAutoMerge: "false"` in Helm values), the init completes after the PR is created. Merge the PR manually, then re-run `sharko init` to continue ArgoCD bootstrap. The server recognizes the existing operation and resumes it automatically.
 
 ### `sharko validate`
 
@@ -116,19 +116,19 @@ into, so `sharko validate-config .` in the repo root stays fast.
 - `0` — every Sharko-enveloped file validated; non-Sharko files were skipped.
 - `1` — at least one Sharko-enveloped file failed schema validation.
 
-**Example output (success):**
+**Example output (success)**, from `sharko validate-config .` at the root of a GitOps repo:
 
 ```
-✓ templates/bootstrap/configuration/addons-catalog.yaml
-✓ templates/bootstrap/configuration/managed-clusters.yaml
-skip: templates/bootstrap/configuration/bootstrap-config.yaml (not a Sharko-enveloped file)
+✓ cluster-addons/my-cluster.yaml
+✓ managed-clusters.yaml
+skip: sharko-engine.yaml (not a Sharko-enveloped file)
 ```
 
 **Example output (failure):**
 
 ```
-✘ configuration/managed-clusters.yaml: schema violations (kind: ManagedClusters)
-   ✘ /spec/clusters/0: missing required property "name"
+✘ managed-clusters.yaml: schema violations (kind: ManagedClusters)
+   ✘ /clusters/0: missing properties: 'name' (line 4)
    → for details: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 
 1 file(s) failed validation
@@ -155,9 +155,7 @@ sharko add-cluster <name> [flags]
 | Flag | Description |
 |------|-------------|
 | `--addons <list>` | Comma-separated list of addons to enable |
-| `--region <region>` | AWS region (for `aws-sm` provider) |
-| `--env <env>` | Environment label (`dev`, `staging`, `prod`, etc.) |
-| `--secret-path <path>` | Override the secrets provider path used to look up cluster credentials. Use when the secret key differs from the cluster name (e.g., `clusters/prod/my-cluster`). |
+| `--region <region>` | Cluster region |
 | `--dry-run` | Preview the registration without making changes — prints the PR title, effective addons, secrets that would be created, the connectivity check result, and per-file the exact diff the pull request would contain |
 
 Example:
@@ -165,13 +163,6 @@ Example:
 ```bash
 sharko add-cluster prod-eu \
   --addons cert-manager,monitoring,logging \
-  --region eu-west-1 \
-  --env prod
-
-# With a custom secret path:
-sharko add-cluster prod-eu \
-  --secret-path clusters/prod/prod-eu \
-  --addons cert-manager,monitoring \
   --region eu-west-1
 ```
 
@@ -206,8 +197,13 @@ fleet-record entry).
 Update the addon assignments for a cluster.
 
 ```bash
-sharko update-cluster <name> --addons cert-manager,metrics-server,logging
+sharko update-cluster <name> --add-addon cert-manager,metrics-server --remove-addon logging
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--add-addon <list>` | Comma-separated addons to enable |
+| `--remove-addon <list>` | Comma-separated addons to disable |
 
 ### `sharko test-cluster`
 
@@ -288,7 +284,6 @@ sharko add-addon <name> [flags]
 | `--repo <url>` | Yes | Helm repository URL |
 | `--version <ver>` | Yes | Chart version |
 | `--namespace <ns>` | No | Target namespace (defaults to addon name) |
-| `--values <file>` | No | Base values YAML file |
 
 Example:
 
@@ -623,9 +618,12 @@ sharko connect \
 | Flag | Description |
 |------|-------------|
 | `--name <name>` | Connection name (required) |
-| `--git-provider <provider>` | `github` or `azure-devops` (required) |
+| `--git-provider <provider>` | `github` or `azuredevops` (required) |
 | `--git-repo <url>` | Addons repository URL (required) |
 | `--git-token <token>` | PAT or access token (required) |
+| `--argocd-url <url>` | ArgoCD server URL |
+| `--argocd-token <token>` | ArgoCD API token |
+| `--argocd-namespace <ns>` | ArgoCD namespace (default: `argocd`) |
 
 ### `sharko connect list`
 
@@ -642,6 +640,21 @@ Test the current active connection (validates credentials and repo access).
 ```bash
 sharko connect test
 ```
+
+### `sharko repair-connection`
+
+Make a cluster's ArgoCD connection match the Git-defined connection. Checks a cluster's ArgoCD connection against what Sharko means it to be, shows you what does not match, and then puts it right.
+
+```bash
+sharko repair-connection <cluster>
+```
+
+| Flag | Description |
+|------|-------------|
+| `-y`, `--yes` | Skip the confirmation prompt |
+| `--check-only` | Run the read-only check and stop; change nothing |
+
+Use this when a cluster's ArgoCD Secret has drifted from what Sharko wrote to Git (for example, after manually editing the Secret or after a takeover).
 
 ---
 
@@ -744,3 +757,39 @@ sharko user create <username>             # create a new user
 sharko user delete <username>             # delete a user
 sharko user update <username>             # update a user's role or enabled status
 ```
+
+### `sharko reset-admin`
+
+Reset the admin user's password by directly updating the Kubernetes Secret. Requires kubectl access to the namespace where Sharko is installed.
+
+```bash
+sharko reset-admin
+```
+
+| Flag | Description |
+|------|-------------|
+| `--kubeconfig <path>` | Path to kubeconfig file (defaults to `KUBECONFIG` env or `~/.kube/config`) |
+| `--namespace <ns>` | Kubernetes namespace where Sharko is installed |
+| `--secret <name>` | Name of the Sharko credentials Secret |
+
+Use this when you have lost access to the admin account and need to recover it. The command generates a new random password and prints it.
+
+---
+
+## Server Commands
+
+### `sharko serve`
+
+Start the Sharko API server. This is the command the Helm chart runs inside the Sharko pod. Operators do not usually run this directly — it is for local development and testing.
+
+```bash
+sharko serve
+```
+
+| Flag | Description |
+|------|-------------|
+| `--port <port>` | HTTP server port (default: 8080) |
+| `--config <path>` | Path to config file for local mode |
+| `--static <path>` | Path to static files directory for the UI |
+| `--demo` | Run with mock backends for testing (no external dependencies) |
+| `--demo-clusters <n>` | Demo mode: number of clusters to generate |

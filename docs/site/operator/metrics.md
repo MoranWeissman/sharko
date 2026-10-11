@@ -1,32 +1,34 @@
-# Reference — Metrics, Alerts, and the Grafana Dashboard
+# Metrics, alerts and the Grafana dashboard
 
-This page lists every metric Sharko actually exports on `/metrics`, the alert rules the Helm chart can install, and the Grafana dashboard shipped in the repo. It's the "what exists" reference — for naming rules and per-surface sizing details, see [Metrics Naming](metrics-naming.md); for how the SLO targets were set, see [SLOs](slos.md) and [Perf Baselines](perf-baselines.md).
+This page lists every metric Sharko exports, the alerts the Helm chart can install, and the Grafana dashboard that comes with Sharko. For how the names are built, see [Metrics Naming](metrics-naming.md). For the goals and what the alerts check, see [SLOs](slos.md).
 
-Sharko serves metrics on the unauthenticated `/metrics` endpoint, in standard Prometheus exposition format.
+Sharko serves its metrics at `/metrics`, in the normal Prometheus format. **There is no login in front of `/metrics`.** Anyone who can reach the port can read it.
 
 ## SLO surface metrics
 
-Four request paths are instrumented as "SLO surfaces": `cluster_registration`, `addon_cycle`, `catalog_scan`, `dashboard_read`. Each one exports the same three-metric pattern:
+Sharko counts and times four kinds of requests: `cluster_registration`, `addon_cycle`, `catalog_scan` and `dashboard_read`. [SLOs](slos.md#the-four-parts-of-sharko-that-are-measured) says which API routes each one covers. Each one exports the same three metrics:
 
 | Metric name pattern | Type | Labels | Meaning |
 |---|---|---|---|
-| `sharko_<path>_duration_seconds` | Histogram | `phase` | How long this surface's operations take, broken down by sub-stage (`phase`). |
-| `sharko_<path>_total` | Counter | `code` | How many times this surface was invoked, by outcome code (HTTP status or a short domain code). |
-| `sharko_<path>_errors_total` | Counter | `code` | How many of those invocations failed, by the same code. |
+| `sharko_<path>_duration_seconds` | Histogram | `phase` | How long the requests took. |
+| `sharko_<path>_total` | Counter | `code` | How many requests there were, by HTTP status code. |
+| `sharko_<path>_errors_total` | Counter | `code` | How many of them failed (status 400 or higher), by the same code. |
 
-So for `cluster_registration` you get `sharko_cluster_registration_duration_seconds`, `sharko_cluster_registration_total`, and `sharko_cluster_registration_errors_total` — and the same shape repeats for the other three paths. See [Metrics Naming](metrics-naming.md#slo-surface-inventory) for the phase label values and bucket sizing per path.
+So for `cluster_registration` you get `sharko_cluster_registration_duration_seconds`, `sharko_cluster_registration_total` and `sharko_cluster_registration_errors_total`. The other three follow the same pattern.
+
+The `phase` values a running Sharko writes are: `total` for `cluster_registration` and `catalog_scan`; `enable` and `disable` for `addon_cycle`; `fleet_status`, `attention` and `pull_requests` for `dashboard_read`.
 
 ## Everything else Sharko exports
 
-These are the older metric families, served alongside the SLO surfaces above. Together with the 12 SLO families that makes 44 metric families in total.
+These are the other metrics Sharko exports, next to the twelve above.
 
-!!! warning "Ten of the metrics below are registered but never written"
+!!! warning "Ten of the metrics below are never written"
 
-    `sharko_cluster_count`, `sharko_cluster_status`, `sharko_cluster_last_verified_timestamp`, `sharko_cluster_last_test_duration_seconds`, `sharko_cluster_test_failures_total`, `sharko_addon_sync_status`, `sharko_addon_health`, `sharko_addon_version`, `sharko_pr_tracked` and `sharko_auth_login_total` are declared in the code, but nothing in Sharko ever sets a value on them. They have never produced a real number, so no dashboard or alert can be relying on them. Do not build one now.
+    `sharko_cluster_count`, `sharko_cluster_status`, `sharko_cluster_last_verified_timestamp`, `sharko_cluster_last_test_duration_seconds`, `sharko_cluster_test_failures_total`, `sharko_addon_sync_status`, `sharko_addon_health`, `sharko_addon_version`, `sharko_pr_tracked` and `sharko_auth_login_total` exist in the code, but nothing in Sharko ever gives them a value.
 
-    All ten carry labels, and a labelled Prometheus collector with no children publishes nothing at all — so they are simply absent from a scrape and a query against them returns no data. None of them shows you a number that is not true; they show you nothing, which is the honest answer for something nobody measures.
+    So they never show up on `/metrics`, and a query for any of them returns no data. Do not build a graph or an alert on them.
 
-    Whether these get wired up or removed is an open product decision. The rows below describe what each one *would* mean. Sharko's own tests hold the same list, so this warning and the product cannot drift apart.
+    Whether they get filled in or removed is not decided yet. The rows below say what each one *would* mean. Sharko's own tests hold the same list of ten, so this box cannot fall out of step with the code.
 
 ### Clusters
 
@@ -49,12 +51,14 @@ These are the older metric families, served alongside the SLO surfaces above. To
 | `sharko_catalog_source_fetch_total` | Counter | `url`, `status` | Third-party catalog source fetch attempts by outcome (`ok`, `stale`, `failed`). The `url` label is always the fixed word `redacted`. |
 | `sharko_catalog_source_last_success_timestamp` | Gauge | `url` | Unix time of the last successful third-party catalog fetch. The `url` label is always the fixed word `redacted`. |
 | `sharko_catalog_source_entries` | Gauge | `url` | Number of entries in the most recently written third-party catalog snapshot. The `url` label is always the fixed word `redacted`. |
+| `sharko_scorecard_refresh_total` | Counter | `status` | OpenSSF Scorecard refresh runs, by outcome. |
+| `sharko_scorecard_last_refresh_timestamp` | Gauge | — | Unix time of the last Scorecard refresh run. |
 
 #### Why `url` is always `redacted` on the three catalog-source metrics
 
-`GET /metrics` has no login in front of it, so everything on it is readable by anyone who can reach the port. You address a private catalog by writing a token into the address itself — that is what `SHARKO_CATALOG_URLS` is for — and the documented shape puts the token inside the address's own path, where no check can tell it apart from an ordinary path segment. An address that looks clean can still be the key to someone's private catalog.
+`/metrics` has no login in front of it. The catalog addresses you set in `SHARKO_CATALOG_URLS` can be private: some catalog hosts put a secret key inside the address itself, and Sharko has no way to tell which part of an address is a secret. An address that looks harmless can still let someone into a private catalog.
 
-So Sharko never puts a configured address on the `url` label, no matter what it looks like. Every source is published as the single word `redacted`. Nothing about the address is shown, and nothing is worked out from it either: no hash of it, no part of it, no hint of how long it was.
+So Sharko never puts a catalog address on the `url` label, whatever it looks like. Every source shows as the single word `redacted`. Nothing about the address is shown: not a part of it, not a hash of it, not its length.
 
 **One consequence to know before you read a dashboard.** `redacted` is the same word for every configured source, so all of them share one line:
 
@@ -62,13 +66,11 @@ So Sharko never puts a configured address on the `url` label, no matter what it 
 - `sharko_catalog_source_last_success_timestamp{url="redacted"}` shows whichever of them succeeded most recently.
 - `sharko_catalog_source_entries{url="redacted"}` shows the entry count of the most recent one written, not a total across them.
 
-Alert on the rate of `status="failed"` and on the freshness of the last success, as you would anyway. To find out *which* catalog is unhappy, use `GET /api/v1/catalog/sources`, which is behind a login — its rows also all say `redacted`, so tell them apart by their status, entry count and last-fetched time.
-| `sharko_scorecard_refresh_total` | Counter | `status` | OpenSSF Scorecard refresh runs, by outcome. |
-| `sharko_scorecard_last_refresh_timestamp` | Gauge | — | Unix time of the last Scorecard refresh cycle. |
+Alert on how often `status="failed"` goes up, and on how long ago the last success was. To find out *which* catalog has the problem, use `GET /api/v1/marketplace/sources`, which needs a login. Its rows also all say `redacted`, so tell them apart by their status, entry count and last-fetched time. The rows always come in the same order (sorted by the real address), so the same row is the same catalog each time you ask.
 
 ### Reconcilers (cluster-connection and addon-values engines)
 
-Both of Sharko's background reconcilers — the one that keeps ArgoCD cluster-secret labels in step with `managed-clusters.yaml`, and the one that delivers addon secret values — report through the same metric family, distinguished by the `engine` label (`cluster_connection` or `addon_values`):
+Sharko has two background reconcilers. One keeps the ArgoCD cluster secrets matching `managed-clusters.yaml`. The other delivers addon secret values to the clusters. Both report through the same metrics, and the `engine` label says which one it is (`cluster_connection` or `addon_values`):
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
@@ -88,15 +90,15 @@ Both of Sharko's background reconcilers — the one that keeps ArgoCD cluster-se
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `sharko_api_requests_total` | Counter | `method`, `path`, `status` | HTTP requests, by method, normalized path, and status code. |
+| `sharko_api_requests_total` | Counter | `method`, `path`, `status` | HTTP requests, by method, path and status code. |
 | `sharko_api_request_duration_seconds` | Histogram | `method`, `path` | HTTP request duration. |
 | `sharko_auth_login_total` | Counter | `result` | Login attempts, by outcome. |
 | `sharko_active_sessions` | Gauge | — | How many people are signed in right now. Counted fresh on every scrape; a login whose 24-hour lifetime has run out is not counted, even in the window before the hourly sweep deletes it. |
 | `sharko_pr_tracked` | Gauge | `status` | Count of pull requests Sharko is tracking, by status. |
-| `sharko_ai_annotate_total` | Counter | `outcome` | AI "annotate values" calls, by outcome (`ok`, `not_configured`, `oversize`, `secret_blocked`, `timeout`, `llm_error`, `parse_error`, `opted_out`, `disabled`). |
+| `sharko_ai_annotate_total` | Counter | `outcome` | AI "annotate values" calls, by outcome (`ok`, `not_configured`, `empty_input`, `oversize`, `secret_blocked`, `timeout`, `llm_error`, `parse_error`). |
 | `sharko_ai_annotate_latency_seconds` | Histogram | `outcome` | Latency of AI annotate calls (secret-guard scan plus the LLM round-trip), by outcome. |
 
-Path labels are normalized before being recorded (dynamic segments like a cluster or addon name are replaced with a placeholder such as `{name}`), so metric cardinality stays bounded regardless of fleet size.
+In the `path` label, names such as a cluster or addon name are replaced with a placeholder such as `{name}`. So the number of lines stays the same however many clusters you have.
 
 ## Alert rules
 
@@ -104,20 +106,20 @@ The Helm chart can install a `PrometheusRule` (`charts/sharko/templates/promethe
 
 ### SLO burn-rate alerts
 
-Each of the four SLO surfaces gets a fast-burn (pages, 1-hour window) and a slow-burn (files a ticket, 6-hour window) alert pair, following the Google SRE book's multi-window burn-rate pattern. These are brief on purpose — the full explanation of the SLO targets and what burning fast vs. slow means lives in [SLOs](slos.md), and the exact steps to take when one fires are in the [Budget-Burn Runbook](budget-burn-runbook.md).
+Each of the four parts gets two alerts. The fast-burn one has `severity: page` and looks at the last 5 minutes and the last hour. The slow-burn one has `severity: ticket` and looks at the last 30 minutes and the last 6 hours. Both only count failed requests, never slow ones. [SLOs](slos.md#the-goal-and-the-alerts) has the exact numbers and all eight alert names. The steps to take when one fires are in the [Budget-Burn Runbook](budget-burn-runbook.md).
 
 ### Reconciler health alerts
 
 Two alerts watch the reconciler metrics directly, since a stalled reconciler or a pile of unrepaired secrets is a correctness problem, not a latency one:
 
-- **`SharkoReconcilerPassAge`** — fires when an engine hasn't completed a successful pass in more than 10x its normal cadence (5 minutes for the cluster-connection engine, 30 minutes for the addon-values engine). In plain words: something is stopping one of Sharko's background loops from finishing cleanly, so drift is piling up unnoticed. Check the pod logs for that engine's tick/pass lines, and confirm its Git connection and Kubernetes access are both healthy. This alert automatically stays quiet for an engine an admin has deliberately switched off.
+- **`SharkoReconcilerPassAge`** — fires when an engine has not finished a pass without errors for more than 10 times its normal gap: 5 minutes for the cluster-connection engine, 30 minutes for the addon-values engine. In plain words: something keeps one of Sharko's background loops from finishing, so changes that need fixing are piling up unnoticed. Check the pod logs for that engine's tick/pass lines, and confirm its Git connection and Kubernetes access are both healthy. This alert automatically stays quiet for an engine an admin has deliberately switched off.
 - **`SharkoManagedSecretsSustainedBadState`** — fires when secrets have sat in `missing` or `out_of_sync` state for 30 minutes straight, meaning Sharko's own repair loop isn't clearing them. In plain words: Sharko knows some secrets are wrong and has been trying to fix them for half an hour without success. Check the Secrets area in the UI (Cluster connections and Addon secrets) for the affected rows and their last check error, and confirm Sharko can reach the cluster and the secrets store. This alert also stays quiet for a switched-off engine, since nothing is going to repair it until it's turned back on.
 
 ## Grafana dashboard
 
 The repo ships a ready-to-import Grafana dashboard at `charts/sharko/dashboards/sharko-overview.json`. It has six panels. **Five of them show data. The first one does not:**
 
-- **Cluster Status Overview** — **this panel is always empty.** It queries `sum(sharko_cluster_count) by (status)`, and `sharko_cluster_count` is one of the thirteen metrics listed in the warning above that nothing in Sharko ever writes. The panel is not broken and there is nothing to fix in Grafana — the number it wants simply does not exist yet. Whether to remove the panel or start writing the metric is an open product decision.
+- **Cluster Status Overview** — **this panel is always empty.** It queries `sum(sharko_cluster_count) by (status)`, and `sharko_cluster_count` is one of the ten metrics listed in the warning above that nothing in Sharko ever writes. The panel is not broken and there is nothing to fix in Grafana — the number it wants simply does not exist yet. Whether to remove the panel or start writing the metric is not decided yet.
 - **Reconciler Run Duration** — time series, per engine
 - **API Request Rate** — time series
 - **API Latency Percentiles** — time series
@@ -128,7 +130,7 @@ The chart doesn't wire this dashboard into a Grafana sidecar or ConfigMap automa
 
 ## See also
 
-- [Metrics Naming](metrics-naming.md) — the naming scheme, per-surface bucket sizing, and operational notes (unauthenticated scraping, exemplars, cardinality budget)
-- [SLOs](slos.md) — how the SLO targets were set and what the error budgets mean
-- [Perf Baselines](perf-baselines.md) — the raw measurements the SLO targets are sized against
+- [Metrics Naming](metrics-naming.md) — how the metric names are built, and the speed boxes each part uses
+- [SLOs](slos.md) — the goals, and what the alerts check
+- [Perf Baselines](perf-baselines.md) — speed numbers from Sharko's own test setup
 - [Budget-Burn Runbook](budget-burn-runbook.md) — step-by-step response when a burn-rate alert fires
