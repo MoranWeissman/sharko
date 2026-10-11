@@ -12,18 +12,11 @@
 // hand-typed YAML strings, so the fixture can never drift from what the
 // real read/write path actually accepts.
 //
-// Deliberately additive: the v3 fixture files in mock_git.go
-// (configuration/managed-clusters.yaml, configuration/addons-catalog.yaml,
-// configuration/addons-*-values/) are left untouched. Several existing
-// read paths (GetClusterComparison, the dashboard's addon-stats tile) are
-// not yet v4-aware — that is a known backend gap tracked in the design
-// doc's §8 "what this changes in the existing code" list, not something
-// this UI/demo-fixture lane owns. Keeping both layouts side by side means
-// the v4-aware reads (AddonService.GetVersionMatrix's v4 branch, the
-// catalog endpoints, EnableAddonV4/DisableAddonV4 and their
-// dry-run previews) light up on real v4 data while every already-working
-// v3-driven view (cluster comparison, the dashboard tile) keeps working
-// exactly as it did before this story.
+// This is the ONLY layout the demo repo holds. It used to sit next to the
+// old v3 files (configuration/managed-clusters.yaml and friends), but a
+// repo with both layouts is one Sharko refuses to write to
+// (orchestrator.ErrMixedRepoLayout), so every demo write failed. A real
+// v4.0.5 user has only these files, and so does the demo.
 package demo
 
 import (
@@ -43,9 +36,8 @@ type v4ClusterAddonPin struct {
 }
 
 // buildV4DemoFiles renders the v4-format demo repo layout (design doc
-// §1, §2) for the same five clusters the v3 fixture already seeds
-// (prod-eu, prod-us, staging-eu, dev-us, perf-asia — see
-// clusterAddonsYAML in mock_git.go). Five of the six approved addons are
+// §1, §2) for five clusters: prod-eu, prod-us, staging-eu, dev-us and
+// perf-asia. Five of the six approved addons are
 // also in the Marketplace's curated list; datadog is not (it ships from
 // a real public Helm repo but is not part of Sharko's open-source curated
 // set). That gap is the point: it shows an in-house chart deploying from
@@ -126,9 +118,8 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 	// prod-eu carries the design doc's worked example verbatim (§6):
 	// cert-manager pinned to an older version with the webhook
 	// caBundle ignoreDifferences quirk, metrics-server following the
-	// catalog default. The other four clusters mirror the pins already
-	// present in the v3 fixture's labels (clusterAddonsYAML) so the two
-	// layouts tell the same story about the same fleet.
+	// catalog default. The other four clusters get a mix of pinned and
+	// unpinned addons so the version matrix has something to show.
 	clusterAddons := map[string][]v4ClusterAddonPin{
 		"prod-eu": {
 			{name: "cert-manager", version: "1.12.0", settings: &models.ClusterAddonsAddonSettings{
@@ -194,9 +185,9 @@ func buildV4DemoFiles() (map[string][]byte, error) {
 
 	// ---- managed-clusters.yaml (ManagedClusters, v4 path) ------------
 	//
-	// Same five clusters as the v3 configuration/managed-clusters.yaml,
-	// minus the addon on/off labels — v4 no longer authors those here
-	// (design doc §2.4); they're derived from cluster-addons/*.yaml instead.
+	// The same five clusters. There are no addon on/off labels here: v4
+	// doesn't write them in this file (design doc §2.4). Sharko works
+	// them out from cluster-addons/*.yaml instead.
 	connSpec := models.ManagedClustersSpec{
 		Clusters: []models.ManagedClusterEntry{
 			{Name: "prod-eu", Region: "eu-west-1", SecretPath: "k8s-prod-eu", CredsSource: "secret-kubeconfig"},

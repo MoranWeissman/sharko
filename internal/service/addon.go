@@ -15,6 +15,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/readcache"
 )
 
@@ -895,8 +896,16 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 // ClusterService's v4 branch (see that file's doc comment).
 
 // GetAddonValues returns the global default values YAML for a specific addon.
+//
+// The file lives in a different place in each layout. A v3 repo keeps it at
+// configuration/addons-global-values/<addon>.yaml. A v4 repo (one with the
+// engine pin) keeps it at values/global/<addon>.yaml. Reading only the v3
+// path meant this call failed with "file not found" on every v4 repo.
 func (s *AddonService) GetAddonValues(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AddonValuesResponse, error) {
 	path := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
+	if isV4Repo(ctx, gp, s.branch()) {
+		path = fmt.Sprintf("%s/%s.yaml", orchestrator.V4GlobalValuesDir, addonName)
+	}
 	data, err := gp.GetFileContent(ctx, path, s.branch())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch global values for addon %s: %w", addonName, err)

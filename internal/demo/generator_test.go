@@ -2,6 +2,9 @@ package demo
 
 import (
 	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // TestGenerateEstate_Sizing verifies the generator honors the requested
@@ -76,6 +79,8 @@ func TestGenerateEstate_Deterministic(t *testing.T) {
 // TestNewMockGitProviderWithConfig_DefaultUnchanged verifies the default
 // ScaleConfig bypasses the generator entirely — byte-identical to
 // NewMockGitProvider()'s hand-written fixture (S1 "defaults unchanged").
+// It compares every file, not a picked list: the old picked list named
+// v3 files the demo no longer has, so it passed while comparing nothing.
 func TestNewMockGitProviderWithConfig_DefaultUnchanged(t *testing.T) {
 	want := NewMockGitProvider()
 	got, err := NewMockGitProviderWithConfig(DefaultScaleConfig)
@@ -83,12 +88,19 @@ func TestNewMockGitProviderWithConfig_DefaultUnchanged(t *testing.T) {
 		t.Fatalf("NewMockGitProviderWithConfig: %v", err)
 	}
 	for _, path := range []string{
-		"configuration/managed-clusters.yaml",
-		"configuration/addons-catalog.yaml",
+		orchestrator.V4ManagedClustersPath,
+		config.AddonCatalogPath,
+		orchestrator.V4ClustersDir + "/prod-eu.yaml",
 	} {
-		wantBody, _ := want.files[path]
-		gotBody, _ := got.files[path]
-		if string(wantBody) != string(gotBody) {
+		if len(want.files[path]) == 0 {
+			t.Errorf("default demo is missing %s", path)
+		}
+	}
+	if len(want.files) != len(got.files) {
+		t.Errorf("file count differs: %d vs %d", len(want.files), len(got.files))
+	}
+	for path, wantBody := range want.files {
+		if string(wantBody) != string(got.files[path]) {
 			t.Errorf("%s differs between NewMockGitProvider and NewMockGitProviderWithConfig(default)", path)
 		}
 	}

@@ -93,7 +93,7 @@ func TestEveryCatalogWriteGoesThroughTheTwoCheckedWriters(t *testing.T) {
 	want := []string{
 		"internal/config/addon_catalog.go",        // SaveAddonCatalog itself
 		"internal/config/parser.go",               // MarshalAddonCatalog itself
-		"internal/demo/generator_files.go",        // demo fixtures, both shapes
+		"internal/demo/generator_files.go",        // demo fixtures, generated v4
 		"internal/demo/v4_fixtures.go",            // demo fixtures, v4
 		"internal/gitops/yaml_mutator_catalog.go", // the v3 mutators
 		"internal/orchestrator/addon_configure.go",
@@ -133,17 +133,12 @@ func TestNobodyMarshalsACatalogEntryThemselves(t *testing.T) {
 	//   internal/catalog/loader.go — canonicalBytes, which serialises a
 	//     MARKETPLACE entry to reproduce the exact bytes a cosign signature
 	//     was made over. The result is compared, never written.
-	//   internal/demo/generator_files.go — its yaml.Marshal renders the
-	//     generated managed-clusters.yaml, a different file with a different
-	//     type. Its catalog writes go through MarshalAddonCatalog and
-	//     SaveAddonCatalog, which the other guard above confirms.
 	//   cmd/catalog-sign/main.go — a release-time build tool that stamps
 	//     signature URLs into the Marketplace list Sharko itself ships. It
 	//     writes into a build output folder, never into a user's repo.
 	want := []string{
 		"cmd/catalog-sign/main.go",
 		"internal/catalog/loader.go",
-		"internal/demo/generator_files.go",
 	}
 
 	// Any yaml.Marshal in the same file as one of the catalog entry type

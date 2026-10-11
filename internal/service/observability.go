@@ -416,27 +416,26 @@ func (s *ObservabilityService) checkResourceAlerts(ctx context.Context, gp gitpr
 		}
 	}
 
-	// Only check addons from the catalog that are actually deployed
-	parser := config.NewParser()
-	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
-	if err != nil {
-		return nil
-	}
-	catalog, err := parser.ParseAddonsCatalog(catalogData)
-	if err != nil {
+	// Only check addons from the catalog that are actually deployed.
+	// A v4 repo keeps its catalog in catalog.yaml and its global values
+	// under values/global/; a v3 repo uses the configuration/ files. Reading
+	// only the v3 files meant a v4 repo never got a single alert.
+	v4 := isV4Repo(ctx, gp, s.branch())
+	addonNames, ok := s.catalogAddonNames(ctx, gp, v4)
+	if !ok {
 		return nil
 	}
 
 	var alerts []models.ResourceAlert
-	for _, addon := range catalog {
+	for _, name := range addonNames {
 		// Skip addons that aren't deployed anywhere
-		if !deployedAddons[addon.Name] {
+		if !deployedAddons[name] {
 			continue
 		}
-		missing, detail := checkMissingResources(ctx, gp, addon.Name, s.branch())
+		missing, detail := checkMissingResources(ctx, gp, name, s.branch(), v4)
 		if missing {
 			alerts = append(alerts, models.ResourceAlert{
-				AddonName: addon.Name,
+				AddonName: name,
 				AlertType: "missing_limits",
 				Details:   detail,
 			})
@@ -451,10 +450,47 @@ func (s *ObservabilityService) checkResourceAlerts(ctx context.Context, gp gitpr
 	return alerts
 }
 
+// catalogAddonNames returns the names of the addons in the repo's catalog.
+// On a v4 repo it reads catalog.yaml; on a v3 repo it reads
+// configuration/addons-catalog.yaml. The second result is false when the
+// catalog can't be read or parsed, so the caller shows no alerts.
+func (s *ObservabilityService) catalogAddonNames(ctx context.Context, gp gitprovider.GitProvider, v4 bool) ([]string, bool) {
+	if v4 {
+		approved, err := readV4ApprovedCatalog(ctx, gp, s.branch())
+		if err != nil {
+			return nil, false
+		}
+		names := make([]string, 0, len(approved.Addons))
+		for name := range approved.Addons {
+			names = append(names, name)
+		}
+		return names, true
+	}
+
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", s.branch())
+	if err != nil {
+		return nil, false
+	}
+	catalog, err := config.NewParser().ParseAddonsCatalog(catalogData)
+	if err != nil {
+		return nil, false
+	}
+	names := make([]string, 0, len(catalog))
+	for _, addon := range catalog {
+		names = append(names, addon.Name)
+	}
+	return names, true
+}
+
 // checkMissingResources checks if an addon's global values file contains resource configuration.
 // Returns false (no alert) if the addon has no values file — likely a CRD-only chart with no workloads.
-func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addonName, baseBranch string) (bool, string) {
+// v4 says which layout to read: values/global/<addon>.yaml on v4,
+// configuration/addons-global-values/<addon>.yaml on v3.
+func checkMissingResources(ctx context.Context, gp gitprovider.GitProvider, addonName, baseBranch string, v4 bool) (bool, string) {
 	path := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
+	if v4 {
+		path = fmt.Sprintf("%s/%s.yaml", orchestrator.V4GlobalValuesDir, addonName)
+	}
 	data, err := gp.GetFileContent(ctx, path, baseBranch)
 	if err != nil {
 		// No values file = likely a CRD-only or config-only chart (no pods to configure)
