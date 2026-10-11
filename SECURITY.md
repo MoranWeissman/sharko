@@ -11,8 +11,9 @@ is available.
 
 ### Preferred channel
 
-Email **moran.weissman@gmail.com** with the subject line `[Sharko
-Security]` followed by a brief summary. Include:
+Use GitHub's private vulnerability reporting: go to the repository's Security tab and click "Report a vulnerability" (or visit https://github.com/MoranWeissman/sharko/security/advisories/new directly). This opens a private Security Advisory that reaches the lead maintainer directly.
+
+Include:
 
 - A clear description of the vulnerability
 - Steps to reproduce (or a proof-of-concept)
@@ -21,15 +22,13 @@ Security]` followed by a brief summary. Include:
 - Any known mitigations
 - Whether you intend to disclose publicly, and on what timeline
 
-If you would prefer to encrypt the report, ask in your initial email
-and a PGP key will be provided. The project does not currently publish
-a PGP key by default; one is available on request.
+### Email fallback
 
-> **Note:** You can also report privately through GitHub's built-in
-> vulnerability reporting (Security tab → "Report a vulnerability" on
-> the repository, which opens a private Security Advisory). Both
-> channels reach the lead maintainer directly. See
-> [GOVERNANCE.md](GOVERNANCE.md) for the governance transition plan.
+If you cannot use GitHub's private vulnerability reporting, email **sharko.maintainer@gmail.com** with the subject line `[Sharko Security]` followed by a brief summary. Include the same information listed above.
+
+If you would prefer to encrypt the report, ask in your initial email and a PGP key will be provided. The project does not currently publish a PGP key by default; one is available on request.
+
+> **Note:** Both channels (GitHub private vulnerability reporting and email) reach the lead maintainer directly. See [GOVERNANCE.md](GOVERNANCE.md) for the governance transition plan.
 
 ### What to expect
 
