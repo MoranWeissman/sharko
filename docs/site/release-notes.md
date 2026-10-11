@@ -14,6 +14,104 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v4.0.6 — Previews write nothing on your clusters, safer previews, demo fixed
+
+**Status:** a patch in the v4 code line. Which versions have been
+released, which one is the latest, and what each one published are all listed on
+[the releases page](https://github.com/MoranWeissman/sharko/releases) — read it
+there rather than here, because a sentence on this page can only describe the day
+somebody wrote it.
+
+**Sharko v4 is a technical preview. Do not use Sharko in production.**
+See the [v3.0.0 entry](#v300-first-public-release) below.
+
+### What changed
+
+- **Previewing register or adopt a cluster now only reads from the cluster,
+  and says write access was not checked.** A preview used to run the full
+  connection check before the dry-run exit, so it created the sharko-test
+  namespace and wrote a test Secret on the cluster. The namespace was never
+  removed. A preview now runs Stage1Preview, which reads the version and checks
+  the test namespace and writes nothing. The write steps come back skipped, and
+  the result says "Write access was not checked because this is a preview."
+- **Test connection removes the test Secret, and the test namespace if it made
+  it.** A real register and adopt and the doctor still run the full check.
+  Afterwards Sharko removes the test Secret, and the test namespace only if it
+  created it in this same run. A namespace that was already there is never
+  deleted. A namespace Sharko creates carries the managed-by=sharko label. If
+  the test namespace is still being deleted, the check waits for it to go away,
+  so a Test followed quickly by a register does not fail.
+- **The search for leftover addon secrets looks only in namespaces the catalog
+  names now or named before.** The leftover-secret scan listed Secrets across
+  all namespaces on every spoke, every 5 minutes. The cluster secrets list did
+  the same in production. Both needed a cluster-wide "list secrets" right,
+  which lets Sharko read every Secret on the cluster. Both now list only in the
+  namespaces Sharko could have written an addon secret to: every namespace the
+  catalog's push definitions name, plus a per-cluster record of the namespaces
+  earlier passes saw. The record is what still finds the secret of an addon
+  removed from the catalog. The record is kept in the hub ConfigMap
+  `sharko-addon-secret-namespaces` in Sharko's namespace, so a restart does not
+  lose it when Sharko runs in a cluster. A cluster with no namespace to look in is not contacted. The example
+  spoke RBAC no longer needs cluster-wide list on Secrets; list moves into each
+  addon namespace Role.
+- **The preview diff shows the real changed lines with context.** The dry-run
+  preview printed a removed line only when that line was nowhere in the new
+  file, and an added line only when it was nowhere in the old file. So enabling
+  an addon showed "+    datadog:" with nothing under it, because "enabled:
+  true" already existed under other addons. The preview is now a real in-order
+  line diff in the normal unified format (@@ hunk headers, three unchanged lines
+  of context), matching GNU diff -u.
+- **A values file with only comments no longer shows `null`.** Values files
+  were parsed and printed back out to hide secrets. A file with only comments
+  (like the two-line stub Sharko writes for a new cluster values file) came out
+  as "null". An empty or comments-only file now shows no lines. Comments are
+  removed before they are shown, since a comment can hold anything (an old
+  password, a pasted token) and the key-based redaction cannot see inside it.
+  The exception is the comment lines Sharko writes itself when it creates a
+  values file: they are kept only when they match, exactly, what Sharko would
+  write for that path.
+- **Secret values are hidden for many more key names, and files Sharko doesn't
+  know are hidden by default.** Preview diffs printed many secret values in
+  clear. The old key check only knew a few exact names and the endings _token,
+  _password, _secret and _key, so adminPassword, clientSecret, secretKey,
+  accessKey, appKey, client-secret, api-key, apiKeyValue, "db.password" and the
+  map under "secret:" all showed. Now a key is secret if, lowercased and with
+  "_", "-", "." and spaces dropped, it holds any of: password, passwd, secret,
+  token, apikey, accesskey, secretkey, privatekey, appkey, clientkey, keydata,
+  credential, auth, bearer, kubeconfig, certdata, connectionstring, dsn; or
+  ends in camel-case "Key", "-key" or ".key"; or any dot part of a dotted key
+  does. The whole value under a secret key (map or list too) becomes
+  <redacted>. Paths are cleaned first, and only files Sharko knows hold no
+  secrets are shown as they are; any other path is hidden like a values file.
+- **Two connection checks on the same cluster at the same time no longer make
+  one fail.** Stage 1: when the namespace create says AlreadyExists (another
+  check made it between our get and our create), the check goes on and never
+  deletes that namespace.
+- **Demo mode can make changes again, and for real v4 repos, reading an addon's
+  values and the missing-resource-limits alerts now read the v4 files.** The
+  demo repo held the v4 files and the old v3 files side by side. Sharko refuses
+  to write to a repo with both layouts (ErrMixedRepoLayout), so every demo
+  write failed with "repo has both layouts", including "Add to catalog" and
+  "Add addon" on a cluster page. The check is right; the demo was wrong. Every
+  v3 file was removed from the demo seed, for the default demo and the
+  generated (bigger) one. The demo now holds what a real v4 user has. Also two
+  reads only looked at the v3 files, so they were broken on every real v4 repo
+  too, not just the demo: GetAddonValues (an addon's global values) failed with
+  "file not found", and the "missing resource limits" alerts never showed on a
+  v4 repo. They now read the v4 files (catalog.yaml and values/global/
+  respectively).
+- **Docs:** new page showing one change made three ways (UI, CLI, API); new
+  page on what access Sharko and ArgoCD need on each cluster; how to install
+  ArgoCD; GIFs of the two main flows; the whole docs rewritten in plain English
+  (PR #9); project contact is now sharko.maintainer@gmail.com and security
+  reports go through GitHub private vulnerability reporting.
+
+### Upgrade note
+
+The new ConfigMap `sharko-addon-secret-namespaces` is created in Sharko's
+namespace. The chart's RBAC already allows get, list, create, update and delete
+on ConfigMaps.
+
 ## v4.0.5 — Published from a new, clean copy of the repository, with Go security fixes
 
 **Status:** a patch in the v4 code line. Which versions have been
