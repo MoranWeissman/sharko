@@ -272,6 +272,24 @@ type Reconciler struct {
 	// findings (and their honest LastChecked timestamps) instead of losing
 	// them or fabricating fresh ones (locked decision #10, orphans.go).
 	orphanRecords map[string][]models.OrphanedSecret
+
+	// nsMu guards the namespace record the orphan scan uses to know where
+	// to look (scan_namespaces.go). Separate from mu and orphanMu, same
+	// reasoning as orphanMu.
+	nsMu sync.Mutex
+	// knownNamespaces is cluster name -> namespaces Sharko could have
+	// written an addon secret to there (see scan_namespaces.go).
+	knownNamespaces map[string]map[string]bool
+	// lastCatalogNamespaces is the catalog's push namespaces as of the last
+	// scan, for KnownSecretNamespaces.
+	lastCatalogNamespaces []string
+	// nsStore keeps knownNamespaces across restarts; nil = memory only.
+	nsStore NamespaceRecordStore
+	// nsLoaded is true once nsStore was read successfully. Nothing is saved
+	// before that, so a partial record never overwrites a fuller one.
+	nsLoaded bool
+	// nsDirty is true when knownNamespaces changed since the last good save.
+	nsDirty bool
 }
 
 // SetEnabledFn registers the live reader this reconciler consults, at the
@@ -960,6 +978,12 @@ type pushPlan struct {
 	// clusters — and the leftover secrets sitting on them — still need to
 	// be looked at.
 	clusters []clusterRef
+	// catalogNamespaces is every namespace a push definition in the catalog
+	// names, whether or not the addon is enabled anywhere — sorted, no
+	// duplicates, never "". Populated UNCONDITIONALLY, like clusters. The
+	// orphan scan lists Secrets only in these namespaces plus the ones on
+	// each cluster's record (scan_namespaces.go), never across all of them.
+	catalogNamespaces []string
 	// problems are things that went wrong for PART of the repo — one
 	// unreadable cluster file, one cluster name that cannot be a path.
 	// The rest of the plan still runs; these are recorded in the status
@@ -1039,6 +1063,7 @@ func (r *Reconciler) planV3(ctx context.Context, gr GitReader, catalogData []byt
 			pushesByAddon[entry.Name] = entry.Secrets
 		}
 	}
+	plan.catalogNamespaces = pushNamespaces(pushesByAddon)
 
 	// The cluster list is read UNCONDITIONALLY — even when the catalog
 	// currently defines no push at all (leftover-secrets S1). A catalog
@@ -1106,6 +1131,7 @@ func (r *Reconciler) planV4(ctx context.Context, gr GitReader, catalogData []byt
 			pushesByAddon[addonName] = append(pushesByAddon[addonName], *req.Push)
 		}
 	}
+	plan.catalogNamespaces = pushNamespaces(pushesByAddon)
 
 	// The cluster list is read UNCONDITIONALLY — even when the catalog
 	// currently defines no push at all. See planV3's matching comment
@@ -1171,6 +1197,25 @@ func (r *Reconciler) planV4(ctx context.Context, gr GitReader, catalogData []byt
 		}
 	}
 	return plan, nil
+}
+
+// pushNamespaces is every non-empty namespace the push definitions name,
+// sorted and without duplicates.
+func pushNamespaces(pushesByAddon map[string][]models.AddonSecretRef) []string {
+	set := make(map[string]bool)
+	for _, refs := range pushesByAddon {
+		for _, ref := range refs {
+			if ref.Namespace != "" {
+				set[ref.Namespace] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for ns := range set {
+		out = append(out, ns)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // enabledAddonNames lists the addons a v4 cluster actually runs, sorted so

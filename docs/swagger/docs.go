@@ -4663,7 +4663,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Lists managed addon secrets on a remote cluster",
+                "description": "Lists managed addon secrets on a remote cluster. Lists only in the namespaces Sharko could have written an addon secret to (the catalog's addon secret namespaces plus the ones it still remembers for this cluster), never across all namespaces. With no such namespace the list is empty.",
                 "produces": [
                     "application/json"
                 ],

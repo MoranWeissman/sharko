@@ -682,6 +682,27 @@ func (r *demoAddonValuesReconciler) OrphanedSecrets() []models.OrphanedSecret {
 	return out
 }
 
+// KnownSecretNamespaces is the demo counterpart to
+// secrets.Reconciler.KnownSecretNamespaces: the namespaces of this cluster's
+// seeded leftover secrets, sorted. The demo's own addon secret definitions
+// (SetDemoAddonSecretDefs) cover the rest.
+func (r *demoAddonValuesReconciler) KnownSecretNamespaces(cluster string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	set := make(map[string]bool)
+	for _, o := range r.orphans[cluster] {
+		if o.Namespace != "" {
+			set[o.Namespace] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for ns := range set {
+		out = append(out, ns)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // DeleteOrphanedSecret (leftover-secrets S1) is the demo counterpart to
 // secrets.Reconciler.DeleteOrphanedSecret: removes the seeded record — so
 // the row genuinely disappears from the next read, exactly like a real

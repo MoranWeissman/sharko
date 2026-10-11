@@ -138,6 +138,7 @@ func (f *fakeSecretReconciler) checkAllCount() int {
 }
 
 func (f *fakeSecretReconciler) OrphanedSecrets() []models.OrphanedSecret { return nil }
+func (f *fakeSecretReconciler) KnownSecretNamespaces(string) []string    { return nil }
 
 func (f *fakeSecretReconciler) DeleteOrphanedSecret(_ context.Context, _, _, _ string) error {
 	return nil

@@ -72,6 +72,13 @@ var ErrOrphanRefused = errors.New("this secret's ownership marker has changed si
 // unreachable cluster never touches any other cluster's records (locked
 // decision #10).
 //
+// It lists Secrets ONLY in the namespaces Sharko could have written an addon
+// secret to — the catalog's push namespaces plus the cluster's namespace
+// record (scan_namespaces.go) — one namespaced LIST each. It never lists
+// across all namespaces, so a spoke needs no cluster-wide "list secrets"
+// permission for it. A cluster with no namespace to look in is not contacted
+// at all (no credentials fetched, no token minted).
+//
 // Called at the end of reconcile()'s per-item loop and at the end of
 // CheckAll() — never inline with a single item's check or push, and never
 // from a list read: GET /system/managed-secrets (OrphanedSecrets below)
@@ -79,6 +86,8 @@ var ErrOrphanRefused = errors.New("this secret's ownership marker has changed si
 // own (locked decision #2).
 func (r *Reconciler) scanOrphans(ctx context.Context, plan pushPlan) {
 	log := logging.LoggerFromContext(ctx)
+
+	r.loadNamespaceRecord(ctx)
 
 	// claimed[cluster][namespace/name] is what THIS pass's plan still
 	// wants pushed there — subtracted from what LIST finds so a secret a
@@ -93,6 +102,25 @@ func (r *Reconciler) scanOrphans(ctx context.Context, plan pushPlan) {
 	}
 
 	for _, c := range plan.clusters {
+		// Record this pass's catalog namespaces for the cluster FIRST, even
+		// if the cluster cannot be reached below: this same pass may have
+		// just pushed a secret there, and if the addon is removed from the
+		// catalog before the next pass, this record is the only thing that
+		// still points the scan at it.
+		r.updateNamespaceRecord(c.name, plan.catalogNamespaces, nil)
+		namespaces := r.namespacesToScan(c.name, plan.catalogNamespaces)
+		if len(namespaces) == 0 {
+			// Nowhere Sharko could have written an addon secret on this
+			// cluster, so there is nothing to find and no reason to call it.
+			r.orphanMu.Lock()
+			if r.orphanRecords == nil {
+				r.orphanRecords = make(map[string][]models.OrphanedSecret)
+			}
+			r.orphanRecords[c.name] = []models.OrphanedSecret{}
+			r.orphanMu.Unlock()
+			continue
+		}
+
 		creds, err := r.credProvider.GetCredentials(c.credLookup)
 		if err != nil {
 			// A credentials-backend error's own text never reaches this log
@@ -109,33 +137,55 @@ func (r *Reconciler) scanOrphans(ctx context.Context, plan pushPlan) {
 			continue
 		}
 
-		infos, err := remoteclient.ListManagedSecrets(ctx, client, "")
-		if err != nil {
-			log.Warn("[secrets] orphan scan: could not list secrets — keeping this cluster's previous leftover-secret records",
-				"cluster", c.name, "error", err)
-			continue
-		}
+		r.orphanMu.RLock()
+		previous := append([]models.OrphanedSecret(nil), r.orphanRecords[c.name]...)
+		r.orphanMu.RUnlock()
 
 		now := time.Now()
 		found := make([]models.OrphanedSecret, 0)
-		for _, info := range infos {
-			if info.Addon == "" {
-				// The kubeconfig-secret / ArgoCD-connection-secret safety
-				// pin — see this file's header comment. The managed-by
-				// label alone proves nothing about what kind of secret
-				// this is.
+		// emptyNamespaces are the namespaces whose LIST worked and held no
+		// Sharko addon secret at all — the only ones that may leave the
+		// cluster's namespace record.
+		var emptyNamespaces []string
+		for _, ns := range namespaces {
+			infos, err := remoteclient.ListManagedSecrets(ctx, client, ns)
+			if err != nil {
+				// Only THIS namespace keeps its previous records; the
+				// namespaces that could be read still get fresh ones.
+				log.Warn("[secrets] orphan scan: could not list secrets — keeping this namespace's previous leftover-secret records",
+					"cluster", c.name, "namespace", ns, "error", err)
+				for _, prev := range previous {
+					if prev.Namespace == ns {
+						found = append(found, prev)
+					}
+				}
 				continue
 			}
-			if claimed[c.name][info.Namespace+"/"+info.Name] {
-				continue
+
+			addonSecrets := 0
+			for _, info := range infos {
+				if info.Addon == "" {
+					// The kubeconfig-secret / ArgoCD-connection-secret safety
+					// pin — see this file's header comment. The managed-by
+					// label alone proves nothing about what kind of secret
+					// this is.
+					continue
+				}
+				addonSecrets++
+				if claimed[c.name][info.Namespace+"/"+info.Name] {
+					continue
+				}
+				found = append(found, models.OrphanedSecret{
+					Cluster:     c.name,
+					Namespace:   info.Namespace,
+					Name:        info.Name,
+					Addon:       info.Addon,
+					LastChecked: now,
+				})
 			}
-			found = append(found, models.OrphanedSecret{
-				Cluster:     c.name,
-				Namespace:   info.Namespace,
-				Name:        info.Name,
-				Addon:       info.Addon,
-				LastChecked: now,
-			})
+			if addonSecrets == 0 {
+				emptyNamespaces = append(emptyNamespaces, ns)
+			}
 		}
 
 		r.orphanMu.Lock()
@@ -145,10 +195,14 @@ func (r *Reconciler) scanOrphans(ctx context.Context, plan pushPlan) {
 		r.orphanRecords[c.name] = found
 		r.orphanMu.Unlock()
 
+		r.updateNamespaceRecord(c.name, plan.catalogNamespaces, emptyNamespaces)
+
 		if len(found) > 0 {
 			log.Info("[secrets] orphan scan found leftover secrets", "cluster", c.name, "count", len(found))
 		}
 	}
+
+	r.saveNamespaceRecord(ctx)
 }
 
 // OrphanedSecrets returns a deterministic, sorted snapshot of every orphan

@@ -157,6 +157,9 @@ type fakeReconciler struct {
 	deleteOrphanErr   error
 	deleteOrphanCalls []orphanDeleteCallArgs
 
+	// knownNamespaces is what KnownSecretNamespaces returns, by cluster.
+	knownNamespaces map[string][]string
+
 	// disabled (M6, code review) lets a test simulate the addon-values
 	// engine's off switch. Zero value false means IsEnabled reports true —
 	// every existing test that never sets this keeps seeing an enabled
@@ -239,6 +242,10 @@ func (r *fakeReconciler) CheckAll(_ context.Context) error {
 
 func (r *fakeReconciler) OrphanedSecrets() []models.OrphanedSecret {
 	return r.orphanedSecrets
+}
+
+func (r *fakeReconciler) KnownSecretNamespaces(cluster string) []string {
+	return r.knownNamespaces[cluster]
 }
 
 func (r *fakeReconciler) DeleteOrphanedSecret(_ context.Context, cluster, namespace, name string) error {

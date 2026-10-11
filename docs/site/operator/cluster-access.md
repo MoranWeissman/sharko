@@ -82,17 +82,48 @@ Sharko only does the things in this list.
   named `sharko-diagnose-test` there.
 - **Looks for leftover addon secrets.** After every addon secrets run
   (every 5 minutes by default), Sharko lists the Secrets that carry its
-  label, across all namespaces of the cluster. If you choose to delete a
-  leftover one, Sharko reads it and deletes it.
+  label. It lists them only in the namespaces where it could have put an
+  addon secret, never across the whole cluster. See the next section for
+  which namespaces those are. If you choose to delete a leftover one,
+  Sharko reads it and deletes it.
 - **Shows the addon secrets on a cluster.** The cluster's secrets list
-  lists Sharko-labelled Secrets in the catalog's addon namespaces, or
-  across all namespaces when no addon in the catalog lists any secrets.
-  Opening one addon secret reads that one Secret.
+  lists Sharko-labelled Secrets in those same namespaces. If there are
+  none, the list is empty and Sharko lists nothing. Opening one addon
+  secret reads that one Secret.
 
 Kubernetes cannot limit a list of Secrets to one label. So the right to
-list Secrets across the whole cluster lets the caller read every Secret on
-it, values included. Sharko only asks for its own label, but the access
-itself is not smaller.
+list Secrets in a namespace lets the caller read every Secret in that
+namespace, values included. Sharko only asks for its own label, but the
+access itself is not smaller. That is why Sharko only lists in namespaces
+it uses.
+
+### Where Sharko looks for leftover addon secrets
+
+Sharko looks in two kinds of namespaces on each cluster:
+
+- every namespace an addon secret in the catalog names right now, and
+- every namespace an addon secret in the catalog named before. Sharko
+  keeps this list for each cluster, so that when you remove an addon from
+  the catalog, Sharko still looks in its namespace and finds the secret it
+  left behind.
+
+A namespace leaves that list once the catalog no longer names it and
+Sharko has looked there and found none of its addon secrets.
+
+When Sharko runs in a cluster, it keeps the list in a ConfigMap named
+`sharko-addon-secret-namespaces` in its own namespace, so a restart does
+not lose it. When it runs outside a cluster (for example on a laptop), the
+list is kept in memory only and starts empty again after a restart.
+
+Sharko will not find a leftover secret in these cases:
+
+- The addon was removed from the catalog before you upgraded to a Sharko
+  version that keeps this list. Sharko never saw that namespace in the
+  catalog, so it does not look there.
+- The `sharko-addon-secret-namespaces` ConfigMap was deleted, or Sharko
+  ran outside a cluster and restarted, after the addon was removed.
+- Someone copied a Sharko secret into a namespace no addon in the catalog
+  ever named.
 
 ## The smallest access that would cover Sharko's own work
 
@@ -102,7 +133,17 @@ itself is not smaller.
     syncing.
 
 This example covers everything in the list above, and nothing more. Make
-one `Role` for each addon namespace in your catalog.
+one `Role` for each addon namespace in your catalog. Sharko does not need
+to list Secrets across the whole cluster.
+
+When you remove an addon from the catalog, keep its `Role` until Sharko
+has found its leftover secret and you have deleted it. Without the `Role`,
+Sharko cannot look in that namespace.
+
+Create the test namespace yourself before you add the `sharko-test` `Role`
+below. Sharko never deletes a test namespace it did not create, so the
+`Role` stays. If Sharko creates the namespace itself, it deletes it at the
+end of the check, and any `Role` inside it goes with it.
 
 ```yaml
 # Across the whole cluster.
@@ -114,9 +155,6 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "create", "delete"]   # the connection check and Diagnose
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["list"]                    # the leftover-secret scan and the secrets list
 ---
 # One of these for each addon namespace in the catalog.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -127,7 +165,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "update", "delete"]
+    verbs: ["get", "list", "create", "update", "delete"]   # list: the leftover-secret scan and the secrets list
 ---
 # The test namespace (sharko-test, or your SHARKO_TEST_NAMESPACE).
 apiVersion: rbac.authorization.k8s.io/v1

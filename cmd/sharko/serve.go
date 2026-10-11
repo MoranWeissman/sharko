@@ -1272,6 +1272,12 @@ var serveCmd = &cobra.Command{
 				// weren't available at construction time.
 				if secretRecon != nil {
 					secretRecon.SetEnabledFn(settingsStore.IsAddonValuesEngineEnabled)
+					// The leftover-secret scan lists only in the namespaces
+					// Sharko could have written to. This ConfigMap keeps the
+					// namespaces of addons removed from the catalog across a
+					// restart, so their leftovers are still found.
+					secretRecon.SetNamespaceRecordStore(secrets.NewConfigMapNamespaceStore(
+						cmstore.NewStore(inClusterK8sClient, prNamespace, secrets.NamespaceRecordConfigMapName)))
 				}
 				slog.Info("server settings persisted via configmap", "namespace", prNamespace, "name", "sharko-server-settings")
 
