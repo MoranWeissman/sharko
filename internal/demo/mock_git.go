@@ -49,8 +49,8 @@ func NewMockGitProvider() *MockGitProvider {
 // the default size (cfg.IsDefault()) it defers to NewMockGitProvider
 // unchanged — same hand-written fixture, byte-for-byte, so the small
 // estate's shape never depends on the generator. For any other size it
-// generates a fresh estate and renders both the v3 and v4 layouts from it
-// instead of the hand-written consts.
+// generates a fresh estate and renders the v4 layout from it instead of
+// the hand-written fixture.
 func NewMockGitProviderWithConfig(cfg ScaleConfig) (*MockGitProvider, error) {
 	if cfg.IsDefault() {
 		return NewMockGitProvider(), nil
@@ -74,34 +74,9 @@ func NewMockGitProviderFromEstate(estate *GeneratedEstate) (*MockGitProvider, er
 		nextPRID: 1000, // clear of both the default estate's 41-43 range and TrackedPRs' 100+ range
 	}
 
-	v3Managed, err := renderV3ManagedClusters(estate)
-	if err != nil {
-		return nil, err
-	}
-	p.files["configuration/managed-clusters.yaml"] = v3Managed
-	p.files["configuration/cluster-addons.yaml"] = v3Managed // legacy alias, same as seedFiles
-
-	v3Catalog, err := renderV3AddonsCatalog(estate)
-	if err != nil {
-		return nil, err
-	}
-	p.files["configuration/addons-catalog.yaml"] = v3Catalog
-
-	p.files[orchestrator.BootstrapRootAppPath] = []byte(`apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: sharko-engine
-  namespace: argocd
-spec:
-  project: default
-  sources:
-    - repoURL: ghcr.io/moranweissman/sharko
-      chart: sharko-engine
-      targetRevision: 0.1.0
-    - repoURL: https://github.com/demo/sharko-addons
-      targetRevision: main
-      ref: values
-`)
+	// Same one-layout rule as seedFiles: the engine pin plus the v4 files,
+	// and nothing from the old v3 layout.
+	p.files[orchestrator.BootstrapRootAppPath] = []byte(demoEnginePin)
 
 	v4Files, err := buildV4DemoFilesFromEstate(estate)
 	if err != nil {
@@ -116,56 +91,10 @@ spec:
 	return p, nil
 }
 
-func (p *MockGitProvider) seedFiles() {
-	// managed-clusters.yaml — the file ClusterService.ListClusters reads.
-	// Without this, GET /api/v1/clusters would 500 because the service
-	// tries to read managed-clusters.yaml from this provider.
-	p.files["configuration/managed-clusters.yaml"] = []byte(clusterAddonsYAML)
-
-	// cluster-addons.yaml — legacy alias kept so any older read paths or
-	// external tooling pointed at it still resolve.
-	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
-
-	// addons-catalog.yaml — the addon catalog (applicationsets format).
-	// The canonical filename is addons-catalog.yaml (plural) wrapped
-	// in the sharko.dev/v1 envelope.
-	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogYAML)
-
-	// Global values stubs
-	p.files["configuration/addons-global-values/cert-manager.yaml"] = []byte(`replicaCount: 1
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-`)
-	p.files["configuration/addons-global-values/metrics-server.yaml"] = []byte(`replicaCount: 1
-args:
-  - --kubelet-insecure-tls
-`)
-	p.files["configuration/addons-global-values/kube-prometheus-stack.yaml"] = []byte(`grafana:
-  enabled: true
-alertmanager:
-  enabled: true
-`)
-	p.files["configuration/addons-global-values/datadog.yaml"] = []byte(`datadog:
-  clusterName: "demo"
-  collectEvents: true
-`)
-
-	// Engine pin (marks repo as initialised). The demo simulates a repo
-	// that has already been through v4 init. The rest of the v4 layout
-	// this pin implies (cluster-addons/, catalog.yaml, values/,
-	// managed-clusters.yaml) is built by buildV4DemoFiles (v4_fixtures.go)
-	// and merged into p.files by NewMockGitProvider, right after this
-	// method returns.
-	//
-	// The path comes from the constant rather than a copied literal on
-	// purpose. Every v4-aware read path decides "is this a v4 repo?" by
-	// asking whether a file exists HERE, and answers no when it cannot
-	// find one. So a copy that fell behind would not fail — the whole demo
-	// would quietly present itself as a v3 repo, and every v4 screen would
-	// show the wrong thing with nothing in the logs to say why.
-	p.files[orchestrator.BootstrapRootAppPath] = []byte(`apiVersion: argoproj.io/v1alpha1
+// demoEnginePin is the engine pin (sharko-engine.yaml) every demo repo
+// carries. It is what makes the repo a v4 repo: every v4-aware read and
+// write asks whether this file exists before it decides which files to use.
+const demoEnginePin = `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sharko-engine
@@ -179,17 +108,29 @@ spec:
     - repoURL: https://github.com/demo/sharko-addons
       targetRevision: main
       ref: values
-`)
+`
 
-	// Per-cluster values
-	p.files["configuration/addons-clusters-values/prod-eu/cert-manager.yaml"] = []byte(`global:
-  leaderElection:
-    namespace: cert-manager
-`)
-	p.files["configuration/addons-clusters-values/staging-eu/cert-manager.yaml"] = []byte(`global:
-  leaderElection:
-    namespace: cert-manager
-`)
+// seedFiles writes the engine pin. The rest of the repo (catalog.yaml,
+// cluster-addons/, managed-clusters.yaml, values/) comes from
+// buildV4DemoFiles (v4_fixtures.go), which NewMockGitProvider merges in
+// right after this.
+//
+// The demo repo holds ONLY the v4 layout, the same as a repo a real
+// v4 Sharko user has. It used to carry the old v3 files too
+// (configuration/managed-clusters.yaml, configuration/addons-catalog.yaml,
+// configuration/addons-*-values/), and that made every write in the demo
+// fail: Sharko refuses to change a repo that has both layouts in it
+// (orchestrator.ErrMixedRepoLayout). Do not add v3 files back here.
+// TestDemoRepo_IsOneLayoutOnly fails if anyone does.
+//
+// The path comes from the constant rather than a copied literal on
+// purpose. Every v4-aware path decides "is this a v4 repo?" by asking
+// whether a file exists HERE, and answers no when it cannot find one. So
+// a copy that fell behind would not fail — the whole demo would quietly
+// present itself as a v3 repo, and every v4 screen would show the wrong
+// thing with nothing in the logs to say why.
+func (p *MockGitProvider) seedFiles() {
+	p.files[orchestrator.BootstrapRootAppPath] = []byte(demoEnginePin)
 }
 
 func (p *MockGitProvider) seedPRs() {
@@ -409,137 +350,3 @@ func indexOf(s string, sep byte) int {
 	}
 	return -1
 }
-
-// clusterAddonsYAML is the fake configuration/managed-clusters.yaml
-// (also seeded at the legacy configuration/cluster-addons.yaml alias path).
-//
-// The seed ships in the enveloped shape (apiVersion: sharko.dev/v1,
-// kind: ManagedClusters) with the yaml-language-server schema header
-// so the demo previews what a real Sharko-bootstrapped repo looks
-// like. The reader (config.ParseClusterAddons) is envelope-aware so
-// the demo's GET /api/v1/clusters response resolves cleanly.
-//
-// Each cluster has addon labels: addonName: enabled|disabled.
-const clusterAddonsYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.dev/v1
-kind: ManagedClusters
-metadata:
-  name: managed-clusters
-spec:
-  clusters:
-    - name: prod-eu
-      region: eu-west-1
-      labels:
-        env: production
-        region: eu-west-1
-        cert-manager: enabled
-        metrics-server: enabled
-        kube-prometheus-stack: enabled
-        external-dns: enabled
-        istio-base: enabled
-
-    - name: prod-us
-      region: us-east-1
-      labels:
-        env: production
-        region: us-east-1
-        cert-manager: enabled
-        metrics-server: enabled
-        kube-prometheus-stack: enabled
-        external-dns: enabled
-
-    - name: staging-eu
-      region: eu-west-1
-      labels:
-        env: staging
-        region: eu-west-1
-        cert-manager: enabled
-        cert-manager-version: "1.13.6"
-        metrics-server: enabled
-        metrics-server-version: "3.11.0"
-        kube-prometheus-stack: enabled
-        kube-prometheus-stack-version: "57.2.0"
-        datadog: enabled
-
-    - name: dev-us
-      region: us-west-2
-      labels:
-        env: development
-        region: us-west-2
-        cert-manager: enabled
-        cert-manager-version: "1.13.6"
-        metrics-server: enabled
-        vault: enabled
-
-    - name: perf-asia
-      region: ap-southeast-1
-      labels:
-        env: performance
-        region: ap-southeast-1
-        cert-manager: enabled
-        cert-manager-version: "1.12.9"
-        metrics-server: enabled
-        metrics-server-version: "3.10.0"
-        kube-prometheus-stack: enabled
-        kube-prometheus-stack-version: "55.5.0"
-`
-
-// addonsCatalogYAML is the fake configuration/addons-catalog.yaml in the
-// sharko.dev/v1 envelope shape. The applicationsets payload itself is
-// unchanged; only the wrapping frame and the editor schema header are
-// new.
-const addonsCatalogYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.dev/v1
-kind: AddonCatalog
-metadata:
-  name: addon-catalog
-spec:
-  applicationsets:
-    - name: cert-manager
-      chart: cert-manager
-      repoURL: https://charts.jetstack.io
-      version: "1.14.4"
-      namespace: cert-manager
-
-    - name: metrics-server
-      chart: metrics-server
-      repoURL: https://kubernetes-sigs.github.io/metrics-server/
-      version: "3.12.1"
-      namespace: kube-system
-
-    - name: datadog
-      chart: datadog
-      repoURL: https://helm.datadoghq.com
-      version: "3.69.0"
-      namespace: datadog
-
-    - name: external-dns
-      chart: external-dns
-      repoURL: https://kubernetes-sigs.github.io/external-dns/
-      version: "1.14.4"
-      namespace: external-dns
-
-    - name: istio-base
-      chart: base
-      repoURL: https://istio-release.storage.googleapis.com/charts
-      version: "1.21.1"
-      namespace: istio-system
-
-    - name: kube-prometheus-stack
-      chart: kube-prometheus-stack
-      repoURL: https://prometheus-community.github.io/helm-charts
-      version: "58.2.1"
-      namespace: monitoring
-
-    - name: logging-operator
-      chart: logging-operator
-      repoURL: https://kube-logging.github.io/helm-charts
-      version: "4.6.0"
-      namespace: logging
-
-    - name: vault
-      chart: vault
-      repoURL: https://helm.releases.hashicorp.com
-      version: "0.28.0"
-      namespace: vault
-`
