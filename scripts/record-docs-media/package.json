@@ -1,0 +1,13 @@
+{
+  "name": "sharko-docs-media-recorder",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Records videos for Sharko documentation GIFs",
+  "scripts": {
+    "record": "node record-both-flows.mjs",
+    "install-browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.64.0"
+  }
+}
