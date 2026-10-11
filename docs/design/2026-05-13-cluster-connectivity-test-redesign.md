@@ -1,17 +1,15 @@
 # Cluster Connectivity Test Redesign
 
-> **Status:** APPROVED 2026-05-13. Maintainer signoff captured against `.bmad/output/brainstorming/2026-05-13-cluster-test-redesign.md`. This doc supersedes that brainstorm — the thread-level recommendations there are retained for historical context only.
+> **Status:** APPROVED 2026-05-13. Maintainer signoff captured. This doc supersedes the earlier brainstorm — the thread-level recommendations there are retained for historical context only.
 >
 > **Date:** 2026-05-13
 >
 > **Authors:** Moran Weissman (maintainer); tech-lead (Claude).
 >
-> **Supersedes:** `.bmad/output/brainstorming/2026-05-13-cluster-test-redesign.md`
->
 > **Related docs:**
 > - `docs/design/2026-05-12-v125-architectural-todos.md` — V125 architectural roadmap (schema envelope, reconciler, ownership label).
 > - `docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md` — why Sharko owns its solution end-to-end and why `argocdProvider` is the right credentials surface for the Test path.
-> - `.bmad/output/planning-artifacts/epics-v125-1-9.md` — V125-1-9 schema envelope plan (the prerequisite for V125-1-8 reconciler this work depends on).
+> - V125-1-9 schema envelope (shipped) — the prerequisite for V125-1-8 reconciler this work depends on.
 
 ---
 
@@ -124,7 +122,7 @@ V125-2    (cleanup: deprecate KubernetesSecretProvider.GetCredentials, retire de
 - **V125-1-8 → V125-1-7 tightening:** the orphan filter can only tighten to "Sharko-labeled only" once V125-1-8 has placed the ownership label. After V125-1-8, `ArgoCDProvider` also gains label-gated reads as a defense-in-depth follow-up.
 - **V125-1-7 tightening → V125-2:** `KubernetesSecretProvider.GetCredentials` is deprecated docs-only in v1.25 (operators with corporate Vault adopt-flow installs depend on it); real removal happens in V125-2 cleanup alongside dead adopt code.
 
-V125-1-10 is the epic ID for this work (Test redesign + `argocdProvider` + UI badge bundled). Planning artifact at `.bmad/output/planning-artifacts/epics-v125-1-10.md`.
+V125-1-10 is the epic ID for this work (Test redesign + `argocdProvider` + UI badge bundled).
 
 ---
 
@@ -142,8 +140,6 @@ These are not blocking decisions — they are the things the V125-1-10 dev agent
 
 ## 6. References
 
-- Brainstorm (now superseded, locked status block at top): `.bmad/output/brainstorming/2026-05-13-cluster-test-redesign.md`
-- V125-1-9 schema envelope plan: `.bmad/output/planning-artifacts/epics-v125-1-9.md`
 - V125 architectural TODOs (V125-1-9 / V125-1-8 / V125-1-7 tightening / V125-2 cleanup): `docs/design/2026-05-12-v125-architectural-todos.md`
 - Cluster reconciler + GitOps stance (architectural source-of-truth for ownership label, decision C "Sharko owns its solution," `argocdProvider` rationale): `docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md`
 - Section 3 design (the existing pre-merge "PR Is the Gate" stance V125-1-8 supersedes): `docs/design/section-3-template-and-secrets.md`

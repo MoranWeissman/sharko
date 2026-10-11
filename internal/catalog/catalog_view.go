@@ -1,6 +1,6 @@
 // The org's catalog, read from catalog.yaml — and nothing else.
 //
-// Design doc .bmad/output/architecture/2026-07-31-catalog-approved-model.md
+// Design doc docs/design/2026-07-30-v4-data-file-format.md
 // §1 and §4. catalog.yaml holds the addons this org approved for its
 // clusters. Every entry is FULL and self-contained: chart, chart repo,
 // version, namespace, settings, needed secrets. Nothing is inherited from

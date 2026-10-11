@@ -9,9 +9,9 @@ between call sites.
 
 {{/*
 sharko-engine.catalogAddons returns the org's approved addon list —
-.Values.addons, exactly as the org's own catalog.yaml sets it (design doc
-.bmad/output/architecture/2026-07-31-catalog-approved-model.md, decision 6:
-"the engine chart reads catalog.yaml + cluster-addons/ + values/ — nothing else").
+.Values.addons, exactly as the org's own catalog.yaml sets it (see
+docs/design/2026-07-30-v4-data-file-format.md: "the engine chart reads
+catalog.yaml + cluster-addons/ + values/ — nothing else").
 
 Every entry is a FULL entry (repoURL, chart, version, namespace, settings,
 ...) — catalog.yaml is the org's approved list, not a delta against a

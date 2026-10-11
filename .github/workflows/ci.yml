@@ -533,9 +533,10 @@ jobs:
   # scanner ran here (it doesn't — the actual static-analysis, dependency and
   # image scanning live in the gosec, ui-deps-audit and container-image-scan
   # jobs below). Then it was "Forbidden Content Check", which oversold it the
-  # other way: that name promised the whole Content Policy in CLAUDE.md — the
-  # original organisation, internal domains, employee emails, real AWS account
-  # ids — while the grep only ever tested one hostname. The policy as a whole
+  # other way: that name promised the whole Content Policy (see
+  # CONTRIBUTING.md) — the original organisation, internal domains, employee
+  # emails, real AWS account ids — while the grep only ever tested one hostname.
+  # The policy as a whole
   # is now tested by the content-sweep job below, which is a separate check
   # with its own name so that neither name has to cover for the other.
   #
@@ -582,9 +583,9 @@ jobs:
           fi
           echo "The legacy internal hostname string is absent. That is the only thing this check tested."
 
-  # The Content Policy in CLAUDE.md, actually tested: every tracked text file
-  # read, and a failure on a credential-shaped string or an email address on a
-  # domain this project does not use. Implemented as a Go test under
+  # The Content Policy (see CONTRIBUTING.md), actually tested: every tracked
+  # text file read, and a failure on a credential-shaped string or an email
+  # address on a domain this project does not use. Implemented as a Go test under
   # tests/contentsweep/ so it also runs under plain `go test ./...` — a
   # developer sees a problem before pushing, not after.
   #

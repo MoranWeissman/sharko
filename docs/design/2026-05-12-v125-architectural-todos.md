@@ -426,8 +426,7 @@ After V125-1-8 lands and is validated:
 2. Delete the related test file
 3. Remove the `/api/v1/clusters/adopt` route registration from `internal/api/router.go`
 4. Remove related types from `internal/api/clusters_write.go`
-5. Update `.bmad/output/implementation-artifacts/sprint-status.yaml` — close V125-2 epic with note "Decision C: no adoption; backend removed"
-6. Update any docs referencing the Adopt feature
+5. Update any docs referencing the Adopt feature
 
 ### Files
 - `internal/orchestrator/adopt.go` — DELETE
@@ -529,7 +528,6 @@ After all of this lands:
 ## 12. Cross-references
 
 - **Source design doc** (the architectural conversation in full): `docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md` — 17 sections including "Honest evaluation: stateless reconciler vs full K8s operator"
-- **Sprint status** (BMAD tracking): `.bmad/output/implementation-artifacts/sprint-status.yaml` — V125-1 epic, stories V125-1-1 through V125-1-8
 - **Section 3 design** (the original pre-merge rationale that this work supersedes): `docs/design/section-3-template-and-secrets.md`
 - **V1 design decisions**: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
 - **Implementation Plan V1**: `docs/design/IMPLEMENTATION-PLAN-V1.md` (line 34: "Direct commit to main is removed — every Git operation goes through a PR")

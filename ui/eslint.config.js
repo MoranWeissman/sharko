@@ -30,24 +30,21 @@ export default defineConfig([
       // eslint-plugin-react-hooks v7's new (React Compiler-derived) rule
       // against calling setState synchronously in a useEffect body. It
       // fires on the "fetch on mount" / "poll on an interval" pattern used
-      // throughout this codebase's data-loading components (see the
-      // Operations polling pattern and Init Progress pattern documented in
-      // .claude/team/frontend-expert.md) — a legitimate, intentional
-      // architecture, not a bug. Rewriting all 47 files to the
-      // derived-state style the rule wants is a real but separate
-      // refactor, out of scope for turning lint on in CI.
+      // throughout this codebase's data-loading components — a legitimate,
+      // intentional architecture, not a bug. Rewriting all 47 files to the
+      // derived-state style the rule wants is a real but separate refactor,
+      // out of scope for turning lint on in CI.
       'react-hooks/set-state-in-effect': 'off',
 
       // documented-off: react-refresh/only-export-components — 75
       // pre-existing violations across 27 files, tracked for cleanup. This
-      // rule is a Vite Fast Refresh dev-experience check (not a
-      // correctness check): it flags any file that exports something
-      // besides components (a context + its Provider + its hook, a
-      // vendored shadcn/ui component + its cva variants, a page that also
-      // exports a constant others import). All of those are established,
-      // intentional patterns here (see the Hooks and shadcn/ui sections in
-      // .claude/team/frontend-expert.md). Splitting 27 files apart just to
-      // satisfy this is a structural change, out of scope here.
+      // rule is a Vite Fast Refresh dev-experience check (not a correctness
+      // check): it flags any file that exports something besides components
+      // (a context + its Provider + its hook, a vendored shadcn/ui component
+      // + its cva variants, a page that also exports a constant others
+      // import). All of those are established, intentional patterns here.
+      // Splitting 27 files apart just to satisfy this is a structural change,
+      // out of scope here.
       'react-refresh/only-export-components': 'off',
     },
   },

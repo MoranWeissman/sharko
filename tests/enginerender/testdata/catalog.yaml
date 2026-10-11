@@ -1,5 +1,5 @@
 # Fixture catalog.yaml — the org's approved list (kind AddonCatalog), exactly
-# as decision 1 of .bmad/output/architecture/2026-07-31-catalog-approved-model.md
+# as decision 1 of docs/design/2026-07-30-v4-data-file-format.md
 # defines it: every entry is a FULL entry (repoURL, chart, namespace,
 # version), not a delta against a shipped default — the chart carries no
 # curated data of its own any more (decision 6). This is the ONE enveloped

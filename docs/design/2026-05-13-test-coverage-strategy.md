@@ -189,7 +189,6 @@ Defer answering these until incremental smoke phases stabilize and the harness n
 
 - `scripts/smoke.sh` — V124-5.6 (always-refresh auth + Phase 6 orphan-cascade), `dev/v1.24-cleanup` HEAD `c27cde6e`
 - `tests/e2e/` — stub Go e2e suite (currently 1 cached test)
-- `.bmad/output/implementation-artifacts/sprint-status.yaml` — V2 Epic 7 (4 stories backlog including 7-1)
 - `docs/design/2026-05-12-v125-architectural-todos.md` — V125-1-7-fix epic closed (3-story cascade verified live)
 - Memory: `feedback_fix_bugs_dont_stop.md` — fix-and-ship-without-asking standing rule (broadened 2026-05-13)
 - Memory: `feedback_agent_dispatch_worktree_isolation.md` — agent worktree safety (Layer 1 of V124-5.5 incident prevention)

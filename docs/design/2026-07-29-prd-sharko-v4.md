@@ -1,10 +1,5 @@
 ---
 status: COMPLETE (2026-07-29) · AMENDED 2026-08-08 (catalog model + secret ownership — see the two Amendment notes under the title) · AMENDED 2026-08-10 (the Secrets area — names, navigation, routes; see the amendment at the end)
-inputDocuments:
-  - .bmad/output/architecture/2026-07-25-sharko-oss-professional-design.md
-  - .bmad/output/brainstorming/2026-07-24-blind-vs-biased-diff.md
-  - .bmad/output/brainstorming/2026-07-24-neutral-factsheet.md
-  - .bmad/output/brainstorming/2026-07-25-operator-ab-factsheet.md
 classification:
   projectType: self-hosted infrastructure product with a first-class API (web UI + CLI as clients of the same API; runs on the user's hub cluster next to ArgoCD; NOT SaaS, NOT a library)
   domain: DevOps / Kubernetes infrastructure (GitOps tooling)

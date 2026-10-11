@@ -3,13 +3,12 @@
 > **Verified:** This page was updated by reading the current source
 > (`cmd/playground/realdoors.go`, `Makefile`, `scripts/playground-*.sh`)
 > after the playground gained a fourth real-API step — adding the addon to
-> the catalog before enabling it — to match the "catalog = the approved
-> list" rebuild (v4 Wave 2.5, design doc
-> `.bmad/output/architecture/2026-07-31-catalog-approved-model.md`). It has
-> NOT been re-walked end-to-end live in this pass — kind/docker/helm are
-> not available in the authoring sandbox. Treat the commands below as
-> accurate against the code as of this commit; a live re-walk (and a real
-> measured timing) is still owed before the next substantive edit.
+> the catalog before enabling it — to match the "catalog = the approved list"
+> rebuild (v4 Wave 2.5, see docs/design/2026-07-30-v4-data-file-format.md). It
+> has NOT been re-walked end-to-end live in this pass — kind/docker/helm are
+> not available in the authoring sandbox. Treat the commands below as accurate
+> against the code as of this commit; a live re-walk (and a real measured
+> timing) is still owed before the next substantive edit.
 
 This guide covers the **local playground** — a one-command kind topology that
 provisions a hub cluster running ArgoCD + Sharko, plus N spoke clusters

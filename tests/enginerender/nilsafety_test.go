@@ -1,6 +1,6 @@
 // Round-two nil-safety simulation for the FIX-3 review fix (v4 Wave 1 R2),
 // updated for the flat cluster-addons/<name>.yaml shape (decision 9 of
-// .bmad/output/architecture/2026-07-31-catalog-approved-model.md — no more
+// docs/design/2026-07-30-v4-data-file-format.md — no more
 // `spec:` wrapper).
 //
 // charts/sharko-engine/templates/appset.yaml's targetRevision, namespace,

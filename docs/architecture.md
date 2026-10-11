@@ -561,30 +561,6 @@ environment variable for them:
 
 ---
 
-## Agent Team
-
-Sharko development is coordinated by 13 specialized agent roles, each with a defined responsibility:
-
-| Role | File | Responsibility |
-|------|------|---------------|
-| **Tech Lead** | `.claude/team/tech-lead.md` | Orchestration, phase breakdown, dispatch, quality gates |
-| **Implementer** | `.claude/team/implementer.md` | Writes code following plans, knows project patterns |
-| **Go Expert** | `.claude/team/go-expert.md` | Complex Go work, interfaces, testing, stdlib patterns |
-| **K8s Expert** | `.claude/team/k8s-expert.md` | ArgoCD, Helm, K8s providers, ApplicationSets |
-| **Frontend Expert** | `.claude/team/frontend-expert.md` | React UI, shadcn/ui, Vite, TypeScript |
-| **Test Engineer** | `.claude/team/test-engineer.md` | Test writing, mock patterns, coverage tracking |
-| **Architect** | `.claude/team/architect.md` | Package design, interface contracts, dependency direction |
-| **DevOps** | `.claude/team/devops-agent.md` | CI/CD, Makefile, Docker, Helm packaging, releases |
-| **Docs Writer** | `.claude/team/docs-writer.md` | All documentation: user guides, API refs, agent files |
-| **Code Reviewer** | `.claude/team/code-reviewer.md` | Reviews for bugs, security, contract compliance |
-| **Security Auditor** | `.claude/team/security-auditor.md` | Security sweeps, forbidden content, auth checks |
-| **Product Manager** | `.claude/team/product-manager.md` | Product vision, user needs, feature prioritization |
-| **Project Manager** | `.claude/team/project-manager.md` | Progress tracking, build sequence, quality gates |
-
-The tech lead NEVER writes code directly — every change is dispatched to an agent with the appropriate role. Agent files are living documents updated after each phase to reflect new patterns, file paths, and dependencies.
-
----
-
 ## What Sharko Does NOT Do
 
 - **Does not generate ApplicationSet templates.** AppSet templates contain deeply evolved production logic (sync waves, multi-source apps, conditional logic). They belong in Git, owned by the user. Sharko generates data files (values, config). It never touches template logic.
