@@ -12,7 +12,7 @@ Registering a cluster is an API call that tells ArgoCD about a new cluster and i
 
 ## Prerequisites
 
-- Kubernetes with ArgoCD installed (tested against 1.31 in CI — see [Installation prerequisites](installation.md#prerequisites) for the full range)
+- Kubernetes with ArgoCD installed (tested against 1.31 in CI — see [Installation prerequisites](installation.md#prerequisites) for the full range). If you need to install ArgoCD, see [Install ArgoCD for Sharko](../operator/install-argocd.md).
 - Helm 3.x
 
 ## 1. Install Sharko
