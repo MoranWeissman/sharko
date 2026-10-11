@@ -20,10 +20,7 @@ the skill content itself.
 
 **Not included:** the BMAD-METHOD *engine* (`_bmad/`) that executes these
 skills is not distributed in this repository. It's a separate install — see
-[CONTRIBUTING.md](CONTRIBUTING.md) for the one-line setup. If it isn't
-installed, or a `bmad-*` skill otherwise isn't available in your session, the
-role files under `.claude/team/` are the fallback (see
-[CLAUDE.md](CLAUDE.md)).
+[CONTRIBUTING.md](CONTRIBUTING.md) for the one-line setup.
 
 ### MIT License text
 

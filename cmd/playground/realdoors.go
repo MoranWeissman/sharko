@@ -18,8 +18,8 @@ package main
 //     managed-clusters.yaml entry on its own tick and creates the ArgoCD
 //     cluster Secret.
 //  3. Add to catalog: POST /api/v1/catalog/addons opens a real PR that adds
-//     the addon to catalog.yaml — the org's approval step (design doc
-//     .bmad/output/architecture/2026-07-31-catalog-approved-model.md §4).
+//     the addon to catalog.yaml — the org's approval step (see
+//     docs/design/2026-07-30-v4-data-file-format.md for the catalog model).
 //     The playground merges it the same way as every other PR here. This
 //     step exists because the enable gate is now real: an addon that was
 //     never added to the catalog cannot be enabled on any cluster, so step

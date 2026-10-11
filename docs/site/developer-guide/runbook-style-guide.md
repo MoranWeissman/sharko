@@ -638,9 +638,8 @@ maintainer email documented above.
 
 ## Verification before merging
 
-Per `.claude/team/docs-writer.md` (the docs-writer agent role file in
-this repo), every operator runbook MUST carry a `> **Verified:** ...`
-header. The header records:
+Every operator runbook MUST carry a `> **Verified:** ...` header. The
+header records:
 
 - **When** the page was last verified-by-execution (date)
 - **Against what** (specific commit / PR / shipped surface)
@@ -742,6 +741,3 @@ checklist is the contract between the author and the reviewer.
 - [`docs/site/developer-guide/logging.md`](logging.md) — the V2-2.2
   `request_id` correlation pattern that every runbook's Diagnosis
   section leans on for log-driven debugging.
-- [`.claude/team/docs-writer.md`](https://github.com/MoranWeissman/sharko/blob/main/.claude/team/docs-writer.md)
-  — the docs-writer agent role file in this repo, including the
-  verified-by-execution rule and the `mkdocs --strict` build gate.

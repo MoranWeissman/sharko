@@ -2,7 +2,7 @@ package orchestrator
 
 // catalog_ops.go — the one way an addon gets into the org's catalog.
 //
-// Design doc .bmad/output/architecture/2026-07-31-catalog-approved-model.md
+// Design doc docs/design/2026-07-30-v4-data-file-format.md
 // §3 and §4. There are three doors into catalog.yaml and they all end up
 // here, producing the same pull request with the same full entry:
 //

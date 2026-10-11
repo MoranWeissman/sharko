@@ -13,9 +13,8 @@ see the amendment below.**
 Everything below this notice describes the design as it was agreed on
 2026-07-30. One day later, a real walkthrough surfaced a problem with it:
 the catalog file only held *changes* against a shipped list, so a fresh
-install already showed 45 addons the user never chose. That is the bug
-`.bmad/output/architecture/2026-07-31-catalog-approved-model.md` fixes.
-Read that document for the full reasoning. This amendment records only
+install already showed 45 addons the user never chose. That design was
+revised to use an approved-list model instead. This amendment records only
 what it changes in the file format this document defines, so a reader of
 the text below knows which parts are still true.
 
@@ -1317,9 +1316,8 @@ will meet.
 
 ## 9. Documents this builds on
 
-- `.bmad/output/planning-artifacts/prd-sharko-v4.md` — FR2, FR19, FR22–FR25, FR33, and
+- `docs/design/2026-07-29-prd-sharko-v4.md` — FR2, FR19, FR22–FR25, FR33, and
   the versioning section
-- `.bmad/output/planning-artifacts/epics-v4.md` — Epic 2 Stories 2.1–2.6, Story 4.2
 - `internal/schema/envelope.go` — the envelope, the kind constants, the unknown-version
   guard
 - `templates/bootstrap/templates/addons-appset.yaml` — the v3 matrix pattern this

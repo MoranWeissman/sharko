@@ -4,11 +4,10 @@ The Sharko v4 "engine" — a standalone Helm chart that turns a user's GitOps
 repo (`cluster-addons/`, `catalog.yaml`, `values/`) into ArgoCD ApplicationSets.
 This chart **is** the whole of Sharko's deployment logic — see
 `docs/design/2026-07-30-v4-data-file-format.md` for the render mechanics and
-`.bmad/output/architecture/2026-07-31-catalog-approved-model.md` (decision
-6) for the "catalog = the approved list" model this chart implements: it
-reads `catalog.yaml` + `cluster-addons/` + `values/` from the user's own repo,
-nothing else. There is no shipped/curated addon data baked into this chart
-— that set now lives only on the Sharko server, feeding the Marketplace.
+the "catalog = the approved list" model: it reads `catalog.yaml` +
+`cluster-addons/` + `values/` from the user's own repo, nothing else. There is
+no shipped/curated addon data baked into this chart — that set now lives only
+on the Sharko server, feeding the Marketplace.
 
 It replaces `templates/bootstrap/` from v3. The mechanics (matrix generator:
 cluster-label arm × git-files arm) are the same proven shape; what changed
@@ -172,11 +171,10 @@ nothing to unwind (design doc section 3.4, "rung 4" of the escape ladder).
   `sharko/marketplace-sources.yaml` — those configure the Sharko server
   itself, not the engine (design doc section 2.6).
 - It does not carry any shipped/curated addon data of its own — the
-  Marketplace's curated list lives only on the Sharko server
-  (`.bmad/output/architecture/2026-07-31-catalog-approved-model.md`
-  decision 6). Approving an addon copies it, as a full entry, into the
-  org's own `catalog.yaml` — that is the only addon data this chart ever
-  reads.
+  Marketplace's curated list lives only on the Sharko server ("catalog =
+  approved list" model, see docs/design/2026-07-30-v4-data-file-format.md).
+  Approving an addon copies it, as a full entry, into the org's own
+  `catalog.yaml` — that is the only addon data this chart ever reads.
 - It does not validate the data files it reads — `sharko validate` is the
   gate that runs before a PR merges; the engine's job is to render what is
   already there.

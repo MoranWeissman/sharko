@@ -10,9 +10,7 @@
 > (sprint PR pending). The cluster reconciler, ownership label, and pre-merge
 > Secret-path retirement are all in. See
 > [`docs/site/operator/cluster-reconciler.md`](../site/operator/cluster-reconciler.md)
-> for the operator runbook,
-> [`.bmad/output/planning-artifacts/epics-v125-1-8.md`](../../.bmad/output/planning-artifacts/epics-v125-1-8.md)
-> for the sprint plan, and §12 below for the per-component shipped-state
+> for the operator runbook and §12 below for the per-component shipped-state
 > annotations. V125-1-9 (schema envelope) shipped in the same release cycle.
 
 ---

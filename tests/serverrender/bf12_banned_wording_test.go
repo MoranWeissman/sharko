@@ -554,7 +554,6 @@ var wordingSweptRoots = []string{
 	// carry one of the names already listed above, so the walk was missing
 	// them.
 	"MAINTAINERS.md", "CONTRIBUTING.md", "CHANGELOG.md",
-	".claude/team/product-manager.md", ".claude/team/project-manager.md",
 }
 
 // commentMarkers are the characters a line of prose can start with when it is

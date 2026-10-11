@@ -63,9 +63,10 @@ first — it's a narrower, faster path than the general steps below.
    ```
 3. **Make your changes** following the [coding
    conventions](#coding-conventions) and the project's settled
-   architecture (see
-   [`.claude/team/product-manager.md`](.claude/team/product-manager.md)
-   "Settled Decisions").
+   architecture. Some directions are intentionally off the table: CRD-based
+   operator mode was tried and shelved; multi-ArgoCD, standalone CLI, and
+   advanced metrics are V3+ backlog items. See GOVERNANCE.md for version
+   strategy and API stability commitments.
 4. **Sign-off your commits** (see [DCO section](#sign-off-your-commits-dco))
    and use Conventional Commits messages (see below).
 5. **Run the full quality gate locally** (see [Building and
@@ -148,8 +149,6 @@ charts/sharko/       Helm chart
 docs/                User-facing docs (mkdocs site at docs/site/)
 templates/           ApplicationSet and helm-values templates
 tests/               Integration and e2e tests (in addition to package _test.go files)
-.claude/team/        Per-role agent instruction files (project-specific context)
-.bmad/output/        Planning artifacts (epics, stories, reviews)
 ```
 
 ### Branching
@@ -186,7 +185,7 @@ cd ui && npm ci && npm run build && npm test && cd ..
 helm template sharko charts/sharko/
 
 # Swagger regeneration (REQUIRED if you added or changed any
-# handler with @Router annotations — see CLAUDE.md Code Rules)
+# handler with @Router annotations)
 swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal
 
 # Schema regeneration (REQUIRED if you changed any envelope model)
@@ -206,10 +205,11 @@ make test-e2e-fast
 # changes touching orchestrator, reconciler, or secrets paths
 make test-e2e
 
-# Forbidden-content sweep (always — see CLAUDE.md Content Policy). The pattern list lives
-# only in .github/workflows/ci.yml's forbidden-content-check job (renamed from security-scan
-# in story 152.H; FORBIDDEN_PATTERNS array); extract
-# at runtime — never duplicate the literal strings in this doc.
+# Forbidden-content sweep (always required). This project was extracted from an internal
+# codebase; no references to the original organization, internal domains, employee emails,
+# or real AWS account IDs are allowed. The pattern list lives only in .github/workflows/ci.yml's
+# forbidden-content-check job (FORBIDDEN_PATTERNS array); extract at runtime — never duplicate
+# the literal strings in this doc.
 grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
     | grep -oE '"[^"]+"' | tr -d '"') \
   --include="*.go" --include="*.ts" --include="*.yaml" . | \
@@ -300,11 +300,10 @@ provides one-click guidance on how to add the missing trailer.
 >
 > `Co-Authored-By:` is a separate **multi-author attribution trailer**
 > (used by GitHub to display multiple authors on the commit). We do
-> **NOT** use `Co-Authored-By:` in this repository — see
-> [CLAUDE.md](CLAUDE.md) "Git Rules". All commits are authored solely
-> by the contributor whose `Signed-off-by:` they bear, and any
-> AI-assistance attribution belongs in the PR description, not in the
-> commit metadata.
+> **NOT** use `Co-Authored-By:` in this repository. All commits are
+> authored solely by the contributor whose `Signed-off-by:` they bear,
+> and any AI-assistance attribution belongs in the PR description, not
+> in the commit metadata.
 
 If you previously contributed to a repo that used `Co-Authored-By:`
 for AI-assisted commits, please do **not** carry that habit here.
@@ -360,23 +359,9 @@ for AI-assisted commits, please do **not** carry that habit here.
 
 ## AI-Agent Collaborators
 
-Sharko is developed with help from AI coding agents (Claude Code,
-specifically). The project documents this collaboration explicitly. For
-the full picture — the team role files, the planning-to-review workflow,
-worktree-isolated agent dispatch, and the quality gates every change must
-pass — see
-[Developing with AI](docs/site/developer-guide/developing-with-ai.md).
-Short version:
+Sharko is built with help from AI coding agents. The project documents
+this explicitly:
 
-- **Role files in `.claude/team/`** — each role (tech-lead,
-  go-expert, k8s-expert, frontend-expert, test-engineer,
-  code-reviewer, security-auditor, etc.) has a `.md` file that
-  serves as a stable, project-specific system prompt. When an
-  AI agent is dispatched to do work, the relevant role file is
-  included in the prompt. This keeps agent output aligned with
-  project-specific constraints (the orchestrator pattern, the
-  ownership-label gate, the schema-envelope discipline, the
-  PR-only Git flow, etc.).
 - **Planning skills in `.claude/skills/bmad-*`** — committed in this repo
   (MIT license, from the [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD)
   project — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). These
@@ -385,17 +370,10 @@ Short version:
   engine that runs these skills (`_bmad/`) is a separate install, not
   shipped in this repo — see the
   [BMAD-METHOD project](https://github.com/bmad-code-org/BMAD-METHOD) for
-  setup. If a skill isn't available in your session, the `.claude/team/`
-  role files above are the fallback — proceed by hand with the same
-  role-file context.
-- **Planning artifacts in `.bmad/output/`** — sprint plans, epics,
-  story breakdowns, and post-implementation reviews live here. They
-  are intentionally version-controlled so the planning history is
-  visible.
-- **`CLAUDE.md`** — the top-level instruction file that any AI
-  collaborator reads at session start. Note in particular the
-  **"Never add Co-Authored-By trailers"** rule — see the [DCO
-  section](#sign-off-your-commits-dco) above.
+  setup.
+
+For more on the workflow, see
+[Developing with AI](docs/site/developer-guide/developing-with-ai.md).
 
 You do **not** need to use AI agents to contribute. Human
 contributions are equally welcome and follow the same review process.
@@ -449,20 +427,20 @@ Releases are cut by maintainers. The process is documented in
 `docs/site/developer-guide/` and is summarized here:
 
 - **Version bumps** — patch for fixes, minor for features, major for
-  breaking changes. **Never retag** an existing version
-  (see [CLAUDE.md](CLAUDE.md) "Git Rules").
+  breaking changes. **Never retag** an existing version — every code
+  change, no matter how small, gets a new semver version. Retagging
+  (deleting a tag and recreating it on a different commit) is forbidden.
 - **Release line** — Sharko reached production GA with `v2.0.0`
   (2026-06-03). Sharko v4 is the technical-preview release line.
   Install only published v4.0.1-or-later artifacts. v3.0.0 and earlier
   remain retired and unsupported (see [SECURITY.md](SECURITY.md)); do
-  not use Sharko in production (see
-  [`.claude/team/product-manager.md`](.claude/team/product-manager.md)).
+  not use Sharko in production. See GOVERNANCE.md for the full version
+  strategy.
 - **Release cadence** — fixes are bundled on a working branch and
   cut as a release at a real milestone, not per-fix.
 - **Keep version claims in sync** — when a new major version is
   tagged, update the version statements in README.md, GOVERNANCE.md,
-  MAINTAINERS.md, CONTRIBUTING.md (this bullet list), and
-  `.claude/team/product-manager.md` in the same PR.
+  MAINTAINERS.md, and CONTRIBUTING.md (this bullet list) in the same PR.
 
 ## Response Cadence
 

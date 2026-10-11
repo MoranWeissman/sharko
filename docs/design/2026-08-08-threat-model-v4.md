@@ -6,7 +6,6 @@ version: "v4.0.0 (pre-release, task #152 Secret Sync security closure)"
 status: "Replaces the v2.0.0 baseline threat model. Written against merged main after task #152 lanes A (refresh reads Git), B (backend boundary), C (destination TLS refusal) and F (least-privilege RBAC). All of these are merged and describe what is actually deployed."
 scope: "Sharko server, CLI, web UI, Helm chart, container image, catalog signing pipeline. Excludes downstream addon contents and ArgoCD itself."
 related:
-  - ".claude/team/security-auditor.md"
   - "SECURITY.md"
   - "docs/site/operator/security.md"
   - "docs/site/operator/configuration.md"
@@ -568,12 +567,10 @@ landed.
 Related reading:
 
 - [`SECURITY.md`](../../SECURITY.md) — disclosure policy.
-- [`.claude/team/security-auditor.md`](../../.claude/team/security-auditor.md) — the security-auditor checklist this project runs against.
 - [`docs/site/operator/security.md`](../site/operator/security.md) — operator-facing security reference (headers, rate limiting, RBAC tiers, secret encryption).
 - [`docs/site/operator/configuration.md`](../site/operator/configuration.md) — includes the ArgoCD resource-exclusions setup this document discusses in §11.
 - [`docs/site/operator/self-managed-connections.md`](../site/operator/self-managed-connections.md), [`docs/site/operator/takeover-playbook.md`](../site/operator/takeover-playbook.md), [`docs/site/operator/cluster-reconciler.md`](../site/operator/cluster-reconciler.md), [`docs/site/operator/connection-doctor.md`](../site/operator/connection-doctor.md) — where the "don't paper over a fight with ignoreDifferences" rule is documented for the cluster-connection-Secret case.
 - [`docs/site/community/roadmap.md`](../site/community/roadmap.md) — where the items in [§10](#10-what-is-not-built-yet) are tracked going forward.
-- `.bmad/output/planning-artifacts/report-secret-sync-security.md` and `.bmad/output/planning-artifacts/epic-secret-sync-security-closure.md` — the report and the sprint plan that produced this rewrite.
 
 *This is the working v4 threat model. It should be revisited whenever
 a delivery path, a boundary check, or the permissions Sharko holds

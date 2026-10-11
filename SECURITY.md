@@ -59,18 +59,23 @@ Vulnerabilities of interest include (non-exhaustive):
   ArgoCD account tokens)
 - Bypass of the ownership-label gate
   (`app.kubernetes.io/managed-by: sharko`) that allows Sharko to
-  modify or delete a Secret it does not own (see
-  `.claude/team/security-auditor.md` §11)
+  modify or delete a Secret it does not own. Every ArgoCD cluster
+  Secret Sharko writes must carry this label, and every cluster-Secret
+  deletion must check the label first.
 - Bypass of the schema-envelope read-time validator allowing malformed
-  or untrusted input to traverse the trust boundary (see
-  `.claude/team/security-auditor.md` §12)
+  or untrusted input to traverse the trust boundary. Reads of
+  `managed-clusters.yaml` and `addon-catalog.yaml` must go through
+  envelope-aware loaders that validate against committed JSON Schema
+  before unmarshalling.
 - Catalog-signing trust-policy bypass: unanchored trust-regex
   exploitation, legacy-Bundle-format acceptance, or `workflow_run`
-  SAN spoofing (see `.claude/team/security-auditor.md` "Catalog
-  signing surface")
-- AVP / Redis bridging of secret material that violates the no-AVP /
-  no-Redis-leak design constraint (see
-  `.claude/team/security-auditor.md` §13)
+  SAN spoofing. Operator-supplied patterns in the trust policy must
+  be anchored, and the verifier must consume the modern Sigstore
+  Bundle format, not the legacy v1 format.
+- AVP / Redis bridging of secret material that violates Sharko's
+  no-AVP / no-Redis-leak design constraint. Sharko intentionally has
+  no ArgoCD Vault Plugin integration and no Redis ingestion of secret
+  material.
 - Container escape, privilege escalation, or Kubernetes RBAC abuse
   via the Sharko pod
 - Injection vulnerabilities in any Sharko surface (CLI, API, UI)
@@ -129,9 +134,7 @@ ArgoCD token as possibly exposed.
 
 ## Security-Sensitive Code Paths
 
-Contributors should review
-[`.claude/team/security-auditor.md`](.claude/team/security-auditor.md)
-before modifying any of the following:
+Contributors should take extra care when modifying any of the following:
 
 - `internal/api/` — request handling, auth middleware, write-endpoint
   admin checks

@@ -2,10 +2,9 @@
 # sharko-engine — chart values
 #
 # See docs/design/2026-07-30-v4-data-file-format.md for the render mechanics
-# and .bmad/output/architecture/2026-07-31-catalog-approved-model.md decision
-# 6 ("catalog = the approved list") for why this file carries no shipped
-# addon data of its own: the engine reads catalog.yaml + cluster-addons/ + values/
-# from the user's own repo, nothing else. This file only carries what the
+# and the "catalog = the approved list" model for why this file carries no
+# shipped addon data of its own: the engine reads catalog.yaml +
+# cluster-addons/ + values/ from the user's own repo, nothing else. This file only carries what the
 # chart needs to render: where the user's GitOps repo is and the shared
 # AppProject name. Everything else — which addons even exist, which clusters
 # run them, and their settings — comes from the user's own repo, read at

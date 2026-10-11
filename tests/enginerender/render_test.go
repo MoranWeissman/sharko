@@ -3,7 +3,7 @@
 // templates/bootstrap/ as the thing that turns a user's GitOps repo into
 // ArgoCD ApplicationSets — see docs/design/2026-07-30-v4-data-file-format.md
 // for the render mechanics and
-// .bmad/output/architecture/2026-07-31-catalog-approved-model.md for the
+// docs/design/2026-07-30-v4-data-file-format.md for the
 // "catalog = the approved list" model this file's fixtures follow.
 //
 // The fixture at testdata/ is the design doc's own worked example (section
@@ -455,7 +455,7 @@ func TestEngineChartFixtureValuesLayeringFiles(t *testing.T) {
 // totally fresh install — chart defaults only, no catalog.yaml passed at
 // all — renders ZERO ADDON ApplicationSets, plus the shared AppProject.
 // This is the "catalog = the approved list" model's day-zero promise
-// (.bmad/output/architecture/2026-07-31-catalog-approved-model.md decisions
+// (docs/design/2026-07-30-v4-data-file-format.md decisions
 // 3 and 6): nothing runs in a fresh org's fleet until an addon is approved
 // into catalog.yaml. The engine chart carries no baked curated defaults any
 // more — values.yaml's own default is addons: {}, so chart-defaults-only is

@@ -1,7 +1,7 @@
 // The org's catalog over HTTP — the addons this org approved, and the one
 // write path that adds to them.
 //
-// Design doc .bmad/output/architecture/2026-07-31-catalog-approved-model.md.
+// Design doc docs/design/2026-07-30-v4-data-file-format.md.
 // Two words, no third one:
 //
 //	Marketplace  GET /api/v1/marketplace/addons — what you COULD run.

@@ -20,18 +20,16 @@ current stage:
 - The contributor community is still small, with a single maintainer
   doing the day-to-day work. A heavyweight governance structure would
   impose overhead without proportional benefit.
-- Settled decisions (see
-  [`.claude/team/product-manager.md`](.claude/team/product-manager.md))
-  are tracked explicitly so contributors know what is up for debate
-  and what is not.
+- Settled decisions (see "Settled Decisions" below) are tracked
+  explicitly so contributors know what is up for debate and what is not.
 
 The BDFL still operates transparently:
 
-- All planning happens in the open via GitHub issues, BMAD planning
-  artifacts under `.bmad/output/`, and design docs under `docs/design/`.
+- All planning happens in the open via GitHub issues and design docs
+  under `docs/design/`.
 - All changes ship via pull requests — no direct commits to `main`.
-- All decisions of architectural significance are recorded in the
-  `.bmad/output/` artifacts or `docs/design/` proposals.
+- All decisions of architectural significance are recorded in
+  `docs/design/` proposals.
 
 ## Transition Plan: From BDFL to Steering Committee
 
@@ -51,9 +49,7 @@ least three** of the following conditions are met:
    **two distinct organizations** (per CNCF maintainer-diversity
    guidance).
 3. The project has shipped **`v2.0.0` GA** (the first production
-   release, shipped 2026-06-03 — see
-   [`.claude/team/product-manager.md`](.claude/team/product-manager.md)).
-   This condition is already met.
+   release, shipped 2026-06-03). This condition is already met.
 4. There are at least **five organizations listed in
    [ADOPTERS.md](ADOPTERS.md)** running Sharko in production or
    staging.
@@ -99,11 +95,9 @@ Once a steering committee exists, the lazy-consensus rule applies.
 ### Settled decisions
 
 Some decisions are **settled** and not subject to re-litigation without
-an exceptional reason. The current list is maintained at
-[`.claude/team/product-manager.md`](.claude/team/product-manager.md)
-under "Settled Decisions". Examples include "ArgoCD only, no Flux",
-"server-first, not standalone CLI", and "PR-only Git flow, no direct
-commits".
+an exceptional reason. Examples: "ArgoCD only, no Flux", "server-first, not
+standalone CLI", "PR-only Git flow, no direct commits", and "CRD-based
+operator mode tried and shelved".
 
 If you want to propose changing a settled decision, open a design-doc
 PR under `docs/design/` explaining the new context and the trade-offs.
@@ -111,8 +105,7 @@ PR under `docs/design/` explaining the new context and the trade-offs.
 ### Release decisions
 
 Release cadence and version numbering follow the rules in
-[CONTRIBUTING.md](CONTRIBUTING.md) and the
-[Sharko version strategy](.claude/team/product-manager.md):
+[CONTRIBUTING.md](CONTRIBUTING.md):
 
 - `v2.0.0` (2026-06-03) was Sharko's first production-ready release.
   SemVer has applied strictly since then: patch for fixes, minor for
