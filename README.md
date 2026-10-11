@@ -34,7 +34,9 @@ Three doors lead to the same pipeline: the UI for a person, the REST API for a p
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
 <p align="center">
-  <img src="docs/site/assets/diagrams/01-hub-spoke.drawio.svg" alt="Sharko and ArgoCD run on the hub cluster, read/write the GitOps repo, and ArgoCD deploys addons to a mixed fleet of Sharko-managed, self-managed, and EKS-token spoke clusters." width="820">
+  <a href="docs/site/assets/diagrams/01-hub-spoke.drawio.svg">
+    <img src="docs/site/assets/diagrams/01-hub-spoke.drawio.svg" alt="Sharko and ArgoCD run on the hub cluster, read/write the GitOps repo, and ArgoCD deploys addons to a mixed fleet of Sharko-managed, self-managed, and EKS-token spoke clusters." width="820">
+  </a>
 </p>
 
 ## Why not just ApplicationSets?
@@ -83,6 +85,15 @@ make demo
 Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `admin` (admin role) or `qa` / `sharko` (viewer role).
 
 ## Getting started on a cluster
+
+### Before you start
+
+You need:
+
+- **Kubernetes** (tested on 1.31)
+- **ArgoCD v3.3 to v3.5** installed in the same cluster ([how to install ArgoCD for Sharko](docs/site/operator/install-argocd.md))
+- **Helm 3**
+- **A Git repo** (GitHub, Azure DevOps, or Gitea) and a personal access token for it
 
 ### 1. Install Sharko
 

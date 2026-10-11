@@ -69,6 +69,7 @@ nav:
     - Git Attribution: user-guide/attribution.md
   - Operator Manual:
     - Installation: operator/installation.md
+    - Install ArgoCD for Sharko: operator/install-argocd.md
     - Configuration: operator/configuration.md
     - 'Upgrading & Rollback Safety': operator/upgrading-and-rollback.md
     - 'Taking Over a Fleet That Is Already Running': operator/takeover-playbook.md
@@ -195,6 +196,7 @@ hooks:
 
 plugins:
   - search
+  - glightbox
   - minify:
       minify_html: true
   - git-revision-date-localized:

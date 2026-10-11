@@ -24,7 +24,7 @@ This guide is for platform engineers and cluster operators installing Sharko on 
 | You need | Notes |
 |---|---|
 | Kubernetes | Tested on 1.31. Nearby versions are expected to work. |
-| ArgoCD | Installed in the same cluster. Tested on v3.3 to v3.5. The **System** page in Sharko shows the ArgoCD version it found and the range that was tested. |
+| ArgoCD | Installed in the same cluster. Tested on v3.3 to v3.5. The **System** page in Sharko shows the ArgoCD version it found and the range that was tested. See [Install ArgoCD for Sharko](install-argocd.md) if you need to install it. |
 | Helm 3 | Run `helm version` to check. |
 | A Git repo and a token for it | GitHub, Azure DevOps or Gitea. The token is a personal access token (PAT): a token you create in your Git host's settings that lets Sharko open pull requests on the repo. |
 | An AWS IAM role (only if you use AWS Secrets Manager) | Needed only if Sharko reads cluster or addon credentials from AWS Secrets Manager. |
