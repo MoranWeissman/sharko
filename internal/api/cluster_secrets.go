@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,7 +18,7 @@ import (
 // handleListClusterSecrets godoc
 //
 // @Summary List cluster secrets
-// @Description Lists managed addon secrets on a remote cluster
+// @Description Lists managed addon secrets on a remote cluster. Lists only in the namespaces Sharko could have written an addon secret to (the catalog's addon secret namespaces plus the ones it still remembers for this cluster), never across all namespaces. With no such namespace the list is empty.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -65,7 +66,13 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Collect declared namespaces from addon secret definitions.
+	// List ONLY in the namespaces Sharko could have written an addon secret
+	// to: the addon secret definitions' namespaces plus what the secrets
+	// engine knows for this cluster (the catalog's push namespaces and the
+	// namespaces still on its record). Never across all namespaces — that
+	// would need a cluster-wide "list secrets" right on the spoke, and with
+	// it Sharko could read every Secret there. No known namespace means
+	// there is nothing Sharko could have put there: an empty list.
 	allowedNamespaces := make(map[string]bool)
 	s.addonSecretDefsMu.RLock()
 	for _, def := range s.addonSecretDefs {
@@ -74,35 +81,43 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		}
 	}
 	s.addonSecretDefsMu.RUnlock()
-
-	var allSecrets []remoteclient.ManagedSecretInfo
-	if len(allowedNamespaces) > 0 {
-		// List secrets only in declared namespaces.
-		for ns := range allowedNamespaces {
-			secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, ns)
-			if err != nil {
-				// Log but continue — namespace may not exist yet.
-				slog.Warn("listing secrets in namespace", "namespace", ns, "error", err)
-				continue
+	if s.secretReconciler != nil {
+		for _, ns := range s.secretReconciler.KnownSecretNamespaces(name) {
+			if ns != "" {
+				allowedNamespaces[ns] = true
 			}
-			allSecrets = append(allSecrets, secrets...)
 		}
-	} else {
-		// No addon secret definitions configured — fall back to listing by label only.
-		slog.Warn("no addon secret definitions — listing all managed secrets")
-		secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, "")
+	}
+	namespaces := make([]string, 0, len(allowedNamespaces))
+	for ns := range allowedNamespaces {
+		namespaces = append(namespaces, ns)
+	}
+	sort.Strings(namespaces)
+
+	allSecrets := make([]remoteclient.ManagedSecretInfo, 0)
+	var lastErr error
+	failed := 0
+	for _, ns := range namespaces {
+		secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, ns)
 		if err != nil {
-			// PUBLIC BOUNDARY. Unlike the client build above, this one was
-			// genuinely leaking: ListManagedSecrets is a plain Kubernetes
-			// List against the remote cluster and nothing marks its error, so
-			// a raw *apierrors.StatusError went into the response body. It is
-			// classified by type — the same three outcomes the doctor's
-			// connection-Secret read uses.
-			slog.Error("[cluster-secrets] listing managed secrets failed", "cluster", name, "step", "list-secrets")
-			writeError(w, http.StatusBadGateway, listManagedSecretsSentence(name, err))
-			return
+			// Log but continue — one namespace failing must not hide the
+			// others.
+			slog.Warn("listing secrets in namespace", "namespace", ns, "error", err)
+			failed++
+			lastErr = err
+			continue
 		}
-		allSecrets = secrets
+		allSecrets = append(allSecrets, secrets...)
+	}
+	if len(namespaces) > 0 && failed == len(namespaces) {
+		// PUBLIC BOUNDARY. Not one namespace could be read, so an empty list
+		// would be a lie. ListManagedSecrets is a plain Kubernetes List and
+		// nothing marks its error, so the raw *apierrors.StatusError never
+		// goes into the response body. It is classified by type — the same
+		// three outcomes the doctor's connection-Secret read uses.
+		slog.Error("[cluster-secrets] listing managed secrets failed", "cluster", name, "step", "list-secrets")
+		writeError(w, http.StatusBadGateway, listManagedSecretsSentence(name, lastErr))
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{

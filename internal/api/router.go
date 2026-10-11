@@ -298,6 +298,14 @@ type SecretReconciler interface {
 	// triggers a K8s call to build this. Sorted deterministically (cluster,
 	// then namespace, then name).
 	OrphanedSecrets() []models.OrphanedSecret
+	// KnownSecretNamespaces returns every namespace Sharko could have written
+	// an addon secret to on this cluster: the catalog's push namespaces from
+	// the last pass plus the namespaces still on the cluster's record (which
+	// keeps the namespace of an addon removed from the catalog until its
+	// leftover is gone). Sorted. Empty before the first pass. GET
+	// /clusters/{name}/secrets lists only in these namespaces, never across
+	// all of them.
+	KnownSecretNamespaces(cluster string) []string
 	// DeleteOrphanedSecret deletes one leftover secret found by
 	// OrphanedSecrets — the operator-gated, human-confirmed action behind
 	// DELETE /clusters/{name}/orphaned-secrets/{namespace}/{secret}. Never

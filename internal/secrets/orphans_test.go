@@ -53,6 +53,15 @@ func scanReconciler(gitReader GitReader, client kubernetes.Interface) *Reconcile
 	)
 }
 
+// rememberNamespace puts a namespace on a cluster's record, the same way an
+// earlier pass does when the catalog named it. The tests below seed leftovers
+// for an addon (redis, in "data") that is NOT in the current catalog — the
+// "removed from the catalog" case — so the scan only looks in "data" if an
+// earlier catalog named it. This stands in for that earlier pass.
+func rememberNamespace(r *Reconciler, cluster, namespace string) {
+	r.updateNamespaceRecord(cluster, []string{namespace}, nil)
+}
+
 // planAndScan runs planPushes then scanOrphans directly — the same two
 // calls reconcile()/CheckAll() make, without needing a full reconcile pass
 // (and its secretProvider/push-write side effects) for tests that only care
@@ -78,6 +87,7 @@ func planAndScan(t *testing.T, r *Reconciler) {
 func TestScanOrphans_ReportsUnclaimedLabeledAndAnnotatedSecret(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("data", "old-redis-secret", "redis"))
 	r := scanReconciler(standardGitReader(catalogWithSecrets), client)
+	rememberNamespace(r, "prod-cluster", "data")
 
 	planAndScan(t, r)
 
@@ -102,6 +112,7 @@ func TestScanOrphans_ReportsUnclaimedLabeledAndAnnotatedSecret(t *testing.T) {
 func TestScanOrphans_LabelWithoutAddonAnnotationNeverReported(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("argocd", "cluster-kubeconfig", ""))
 	r := scanReconciler(standardGitReader(catalogWithSecrets), client)
+	rememberNamespace(r, "prod-cluster", "argocd")
 
 	planAndScan(t, r)
 
@@ -133,6 +144,7 @@ func TestScanOrphans_ClaimedSecretNeverReported(t *testing.T) {
 func TestScanOrphans_ZeroPushDefinitions_StillScansAndFindsOrphans(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("data", "old-redis-secret", "redis"))
 	r := scanReconciler(standardGitReader(catalogWithoutSecrets), client)
+	rememberNamespace(r, "prod-cluster", "data")
 
 	ctx := context.Background()
 	plan, err := r.planPushes(ctx, r.gitReader())
@@ -169,8 +181,8 @@ func (p *perClusterCredProvider) GetCredentials(lookup string) (*providers.Kubec
 	return &providers.Kubeconfig{Raw: []byte(lookup)}, nil
 }
 func (p *perClusterCredProvider) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
-func (p *perClusterCredProvider) SearchSecrets(string) ([]string, error)        { return nil, nil }
-func (p *perClusterCredProvider) HealthCheck(context.Context) error             { return nil }
+func (p *perClusterCredProvider) SearchSecrets(string) ([]string, error)         { return nil, nil }
+func (p *perClusterCredProvider) HealthCheck(context.Context) error              { return nil }
 
 // perClusterClientFn routes each kubeconfig (built as []byte(credLookup) by
 // perClusterCredProvider above) to its own fake clientset, keyed by cluster
@@ -241,6 +253,8 @@ func TestScanOrphans_OneClusterFails_OthersStillScanned_PreviousRecordsKept(t *t
 	})
 
 	r := newReconciler(twoClusterGitReader(), credProvider, &mockSecretProvider{}, clientFn)
+	rememberNamespace(r, "prod-cluster", "data")
+	rememberNamespace(r, "staging-cluster", "data")
 
 	// Pass 1: both clusters healthy — both get real records.
 	planAndScan(t, r)
@@ -317,6 +331,7 @@ clusters:
 func TestDeleteOrphanedSecret_HappyPath(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("data", "old-redis-secret", "redis"))
 	r := scanReconciler(standardGitReader(catalogWithSecrets), client)
+	rememberNamespace(r, "prod-cluster", "data")
 	planAndScan(t, r)
 
 	if err := r.DeleteOrphanedSecret(context.Background(), "prod-cluster", "data", "old-redis-secret"); err != nil {
@@ -353,6 +368,7 @@ func TestDeleteOrphanedSecret_ReclaimedByFreshPlanRefuses(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("data", "old-redis-secret", "redis"))
 	gr := standardGitReader(catalogWithSecrets)
 	r := scanReconciler(gr, client)
+	rememberNamespace(r, "prod-cluster", "data")
 	planAndScan(t, r)
 
 	if _, ok := findOrphan(r.OrphanedSecrets(), "prod-cluster", "old-redis-secret"); !ok {
@@ -380,6 +396,7 @@ func TestDeleteOrphanedSecret_ReclaimedByFreshPlanRefuses(t *testing.T) {
 func TestDeleteOrphanedSecret_AnnotationStrippedRefuses(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("data", "old-redis-secret", "redis"))
 	r := scanReconciler(standardGitReader(catalogWithSecrets), client)
+	rememberNamespace(r, "prod-cluster", "data")
 	planAndScan(t, r)
 
 	live, err := client.CoreV1().Secrets("data").Get(context.Background(), "old-redis-secret", metav1.GetOptions{})
@@ -406,6 +423,7 @@ func TestDeleteOrphanedSecret_AnnotationStrippedRefuses(t *testing.T) {
 func TestDeleteOrphanedSecret_LabelStrippedRefuses(t *testing.T) {
 	client := fake.NewSimpleClientset(labeledSecret("data", "old-redis-secret", "redis"))
 	r := scanReconciler(standardGitReader(catalogWithSecrets), client)
+	rememberNamespace(r, "prod-cluster", "data")
 	planAndScan(t, r)
 
 	live, err := client.CoreV1().Secrets("data").Get(context.Background(), "old-redis-secret", metav1.GetOptions{})

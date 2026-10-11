@@ -51,6 +51,8 @@ What Sharko *does* show — a secret's name, namespace, the commit or store key 
 
 An **orphaned** row is a secret Sharko wrote to a cluster at some point, whose source someone later deleted from Git — the addon definition (or cluster registration) that once asked for this secret is gone, but the secret itself is still sitting on the cluster, still carrying Sharko's own labels. Nothing asks for it anymore.
 
+Sharko looks for these leftovers only in the namespaces where it could have put an addon secret, including the namespaces of addons you removed from the catalog. [Where Sharko looks for leftover addon secrets](../operator/cluster-access.md#where-sharko-looks-for-leftover-addon-secrets) says which namespaces those are, and the cases where a leftover is not found.
+
 Sharko never deletes an orphaned secret on its own. It shows up on the Addon secrets page with its own **Orphaned** status (a violet dot, distinct from every other state on the page) so you know it's there, and it stays there — same as any other row — until you decide what to do with it.
 
 **Delete** is the one action an orphaned row offers, and it's operator-or-admin only. Clicking it opens a confirm dialog that names exactly what's about to happen — the secret's namespace and name, the cluster it's on, and that this cannot be undone — before anything happens. Cancel does nothing at all; no request is made unless you confirm.

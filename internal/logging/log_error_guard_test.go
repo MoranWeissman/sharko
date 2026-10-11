@@ -117,7 +117,7 @@ import (
 // tests import it. It makes no slog call and no log call of any kind: every
 // failure goes back to the caller as a returned error. It does not search
 // for credential characters either.
-const wantSweptGoFiles = 433
+const wantSweptGoFiles = 434
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -294,9 +294,11 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/schema/validator.go", fn: "LogValidationFailure", msg: "schema_validation_failed", carriers: "ident:failure.Violations", verdict: "safe", reason: "Violations holds one “<json pointer>: <message>” line per schema violation. The pointer is a location in the operator’s own file and the message is the JSON Schema library’s own wording about the shape — neither quotes the offending VALUE, so a repository address with a token in it cannot arrive here. Reviewed by hand as part of B16."},
 	{file: "internal/secrets/orphans.go", fn: "scanOrphans", msg: "[secrets] orphan scan: could not connect — keeping this cluster's previous leftover-secret records", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/secrets/orphans.go", fn: "scanOrphans", msg: "[secrets] orphan scan: could not get credentials — keeping this cluster's previous leftover-secret records", carriers: "call:credsafe.Sentence", verdict: "safe", reason: "internal/credsafe already reduced this to one of Sharko's own fixed sentences before it reached slog, so there are no provider words left in it."},
-	{file: "internal/secrets/orphans.go", fn: "scanOrphans", msg: "[secrets] orphan scan: could not list secrets — keeping this cluster's previous leftover-secret records", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/secrets/orphans.go", fn: "scanOrphans", msg: "[secrets] orphan scan: could not list secrets — keeping this namespace's previous leftover-secret records", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/secrets/reconciler.go", fn: "CheckAll", msg: "[secrets] could not check this addon-values secret — carrying on with the rest", carriers: "ident:checkErr", verdict: "sink"},
 	{file: "internal/secrets/reconciler.go", fn: "reconcile", msg: "[secrets] could not work out which secrets to push — nothing was pushed this run", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/secrets/scan_namespaces.go", fn: "loadNamespaceRecord", msg: "[secrets] orphan scan: could not read the saved list of addon secret namespaces — using what this server has seen so far, and not saving until it can be read", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/secrets/scan_namespaces.go", fn: "saveNamespaceRecord", msg: "[secrets] orphan scan: could not save the list of addon secret namespaces — it is kept in memory and saved on a later pass", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/service/addon.go", fn: "GetAddonDetail", msg: "could not fetch applicationset status", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/service/addon.go", fn: "GetAddonValuesAndSchema", msg: "ignoring unparseable values schema", carriers: "ident:perr", verdict: "sink"},
 	{file: "internal/service/addon.go", fn: "getCatalogUncached", msg: "could not fetch argocd applications", carriers: "ident:err", verdict: "sink"},
