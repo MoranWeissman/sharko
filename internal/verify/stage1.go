@@ -130,13 +130,21 @@ func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) 
 				},
 			},
 		}, metav1.CreateOptions{})
-		if err != nil {
+		switch {
+		case apierrors.IsAlreadyExists(err):
+			// Someone else made it between our get and our create, for
+			// example a second check running at the same time. It is there,
+			// so the check goes on; it is not ours, so the cleanup never
+			// deletes it (createdNamespace stays false).
+			steps = append(steps, Step{Name: "Ensure namespace", Status: "pass", Detail: "already exists"})
+		case err != nil:
 			steps = append(steps, Step{Name: "Ensure namespace", Status: "fail", Detail: safeDetail(err)})
 			return failResultSkipping("stage1", err, time.Since(start), serverVersion, steps,
 				stepCreateSecret, stepReadSecret, stepDeleteSecret)
+		default:
+			createdNamespace = true
+			steps = append(steps, Step{Name: "Ensure namespace", Status: "pass", Detail: "created"})
 		}
-		createdNamespace = true
-		steps = append(steps, Step{Name: "Ensure namespace", Status: "pass", Detail: "created"})
 	} else if err != nil {
 		steps = append(steps, Step{Name: "Ensure namespace", Status: "fail", Detail: safeDetail(err)})
 		return failResultSkipping("stage1", err, time.Since(start), serverVersion, steps,

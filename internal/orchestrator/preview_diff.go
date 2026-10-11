@@ -3,12 +3,15 @@ package orchestrator
 import (
 	"bytes"
 	"fmt"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/MoranWeissman/sharko/internal/config"
 )
 
 // BuildFileDiff computes a unified diff string for the given file change.
@@ -263,8 +266,9 @@ func hunkRange(before, count int) string {
 // shows as no lines — never as the word "null", which is what printing an
 // empty YAML document back out produces.
 //
-// For non-values paths (catalog, managed-clusters, etc.), returns content
-// unchanged since those files are safe by construction.
+// Only the files listed in isPlainFile (catalog, managed-clusters, the
+// per-cluster addon lists, the engine pin) are returned unchanged, since
+// those files are safe by construction. Any other path is redacted.
 //
 // If YAML parsing fails, returns a single-line redacted placeholder to ensure
 // no raw bytes from an unparseable file leak into a preview.
@@ -273,27 +277,15 @@ func (o *Orchestrator) redactValuesContent(path string, content []byte) []byte {
 		return content
 	}
 
-	// Determine if this is a values file that requires redaction.
-	// Values files live under ClusterValues or GlobalValues directories
-	// (v3, per-connection-configured) or under the fixed v4 values/
-	// tree (V4GlobalValuesDir / V4ClusterValuesDir — v4 Wave 1 Story 4.3;
-	// unlike the v3 paths these are NOT server-configurable, so they must
-	// be checked unconditionally, not gated on a RepoPathsConfig field
-	// being set).
-	isValuesFile := false
-	if o.paths.ClusterValues != "" && isUnderDirectory(path, o.paths.ClusterValues) {
-		isValuesFile = true
-	}
-	if o.paths.GlobalValues != "" && isUnderDirectory(path, o.paths.GlobalValues) {
-		isValuesFile = true
-	}
-	if isUnderDirectory(path, V4GlobalValuesDir) || isUnderDirectory(path, V4ClusterValuesDir) {
-		isValuesFile = true
-	}
-
-	if !isValuesFile {
-		// Safe by construction: catalog, managed-clusters, etc. contain only
-		// flags/versions/URLs, no secrets.
+	// Decide whether this file is shown as it is or redacted. This fails
+	// safe: only a short list of files Sharko knows hold no secrets
+	// (catalog, managed clusters, per-cluster addon lists, the engine pin)
+	// are shown as they are. Every other path, including any path this code
+	// does not recognise, is redacted the same way a values file is. The
+	// path is cleaned first, so "/values/clusters/x.yaml" or
+	// "./values/clusters/x.yaml" is treated as "values/clusters/x.yaml".
+	path = normalizeRepoPath(path)
+	if o.isPlainFile(path) {
 		return content
 	}
 
@@ -481,14 +473,58 @@ func lineIn(stub []byte, line string) bool {
 	return false
 }
 
-// isUnderDirectory checks if the given path is under the specified directory.
-func isUnderDirectory(path, dir string) bool {
-	relPath, err := filepath.Rel(dir, path)
-	if err != nil {
+// normalizeRepoPath turns a repo path into the plain form Sharko builds
+// paths in: forward slashes, no leading "/" or "./", no "a/../b" parts.
+// A path that cleans down to nothing becomes "".
+func normalizeRepoPath(p string) string {
+	p = filepath.ToSlash(strings.TrimSpace(p))
+	p = strings.TrimLeft(p, "/")
+	if p == "" {
+		return ""
+	}
+	p = pathpkg.Clean(p)
+	if p == "." {
+		return ""
+	}
+	return p
+}
+
+// plainFilesDefault are the repo files that hold no secrets by
+// construction and are shown in a preview as they are: the v4 root files
+// and the default v3 names. Paths configured on the server (o.paths.Catalog,
+// o.paths.ManagedClusters) are added in isPlainFile.
+var plainFilesDefault = []string{
+	config.AddonCatalogPath,             // v4 catalog.yaml
+	V4ManagedClustersPath,               // v4 managed-clusters.yaml
+	EnginePinPath,                       // v4 sharko-engine.yaml
+	"configuration/addons-catalog.yaml", // v3 default catalog
+	config.DefaultManagedClustersPath,   // v3 default managed-clusters
+	"README.md",                         // the fixed README a v4 repo is seeded with (BuildV4SeedFiles)
+}
+
+// isPlainFile reports whether path (already normalised) is one of the
+// files a preview may show without redaction. Anything else is redacted,
+// so a path this code does not know is never shown in clear.
+func (o *Orchestrator) isPlainFile(path string) bool {
+	if path == "" {
 		return false
 	}
-	// If the relative path starts with "..", the file is outside the directory
-	return !strings.HasPrefix(relPath, "..")
+	for _, f := range plainFilesDefault {
+		if path == f {
+			return true
+		}
+	}
+	for _, f := range []string{o.paths.Catalog, o.paths.ManagedClusters} {
+		if f != "" && path == normalizeRepoPath(f) {
+			return true
+		}
+	}
+	// cluster-addons/<cluster>.yaml: the list of addons turned on per
+	// cluster, no values.
+	if rest, ok := strings.CutPrefix(path, V4ClustersDir+"/"); ok && rest != "" && !strings.Contains(rest, "/") {
+		return true
+	}
+	return false
 }
 
 // sensitiveKeysExact is a case-insensitive set of canonical secret key names.
@@ -517,6 +553,8 @@ var sensitiveKeySuffixes = []string{
 	"_password",
 	"_secret",
 	"_key",
+	"-key",
+	".key",
 }
 
 // jwtRegex matches canonical three-segment JWTs (base64url header.payload.signature).
@@ -527,13 +565,80 @@ var base64BlobRegex = regexp.MustCompile(`^[A-Za-z0-9+/=]+$`)
 
 const base64BlobMinLen = 100
 
-// isSensitiveKey returns true if the key matches a canonical secret name (case-insensitive)
-// or ends with a secret suffix (_token, _password, _secret, _key).
-// Reuses the same heuristic as internal/logging/redact.go for consistency.
+// sensitiveKeyFragments are the words that make a key secret when they
+// appear ANYWHERE in it, once the key is lowercased and "_", "-", "." and
+// spaces are dropped. So "adminPassword", "client-secret", "secretKey",
+// "apiKeyValue" and "db.password" all match. When in doubt this list
+// errs toward hiding a value: a hidden harmless value costs a reader one
+// look at the file, a shown password cannot be taken back.
+//
+// "auth" is on the list on purpose. It also hides harmless values such as
+// "authEnabled: true", but charts very often nest real secrets under an
+// "auth" block (redis auth.password, oauth client settings, basicAuth),
+// and the whole block under a matching key is hidden (see
+// redactYAMLNodeWithKey). The key names themselves stay visible.
+var sensitiveKeyFragments = []string{
+	"password",
+	"passwd",
+	"secret",
+	"token",
+	"apikey",
+	"accesskey",
+	"secretkey",
+	"privatekey",
+	"appkey",
+	"clientkey",
+	"keydata",
+	"credential",
+	"auth",
+	"bearer",
+	"kubeconfig",
+	"certdata",
+	"connectionstring",
+	"dsn",
+}
+
+// normalizeKey lowercases key and drops "_", "-", "." and spaces.
+func normalizeKey(key string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(key) {
+		switch r {
+		case '_', '-', '.', ' ':
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// isSensitiveKey reports whether a values key names something secret.
+// It matches when:
+//   - the key (case-insensitive) is one of sensitiveKeysExact, or ends in
+//     one of sensitiveKeySuffixes (the older rules, kept as they were);
+//   - the key, normalised (normalizeKey), contains any of
+//     sensitiveKeyFragments;
+//   - the key ends in "Key" written in camel case ("sshKey",
+//     "encryptionKey"), or in "-key" / ".key" ("tls.key");
+//   - for a dotted key ("datadog.apiKey", "tls.key"), any one dot part
+//     matches the rules above on its own.
 func isSensitiveKey(key string) bool {
-	if key == "" {
+	if strings.TrimSpace(key) == "" {
 		return false
 	}
+	if isSensitiveKeyPart(key) {
+		return true
+	}
+	if strings.Contains(key, ".") {
+		for _, part := range strings.Split(key, ".") {
+			if part != "" && isSensitiveKeyPart(part) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isSensitiveKeyPart(key string) bool {
 	// Exact match, case-insensitive
 	for _, candidate := range sensitiveKeysExact {
 		if strings.EqualFold(key, candidate) {
@@ -546,6 +651,18 @@ func isSensitiveKey(key string) bool {
 		if strings.HasSuffix(lower, suffix) {
 			return true
 		}
+	}
+	// Fragment match on the normalised key
+	norm := normalizeKey(key)
+	for _, frag := range sensitiveKeyFragments {
+		if strings.Contains(norm, frag) {
+			return true
+		}
+	}
+	// Camel-case "...Key" ("sshKey", "encryptionKey"); a key named just
+	// "Key" or "key" is already caught by the exact list above.
+	if len(key) > 3 && strings.HasSuffix(key, "Key") {
+		return true
 	}
 	return false
 }
@@ -580,6 +697,17 @@ func redactYAMLNode(node *yaml.Node) {
 	redactYAMLNodeWithKey(node, "")
 }
 
+// redactedPlaceholder is the text that replaces a hidden value.
+const redactedPlaceholder = "<redacted>"
+
+// redactWholeValue replaces node, whatever it is (a single value, a map, a
+// list or an alias), with one plain "<redacted>" value. It is used for the
+// value under a secret key: nothing inside it is shown, not even the
+// names of keys inside a map, because those can be secrets too.
+func redactWholeValue(node *yaml.Node) {
+	*node = yaml.Node{Kind: yaml.ScalarNode, Value: redactedPlaceholder}
+}
+
 func redactYAMLNodeWithKey(node *yaml.Node, keyPath string) {
 	if node == nil {
 		return
@@ -603,6 +731,12 @@ func redactYAMLNodeWithKey(node *yaml.Node, keyPath string) {
 			valueNode := node.Content[i+1]
 			// Strip tag from key too
 			keyNode.Tag = ""
+			// The value under a secret key is hidden whole, whatever its
+			// shape: "secret: {value: x}" must not show x.
+			if isSensitiveKey(keyNode.Value) {
+				redactWholeValue(valueNode)
+				continue
+			}
 			// Recurse into value with the key name for context
 			redactYAMLNodeWithKey(valueNode, keyNode.Value)
 		}
@@ -614,7 +748,7 @@ func redactYAMLNodeWithKey(node *yaml.Node, keyPath string) {
 	case yaml.ScalarNode:
 		// Scalar node: decide whether to redact based on key and value
 		if shouldRedactScalar(keyPath, node.Value) {
-			node.Value = "<redacted>"
+			node.Value = redactedPlaceholder
 		}
 		// else: reveal the value in clear (non-secret scalar)
 	case yaml.AliasNode:

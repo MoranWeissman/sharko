@@ -143,7 +143,9 @@ Sharko cannot look in that namespace.
 Create the test namespace yourself before you add the `sharko-test` `Role`
 below. Sharko never deletes a test namespace it did not create, so the
 `Role` stays. If Sharko creates the namespace itself, it deletes it at the
-end of the check, and any `Role` inside it goes with it.
+end of the check, and any `Role` inside it goes with it. If you create the
+test namespace yourself, Sharko needs neither `create` nor `delete` on
+namespaces, so you can leave both out.
 
 ```yaml
 # Across the whole cluster.
@@ -154,7 +156,14 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get", "list", "create", "delete"]   # the connection check and Diagnose
+    # The connection check and Diagnose. Kubernetes cannot limit create
+    # to one namespace name.
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    # Only the test namespace. Put your SHARKO_TEST_NAMESPACE here if you set it.
+    resourceNames: ["sharko-test"]
+    verbs: ["delete"]
 ---
 # One of these for each addon namespace in the catalog.
 apiVersion: rbac.authorization.k8s.io/v1

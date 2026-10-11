@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -188,6 +189,64 @@ func TestStage1_NamespaceAlreadyThere_NotDeletedOnFailure(t *testing.T) {
 		if strings.HasPrefix(w, "delete namespaces") {
 			t.Fatalf("Stage1 deleted a namespace it did not create: %q", writeActions(client))
 		}
+	}
+}
+
+// Two checks at once: our get says the namespace is missing, but the other
+// check creates it before our create lands, so our create gets
+// AlreadyExists. That is not a failure. The check goes on, and since this
+// run did not make the namespace, it never deletes it.
+func TestStage1_NamespaceCreatedByAnotherCheck_PassesAndIsNotDeleted(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "namespaces", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		// The other check got there first.
+		if err := client.Tracker().Add(existingNamespace()); err != nil {
+			t.Errorf("adding the namespace the other check made: %v", err)
+		}
+		return true, nil, apierrors.NewAlreadyExists(corev1.Resource("namespaces"), "sharko-test")
+	})
+
+	result := Stage1(context.Background(), client, "sharko-test")
+	if !result.Success {
+		t.Fatalf("a namespace made by someone else at the same moment must not fail the check, got %s: %s",
+			result.ErrorCode, result.ErrorMessage)
+	}
+	for _, w := range writeActions(client) {
+		if strings.HasPrefix(w, "delete namespaces") {
+			t.Fatalf("Stage1 deleted a namespace another check made: %q", writeActions(client))
+		}
+	}
+	if _, err := client.CoreV1().Namespaces().Get(context.Background(), "sharko-test", metav1.GetOptions{}); err != nil {
+		t.Fatalf("the namespace the other check made must still be there: %v", err)
+	}
+	if got := result.Steps[1]; got.Name != "Ensure namespace" || got.Status != "pass" || got.Detail != "already exists" {
+		t.Errorf("Ensure namespace step = %+v, want pass with %q", got, "already exists")
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("unexpected warnings: %q", result.Warnings)
+	}
+}
+
+// The preview's "Check namespace" detail, pinned by exact text.
+func TestStage1Preview_NamespaceMissingDetail_ExactText(t *testing.T) {
+	const want = "not there yet; the real check creates it and removes it afterwards"
+	if previewNamespaceMissingDetail != want {
+		t.Fatalf("previewNamespaceMissingDetail = %q, want %q", previewNamespaceMissingDetail, want)
+	}
+
+	client := fake.NewSimpleClientset()
+	result := Stage1Preview(context.Background(), client, "sharko-test")
+	var found bool
+	for _, step := range result.Steps {
+		if step.Name == "Check namespace" {
+			found = true
+			if step.Detail != want {
+				t.Errorf("Check namespace detail = %q, want %q", step.Detail, want)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("preview steps have no %q step: %+v", "Check namespace", result.Steps)
 	}
 }
 
