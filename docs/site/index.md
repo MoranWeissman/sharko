@@ -78,6 +78,9 @@ Apart from its own settings, Sharko changes only two things directly, without Gi
 connection for each managed cluster, and the secrets that some addons need. Every change to
 your addons goes to Git first.
 
+You can make changes from the web UI, the command line tool, or the REST API. All three run the
+same steps and open the same kind of pull request. [See the same change made three ways](getting-started/three-doors.md).
+
 New to these words? See the [Glossary](glossary.md).
 
 ## Features
