@@ -2573,6 +2573,12 @@ func classifyBoundaryError(err error) (cause, hint, code string) {
 		return argocd.ErrPermissionDenied.Error(),
 			"grant the token the required permission in ArgoCD, or replace it in Settings → Connections.",
 			string(verify.ERR_RBAC)
+	case errors.Is(err, argocd.ErrArgocdNeedsHTTPS), errors.Is(err, argocd.ErrArgocdRedirectToHTTP):
+		// VF-1: ArgoCD redirected between http and https and Sharko refused
+		// to follow. SafeReadFailure picks Sharko's own sentence by type; for
+		// an http address it names the https address to use instead, built
+		// from the host only (see internal/argocd/unreachable.go).
+		return argocd.SafeReadFailure(err), "", ""
 	case errors.Is(err, gitprovider.ErrFileNotFound):
 		return "the file was not found in the Git repository", "", ""
 	case errors.Is(err, gitprovider.ErrPullRequestNotFound):

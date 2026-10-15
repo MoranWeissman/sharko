@@ -106,16 +106,16 @@ func TestProbeArgoCD_TLSStanceAndNoCredential(t *testing.T) {
 	tlsSrv := httptest.NewTLSServer(tlsTestHandler(&sawAuth))
 	defer tlsSrv.Close()
 
-	if probeArgoCD(tlsSrv.URL, false) {
+	if probeArgoCD(tlsSrv.URL, false) != "" {
 		t.Errorf("probe with insecure=false must refuse a self-signed server")
 	}
-	if !probeArgoCD(tlsSrv.URL, true) {
+	if probeArgoCD(tlsSrv.URL, true) != tlsSrv.URL {
 		t.Errorf("probe with insecure=true (explicit opt-in) must accept the self-signed server")
 	}
 
 	plainSrv := httptest.NewServer(tlsTestHandler(&sawAuth))
 	defer plainSrv.Close()
-	if !probeArgoCD(plainSrv.URL, false) {
+	if probeArgoCD(plainSrv.URL, false) != plainSrv.URL {
 		t.Errorf("probe must succeed against a plain-http ArgoCD without any opt-in")
 	}
 

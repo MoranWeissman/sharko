@@ -89,6 +89,14 @@ const (
 
 	// UnreachableCanceled is the caller giving up mid-call.
 	UnreachableCanceled UnreachableCode = "argocd_canceled"
+
+	// UnreachableNeedsHTTPS is an http:// address that answers by sending
+	// Sharko on to https://. Sharko stops before the token is sent.
+	UnreachableNeedsHTTPS UnreachableCode = "argocd_needs_https"
+
+	// UnreachableRedirectToHTTP is an https:// address that tried to send
+	// Sharko on to plain http. Sharko refuses to follow it.
+	UnreachableRedirectToHTTP UnreachableCode = "argocd_redirect_to_http"
 )
 
 // UnreachableError is what every ArgoCD call returns when the round trip
@@ -106,6 +114,11 @@ type UnreachableError struct {
 	// timeout. It is a bool, not a message, and it exists so this type can
 	// answer net.Error honestly.
 	timedOut bool
+	// httpsAddress is set only for UnreachableNeedsHTTPS, and only when the
+	// redirect went to https on the SAME host name. It is "https://" plus the
+	// host and port — never the user-info, path, query or fragment, which are
+	// the parts an operator's credential can be written into.
+	httpsAddress string
 }
 
 // Error returns one of Sharko's own fixed sentences followed by Sharko's own
@@ -113,10 +126,15 @@ type UnreachableError struct {
 // alike. Nothing here comes from the transport.
 func (e *UnreachableError) Error() string {
 	lead := credsafe.ArgocdReadUnreachableMessage
-	if e.Code == UnreachableTLSUntrusted {
+	switch e.Code {
+	case UnreachableTLSUntrusted:
 		// The certificate case has a fix an operator can act on, and the
 		// sentinel already spells it out. It is Sharko's own constant.
 		lead = ErrTLSCertificateNotTrusted.Error()
+	case UnreachableNeedsHTTPS:
+		lead = (&schemeChangeError{httpsAddress: e.httpsAddress}).Error()
+	case UnreachableRedirectToHTTP:
+		lead = ErrArgocdRedirectToHTTP.Error()
 	}
 	return fmt.Sprintf("%s (code=%s call=%s %s)", lead, e.Code, e.Verb, e.Endpoint)
 }
@@ -128,6 +146,10 @@ func (e *UnreachableError) Is(target error) bool {
 	switch target {
 	case ErrTLSCertificateNotTrusted:
 		return e.Code == UnreachableTLSUntrusted
+	case ErrArgocdNeedsHTTPS:
+		return e.Code == UnreachableNeedsHTTPS
+	case ErrArgocdRedirectToHTTP:
+		return e.Code == UnreachableRedirectToHTTP
 	case context.DeadlineExceeded:
 		return e.Code == UnreachableTimedOut
 	case context.Canceled:
@@ -154,6 +176,10 @@ func unreachableCode(cause error) (UnreachableCode, bool) {
 	switch {
 	case errors.Is(cause, ErrTLSCertificateNotTrusted):
 		return UnreachableTLSUntrusted, timedOut
+	case errors.Is(cause, ErrArgocdNeedsHTTPS):
+		return UnreachableNeedsHTTPS, timedOut
+	case errors.Is(cause, ErrArgocdRedirectToHTTP):
+		return UnreachableRedirectToHTTP, timedOut
 	case errors.Is(cause, context.Canceled):
 		return UnreachableCanceled, timedOut
 	case errors.Is(cause, context.DeadlineExceeded):
@@ -173,12 +199,19 @@ func unreachableCode(cause error) (UnreachableCode, bool) {
 func unreachableCallError(verb, path string, cause error) error {
 	slog.Error("argocd call got no answer", "verb", verb, "endpoint", path, "error", cause)
 	code, timedOut := unreachableCode(cause)
-	return &UnreachableError{
+	out := &UnreachableError{
 		Verb:     verb,
 		Endpoint: path,
 		Code:     code,
 		timedOut: timedOut,
 	}
+	if code == UnreachableNeedsHTTPS {
+		var sc *schemeChangeError
+		if errors.As(cause, &sc) {
+			out.httpsAddress = sc.httpsAddress
+		}
+	}
+	return out
 }
 
 // SafeReadFailure is the sentence a boundary may show a person for a failed

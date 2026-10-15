@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
 func TestTerminateOperation_Success(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			t.Errorf("expected DELETE, got %s", r.Method)
 		}
@@ -33,7 +32,7 @@ func TestTerminateOperation_Success(t *testing.T) {
 }
 
 func TestTerminateOperation_Non200ReturnsError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"message":"permission denied"}`))
 	}))
@@ -55,7 +54,7 @@ func TestTerminateOperation_Non200ReturnsError(t *testing.T) {
 }
 
 func TestSyncApplication_Success(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -81,7 +80,7 @@ func TestSyncApplication_Success(t *testing.T) {
 }
 
 func TestSyncApplication_Non200ReturnsError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"message":"permission denied"}`))
 	}))
@@ -95,7 +94,7 @@ func TestSyncApplication_Non200ReturnsError(t *testing.T) {
 }
 
 func TestRefreshApplication_Hard(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -134,7 +133,7 @@ func TestRefreshApplication_Hard(t *testing.T) {
 }
 
 func TestRefreshApplication_Normal(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("refresh") != "true" {
 			t.Errorf("expected refresh=true, got %q", r.URL.Query().Get("refresh"))
 		}
@@ -161,7 +160,7 @@ func TestRefreshApplication_Normal(t *testing.T) {
 }
 
 func TestDeleteCluster_SendsContentTypeHeader(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			t.Errorf("expected DELETE, got %s", r.Method)
 		}
@@ -184,7 +183,7 @@ func TestDeleteCluster_SendsContentTypeHeader(t *testing.T) {
 }
 
 func TestUpdateClusterLabels_SendsContentTypeHeader(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			// Respond with a minimal cluster JSON for the GET step.
@@ -214,7 +213,7 @@ func TestUpdateClusterLabels_SendsContentTypeHeader(t *testing.T) {
 }
 
 func TestDeleteCluster_PropagatesServer415(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnsupportedMediaType)
 		_, _ = w.Write([]byte(`{"message":"Invalid content type"}`))
 	}))
@@ -263,7 +262,7 @@ func TestEscapeServerURL(t *testing.T) {
 // ArgoCD's gRPC-gateway requires this; url.PathEscape leaves ':' unescaped.
 func TestDeleteCluster_EncodesColonsInServerURL(t *testing.T) {
 	serverURL := "https://172.18.0.3:6443"
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// r.URL.RawPath carries the percent-encoded form as sent on the wire;
 		// r.URL.Path is already decoded by net/http.
 		rawPath := r.URL.RawPath
@@ -294,7 +293,7 @@ func TestUpdateClusterLabels_EncodesColonsInServerURL(t *testing.T) {
 	serverURL := "https://172.18.0.3:6443"
 	var getPathSeen, putPathSeen string
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := newPlainArgoTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawPath := r.URL.RawPath
 		if rawPath == "" {
 			rawPath = r.URL.Path
