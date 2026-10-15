@@ -1390,14 +1390,14 @@ export function ClustersOverview() {
 
       {/* Add Cluster Dialog */}
       <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh]">
           <DialogHeader>
             <DialogTitle>Register New Cluster</DialogTitle>
             <DialogDescription>
               Connection details and cluster location.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 min-h-0 overflow-y-auto">
             {/* Layer 1 — Identity (V2-cleanup-88.5, shrunk to one line by
               * V2-cleanup-89.2). Purely informational: tells the user what
               * Sharko already knows about its own AWS identity instead of

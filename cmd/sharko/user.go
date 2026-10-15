@@ -67,6 +67,7 @@ var userListCmd = &cobra.Command{
 var userCreateCmd = &cobra.Command{
 	Use:   "create <username>",
 	Short: "Create a new user",
+	Long:  "Create a new user. A user name can use letters, numbers, dots, dashes and underscores, with no spaces.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		username := args[0]

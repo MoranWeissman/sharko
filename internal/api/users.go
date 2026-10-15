@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
@@ -62,6 +64,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	tempPassword, err := s.authStore.CreateUser(req.Username, req.Role)
 	if err != nil {
+		// Check if it's the invalid username error and return it verbatim
+		if strings.Contains(err.Error(), auth.ErrInvalidUsername) {
+			writeError(w, http.StatusBadRequest, auth.ErrInvalidUsername)
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

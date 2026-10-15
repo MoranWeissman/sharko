@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -72,6 +73,15 @@ const (
 	ModeK8s   Mode = "k8s"
 	ModeLocal Mode = "local"
 )
+
+// usernamePattern defines valid characters for usernames. Must start with
+// alphanumeric, then 0-62 more chars from [A-Za-z0-9._-]. No spaces allowed.
+// This ensures compatibility with Kubernetes Secret keys (username.password).
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// ErrInvalidUsername is the exact error message returned when a username
+// contains invalid characters (e.g., spaces). UI and CLI display this verbatim.
+const ErrInvalidUsername = "A user name can use letters, numbers, dots, dashes and underscores, with no spaces."
 
 // UserAccount represents a user account from the ConfigMap.
 type UserAccount struct {
@@ -288,6 +298,9 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 	if username == "" {
 		return "", fmt.Errorf("username is required")
 	}
+	if !usernamePattern.MatchString(username) {
+		return "", fmt.Errorf(ErrInvalidUsername)
+	}
 	if role == "" {
 		role = "viewer"
 	}
@@ -327,8 +340,9 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 		if cm.Data == nil {
 			cm.Data = make(map[string]string)
 		}
-		if existing, ok := cm.Data["accounts"]; ok {
-			yaml.Unmarshal([]byte(existing), &accounts)
+		oldAccountsData := cm.Data["accounts"]
+		if oldAccountsData != "" {
+			yaml.Unmarshal([]byte(oldAccountsData), &accounts)
 		}
 		accounts[username] = struct {
 			Enabled bool   `yaml:"enabled"`
@@ -344,6 +358,9 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 		// Update Secret with password hash
 		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
 		if err != nil {
+			// Rollback ConfigMap change
+			cm.Data["accounts"] = oldAccountsData
+			s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
 			return "", fmt.Errorf("reading Secret: %w", err)
 		}
 		if secret.Data == nil {
@@ -351,6 +368,9 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 		}
 		secret.Data[username+".password"] = hash
 		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			// Rollback ConfigMap change
+			cm.Data["accounts"] = oldAccountsData
+			s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
 			return "", fmt.Errorf("updating Secret: %w", err)
 		}
 	}
