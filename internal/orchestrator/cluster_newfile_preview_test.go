@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -79,9 +80,9 @@ func TestRegisterCluster_NewFilePreview(t *testing.T) {
 		t.Fatalf("no diff header found in preview.Diff:\n%s", preview.Diff)
 	}
 
-	// Check exact format: @@ -0,0 +1,N @@
-	if !strings.HasPrefix(headerLine, "@@ -0,0 +1,") {
-		t.Errorf("expected diff header '@@ -0,0 +1,N @@' for new file, got: %s", headerLine)
+	// Check the exact header: @@ -0,0 +1,N @@, N = number of added lines.
+	if want := newFileHunkHeader(t, preview.Diff); headerLine != want {
+		t.Errorf("expected diff header %q for new file, got: %q", want, headerLine)
 	}
 
 	// Ensure the old wrong header is NOT present
@@ -90,7 +91,7 @@ func TestRegisterCluster_NewFilePreview(t *testing.T) {
 	}
 
 	// Verify that all content lines are additions (start with +)
-	for i, line := range lines[1:] { // Skip header line
+	for i, line := range lines[1:] { // the first line is the header
 		if line == "" {
 			continue
 		}
@@ -100,89 +101,139 @@ func TestRegisterCluster_NewFilePreview(t *testing.T) {
 	}
 }
 
-// TestUpdateClusterAddons_NewFilePreview verifies that when updating cluster
-// addons creates a new managed-clusters.yaml file, the preview shows the correct
-// diff header for a new file. This test was added for VF-7.
+// newFileHunkHeader counts the added lines in a unified diff and returns the
+// one header a brand-new file must have: "@@ -0,0 +1,N @@". It fails the test
+// if the diff has fewer than two added lines, because GNU diff writes a
+// one-line hunk as "+1" with no count and this helper does not cover that.
+func newFileHunkHeader(t *testing.T, diff string) string {
+	t.Helper()
+	added := 0
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			added++
+		}
+	}
+	if added < 2 {
+		t.Fatalf("expected at least two added lines in the diff, got %d:\n%s", added, diff)
+	}
+	return fmt.Sprintf("@@ -0,0 +1,%d @@", added)
+}
+
+// findPreview returns the preview for path, or nil.
+func findPreview(previews []FilePreview, path string) *FilePreview {
+	for i := range previews {
+		if previews[i].Path == path {
+			return &previews[i]
+		}
+	}
+	return nil
+}
+
+// firstHunkHeader returns the first "@@" line of a diff.
+func firstHunkHeader(t *testing.T, diff string) string {
+	t.Helper()
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "@@") {
+			return line
+		}
+	}
+	t.Fatalf("no diff header found in:\n%s", diff)
+	return ""
+}
+
+// TestUpdateClusterAddons_NewFilePreview covers the brand-new-file preview in
+// UpdateClusterAddons (VF-7). The cluster has no values file yet and the repo
+// has no managed-clusters.yaml. The catalog is the default test catalog, so
+// the addon is known and the call really reaches the preview.
+//
+// What must be true:
+//   - the values file is shown as "create" with exactly "@@ -0,0 +1,N @@",
+//     and every line in it is an added line;
+//   - managed-clusters.yaml is NOT shown at all. UpdateClusterAddons never
+//     creates that file (the real run stops with "not registered"), so a
+//     "create" preview for it would show a change that can never happen.
 func TestUpdateClusterAddons_NewFilePreview(t *testing.T) {
-	git := &mockGitProvider{
-		files: map[string][]byte{
-			// No managed-clusters.yaml present
-			// But the cluster values file exists
-			"configuration/addons-clusters-values/test-cluster.yaml": []byte("# existing values\n"),
-			// Addon catalog needed by UpdateClusterAddons
-			"configuration/addons-catalog.yaml": []byte("addons:\n  - name: nginx\n    versions:\n      - version: 1.0.0\n"),
-		},
+	git := newMockGitProvider() // seeds configuration/addons-catalog.yaml (has keda)
+	if _, ok := git.files["configuration/addons-catalog.yaml"]; !ok {
+		t.Fatal("test setup: the mock has no addon catalog")
 	}
-	argocd := &mockArgocd{
-		registeredClusters: make(map[string]string),
-	}
+	o := setupUpdateClusterAddonsOrch(git)
 
-	o := &Orchestrator{
-		git:    git,
-		argocd: argocd,
-		gitops: GitOpsConfig{
-			BaseBranch: "main",
-		},
-		paths: RepoPathsConfig{
-			ManagedClusters: "configuration/managed-clusters.yaml",
-			ClusterValues:   "configuration/addons-clusters-values",
-		},
-	}
-
-	result, err := o.UpdateClusterAddons(
-		context.Background(),
-		"test-cluster",
-		"https://kubernetes.default.svc",
-		"us-east-1",
-		map[string]bool{"nginx": true},
-		nil, // autoMergeOverride
-		true, // dry-run
-	)
+	result, err := o.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "us-east-1",
+		map[string]bool{"keda": true}, nil, true)
 	if err != nil {
-		// UpdateClusterAddons needs catalog file - skip if not available
-		t.Skipf("UpdateClusterAddons requires catalog: %v", err)
+		t.Fatalf("UpdateClusterAddons dry-run failed: %v", err)
 	}
-
-	// Find the managed-clusters preview
 	if result.DryRun == nil {
-		t.Fatal("expected DryRun result, got nil")
+		t.Fatalf("expected a dry-run result, got status %q error %q", result.Status, result.Error)
 	}
 
-	var preview *FilePreview
-	for i := range result.DryRun.FilesToWrite {
-		if result.DryRun.FilesToWrite[i].Path == "configuration/managed-clusters.yaml" {
-			preview = &result.DryRun.FilesToWrite[i]
-			break
+	valuesPath := "configuration/addons-clusters-values/test.yaml"
+	values := findPreview(result.DryRun.FilesToWrite, valuesPath)
+	if values == nil {
+		t.Fatalf("no preview for %s; got %+v", valuesPath, result.DryRun.FilesToWrite)
+	}
+	if values.Action != "create" {
+		t.Errorf("values file: expected action \"create\", got %q", values.Action)
+	}
+	if got, want := firstHunkHeader(t, values.Diff), newFileHunkHeader(t, values.Diff); got != want {
+		t.Errorf("values file: expected diff header %q, got %q\n%s", want, got, values.Diff)
+	}
+	for i, line := range strings.Split(values.Diff, "\n") {
+		if line == "" || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "@@") {
+			continue
+		}
+		if !strings.HasPrefix(line, "+") {
+			t.Errorf("values file line %d: a new file can only have added lines, got %q", i+1, line)
 		}
 	}
-	if preview == nil {
-		// It's OK if there's no preview for managed-clusters in UpdateClusterAddons
-		// when only addons are changing - the test passes either way
-		t.Skip("no managed-clusters.yaml preview in UpdateClusterAddons result")
+
+	if mc := findPreview(result.DryRun.FilesToWrite, "configuration/managed-clusters.yaml"); mc != nil {
+		t.Errorf("managed-clusters.yaml must not be previewed when it does not exist (the real run never creates it); got action %q:\n%s", mc.Action, mc.Diff)
+	}
+}
+
+// TestUpdateClusterAddons_ExistingManagedClustersPreview is the other half:
+// when managed-clusters.yaml exists, its preview says "update" and its diff
+// starts from the real old file, not from an empty one.
+func TestUpdateClusterAddons_ExistingManagedClustersPreview(t *testing.T) {
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte(managedClustersWithKedaEnabled)
+	git.files["configuration/addons-clusters-values/test.yaml"] = []byte("clusterGlobalValues:\n")
+	o := setupUpdateClusterAddonsOrch(git)
+
+	result, err := o.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "",
+		map[string]bool{"keda": false}, nil, true)
+	if err != nil {
+		t.Fatalf("UpdateClusterAddons dry-run failed: %v", err)
+	}
+	if result.DryRun == nil {
+		t.Fatalf("expected a dry-run result, got status %q error %q", result.Status, result.Error)
 	}
 
-	// Verify action is "create" (not hardcoded "update")
-	if preview.Action != "create" && preview.Action != "update" {
-		t.Errorf("expected action=create or update for file, got %q", preview.Action)
+	mc := findPreview(result.DryRun.FilesToWrite, "configuration/managed-clusters.yaml")
+	if mc == nil {
+		t.Fatalf("no managed-clusters.yaml preview; got %+v", result.DryRun.FilesToWrite)
 	}
-
-	if preview.Action == "create" {
-		// Verify diff header shows @@ -0,0 +1,N @@ for a new file
-		lines := strings.Split(preview.Diff, "\n")
-		var headerLine string
-		for _, line := range lines {
-			if strings.HasPrefix(line, "@@") {
-				headerLine = line
-				break
-			}
+	if mc.Action != "update" {
+		t.Errorf("expected action \"update\" for an existing file, got %q", mc.Action)
+	}
+	header := firstHunkHeader(t, mc.Diff)
+	if strings.HasPrefix(header, "@@ -0,0 ") {
+		t.Errorf("an existing file must not get a new-file header, got %q", header)
+	}
+	// The old file's lines must show up as removed or kept, which only
+	// happens when the diff starts from the real old file.
+	var removedOld, addedDisabled bool
+	for _, line := range strings.Split(mc.Diff, "\n") {
+		if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") && strings.TrimSpace(strings.TrimPrefix(line, "-")) == "keda: enabled" {
+			removedOld = true
 		}
-		if headerLine == "" {
-			t.Fatalf("no diff header found in preview.Diff:\n%s", preview.Diff)
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") && strings.TrimSpace(strings.TrimPrefix(line, "+")) == "keda: disabled" {
+			addedDisabled = true
 		}
-
-		// Check exact format: @@ -0,0 +1,N @@
-		if !strings.HasPrefix(headerLine, "@@ -0,0 +1,") {
-			t.Errorf("expected diff header '@@ -0,0 +1,N @@' for new file, got: %s", headerLine)
-		}
+	}
+	if !removedOld || !addedDisabled {
+		t.Errorf("expected the diff to remove an old \"keda: enabled\" line and add \"keda: disabled\":\n%s", mc.Diff)
 	}
 }
