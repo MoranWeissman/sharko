@@ -61,9 +61,12 @@ This step creates the starting layout in your Git repo — nothing more:
 
 Sharko shows you a step-by-step progress log as it creates each file and opens the PR.
 
-**Auto-merge:** Toggle this on if you want Sharko to merge the PR immediately after creating it. Toggle it off if you want to review the PR yourself in GitHub or Azure DevOps first.
+You have two choices for how the PR is merged:
 
-Click **Initialize** and watch the progress. When the step completes, you move to the Catalog step.
+- **Set Up & Auto-Merge** — Sharko opens the PR and merges it immediately. The setup completes without you needing to visit GitHub or Azure DevOps.
+- **Set Up (Manual PR Review)** — Sharko opens the PR but does not merge it. You review and merge it yourself in GitHub or Azure DevOps.
+
+Click the button that matches how you want to work. When the step completes, you move to the Catalog step.
 
 ## Step 5: Catalog
 
