@@ -275,7 +275,7 @@ Each line does one thing:
 
 - **repositories create and update** — first-run setup adds your Git repository to ArgoCD so it can read the files Sharko writes there
 - **applications create in default/\*** — first-run setup creates the bootstrap Application that deploys the Sharko engine chart
-- **clusters update and delete** — registering a cluster writes labels to the ArgoCD cluster secret; removing a cluster deletes it
+- **clusters update and delete** — when you change which addons a cluster has, or remove a cluster, Sharko changes the labels on its ArgoCD cluster secret; removing a cluster also deletes it
 - **role:readonly** — reads applications, clusters, application sets and projects
 - The last two lines connect the account name `sharko` to the role
 

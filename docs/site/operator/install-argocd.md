@@ -30,7 +30,7 @@ helm install argocd argo/argo-cd \
   --set configs.params."server\.insecure"=true
 ```
 
-With `server.insecure` set to true, ArgoCD serves plain http on port 80. This avoids certificate errors when connecting to ArgoCD from inside the cluster. For production, either give ArgoCD a trusted certificate, or tick "Skip TLS certificate verification" in the Sharko wizard only on a test setup.
+With `server.insecure` set to true, ArgoCD serves plain http on port 80. This avoids certificate errors when connecting to ArgoCD from inside the cluster. For production, give ArgoCD a trusted certificate. The "Skip TLS certificate verification" box in the Sharko wizard turns off the certificate check, so tick it only on a test setup, never in production.
 
 The chart has its own version number, separate from the ArgoCD version. To see which chart version installs which ArgoCD version, run `helm search repo argo/argo-cd --versions` and read the **APP VERSION** column.
 
