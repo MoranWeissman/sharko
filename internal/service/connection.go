@@ -34,6 +34,13 @@ import (
 // their own classification path (writeUpstreamError).
 var ErrValidation = errors.New("validation failed")
 
+// ErrArgocdNotTested is returned by TestCredentials as the ArgoCD result when
+// the ArgoCD test never ran — today, because the Git repository address could
+// not be read, and the test stops before it reaches ArgoCD. It used to come
+// back as a nil ArgoCD error, which the handler turned into "ok": a green
+// "Connected" for an ArgoCD nobody had asked.
+var ErrArgocdNotTested = errors.New("the ArgoCD connection was not tested")
+
 // validationError is a message-only error that errors.Is-matches
 // ErrValidation without literally embedding ErrValidation's own text
 // ("validation failed") in the rendered message.
@@ -715,7 +722,9 @@ type AuthInfo struct {
 func (s *ConnectionService) TestCredentials(ctx context.Context, conn *models.Connection) (gitErr, argocdErr error, auth AuthInfo) {
 	// Parse repo URL if provided
 	if err := conn.Git.ParseRepoURL(); err != nil {
-		return err, nil, auth
+		// ArgoCD was never asked. Say so, rather than leave its result nil
+		// (which reads as "ok").
+		return err, ErrArgocdNotTested, auth
 	}
 
 	// Track git auth source
