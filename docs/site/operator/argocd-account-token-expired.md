@@ -121,8 +121,8 @@ data:
 
 Then give it the permissions Sharko needs in `argocd-rbac-cm`. Installing
 Sharko does not change that ConfigMap for you. See
-[What Sharko needs from ArgoCD](security.md#what-sharko-needs-from-argocd)
-for the list.
+[Smallest ArgoCD policy for Sharko](security.md#smallest-argocd-policy-for-sharko)
+for the exact policy and how to apply it.
 
 Make the token:
 

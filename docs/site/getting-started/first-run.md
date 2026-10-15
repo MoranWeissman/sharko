@@ -42,7 +42,7 @@ Sharko reads cluster health, sync status, and resource trees from ArgoCD.
     ```bash
     argocd account generate-token --account sharko
     ```
-    Create a dedicated `sharko` account with read permissions. Do not use the admin token.
+    Create a dedicated `sharko` account. The account reads cluster and application status, and also writes a few things during repository setup and cluster registration (creates the repository connection, updates cluster labels). See [ArgoCD RBAC policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko) for the exact policy. Do not use the admin token.
 
 **Secrets Provider (optional, same step):** If you use AWS Secrets Manager or Kubernetes Secrets to store cluster kubeconfigs, configure the provider here:
 
