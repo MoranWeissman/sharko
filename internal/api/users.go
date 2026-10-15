@@ -2,9 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
@@ -64,9 +64,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	tempPassword, err := s.authStore.CreateUser(req.Username, req.Role)
 	if err != nil {
-		// Check if it's the invalid username error and return it verbatim
-		if strings.Contains(err.Error(), auth.ErrInvalidUsername) {
-			writeError(w, http.StatusBadRequest, auth.ErrInvalidUsername)
+		// A bad user name gets the one plain sentence, exactly.
+		if errors.Is(err, auth.ErrInvalidUsername) {
+			writeError(w, http.StatusBadRequest, auth.InvalidUsernameSentence)
 			return
 		}
 		writeError(w, http.StatusBadRequest, err.Error())

@@ -82,19 +82,19 @@ func TestUsernameValidation_TableDriven(t *testing.T) {
 			name:      "invalid - contains space",
 			username:  "john doe",
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 		{
 			name:      "invalid - contains multiple spaces",
 			username:  "dana operator",
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 		{
 			name:      "invalid - contains slash",
 			username:  "john/doe",
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 		{
 			name:      "invalid - empty string",
@@ -106,7 +106,7 @@ func TestUsernameValidation_TableDriven(t *testing.T) {
 			name:      "invalid - too long (over 63 chars)",
 			username:  strings.Repeat("a", 64),
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 		{
 			name:      "valid - exactly 63 chars",
@@ -117,19 +117,19 @@ func TestUsernameValidation_TableDriven(t *testing.T) {
 			name:      "invalid - starts with dot",
 			username:  ".john",
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 		{
 			name:      "invalid - starts with dash",
 			username:  "-john",
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 		{
 			name:      "invalid - contains special chars",
 			username:  "john@example.com",
 			wantError: true,
-			errorMsg:  ErrInvalidUsername,
+			errorMsg:  InvalidUsernameSentence,
 		},
 	}
 
@@ -157,8 +157,8 @@ func TestUsernameValidation_TableDriven(t *testing.T) {
 func TestExactErrorMessage(t *testing.T) {
 	const expectedMessage = "A user name can use letters, numbers, dots, dashes and underscores, with no spaces."
 
-	if ErrInvalidUsername != expectedMessage {
-		t.Errorf("ErrInvalidUsername constant mismatch.\nExpected: %q\nGot:      %q", expectedMessage, ErrInvalidUsername)
+	if InvalidUsernameSentence != expectedMessage {
+		t.Errorf("InvalidUsernameSentence constant mismatch.\nExpected: %q\nGot:      %q", expectedMessage, InvalidUsernameSentence)
 	}
 
 	// Also test that CreateUser returns this exact message

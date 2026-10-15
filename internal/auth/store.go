@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	cryptoRand "crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 )
 
 // Aliases to keep the bootstrap-secret helpers readable while letting
@@ -79,9 +81,15 @@ const (
 // This ensures compatibility with Kubernetes Secret keys (username.password).
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 
-// ErrInvalidUsername is the exact error message returned when a username
-// contains invalid characters (e.g., spaces). UI and CLI display this verbatim.
-const ErrInvalidUsername = "A user name can use letters, numbers, dots, dashes and underscores, with no spaces."
+// InvalidUsernameSentence is the exact sentence shown when a user name
+// breaks the rule in usernamePattern. The API sends it as the 400 message.
+// The UI helper text (ui/src/views/UserManagement.tsx) and the CLI help
+// (cmd/sharko/user.go) carry the same words; tests tie both to this const.
+const InvalidUsernameSentence = "A user name can use letters, numbers, dots, dashes and underscores, with no spaces."
+
+// ErrInvalidUsername is returned by CreateUser when the user name breaks the
+// rule. Callers spot it with errors.Is, never by reading the error text.
+var ErrInvalidUsername = errors.New(InvalidUsernameSentence)
 
 // UserAccount represents a user account from the ConfigMap.
 type UserAccount struct {
@@ -299,7 +307,7 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 		return "", fmt.Errorf("username is required")
 	}
 	if !usernamePattern.MatchString(username) {
-		return "", fmt.Errorf(ErrInvalidUsername)
+		return "", ErrInvalidUsername
 	}
 	if role == "" {
 		role = "viewer"
@@ -324,54 +332,8 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 	}
 
 	if s.mode == ModeK8s {
-		ctx := context.Background()
-
-		// Update ConfigMap with new user
-		cmName := s.secretName + "-users"
-		cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
-		if err != nil {
-			return "", fmt.Errorf("reading ConfigMap: %w", err)
-		}
-
-		accounts := make(map[string]struct {
-			Enabled bool   `yaml:"enabled"`
-			Role    string `yaml:"role"`
-		})
-		if cm.Data == nil {
-			cm.Data = make(map[string]string)
-		}
-		oldAccountsData := cm.Data["accounts"]
-		if oldAccountsData != "" {
-			yaml.Unmarshal([]byte(oldAccountsData), &accounts)
-		}
-		accounts[username] = struct {
-			Enabled bool   `yaml:"enabled"`
-			Role    string `yaml:"role"`
-		}{Enabled: true, Role: role}
-
-		data, _ := yaml.Marshal(accounts)
-		cm.Data["accounts"] = string(data)
-		if _, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
-			return "", fmt.Errorf("updating ConfigMap: %w", err)
-		}
-
-		// Update Secret with password hash
-		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
-		if err != nil {
-			// Rollback ConfigMap change
-			cm.Data["accounts"] = oldAccountsData
-			s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
-			return "", fmt.Errorf("reading Secret: %w", err)
-		}
-		if secret.Data == nil {
-			secret.Data = make(map[string][]byte)
-		}
-		secret.Data[username+".password"] = hash
-		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
-			// Rollback ConfigMap change
-			cm.Data["accounts"] = oldAccountsData
-			s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
-			return "", fmt.Errorf("updating Secret: %w", err)
+		if err := s.createUserK8s(username, role, hash); err != nil {
+			return "", err
 		}
 	}
 
@@ -383,6 +345,159 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 
 	slog.Info("user created", "username", username, "role", role)
 	return tempPass, nil
+}
+
+// usersAccount is the shape of one entry in the users ConfigMap.
+type usersAccount struct {
+	Enabled bool   `yaml:"enabled"`
+	Role    string `yaml:"role"`
+}
+
+// createUserK8s saves a new user in Kubernetes in two writes.
+//
+// The order matters. The password goes into the auth Secret FIRST. A password
+// entry with no matching user entry is harmless: nobody can log in with it,
+// because a login needs the user entry too (see ValidateCredentials). Only
+// then is the user entry added to the users ConfigMap. So if the first write
+// fails, nothing was saved at all. If the second write fails, the password
+// entry is taken back out again.
+//
+// Every write reads the object fresh and retries on a conflict
+// (retry.RetryOnConflict). A real API server refuses an update that carries
+// an old resourceVersion, so an undo that re-sends an object read earlier
+// would be refused and leave the half-made user behind.
+//
+// No error returned from here holds the password or its hash.
+func (s *Store) createUserK8s(username, role string, hash []byte) error {
+	ctx := context.Background()
+	cmName := s.secretName + "-users"
+	cms := s.clientset.CoreV1().ConfigMaps(s.namespace)
+	secrets := s.clientset.CoreV1().Secrets(s.namespace)
+	passKey := username + ".password"
+
+	// Look before writing anything: if the user is already in the ConfigMap
+	// (for example our in-memory copy is behind), stop before the password
+	// write could replace that user's real password.
+	cm, err := cms.Get(ctx, cmName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("reading ConfigMap: %w", err)
+	}
+	if accountsHasUser(cm.Data["accounts"], username) {
+		return fmt.Errorf("user %q already exists", username)
+	}
+
+	// Write 1: the password, into the Secret.
+	var (
+		hadOldPass bool
+		oldPass    []byte
+		stage      string
+	)
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		stage = "reading Secret"
+		secret, err := secrets.Get(ctx, s.secretName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if secret.Data == nil {
+			secret.Data = make(map[string][]byte)
+		}
+		oldPass, hadOldPass = secret.Data[passKey]
+		secret.Data[passKey] = hash
+		stage = "updating Secret"
+		_, err = secrets.Update(ctx, secret, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", stage, err)
+	}
+
+	// Write 2: the user entry, into the ConfigMap.
+	var errExists = fmt.Errorf("user %q already exists", username)
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		stage = "reading ConfigMap"
+		cm, err := cms.Get(ctx, cmName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		accounts := make(map[string]usersAccount)
+		if existing := cm.Data["accounts"]; existing != "" {
+			if err := yaml.Unmarshal([]byte(existing), &accounts); err != nil {
+				stage = "reading the user list in the ConfigMap"
+				return err
+			}
+		}
+		if _, ok := accounts[username]; ok {
+			stage = ""
+			return errExists
+		}
+		accounts[username] = usersAccount{Enabled: true, Role: role}
+		data, err := yaml.Marshal(accounts)
+		if err != nil {
+			stage = "writing the user list"
+			return err
+		}
+		cm.Data["accounts"] = string(data)
+		stage = "updating ConfigMap"
+		_, err = cms.Update(ctx, cm, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		firstErr := err
+		if stage != "" {
+			firstErr = fmt.Errorf("%s: %w", stage, err)
+		}
+		if undoErr := s.undoPasswordSave(ctx, passKey, hash, hadOldPass, oldPass); undoErr != nil {
+			return errors.Join(firstErr, fmt.Errorf(
+				"could not take the password entry for user %q back out of the Secret, so it is still there with no user to go with it: %w",
+				username, undoErr))
+		}
+		return firstErr
+	}
+	return nil
+}
+
+// undoPasswordSave takes back the password entry createUserK8s wrote. It
+// reads the Secret fresh on every try. If the entry no longer holds the hash
+// we wrote, someone else changed it since, and it is left alone.
+func (s *Store) undoPasswordSave(ctx context.Context, passKey string, ours []byte, hadOld bool, old []byte) error {
+	secrets := s.clientset.CoreV1().Secrets(s.namespace)
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		secret, err := secrets.Get(ctx, s.secretName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		current, ok := secret.Data[passKey]
+		if !ok || string(current) != string(ours) {
+			return nil
+		}
+		if hadOld {
+			secret.Data[passKey] = old
+		} else {
+			delete(secret.Data, passKey)
+		}
+		_, err = secrets.Update(ctx, secret, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+// accountsHasUser reports whether the accounts YAML from the users ConfigMap
+// has an entry for username.
+func accountsHasUser(accountsYAML, username string) bool {
+	if accountsYAML == "" {
+		return false
+	}
+	accounts := make(map[string]usersAccount)
+	if err := yaml.Unmarshal([]byte(accountsYAML), &accounts); err != nil {
+		return false
+	}
+	_, ok := accounts[username]
+	return ok
 }
 
 // UpdateUser updates a user's role and enabled status.

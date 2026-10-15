@@ -54,13 +54,13 @@ func TestHandleCreateUser_InvalidUsername(t *testing.T) {
 			name:         "username with space",
 			username:     "john doe",
 			expectedCode: http.StatusBadRequest,
-			expectedMsg:  auth.ErrInvalidUsername,
+			expectedMsg:  auth.InvalidUsernameSentence,
 		},
 		{
 			name:         "username with slash",
 			username:     "john/doe",
 			expectedCode: http.StatusBadRequest,
-			expectedMsg:  auth.ErrInvalidUsername,
+			expectedMsg:  auth.InvalidUsernameSentence,
 		},
 		{
 			name:         "empty username",
@@ -72,7 +72,7 @@ func TestHandleCreateUser_InvalidUsername(t *testing.T) {
 			name:         "too long username",
 			username:     strings.Repeat("a", 64),
 			expectedCode: http.StatusBadRequest,
-			expectedMsg:  auth.ErrInvalidUsername,
+			expectedMsg:  auth.InvalidUsernameSentence,
 		},
 		{
 			name:         "valid username",
