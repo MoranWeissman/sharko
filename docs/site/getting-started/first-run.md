@@ -46,8 +46,8 @@ Sharko reads cluster health, sync status, and resource trees from ArgoCD.
 
 **Secrets Provider (optional, same step):** If you use AWS Secrets Manager or Kubernetes Secrets to store cluster kubeconfigs, configure the provider here:
 
-- **AWS Secrets Manager** — select `aws-sm` and enter the AWS region. Sharko uses IRSA for auth (configure the IRSA annotation at Helm install time — see [Installation](installation.md#aws-secrets-manager-optional)).
-- **Kubernetes Secrets** — select `k8s-secrets` and enter the namespace where cluster secrets live.
+- **AWS Secrets Manager** — select `aws-sm` and enter the AWS region. The optional **Prefix** field lets you add a prefix to the cluster name when looking up secrets (for example, with prefix `k8s-`, Sharko looks for a secret named `k8s-prod-eu` when registering cluster `prod-eu`). Sharko uses IRSA for auth (configure the IRSA annotation at Helm install time — see [Installation](installation.md#aws-secrets-manager-optional)).
+- **Kubernetes Secrets** — select `k8s-secrets` and enter the namespace where cluster secrets live. The optional **Prefix** field works the same way as for AWS Secrets Manager.
 
 You can skip this and configure the secrets provider later in **Settings → Secrets Provider**.
 
