@@ -245,6 +245,34 @@ const gitPermissionRefusal = "The Git server accepted the credentials but denied
 // timeframe.
 const gitPermissionNextStep = "Grant the token permission for this repository on your Git host, or replace it in Settings → Connections."
 
+// argocdCertificateNotTrusted is the whole sentence for an ArgoCD connection
+// test that failed on the certificate (VF-1, video finding V2).
+//
+// WHY IT IS A WHOLE SENTENCE AND NOT A HINT. The generic TLS variant reads
+// "Sharko can't reach ArgoCD — a certificate error occurred while connecting.
+// Check the server's TLS configuration." That is wrong on both halves for the
+// most common case, a default ArgoCD install: Sharko DID reach ArgoCD, and
+// "check the TLS configuration" does not say what to do. A default ArgoCD has
+// TLS on with a certificate it signed itself, and the operator has exactly
+// three honest ways forward, so the sentence names all three in the user's
+// words. Verification is never turned off for them.
+//
+// Pinned by exact text in connection_failure_messages_test.go. Do not reword
+// it without changing that test in the same commit.
+const argocdCertificateNotTrusted = "ArgoCD uses a certificate Sharko does not trust. " +
+	"Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure " +
+	"or tick Skip TLS certificate verification."
+
+// connectionTestStatusNotTested is the "status" of a connection-test result
+// for a test that never ran. Every other result is "ok" or "error".
+const connectionTestStatusNotTested = "not_tested"
+
+// argocdNotTestedBadGitAddress is the message for an ArgoCD result that was
+// not tested because the Git repository address in the same request could not
+// be read (the test stops there). Pinned by exact text in
+// connections_test_credentials_not_tested_test.go.
+const argocdNotTestedBadGitAddress = "ArgoCD was not tested, because Sharko could not read the Git repository address. Fix the Git address and test again."
+
 // connectionFailureWholeSentences holds the (kind, code) pairs whose finished
 // sentence is written out here rather than assembled from a subject and a
 // hint.
@@ -258,7 +286,8 @@ const gitPermissionNextStep = "Grant the token permission for this repository on
 // ConnectionFailureMessages slice, same generated browser file. Nothing about
 // the contract changes — only where the words come from.
 var connectionFailureWholeSentences = map[connectionFailureKey]string{
-	{kind: connectionKindGit, code: verify.ERR_RBAC}: gitPermissionRefusal + " " + gitPermissionNextStep,
+	{kind: connectionKindGit, code: verify.ERR_RBAC}:   gitPermissionRefusal + " " + gitPermissionNextStep,
+	{kind: connectionKindArgoCD, code: verify.ERR_TLS}: argocdCertificateNotTrusted,
 }
 
 // connectionFailureWholeSentence looks a whole-sentence variant up. Both

@@ -440,22 +440,37 @@ func (c *Client) CreateApplication(ctx context.Context, appJSON []byte) error {
 	return nil
 }
 
-// AddRepository registers a Git repository in ArgoCD so it can be used as a source.
+// addRepositoryPath is where AddRepository sends its request. ArgoCD reads
+// "upsert" from the query string, not from the body: the body of
+// POST /api/v1/repositories is the Repository itself (in ArgoCD's
+// repository.proto the call is declared with body: "repo", and its swagger
+// lists upsert as "in": "query"). A body field called "upsert" is ignored, so
+// a second setup with a changed repository setting (a new token, for example)
+// was refused with "existing repository spec is different".
+const addRepositoryPath = "/api/v1/repositories?upsert=true"
+
+// AddRepository registers a Git repository in ArgoCD so it can be used as a
+// source. It runs in upsert mode, so running setup again with a changed
+// setting updates the repository instead of being refused.
 func (c *Client) AddRepository(ctx context.Context, repoURL, username, password string) error {
 	body := map[string]interface{}{
 		"repo":     repoURL,
 		"username": username,
 		"password": password,
 		"type":     "git",
-		"upsert":   true,
 	}
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshalling repository request: %w", err)
 	}
-	_, err = c.doPost(ctx, "/api/v1/repositories", jsonData)
+	_, err = c.doPost(ctx, addRepositoryPath, jsonData)
 	if err != nil {
-		return fmt.Errorf("adding repository %q to ArgoCD: %w", repoURL, err)
+		// Only the credential-free part of the address goes into the error.
+		name := credsafe.SafeRepoURL(repoURL)
+		if name == "" {
+			name = "the Git repository"
+		}
+		return fmt.Errorf("adding repository %q to ArgoCD: %w", name, err)
 	}
 	return nil
 }

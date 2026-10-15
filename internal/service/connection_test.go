@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -296,5 +297,27 @@ func TestGetAddonSecretProviderConfig(t *testing.T) {
 	got = svc.GetAddonSecretProviderConfig()
 	if got != nil {
 		t.Errorf("expected nil when AddonSecretProvider not set, got %+v", got)
+	}
+}
+
+// VF-1 side finding: a Git repository address that cannot be read stops
+// TestCredentials before ArgoCD is asked. The ArgoCD result must say so, not
+// come back nil (which the handler showed as "ok").
+func TestTestCredentials_UnreadableGitAddressMeansArgoCDNotTested(t *testing.T) {
+	store := config.NewFileStore(t.TempDir() + "/test-config.yaml")
+	svc := NewConnectionService(store)
+
+	gitErr, argocdErr, _ := svc.TestCredentials(context.Background(), &models.Connection{
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderAzureDevOps,
+			RepoURL:  "https://dev.azure.com/org/project/repo", // missing /_git/
+		},
+		Argocd: models.ArgocdConfig{ServerURL: "http://127.0.0.1:1", Token: "t"},
+	})
+	if gitErr == nil {
+		t.Fatal("expected a Git error for an unreadable repository address")
+	}
+	if !errors.Is(argocdErr, ErrArgocdNotTested) {
+		t.Fatalf("ArgoCD result = %v, want ErrArgocdNotTested", argocdErr)
 	}
 }

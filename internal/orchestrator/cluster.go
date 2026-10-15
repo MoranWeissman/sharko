@@ -384,6 +384,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 		// Generate the cluster registry update for preview
 		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		clusterAddonsFileMissing := clusterAddonsErr != nil
 		if clusterAddonsErr != nil {
 			clusterAddonsData = []byte("clusters:\n")
 		}
@@ -421,10 +422,16 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 		if addEntryErr == nil && previewClusterAddons != nil {
 			clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
+			// For a brand-new file, pass empty old content so the diff header
+			// shows @@ -0,0 +1,N @@ instead of @@ -1,1 +1,N @@.
+			oldContentForDiff := clusterAddonsData
+			if clusterAddonsFileMissing {
+				oldContentForDiff = []byte{}
+			}
 			filePreviews = append(filePreviews, FilePreview{
 				Path:   clusterAddonsPath,
 				Action: clusterAddonsAction,
-				Diff:   o.buildFileDiff(clusterAddonsPath, clusterAddonsData, previewClusterAddons, clusterAddonsAction),
+				Diff:   o.buildFileDiff(clusterAddonsPath, oldContentForDiff, previewClusterAddons, clusterAddonsAction),
 			})
 		}
 
@@ -1026,10 +1033,17 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		// Managed-clusters preview (if addons are updated)
 		if len(addons) > 0 && updatedMC != nil {
 			oldMC, _ := o.readFileIfExists(ctx, clusterAddonsPath)
+			mcAction := o.fileAction(ctx, clusterAddonsPath)
+			// For a brand-new file, pass empty old content so the diff header
+			// shows @@ -0,0 +1,N @@ instead of @@ -1,1 +1,N @@.
+			oldMCForDiff := oldMC
+			if oldMC == nil {
+				oldMCForDiff = []byte{}
+			}
 			filePreviews = append(filePreviews, FilePreview{
 				Path:   clusterAddonsPath,
-				Action: "update",
-				Diff:   o.buildFileDiff(clusterAddonsPath, oldMC, updatedMC, "update"),
+				Action: mcAction,
+				Diff:   o.buildFileDiff(clusterAddonsPath, oldMCForDiff, updatedMC, mcAction),
 			})
 		}
 

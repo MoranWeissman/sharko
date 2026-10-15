@@ -1390,14 +1390,22 @@ export function ClustersOverview() {
 
       {/* Add Cluster Dialog */}
       <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        {/* A flex column, not the base grid: with only a max height, a grid
+          * row grows to fit its content, so a long preview pushed the footer
+          * below the dialog's cut-off edge. In a flex column the body
+          * (min-h-0) shrinks and scrolls, and the header and footer keep
+          * their size, so Cancel / Preview / Register stay on screen.
+          * max-h-[90%] and not 90vh: under CSS zoom, vh units grow with the
+          * zoom (90vh at 125% is taller than the screen), a percentage of
+          * the screen does not. */}
+        <DialogContent className="sm:max-w-3xl max-h-[90%] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Register New Cluster</DialogTitle>
             <DialogDescription>
               Connection details and cluster location.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div data-testid="register-dialog-body" className="space-y-4 py-2 min-h-0 overflow-y-auto">
             {/* Layer 1 — Identity (V2-cleanup-88.5, shrunk to one line by
               * V2-cleanup-89.2). Purely informational: tells the user what
               * Sharko already knows about its own AWS identity instead of
@@ -1804,7 +1812,7 @@ export function ClustersOverview() {
           {/* Footer buttons. Plain `title=` tooltips (not shadcn
             * <Tooltip>) to stay consistent with the rest of this dialog
             * and avoid portal/provider plumbing for one-line hints. */}
-          <DialogFooter className="flex-wrap gap-2">
+          <DialogFooter className="shrink-0 flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setAddClusterOpen(false)}

@@ -10,8 +10,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/credsafe"
@@ -89,6 +91,170 @@ func (t *tlsExplainTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return resp, err
 }
 
+// ErrArgocdNeedsHTTPS is the sentinel returned (wrapped) when an ArgoCD
+// address starting with http:// answers by sending Sharko on to https://. A
+// default ArgoCD install does exactly this: TLS is on, and a plain http
+// request on the same port gets a 307 to https.
+//
+// Sharko does NOT follow that redirect. Following it means the first request
+// — the one carrying the ArgoCD token — already went out over plain http.
+// Instead, before any token is sent to an http:// address, the client asks
+// that address a credential-free question first (see plainHTTPGuardTransport)
+// and stops here if the answer is "go to https". The error names the https
+// address to use instead, built only from the scheme and host Sharko already
+// had — never from the operator's whole address, which is where a credential
+// can be written (see unreachable.go).
+var ErrArgocdNeedsHTTPS = errors.New("ArgoCD answers only over https at this address — change the ArgoCD address to start with https://")
+
+// ErrArgocdRedirectToHTTP is the sentinel returned (wrapped) when an https
+// ArgoCD address sends Sharko on to plain http. Following it would send the
+// ArgoCD token unencrypted, so Sharko refuses.
+var ErrArgocdRedirectToHTTP = errors.New("ArgoCD tried to send Sharko from https to plain http — Sharko refuses to follow it, so the ArgoCD token never travels unencrypted. Check the ArgoCD address and any proxy in front of it")
+
+// schemeChangeError is what the client returns when ArgoCD redirects between
+// http and https. httpsAddress is "https://<host>" when the redirect went to
+// https on the same host name, and "" otherwise.
+type schemeChangeError struct {
+	toHTTP       bool
+	httpsAddress string
+}
+
+func (e *schemeChangeError) Error() string {
+	if e.toHTTP {
+		return ErrArgocdRedirectToHTTP.Error()
+	}
+	if e.httpsAddress != "" {
+		return "ArgoCD answers only over https at this address — change the ArgoCD address to " + e.httpsAddress
+	}
+	return ErrArgocdNeedsHTTPS.Error()
+}
+
+func (e *schemeChangeError) Is(target error) bool {
+	if e.toHTTP {
+		return target == ErrArgocdRedirectToHTTP
+	}
+	return target == ErrArgocdNeedsHTTPS
+}
+
+// isRedirectStatus reports whether an HTTP status is a redirect that carries
+// a Location to follow.
+func isRedirectStatus(code int) bool {
+	switch code {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
+}
+
+// sameHostHTTPSAddress returns "https://<host>" when to is an https URL on the
+// same host name as from, and "" otherwise. Only the host (and port) is used:
+// never the user-info, path, query or fragment of either URL.
+func sameHostHTTPSAddress(from, to *url.URL) string {
+	if to == nil || from == nil || to.Scheme != "https" || to.Hostname() == "" {
+		return ""
+	}
+	if !strings.EqualFold(to.Hostname(), from.Hostname()) {
+		return ""
+	}
+	return "https://" + to.Host
+}
+
+// refuseSchemeChange is the client's CheckRedirect. It refuses any redirect
+// that changes between http and https, in either direction:
+//
+//   - https → http would send the token unencrypted;
+//   - http → https means the configured address is wrong, and the operator
+//     should be told the right one rather than have Sharko quietly use it.
+//
+// Same-scheme redirects keep the standard library's limit of 10.
+func refuseSchemeChange(req *http.Request, via []*http.Request) error {
+	prev := via[len(via)-1]
+	if !strings.EqualFold(req.URL.Scheme, prev.URL.Scheme) {
+		if strings.EqualFold(req.URL.Scheme, "http") {
+			return &schemeChangeError{toHTTP: true}
+		}
+		return &schemeChangeError{httpsAddress: sameHostHTTPSAddress(prev.URL, req.URL)}
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// plainHTTPGuardTransport makes sure the ArgoCD token is never sent to a plain
+// http address that only exists to redirect to https.
+//
+// A redirect cannot be refused before the request that triggered it was sent,
+// and that request carries the token. So before the FIRST request with an
+// Authorization header goes to an http:// host, this transport asks the same
+// host GET /api/version with no credential and does not follow the answer. A
+// redirect to https stops everything with ErrArgocdNeedsHTTPS, and the token
+// never left. Any other answer marks the host as fine for this client, so the
+// check costs one extra request per client per host. A check that gets no
+// answer at all is not remembered, and the real request goes ahead as it
+// always did — there is no redirect to refuse when nothing answered.
+//
+// The state is per client (per transport), never package-level.
+type plainHTTPGuardTransport struct {
+	base http.RoundTripper
+
+	mu      sync.Mutex
+	checked map[string]bool
+}
+
+func (t *plainHTTPGuardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.EqualFold(req.URL.Scheme, "http") && req.Header.Get("Authorization") != "" {
+		if err := t.checkPlainHTTPHost(req); err != nil {
+			return nil, err
+		}
+	}
+	return t.base.RoundTrip(req)
+}
+
+func (t *plainHTTPGuardTransport) checkPlainHTTPHost(req *http.Request) error {
+	host := strings.ToLower(req.URL.Host)
+	t.mu.Lock()
+	done := t.checked[host]
+	t.mu.Unlock()
+	if done {
+		return nil
+	}
+
+	// Built from scheme + host only: no user-info, no query, no fragment,
+	// and no header of the real request.
+	probeURL := &url.URL{Scheme: "http", Host: req.URL.Host, Path: "/api/version"}
+	probe, err := http.NewRequestWithContext(req.Context(), http.MethodGet, probeURL.String(), nil)
+	if err != nil {
+		// Never the cause (BF12): a *url.Error's words are the address.
+		return errors.New("Sharko could not build its plain-http check request for ArgoCD, so it did not send the ArgoCD token")
+	}
+	resp, err := t.base.RoundTrip(probe)
+	if err != nil {
+		// No answer to the check. Nothing is learned and nothing is
+		// remembered; the real request goes ahead exactly as it did before
+		// this guard existed, and fails on its own if the host is down.
+		return nil
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	_ = resp.Body.Close()
+
+	if isRedirectStatus(resp.StatusCode) {
+		loc, locErr := resp.Location()
+		if locErr == nil && strings.EqualFold(loc.Scheme, "https") {
+			return &schemeChangeError{httpsAddress: sameHostHTTPSAddress(probeURL, loc)}
+		}
+	}
+
+	t.mu.Lock()
+	if t.checked == nil {
+		t.checked = map[string]bool{}
+	}
+	t.checked[host] = true
+	t.mu.Unlock()
+	return nil
+}
+
 // Client is a REST API client for ArgoCD.
 type Client struct {
 	baseURL    string
@@ -112,9 +278,12 @@ func NewClient(serverURL, token string, insecure bool) *Client {
 	}
 
 	return &Client{
-		baseURL:    strings.TrimRight(serverURL, "/"),
-		httpClient: &http.Client{Transport: &tlsExplainTransport{base: transport}},
-		token:      token,
+		baseURL: strings.TrimRight(serverURL, "/"),
+		httpClient: &http.Client{
+			Transport:     &tlsExplainTransport{base: &plainHTTPGuardTransport{base: transport}},
+			CheckRedirect: refuseSchemeChange,
+		},
+		token: token,
 	}
 }
 
@@ -150,8 +319,10 @@ func NewInClusterClient(serverURL, namespace string) (*Client, error) {
 // Exported for use by connection service when token is provided but URL is not.
 //
 // insecure mirrors the connection's argocd.insecure opt-in: the discovery
-// probes use the same TLS stance the real client will, so discovery never
-// "succeeds" on a URL the credential-carrying client would then refuse.
+// probes use the same TLS stance the real client will. One exception, on
+// purpose: an http address that redirects to https is reported as the https
+// address even when its certificate does not verify, because that IS the
+// address — the client then explains the certificate problem.
 func DiscoverServerURL(namespace string, insecure bool) string {
 	return discoverArgocdServer(namespace, insecure)
 }
@@ -169,11 +340,13 @@ var commonArgoServiceNames = []string{
 //
 // For each candidate service, https is probed before http, so a discovered URL
 // prefers TLS whenever a working https endpoint exists. With insecure=false
-// (the default) "working" means the certificate actually verifies — the probes
-// carry no credential, but a URL that only answers with an unverifiable
-// certificate must not be discovered as https, because the real client would
-// then refuse it. With insecure=true (the operator's explicit connection-level
-// opt-in) the probes skip verification exactly like the real client will.
+// (the default) the https probe verifies the certificate. When it does not
+// verify, the http probe still finds out the truth: a TLS-on ArgoCD answers
+// http with a redirect to https, and probeArgoCD reports the https address
+// for it. The real client then names the certificate problem, instead of
+// discovery handing back an http address that only redirects. With
+// insecure=true (the operator's explicit connection-level opt-in) the probes
+// skip verification exactly like the real client will.
 func discoverArgocdServer(namespace string, insecure bool) string {
 	// Check ARGOCD_SERVER_URL env var first
 	if url := os.Getenv("ARGOCD_SERVER_URL"); url != "" {
@@ -242,21 +415,34 @@ func fallbackDiscovery(namespace string, insecure bool) string {
 func probeServiceSchemes(serviceName, namespace string, insecure bool) string {
 	for _, scheme := range []string{"https", "http"} {
 		url := fmt.Sprintf("%s://%s.%s.svc.cluster.local", scheme, serviceName, namespace)
-		if probeArgoCD(url, insecure) {
-			return url
+		if found := probeArgoCD(url, insecure); found != "" {
+			return found
 		}
 	}
 	return ""
 }
 
-// probeArgoCD checks whether an ArgoCD server is reachable at the given base URL
-// by sending a GET request to /api/v1/version with a 2-second timeout.
+// probeVersionPath is the endpoint the discovery probe asks.
+const probeVersionPath = "/api/v1/version"
+
+// probeArgoCD checks whether an ArgoCD server is reachable at the given base
+// URL by sending a GET request to /api/v1/version with a 2-second timeout. It
+// returns the base URL to use, or "" when nothing answered as ArgoCD.
+//
+// The probe never follows a redirect. A default ArgoCD install (TLS on, with a
+// certificate it signed itself) answers plain http with a 307 to https on the
+// same host. That means "the address is https", so the probe returns the
+// https address — even when the certificate does not verify. The real client
+// then reports the certificate problem in words the operator can act on,
+// instead of discovery quietly handing back an http address that only
+// redirects. Following the redirect here would also have tested the https
+// certificate under the http label, which is how a TLS-on ArgoCD used to come
+// back as "http://...".
 //
 // The probe sends NO credential — no Authorization header, no cookie. TLS
-// certificate verification is still ON by default so that discovery only
-// reports https URLs the real (token-carrying) client would accept; insecure
-// mirrors the operator's explicit connection-level opt-in.
-func probeArgoCD(baseURL string, insecure bool) bool {
+// certificate verification is ON by default; insecure mirrors the operator's
+// explicit connection-level opt-in. It is never turned off here on its own.
+func probeArgoCD(baseURL string, insecure bool) string {
 	transport := &http.Transport{}
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{
@@ -266,13 +452,40 @@ func probeArgoCD(baseURL string, insecure bool) bool {
 	client := &http.Client{
 		Timeout:   2 * time.Second,
 		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	resp, err := client.Get(baseURL + "/api/v1/version")
+	resp, err := client.Get(baseURL + probeVersionPath)
 	if err != nil {
-		return false
+		return ""
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+
+	if resp.StatusCode == http.StatusOK {
+		return baseURL
+	}
+	if !isRedirectStatus(resp.StatusCode) {
+		return ""
+	}
+	// Only an http → https redirect on the same host name counts.
+	from, err := url.Parse(baseURL)
+	if err != nil || !strings.EqualFold(from.Scheme, "http") {
+		return ""
+	}
+	loc, err := resp.Location()
+	if err != nil {
+		return ""
+	}
+	httpsBase := sameHostHTTPSAddress(from, loc)
+	if httpsBase == "" {
+		return ""
+	}
+	// Keep a path prefix if ArgoCD runs under one (server.rootpath).
+	if prefix, ok := strings.CutSuffix(loc.Path, probeVersionPath); ok {
+		httpsBase += strings.TrimRight(prefix, "/")
+	}
+	return httpsBase
 }
 
 // TestConnection verifies that the client can reach the ArgoCD server

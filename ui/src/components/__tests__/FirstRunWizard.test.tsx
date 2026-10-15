@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
 import * as apiModule from '@/services/api'
+import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
 // V124-16: per-test override for the connections mock so the resume-mode
 // tests (BUG-037 / BUG-038) can simulate "an existing connection is loaded"
@@ -1934,5 +1935,136 @@ describe('FirstRunWizard — repair completion skips catalog seeding (ride-along
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /skip for now/i })).toBeInTheDocument()
     })
+  })
+})
+
+// VF-1 — ArgoCD address and test results.
+//
+// V2: a default ArgoCD install answers only over https, even inside the
+// cluster. The wizard used to rewrite a found https address to http and
+// show a warning saying in-cluster services use http. Both were wrong.
+//
+// V6: changing one field used to clear BOTH test results, so picking a
+// secrets provider wiped the ArgoCD "Connected" result. Now a change
+// clears only the test it can affect.
+describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
+  const apiMock = apiModule.api as unknown as {
+    discoverArgocd: ReturnType<typeof vi.fn>
+    testCredentials: ReturnType<typeof vi.fn>
+  }
+
+  async function walkToArgocdStepWithBothTested() {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+    // Step 4 -> 3 -> 2 (Git).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await screen.findByText(/Connected/i)
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await screen.findByText(/Connected/i)
+  }
+
+  it('keeps a found https ArgoCD address as https and shows no http warning', async () => {
+    apiMock.discoverArgocd.mockResolvedValueOnce({
+      server_url: 'https://argocd-server.argocd.svc.cluster.local',
+      has_env_token: false,
+      namespace: 'argocd',
+    })
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(
+      await screen.findByPlaceholderText('https://github.com/your-org/your-repo'),
+      { target: { value: 'https://github.com/foo/bar' } },
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await screen.findByText(/Connected/i)
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }))
+
+    const urlInput = await screen.findByPlaceholderText('Auto-discovered from cluster')
+    await waitFor(() => {
+      expect(urlInput).toHaveValue('https://argocd-server.argocd.svc.cluster.local')
+    })
+    expect(screen.queryByText(/In-cluster services typically use http/i)).toBeNull()
+    expect(
+      screen.getByText('Leave blank for in-cluster auto-discovery. Override for external ArgoCD.'),
+    ).toBeInTheDocument()
+  })
+
+  it('changing the secrets provider keeps the ArgoCD "Connected" result', async () => {
+    await walkToArgocdStepWithBothTested()
+    fireEvent.click(screen.getByRole('button', { name: /Secrets Provider \(optional\)/i }))
+    fireEvent.change(screen.getByDisplayValue(/Kubernetes Secrets/i), {
+      target: { value: 'aws-sm' },
+    })
+    expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Save & Continue/i })).toBeEnabled()
+  })
+
+  it('changing an ArgoCD field clears only the ArgoCD result, not the Git one', async () => {
+    await walkToArgocdStepWithBothTested()
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+      ),
+      { target: { value: 'new-argocd-token' } },
+    )
+    expect(screen.queryByText(/Connected/i)).toBeNull()
+    expect(screen.getByRole('button', { name: /Save & Continue/i })).toBeDisabled()
+
+    // Back on the Git step, the Git result is still there.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByText(/Connected/i)
+    expect(screen.getByRole('button', { name: /Next/i })).toBeEnabled()
+  })
+
+  it('changing a Git field clears only the Git result, not the ArgoCD one', async () => {
+    await walkToArgocdStepWithBothTested()
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    const gitToken = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+    fireEvent.change(gitToken, { target: { value: 'new-git-token' } })
+    expect(screen.getByRole('button', { name: /Next/i })).toBeDisabled()
+
+    // Test Git again and move on: ArgoCD still shows "Connected" without
+    // a new ArgoCD test.
+    const callsBefore = apiMock.testCredentials.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await screen.findByText(/Connected/i)
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Save & Continue/i })).toBeEnabled()
+    expect(apiMock.testCredentials.mock.calls.length).toBe(callsBefore + 1)
+  })
+
+  // The exact words are pinned on the server side
+  // (TestConnectionFailure_ArgoCDCertificateSentence). Browser code may not
+  // retype a server sentence, so this reads the generated copy.
+  it('shows the ArgoCD certificate sentence word for word', async () => {
+    const sentence = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDTLS
+    expect(sentence).toMatch(/^ArgoCD uses a certificate Sharko does not trust\./)
+    expect(sentence).toMatch(/Skip TLS certificate verification\.$/)
+
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    apiMock.testCredentials.mockResolvedValueOnce({
+      git: { status: 'ok' },
+      argocd: {
+        status: 'error',
+        message: CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDTLS,
+      },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    expect(await screen.findByText(sentence)).toBeInTheDocument()
   })
 })

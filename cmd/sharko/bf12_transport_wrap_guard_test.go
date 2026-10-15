@@ -239,6 +239,8 @@ var bf12Sites = map[string]bf12Site{
 			"through credsafe.LogClass by type. See internal/argocd/unreachable.go."},
 	// internal/argocd/client.go:502
 	"internal/argocd/client.go::Client.doGet::NewRequestWithContext": {bf12Described, ""},
+	// internal/argocd/client.go — the plain-http check (VF-1)
+	"internal/argocd/client.go::plainHTTPGuardTransport.checkPlainHTTPHost::NewRequestWithContext": {bf12Dropped, ""},
 	// internal/argocd/client_write.go:176
 	"internal/argocd/client_write.go::Client.doDelete::Client.Do": {bf12Raw,
 		"the error is handed to unreachableCallError, which drops the cause and " +
@@ -382,8 +384,9 @@ var bf12Sites = map[string]bf12Site{
 // shape the walk did not look at, because it only ever counted what the walk
 // found — so a whole syntactic form could sit outside the guard and every
 // assertion here would still pass. BF13-2 widened the walk to find the call
-// itself wherever it is written, and one more site came into view.
-const bf12MinimumSites = 80
+// itself wherever it is written, and one more site came into view. VF-1 added
+// the ArgoCD client's plain-http check request, which makes 81.
+const bf12MinimumSites = 81
 
 func TestEveryRequestBuildAndSendIsJudged(t *testing.T) {
 	root := bf12RepoRoot(t)

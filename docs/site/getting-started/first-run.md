@@ -42,12 +42,12 @@ Sharko reads cluster health, sync status, and resource trees from ArgoCD.
     ```bash
     argocd account generate-token --account sharko
     ```
-    Create a dedicated `sharko` account with read permissions. Do not use the admin token.
+    Create a dedicated `sharko` account. The account reads cluster and application status, and also writes a few things during repository setup and cluster registration (creates the repository connection, updates cluster labels). See [ArgoCD RBAC policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko) for the exact policy. Do not use the admin token.
 
 **Secrets Provider (optional, same step):** If you use AWS Secrets Manager or Kubernetes Secrets to store cluster kubeconfigs, configure the provider here:
 
-- **AWS Secrets Manager** — select `aws-sm` and enter the AWS region. Sharko uses IRSA for auth (configure the IRSA annotation at Helm install time — see [Installation](installation.md#aws-secrets-manager-optional)).
-- **Kubernetes Secrets** — select `k8s-secrets` and enter the namespace where cluster secrets live.
+- **AWS Secrets Manager** — select `aws-sm` and enter the AWS region. The optional **Prefix** field lets you add a prefix to the cluster name when looking up secrets (for example, with prefix `k8s-`, Sharko looks for a secret named `k8s-prod-eu` when registering cluster `prod-eu`). Sharko uses IRSA for auth (configure the IRSA annotation at Helm install time — see [Installation](installation.md#aws-secrets-manager-optional)).
+- **Kubernetes Secrets** — select `k8s-secrets`. For each cluster, Sharko reads a Kubernetes Secret with the same name as the cluster (for example `prod-eu`), and takes the kubeconfig from its `kubeconfig` key. **Default case** (when Sharko is installed in namespace `sharko`): you do not need to fill in anything else, and Sharko reads from namespace `sharko`. **Using a different namespace**: set both Helm values `connection.provider.type: k8s-secrets` and `connection.provider.namespace` to the namespace where your Secrets live (see [Where Sharko gets cluster credentials](../operator/configuration.md#provider-3mech)). Once the type is set in Helm, it wins over what you picked in the wizard. The chart gives Sharko read access to Secrets in its own release namespace; to read from a different namespace, also add that namespace to `rbac.k8sSecretsProviderNamespaces` in your Helm values. The wizard shows a **Prefix** field, but Sharko does not use it for Kubernetes Secrets, so leave it empty.
 
 You can skip this and configure the secrets provider later in **Settings → Secrets Provider**.
 
@@ -61,9 +61,12 @@ This step creates the starting layout in your Git repo — nothing more:
 
 Sharko shows you a step-by-step progress log as it creates each file and opens the PR.
 
-**Auto-merge:** Toggle this on if you want Sharko to merge the PR immediately after creating it. Toggle it off if you want to review the PR yourself in GitHub or Azure DevOps first.
+You have two choices for how the PR is merged:
 
-Click **Initialize** and watch the progress. When the step completes, you move to the Catalog step.
+- **Set Up & Auto-Merge** — Sharko opens the PR and merges it immediately. The setup completes without you needing to visit GitHub or Azure DevOps.
+- **Set Up (Manual PR Review)** — Sharko opens the PR but does not merge it. You review and merge it yourself in GitHub or Azure DevOps.
+
+Click the button that matches how you want to work. When the step completes, you move to the Catalog step.
 
 ## Step 5: Catalog
 

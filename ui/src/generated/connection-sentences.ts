@@ -133,7 +133,7 @@ export const CONNECTION_FAILURE_MESSAGES = {
   connectionFailureArgoCDNetwork: "Sharko can't reach ArgoCD — the host could not be reached. Check the URL and network access.",
   connectionFailureArgoCDQuota: "Sharko can't reach ArgoCD. Check the connection settings and try again.",
   connectionFailureArgoCDRBAC: "Sharko can't reach ArgoCD — the cluster accepted the credentials but denied the action (HTTP 403) — grant the service account the required RBAC permissions and try again.",
-  connectionFailureArgoCDTLS: "Sharko can't reach ArgoCD — a certificate error occurred while connecting. Check the server's TLS configuration.",
+  connectionFailureArgoCDTLS: "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure or tick Skip TLS certificate verification.",
   connectionFailureArgoCDTimeout: "Sharko can't reach ArgoCD — the request timed out. Check the URL and network access.",
   connectionFailureArgoCDUnknown: "Sharko can't reach ArgoCD. Check the connection settings and try again.",
   connectionFailureGitAWSAssume: "Sharko can't reach your Git host — the assume-role attempt failed — check the role's trust policy, ensure Sharko's identity has sts:AssumeRole permission on it, and verify sts:TagSession is granted if using EKS Pod Identity.",

@@ -21,6 +21,17 @@ helm install argocd argo/argo-cd \
   --namespace argocd --create-namespace
 ```
 
+**For a test setup only**, you can install ArgoCD with its TLS server disabled:
+
+```bash
+helm install argocd argo/argo-cd \
+  --version 10.9.6 \
+  --namespace argocd --create-namespace \
+  --set configs.params."server\.insecure"=true
+```
+
+With `server.insecure` set to true, ArgoCD serves plain http on port 80. This avoids certificate errors when connecting to ArgoCD from inside the cluster. For production, give ArgoCD a trusted certificate. The "Skip TLS certificate verification" box in the Sharko wizard turns off the certificate check, so tick it only on a test setup, never in production.
+
 The chart has its own version number, separate from the ArgoCD version. To see which chart version installs which ArgoCD version, run `helm search repo argo/argo-cd --versions` and read the **APP VERSION** column.
 
 For production use, set up a values file with your Ingress and resource settings. See the [argo-cd chart documentation](https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd) for all the values you can change.

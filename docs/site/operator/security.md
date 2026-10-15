@@ -257,6 +257,54 @@ it merges, ArgoCD notices and applies it on its own schedule. Git holds the
 desired state and ArgoCD enforces it — that path does not pass through Sharko
 at all, so an account with no sync permission still runs a complete fleet.
 
+### Smallest ArgoCD policy for Sharko
+
+This policy gives Sharko exactly what it needs to run repository setup, register and manage clusters, and read cluster and application status:
+
+```csv
+p, role:sharko, repositories, create, *, allow
+p, role:sharko, repositories, update, *, allow
+p, role:sharko, applications, create, default/*, allow
+p, role:sharko, clusters, update, *, allow
+p, role:sharko, clusters, delete, *, allow
+g, role:sharko, role:readonly
+g, sharko, role:sharko
+```
+
+Each line does one thing:
+
+- **repositories create and update** — first-run setup adds your Git repository to ArgoCD so it can read the files Sharko writes there
+- **applications create in default/\*** — first-run setup creates the bootstrap Application that deploys the Sharko engine chart
+- **clusters update and delete** — when you change which addons a cluster has, or remove a cluster, Sharko changes the labels on its ArgoCD cluster secret; removing a cluster also deletes it
+- **role:readonly** — reads applications, clusters, application sets and projects
+- The last two lines connect the account name `sharko` to the role
+
+Sharko writes the cluster Secret itself through Kubernetes, not through the ArgoCD API, so registering a cluster also needs Sharko's Kubernetes service account to have rights to write Secrets in the ArgoCD namespace. The Sharko Helm chart already grants that in the default setup — see the `rbac.argocdNamespace` value in `charts/sharko/values.yaml`.
+
+To apply the policy, edit the `argocd-rbac-cm` ConfigMap in the ArgoCD namespace. You can do it by hand with `kubectl edit`, or with a patch file:
+
+```yaml
+# sharko-rbac-patch.yaml
+data:
+  policy.csv: |
+    p, role:sharko, repositories, create, *, allow
+    p, role:sharko, repositories, update, *, allow
+    p, role:sharko, applications, create, default/*, allow
+    p, role:sharko, clusters, update, *, allow
+    p, role:sharko, clusters, delete, *, allow
+    g, role:sharko, role:readonly
+    g, sharko, role:sharko
+```
+
+Apply it:
+
+```bash
+kubectl patch configmap argocd-rbac-cm -n argocd \
+  --type merge --patch-file sharko-rbac-patch.yaml
+```
+
+If you already have other policy lines in `policy.csv`, add the new lines to the existing content instead of replacing it.
+
 ### Letting Sharko restart a sync
 
 One feature asks ArgoCD to sync an application directly: **Restart sync** on an

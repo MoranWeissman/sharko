@@ -74,6 +74,16 @@ const emptyForm: WizardForm = {
 
 type TestState = 'idle' | 'testing' | 'ok' | 'error'
 
+// The form fields each connection test depends on. Changing one of these
+// clears that test's result; changing anything else leaves it alone.
+const GIT_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = ['git_url', 'git_token']
+const ARGOCD_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = [
+  'argocd_server_url',
+  'argocd_token',
+  'argocd_namespace',
+  'argocd_insecure',
+]
+
 interface TestStatus {
   git: TestState
   argocd: TestState
@@ -343,16 +353,9 @@ function StepArgoCD({
             onChange={(e) => onChange({ argocd_server_url: e.target.value })}
             placeholder="Auto-discovered from cluster"
           />
-          {form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://') && (
-            <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
-              ⚠ In-cluster services typically use http://, not https://
-            </p>
-          )}
-          {!(form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://')) && (
-            <p className="mt-1 text-sm text-[#3a6a8a]">
-              Leave blank for in-cluster auto-discovery. Override for external ArgoCD.
-            </p>
-          )}
+          <p className="mt-1 text-sm text-[#3a6a8a]">
+            Leave blank for in-cluster auto-discovery. Override for external ArgoCD.
+          </p>
         </div>
 
         <div>
@@ -1762,8 +1765,18 @@ export function FirstRunWizard({
 
   const patchForm = (patch: Partial<WizardForm>) => {
     setForm((prev) => ({ ...prev, ...patch }))
-    // reset test statuses on change
-    setTestStatus({ git: 'idle', argocd: 'idle' })
+    // A change clears only the test result it can affect. Changing the
+    // secrets provider, for example, keeps both "Connected" results.
+    const keys = Object.keys(patch) as Array<keyof WizardForm>
+    const touchesGit = keys.some((k) => GIT_TEST_FIELDS.includes(k))
+    const touchesArgocd = keys.some((k) => ARGOCD_TEST_FIELDS.includes(k))
+    if (touchesGit || touchesArgocd) {
+      setTestStatus((prev) => ({
+        ...prev,
+        ...(touchesGit ? { git: 'idle' as const, gitMessage: undefined } : {}),
+        ...(touchesArgocd ? { argocd: 'idle' as const, argocdMessage: undefined } : {}),
+      }))
+    }
   }
 
   const buildPayload = () => ({
@@ -1956,11 +1969,10 @@ export function FirstRunWizard({
       try {
         const disc = await api.discoverArgocd()
         if (disc.server_url) {
-          let url = disc.server_url
-          // In-cluster services use HTTP, not HTTPS
-          if (url.includes('.svc.cluster.local')) {
-            url = url.replace('https://', 'http://')
-          }
+          // Use the found address exactly as the server reports it. A
+          // default ArgoCD install answers only over https, even inside the
+          // cluster, so an https address must stay https.
+          const url = disc.server_url
           setForm((prev) => ({ ...prev, argocd_server_url: url }))
         }
       } catch { /* ignore */ }
