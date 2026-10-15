@@ -508,6 +508,57 @@ func TestCreateUserK8s_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCreateUserK8s_AnotherCreateOverwritesPassword: two CreateUser calls for
+// the same username run at once. The second one overwrites the password the
+// first one wrote. When the first one's ConfigMap write fails and it tries to
+// undo the password write, it must see the password is no longer its own and
+// leave it alone — the second create's password must survive.
+func TestCreateUserK8s_AnotherCreateOverwritesPassword(t *testing.T) {
+	srv := newRVServer(t, "", nil)
+	srv.failCall("update", "configmaps", 1, errBoom)
+	// Between our password write and the ConfigMap write, another CreateUser for
+	// the same username writes a different password into the Secret.
+	srv.beforeUpdate["configmaps"] = func(n int) {
+		if n == 1 {
+			// Simulate the second create by directly updating the tracker like
+			// bumpSecret does. Read the Secret, change dana.password to a
+			// different hash, bump the resourceVersion.
+			gvr := corev1.SchemeGroupVersion.WithResource("secrets")
+			obj, err := srv.cs.Tracker().Get(gvr, rvNS, rvSecret)
+			if err != nil {
+				t.Fatalf("beforeUpdate get: %v", err)
+			}
+			sec := obj.(*corev1.Secret)
+			n, _ := strconv.Atoi(sec.ResourceVersion)
+			sec.ResourceVersion = strconv.Itoa(n + 1)
+			if sec.Data == nil {
+				sec.Data = map[string][]byte{}
+			}
+			sec.Data["dana.password"] = []byte("second-create-hash")
+			if err := srv.cs.Tracker().Update(gvr, sec, rvNS); err != nil {
+				t.Fatalf("beforeUpdate update: %v", err)
+			}
+		}
+	}
+	st := srv.store()
+
+	_, err := st.CreateUser("dana", "viewer")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "could not take") {
+		t.Errorf("the undo failed even though the password was changed: %v", err)
+	}
+	// The second create's password must still be there.
+	if got := string(srv.secretData(t)["dana.password"]); got != "second-create-hash" {
+		t.Errorf("the second create's password was lost, got %q", got)
+	}
+	// No user entry (our ConfigMap write failed).
+	if accountsHasUser(srv.accounts(t), "dana") {
+		t.Errorf("dana should not be in the ConfigMap: %q", srv.accounts(t))
+	}
+}
+
 // TestRVServer_RefusesStaleUpdate proves the fake itself: an update carrying
 // an old resourceVersion is refused with 409. Without this, the tests above
 // could pass on a fake that takes anything.
