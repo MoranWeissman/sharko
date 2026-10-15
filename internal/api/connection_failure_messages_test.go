@@ -32,6 +32,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
@@ -61,7 +62,7 @@ func TestConnectionFailure_EveryVariantRendersItsSentence(t *testing.T) {
 
 		// ── argocd ───────────────────────────────────────────────────────
 		{connectionKindArgoCD, verify.ERR_NETWORK, "Sharko can't reach ArgoCD — the host could not be reached. Check the URL and network access."},
-		{connectionKindArgoCD, verify.ERR_TLS, "Sharko can't reach ArgoCD — a certificate error occurred while connecting. Check the server's TLS configuration."},
+		{connectionKindArgoCD, verify.ERR_TLS, "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure or tick Skip TLS certificate verification."},
 		{connectionKindArgoCD, verify.ERR_AUTH, "Sharko can't reach ArgoCD — the cluster rejected the credentials (HTTP 401) — the token may be expired or invalid; regenerate the kubeconfig/token and try again."},
 		{connectionKindArgoCD, verify.ERR_RBAC, "Sharko can't reach ArgoCD — the cluster accepted the credentials but denied the action (HTTP 403) — grant the service account the required RBAC permissions and try again."},
 		{connectionKindArgoCD, verify.ERR_AWS_STS, "Sharko can't reach ArgoCD — AWS STS token minting failed — check that Sharko's identity has permission to mint tokens for this cluster and that the cluster region is correctly configured."},
@@ -203,6 +204,7 @@ func TestConnectionFailure_JoinPunctuation(t *testing.T) {
 	// longer has one is named as stale.
 	wholeSentenceVariants := []connectionFailureKey{
 		{kind: connectionKindGit, code: verify.ERR_RBAC},
+		{kind: connectionKindArgoCD, code: verify.ERR_TLS},
 	}
 	isWholeSentence := map[connectionFailureKey]bool{}
 	for _, key := range wholeSentenceVariants {
@@ -439,14 +441,16 @@ func TestConnectionFailure_OtherKindsKeepTheirPermissionWording(t *testing.T) {
 		}
 	}
 
-	// The one place a whole-sentence variant exists must be the only one.
-	if len(connectionFailureWholeSentences) != 1 {
-		var names []string
-		for key := range connectionFailureWholeSentences {
-			names = append(names, string(key.kind)+"/"+string(key.code))
-		}
-		sort.Strings(names)
-		t.Errorf("whole-sentence variants: %v — only git/ERR_RBAC was ruled on. "+
+	// The places a whole-sentence variant exists must be exactly the ruled
+	// ones: git/ERR_RBAC (2026-08-20) and argocd/ERR_TLS (VF-1, video
+	// finding V2, 2026-10-15). Compared as an exact list, never a count.
+	var names []string
+	for key := range connectionFailureWholeSentences {
+		names = append(names, string(key.kind)+"/"+string(key.code))
+	}
+	sort.Strings(names)
+	if strings.Join(names, ",") != "argocd/ERR_TLS,git/ERR_RBAC" {
+		t.Errorf("whole-sentence variants: %v — only argocd/ERR_TLS and git/ERR_RBAC were ruled on. "+
 			"A new one is a product decision, not a refactor: name it in TestConnectionFailure_JoinPunctuation "+
 			"and write its literal out in TestConnectionFailure_EveryVariantRendersItsSentence.",
 			names)
@@ -861,5 +865,43 @@ func TestConnectionMessages_HoldNoProse(t *testing.T) {
 			"This file assembles nothing and says nothing. Every fragment, hint, join and tail of the\n"+
 			"connection-failure family belongs in internal/api/connection_failure_messages.go, where it\n"+
 			"is catalogued and shipped to the browser finished.", strings.Join(found, "\n"))
+	}
+}
+
+// TestConnectionFailure_ArgoCDCertificateSentence pins the ArgoCD certificate
+// sentence by exact text (VF-1, video finding V2), and pins that an ArgoCD
+// certificate error no longer shows the generic TLS hint — which said
+// "Sharko can't reach ArgoCD" about an ArgoCD Sharko did reach, and did not
+// say what to do. The old words are written out here as literals on purpose:
+// comparing against the hintTLS constant would stay green if that constant
+// were the thing that changed.
+func TestConnectionFailure_ArgoCDCertificateSentence(t *testing.T) {
+	const want = "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure or tick Skip TLS certificate verification."
+	const oldGeneric = "a certificate error occurred while connecting. Check the server's TLS configuration."
+	const oldWhole = "Sharko can't reach ArgoCD — a certificate error occurred while connecting. Check the server's TLS configuration."
+
+	if got := renderConnectionFailure(connectionKindArgoCD, verify.ERR_TLS); got != want {
+		t.Errorf("ArgoCD certificate sentence:\n got: %q\nwant: %q", got, want)
+	}
+
+	// The real path: an ArgoCD client error for an untrusted certificate,
+	// through the same body builder the connection-test handlers use.
+	certErr := &argocd.UnreachableError{Verb: "GET", Endpoint: "/api/v1/clusters", Code: argocd.UnreachableTLSUntrusted}
+	body := connectionErrorFields(connectionKindArgoCD, certErr)
+	if body["message"] != want {
+		t.Errorf("connection-test body message for an ArgoCD certificate error:\n got: %q\nwant: %q", body["message"], want)
+	}
+	if body["message_id"] != "connectionFailureArgoCDTLS" {
+		t.Errorf("message_id = %q, want connectionFailureArgoCDTLS", body["message_id"])
+	}
+	for _, field := range []string{"message", "hint", "cause"} {
+		if v, _ := body[field].(string); strings.Contains(v, oldGeneric) || v == oldWhole {
+			t.Errorf("the %s field still carries the old generic TLS wording: %q", field, v)
+		}
+	}
+
+	// The other kinds keep the generic wording — only the ArgoCD pair moved.
+	if got := renderConnectionFailure(connectionKindGit, verify.ERR_TLS); !strings.HasSuffix(got, oldGeneric) {
+		t.Errorf("the Git certificate sentence changed: %q", got)
 	}
 }
