@@ -13,7 +13,7 @@ The split exists because cluster credentials and addon secret values have differ
 
 The **cluster-credentials provider** is where Sharko gets the kubeconfig or token it needs to reach each registered cluster.
 
-You configure it in **Settings → Secrets Provider** (Type / Region / Prefix). Supported today:
+You configure it in **Settings → Secrets Provider**. You pick the type. For AWS Secrets Manager you also fill in the region and, if you want, a prefix. The other types do not use a region or a prefix, so those fields are hidden. Supported today:
 
 - **AWS Secrets Manager** (`aws-sm`)
 - **Kubernetes Secrets** (`k8s-secrets`)

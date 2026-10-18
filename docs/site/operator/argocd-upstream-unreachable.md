@@ -49,6 +49,15 @@ is short and names the step that failed, for example
 Sharko could not get an answer from ArgoCD, so it has nothing to show for this. Check the ArgoCD server address and token in Settings, then try again. (code=argocd_no_answer call=GET /api/v1/clusters)
 ```
 
+One case looks like this but is not: the ArgoCD address starts with `http://`,
+and ArgoCD answers there only by sending Sharko on to `https://`. Sharko did
+reach ArgoCD, so **Test ArgoCD** does not say `Sharko can't reach ArgoCD`. It
+says `ArgoCD answers only over https at this address.` and tells you to change
+the address. When the https address is on the same host, the message names it,
+for example `https://argocd.example.com`. Change the ArgoCD address in
+**Settings > Connections** to that address and test again. Sharko never sends
+the ArgoCD token to an `http://` address that sent it on to https.
+
 The `code` part tells you what kind of failure it was:
 
 | `code` | What it means |
