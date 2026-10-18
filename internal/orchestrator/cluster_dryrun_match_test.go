@@ -9,6 +9,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -181,23 +182,66 @@ func registerPreviewReq() RegisterClusterRequest {
 	}
 }
 
-// TestRegisterCluster_DryRunGitReadErrorIsReturned: before, any Git error
+// TestRegisterCluster_DryRunGitReadErrorIsPartial: before, any Git error
 // made the preview say "this creates managed-clusters.yaml", which is wrong
-// when the file is there and Git just did not answer.
-func TestRegisterCluster_DryRunGitReadErrorIsReturned(t *testing.T) {
+// when the file is there and Git just did not answer. LO-7 R5: the dry run
+// then answers in the same shape as the real registration does for the same
+// failure — a "partial" result with failed step read_cluster_registry — not
+// a Go error (which the API turned into a 502 with other words).
+func TestRegisterCluster_DryRunGitReadErrorIsPartial(t *testing.T) {
 	git := &mockGitProvider{files: map[string][]byte{}}
 	o := newRegisterPreviewOrch(&failReadGit{mockGitProvider: git, path: mcPath, err: errGitDown})
 
 	res, err := o.RegisterCluster(context.Background(), registerPreviewReq())
-	if err == nil {
-		t.Fatalf("want an error, got status %q", res.Status)
+	if err != nil {
+		t.Fatalf("want a partial result, got a Go error: %v", err)
 	}
-	const want = "could not read configuration/managed-clusters.yaml from the main branch, so Sharko could not show what registering cluster test-cluster would change: the git host did not answer"
-	if err.Error() != want {
-		t.Errorf("error = %q, want %q", err.Error(), want)
+	if res.Status != "partial" || res.FailedStep != "read_cluster_registry" {
+		t.Errorf("status %q failed step %q, want partial / read_cluster_registry", res.Status, res.FailedStep)
 	}
-	if !errors.Is(err, errGitDown) {
-		t.Errorf("the Git error is not kept inside: %v", err)
+	const wantErr = "could not read configuration/managed-clusters.yaml from the main branch, so Sharko could not show what registering cluster test-cluster would change: the git host did not answer"
+	if res.Error != wantErr {
+		t.Errorf("error = %q, want %q", res.Error, wantErr)
+	}
+	const want = "Sharko could not read the cluster registry from Git, so it could not show what registering this cluster would change. Nothing was changed. Try again once Git is reachable."
+	if res.Message != want {
+		t.Errorf("message:\n got: %q\nwant: %q", res.Message, want)
+	}
+	if res.DryRun != nil {
+		t.Errorf("a preview came back for a registry Sharko could not read: %+v", res.DryRun)
+	}
+}
+
+// TestRegisterCluster_DryRunGitReadErrorMatchesTheRealRun: the same Git
+// read failure, once as a dry run and once for real, gives the same status,
+// failed step and completed steps, and both errors hold the Git error. (The
+// words before the Git error differ on purpose: one stops a preview, the
+// other stops a write.)
+func TestRegisterCluster_DryRunGitReadErrorMatchesTheRealRun(t *testing.T) {
+	run := func(dry bool) *RegisterClusterResult {
+		t.Helper()
+		git := &mockGitProvider{files: map[string][]byte{}}
+		o := newRegisterPreviewOrch(&failReadGit{mockGitProvider: git, path: mcPath, err: errGitDown})
+		req := registerPreviewReq()
+		req.DryRun = dry
+		res, err := o.RegisterCluster(context.Background(), req)
+		if err != nil {
+			t.Fatalf("dry run %v: want a partial result, got a Go error: %v", dry, err)
+		}
+		return res
+	}
+	dry, real := run(true), run(false)
+	if dry.Status != real.Status || dry.FailedStep != real.FailedStep ||
+		!strings.HasSuffix(dry.Error, ": the git host did not answer") ||
+		!strings.HasSuffix(real.Error, ": the git host did not answer") ||
+		dry.Message == "" || real.Message == "" ||
+		strings.Join(dry.CompletedSteps, ",") != strings.Join(real.CompletedSteps, ",") {
+		t.Errorf("the dry run and the real run answer differently:\n dry:  %q %q %q %v\n real: %q %q %q %v",
+			dry.Status, dry.FailedStep, dry.Error, dry.CompletedSteps,
+			real.Status, real.FailedStep, real.Error, real.CompletedSteps)
+	}
+	if real.FailedStep != "read_cluster_registry" {
+		t.Fatalf("setup: the real run did not stop at read_cluster_registry: %+v", real)
 	}
 }
 

@@ -248,9 +248,15 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dry-run: return preview without side effects.
+	// Dry-run: return preview without side effects. A dry run that stopped
+	// part-way (it could not read the cluster registry) answers 207, the
+	// same as the real registration does for the same failure (LO-7 R5).
 	if req.DryRun {
-		writeJSON(w, http.StatusOK, result)
+		dryStatus := http.StatusOK
+		if result.Status == "partial" {
+			dryStatus = http.StatusMultiStatus
+		}
+		writeJSON(w, dryStatus, result)
 		return
 	}
 

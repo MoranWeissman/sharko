@@ -32,6 +32,8 @@ vi.mock('@/services/api', () => ({
     getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
   },
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
+  // ErrorDetail checks `instanceof ApiError`; a plain class is enough here.
+  ApiError: class ApiError extends Error {},
   testClusterConnection: vi.fn(),
   unadoptCluster: vi.fn(),
 }));
@@ -165,6 +167,34 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     expect(screen.getByText(/managed-clusters\.yaml/)).toBeInTheDocument();
     // Secrets section omitted — empty array, not null.
     expect(screen.queryByText(/Secrets to Create:/i)).not.toBeInTheDocument();
+  });
+
+  // LO-7 R5: a preview that stopped part-way answers 207 with a "partial"
+  // result and no dry_run. The dialog shows the server's sentence, instead
+  // of showing nothing at all.
+  it('shows the server sentence when the preview stopped part-way', async () => {
+    const msg =
+      'Sharko could not read the cluster registry from Git, so it could not show what registering this cluster would change. Nothing was changed. Try again once Git is reachable.';
+    mockRegisterCluster.mockResolvedValue({
+      status: 'partial',
+      failed_step: 'read_cluster_registry',
+      error: 'could not read configuration/managed-clusters.yaml from the main branch: the git host did not answer',
+      message: msg,
+    });
+
+    renderView();
+    await openAddDialog();
+    fireEvent.change(
+      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
+      { target: { value: 'eks-token' } },
+    );
+    fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
+      target: { value: 'kind-test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    expect(await screen.findByText(msg)).toBeInTheDocument();
+    expect(screen.queryByText('Files:')).not.toBeInTheDocument();
   });
 
   it('Preview button carries a tooltip explaining the dry-run action', async () => {

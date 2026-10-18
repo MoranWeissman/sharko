@@ -769,6 +769,10 @@ export function ClustersOverview() {
       );
       if (result?.dry_run) {
         setDryRunResult(result.dry_run);
+      } else if (result?.status === 'partial') {
+        // The preview stopped part-way (for example Sharko could not read
+        // the cluster registry from Git). Show the server's sentence.
+        setAddClusterError(new Error(result.message || 'Sharko could not build the preview.'));
       }
     } catch (e: unknown) {
       setAddClusterError(e);

@@ -20,10 +20,22 @@ import (
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
-// registerPreviewReadFailedFmt is the error when a RegisterCluster dry run
-// cannot read the cluster list for a reason other than "file not found".
+// registerPreviewReadFailedFmt is the "error" of a RegisterCluster dry run
+// that cannot read the cluster list for a reason other than "file not
+// found" (the detail; the message is registerPreviewReadFailedMessage).
 // Arguments: file path, branch, cluster name, the Git error.
 const registerPreviewReadFailedFmt = "could not read %s from the %s branch, so Sharko could not show what registering cluster %s would change: %w"
+
+// registerPreviewReadFailedMessage is the message of a RegisterCluster dry
+// run that cannot read the cluster registry for a reason other than "file
+// not found". The answer has the same shape as the real registration's
+// answer for the same failure: status "partial", failed step
+// "read_cluster_registry", the Git error in "error" (LO-7 R5). Before, the
+// dry run returned a Go error instead, so the same failure came back as a
+// 502 with other words.
+//
+// Pinned by exact text in cluster_dryrun_match_test.go.
+const registerPreviewReadFailedMessage = "Sharko could not read the cluster registry from Git, so it could not show what registering this cluster would change. Nothing was changed. Try again once Git is reachable."
 
 // updateAddonsReadFailedFmt is the error when UpdateClusterAddons cannot read
 // the cluster list for a reason other than "file not found".
@@ -395,11 +407,20 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 		// Generate the cluster registry update for preview
 		// Only a real "file not found" means the file is missing. Any other
-		// Git error (no access, a network failure) is returned: showing a
-		// "create the file" preview then would be a wrong answer.
+		// Git error (no access, a network failure) stops the preview:
+		// showing a "create the file" preview then would be a wrong answer.
+		// The answer has the same shape as the real registration's answer
+		// for the same failure (see below, read_cluster_registry).
 		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 		if clusterAddonsErr != nil && !errors.Is(clusterAddonsErr, gitprovider.ErrFileNotFound) {
-			return nil, fmt.Errorf(registerPreviewReadFailedFmt, clusterAddonsPath, o.gitops.BaseBranch, req.Name, clusterAddonsErr)
+			log.Error("RegisterCluster dry run: could not read the cluster registry",
+				"cluster", req.Name, "path", clusterAddonsPath, "error", clusterAddonsErr)
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "read_cluster_registry"
+			result.Error = fmt.Errorf(registerPreviewReadFailedFmt, clusterAddonsPath, o.gitops.BaseBranch, req.Name, clusterAddonsErr).Error()
+			result.Message = registerPreviewReadFailedMessage
+			return result, nil
 		}
 		clusterAddonsFileMissing := clusterAddonsErr != nil
 		if clusterAddonsFileMissing {
