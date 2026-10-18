@@ -2067,6 +2067,40 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
     expect(await screen.findByText(sentence)).toBeInTheDocument()
   })
+
+  // L13. The needs-https sentence has two forms. The generated file holds the
+  // one without an address. When Sharko knows the https address, the server
+  // sends the same sentence with the address in it, and the wizard must show
+  // that one. The address form is built from the generated sentence, because
+  // browser code may not retype a server sentence.
+  const needsHTTPS = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDNeedsHTTPS
+  const needsHTTPSAt = needsHTTPS.replace('so it starts with https://', 'to https://argocd.example.test:8443')
+
+  async function testArgocdAndGet(message: string) {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    apiMock.testCredentials.mockResolvedValueOnce({
+      git: { status: 'ok' },
+      argocd: { status: 'error', message },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+  }
+
+  it('shows the ArgoCD needs-https sentence word for word', async () => {
+    expect(needsHTTPS).toMatch(/^ArgoCD answers only over https at this address\./)
+    await testArgocdAndGet(needsHTTPS)
+    expect(await screen.findByText(needsHTTPS)).toBeInTheDocument()
+  })
+
+  it('shows the needs-https sentence with the address the server sent, not the generated copy', async () => {
+    expect(needsHTTPSAt).not.toBe(needsHTTPS)
+    expect(needsHTTPSAt).toContain('https://argocd.example.test:8443 and test again.')
+    await testArgocdAndGet(needsHTTPSAt)
+    expect(await screen.findByText(needsHTTPSAt)).toBeInTheDocument()
+    expect(screen.queryByText(needsHTTPS)).toBeNull()
+  })
 })
 
 // L4 — only AWS Secrets Manager uses a prefix. Kubernetes Secrets ignores it,
