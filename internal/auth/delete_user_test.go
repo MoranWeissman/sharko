@@ -205,3 +205,45 @@ func TestDeleteUserK8s_BrokenUserList(t *testing.T) {
 		t.Errorf("the broken user list was written over: %q", got)
 	}
 }
+
+// TestIsInputError: only a bare input error counts. Joined with a storage
+// failure (an undo that failed), it must not, so the API answers 500.
+func TestIsInputError(t *testing.T) {
+	in := inputErrorf("user %q already exists", "dana")
+	if !IsInputError(in) {
+		t.Error("a bare input error is not seen as one")
+	}
+	if !IsInputError(ErrInvalidUsername) || !errors.Is(ErrInvalidUsername, ErrInvalidUsername) {
+		t.Error("ErrInvalidUsername must be an input error")
+	}
+	if IsInputError(errors.Join(in, errBoom)) {
+		t.Error("an input error joined with a storage failure counts as input only")
+	}
+	if IsInputError(errBoom) || IsInputError(nil) {
+		t.Error("a plain error counts as an input error")
+	}
+}
+
+// TestCreateUserK8s_ExistsButUndoFailsIsNotInputError: the user shows up
+// meanwhile (an input error) and then the undo fails (a storage failure).
+// The result must not be a bare input error.
+func TestCreateUserK8s_ExistsButUndoFailsIsNotInputError(t *testing.T) {
+	srv := newRVServer(t, "", nil)
+	srv.beforeUpdate["secrets"] = func(n int) {
+		if n == 1 {
+			srv.bumpConfigMap(t, "dana")
+		}
+	}
+	srv.failCall("update", "secrets", 2, errBoom)
+	st := srv.store()
+	_, err := st.CreateUser("dana", "viewer")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if IsInputError(err) {
+		t.Errorf("a failed undo was reported as only a bad request: %v", err)
+	}
+	if !errors.Is(err, errBoom) {
+		t.Errorf("the undo error is missing: %v", err)
+	}
+}

@@ -89,7 +89,27 @@ const InvalidUsernameSentence = "A user name can use letters, numbers, dots, das
 
 // ErrInvalidUsername is returned by CreateUser when the user name breaks the
 // rule. Callers spot it with errors.Is, never by reading the error text.
-var ErrInvalidUsername = errors.New(InvalidUsernameSentence)
+var ErrInvalidUsername error = &InputError{msg: InvalidUsernameSentence}
+
+// InputError is an error caused by what the caller asked for: a bad user
+// name or role, a user that already exists, or a user that does not exist.
+// CreateUser and DeleteUser return it as is, never wrapped, so the API can
+// tell it apart from a storage failure (see IsInputError).
+type InputError struct{ msg string }
+
+func (e *InputError) Error() string { return e.msg }
+
+func inputErrorf(format string, args ...any) error {
+	return &InputError{msg: fmt.Sprintf(format, args...)}
+}
+
+// IsInputError reports whether err is ONLY an input error. An input error
+// joined with a storage failure (for example an undo that failed) is not,
+// because then something went wrong on the server side too.
+func IsInputError(err error) bool {
+	ie, ok := err.(*InputError)
+	return ok && ie != nil
+}
 
 // UserAccount represents a user account from the ConfigMap.
 type UserAccount struct {
@@ -304,7 +324,7 @@ func (s *Store) ListUsers() []UserAccount {
 // Returns the generated password so the admin can share it.
 func (s *Store) CreateUser(username, role string) (string, error) {
 	if username == "" {
-		return "", fmt.Errorf("username is required")
+		return "", inputErrorf("username is required")
 	}
 	if !usernamePattern.MatchString(username) {
 		return "", ErrInvalidUsername
@@ -313,14 +333,14 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 		role = "viewer"
 	}
 	if role != "admin" && role != "operator" && role != "viewer" {
-		return "", fmt.Errorf("role must be admin, operator, or viewer")
+		return "", inputErrorf("role must be admin, operator, or viewer")
 	}
 
 	// Check if user already exists
 	s.mu.RLock()
 	if _, exists := s.users[username]; exists {
 		s.mu.RUnlock()
-		return "", fmt.Errorf("user %q already exists", username)
+		return "", inputErrorf("user %q already exists", username)
 	}
 	s.mu.RUnlock()
 
@@ -383,7 +403,7 @@ func (s *Store) createUserK8s(username, role string, hash []byte) error {
 		return fmt.Errorf("reading ConfigMap: %w", err)
 	}
 	if accountsHasUser(cm.Data["accounts"], username) {
-		return fmt.Errorf("user %q already exists", username)
+		return inputErrorf("user %q already exists", username)
 	}
 
 	// Write 1: the password, into the Secret.
@@ -412,7 +432,7 @@ func (s *Store) createUserK8s(username, role string, hash []byte) error {
 	}
 
 	// Write 2: the user entry, into the ConfigMap.
-	var errExists = fmt.Errorf("user %q already exists", username)
+	var errExists = inputErrorf("user %q already exists", username)
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		stage = "reading ConfigMap"
 		cm, err := cms.Get(ctx, cmName, metav1.GetOptions{})
@@ -607,7 +627,7 @@ func (s *Store) DeleteUser(username string) error {
 	_, exists := s.users[username]
 	s.mu.RUnlock()
 	if !exists {
-		return fmt.Errorf("user %q not found", username)
+		return inputErrorf("user %q not found", username)
 	}
 
 	if s.mode == ModeK8s {
