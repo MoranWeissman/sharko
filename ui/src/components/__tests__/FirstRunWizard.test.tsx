@@ -2068,3 +2068,50 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     expect(await screen.findByText(sentence)).toBeInTheDocument()
   })
 })
+
+// L4 — only AWS Secrets Manager uses a prefix. Kubernetes Secrets ignores it,
+// so the field is hidden there and a value left over from aws-sm is not sent.
+describe('FirstRunWizard — Prefix field belongs to AWS Secrets Manager only (L4)', () => {
+  async function openProviderSection() {
+    mockState.connections = [
+      { ...resumeConnection, provider: { type: 'aws-sm', region: 'eu-west-1', prefix: 'k8s-' } },
+    ]
+    renderWizard(4)
+    // Step 4 -> Back lands on the ArgoCD step, which holds the provider block.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Secrets Provider \(optional\)/i }))
+    return screen.findByRole('combobox')
+  }
+
+  it('shows the Prefix field for AWS Secrets Manager', async () => {
+    const select = await openProviderSection()
+    expect((select as HTMLSelectElement).value).toBe('aws-sm')
+    expect(screen.getByText('Prefix (optional)')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('k8s-')
+  })
+
+  it('hides the Prefix field for Kubernetes Secrets', async () => {
+    const select = await openProviderSection()
+    fireEvent.change(select, { target: { value: 'k8s-secrets' } })
+    expect(screen.queryByText('Prefix (optional)')).toBeNull()
+    expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+  })
+
+  it('does not send a prefix left over from aws-sm once Kubernetes Secrets is chosen', async () => {
+    const select = await openProviderSection()
+    fireEvent.change(select, { target: { value: 'k8s-secrets' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, payload] = updateMock.mock.calls[0]
+    expect(payload.provider.type).toBe('k8s-secrets')
+    expect(payload.provider.prefix).toBeUndefined()
+  })
+})

@@ -478,7 +478,7 @@ function StepArgoCD({
                 />
               </div>
             )}
-            {form.provider_type && (
+            {form.provider_type === 'aws-sm' && (
               <div>
                 <label className={labelCls}>Prefix (optional)</label>
                 <input
@@ -1803,7 +1803,9 @@ export function FirstRunWizard({
       ? {
           type: form.provider_type,
           region: form.provider_region || undefined,
-          prefix: form.provider_prefix || undefined,
+          // Only AWS Secrets Manager uses a prefix. A value left over from
+          // switching away from it must not be sent for Kubernetes Secrets.
+          prefix: form.provider_type === 'aws-sm' ? form.provider_prefix || undefined : undefined,
         }
       : undefined,
     gitops: {

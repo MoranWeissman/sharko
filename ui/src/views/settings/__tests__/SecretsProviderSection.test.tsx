@@ -331,15 +331,60 @@ describe('SecretsProviderSection', () => {
     const clusterCredsSelect = selects[0] as HTMLSelectElement
     // Stored alias "kubernetes" lands on the canonical k8s-secrets row.
     await waitFor(() => expect(clusterCredsSelect.value).toBe('k8s-secrets'))
-    // Its stored prefix hydrates alongside — auto-expanded because prefix is non-empty.
-    expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('team-')
+    // Kubernetes Secrets ignores a prefix, so there is no field for it.
+    expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /Save Provider/i }))
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
     const body = updateConnectionMock.mock.calls[0][1] as { provider: { type: string; prefix?: string } }
     // Canonical value is what gets saved — the alias is retired on rewrite.
     expect(body.provider.type).toBe('k8s-secrets')
-    expect(body.provider.prefix).toBe('team-')
+    // The old stored prefix is not sent along.
+    expect(body.provider.prefix).toBeUndefined()
+  })
+
+  // L4 — Prefix is an AWS Secrets Manager setting only.
+  it('shows the Prefix field for aws-sm and hides it for k8s-secrets, in both sections', async () => {
+    setupHook()
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+    const selects = await screen.findAllByRole('combobox')
+
+    for (const idx of [0, 1]) {
+      await user.selectOptions(selects[idx], 'aws-sm')
+      expect(screen.getAllByRole('button', { name: /Advanced \(optional\)/i })).toHaveLength(1)
+      await user.click(screen.getByRole('button', { name: /Advanced \(optional\)/i }))
+      expect(screen.getByText('Prefix')).toBeInTheDocument()
+
+      await user.selectOptions(selects[idx], 'k8s-secrets')
+      expect(screen.queryByRole('button', { name: /Advanced \(optional\)/i })).toBeNull()
+      expect(screen.queryByText('Prefix')).toBeNull()
+
+      await user.selectOptions(selects[idx], '')
+    }
+  })
+
+  it('does not send a prefix typed for aws-sm after switching to k8s-secrets, in both sections', async () => {
+    setupHook()
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+    const selects = await screen.findAllByRole('combobox')
+
+    for (const idx of [0, 1]) {
+      await user.selectOptions(selects[idx], 'aws-sm')
+      await user.click(screen.getAllByRole('button', { name: /Advanced \(optional\)/i })[0])
+      await user.type(screen.getByPlaceholderText(idx === 0 ? /prepended to cluster name/i : /prepended to secret name/i), 'old-')
+      await user.selectOptions(selects[idx], 'k8s-secrets')
+    }
+
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const body = updateConnectionMock.mock.calls[0][1] as {
+      provider: { type: string; prefix?: string }
+      addon_secret_provider: { type: string; prefix?: string }
+    }
+    expect(body.provider).toEqual({ type: 'k8s-secrets' })
+    expect(body.addon_secret_provider).toEqual({ type: 'k8s-secrets' })
   })
 
   // L7 (V2-cleanup-60.5) — an unrecognized stored provider type must never
@@ -717,7 +762,7 @@ describe('SecretsProviderSection', () => {
       render(<SecretsProviderSection />)
 
       const selects = await screen.findAllByRole('combobox')
-      await user.selectOptions(selects[0], 'k8s-secrets')
+      await user.selectOptions(selects[0], 'aws-sm')
 
       // Expand Advanced (first one = cluster-creds)
       const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
@@ -730,7 +775,7 @@ describe('SecretsProviderSection', () => {
 
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
       const body = updateConnectionMock.mock.calls[0][1] as { provider: { type: string; prefix?: string } }
-      expect(body.provider.type).toBe('k8s-secrets')
+      expect(body.provider.type).toBe('aws-sm')
       expect(body.provider.prefix).toBe('team-')
     })
   })

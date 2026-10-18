@@ -122,12 +122,18 @@ function isSupported(t: ProviderType): boolean {
 // only — the form value is always canonicalized on hydration.
 const REGION_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>(['aws-sm'])
 
-// Provider types that surface the Prefix input. Both AWS Secrets Manager
-// and the Kubernetes-Secrets backend honour a name prefix.
-const PREFIX_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>([
-  'aws-sm',
-  'k8s-secrets',
-])
+// Provider types that surface the Prefix input. Only AWS Secrets Manager
+// uses a name prefix; the Kubernetes-Secrets backend ignores it, so the
+// field is hidden there and any leftover value is not sent.
+const PREFIX_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>(['aws-sm'])
+
+// A prefix is only sent when the provider uses one. A value left over from
+// switching to Kubernetes Secrets is dropped. An unknown provider is kept
+// as-is, so Save never wipes a config this screen does not know about.
+function prefixToSend(type: ProviderType | typeof UNKNOWN_PROVIDER, prefix: string): string | undefined {
+  if (type === UNKNOWN_PROVIDER) return prefix || undefined
+  return PREFIX_PROVIDERS.has(type) ? prefix || undefined : undefined
+}
 
 interface ProviderInfo {
   type: string
@@ -659,14 +665,14 @@ function buildSecretsProviderPayload(
       ? {
           type: resolvedProviderType,
           region: providerForm.provider_region || undefined,
-          prefix: providerForm.provider_prefix || undefined,
+          prefix: prefixToSend(providerForm.provider_type, providerForm.provider_prefix),
         }
       : undefined,
     addon_secret_provider: resolvedAddonSecretProviderType
       ? {
           type: resolvedAddonSecretProviderType,
           region: providerForm.addon_secret_provider_region || undefined,
-          prefix: providerForm.addon_secret_provider_prefix || undefined,
+          prefix: prefixToSend(providerForm.addon_secret_provider_type, providerForm.addon_secret_provider_prefix),
         }
       : undefined,
   })
