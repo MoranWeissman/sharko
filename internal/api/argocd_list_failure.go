@@ -91,7 +91,9 @@ func argoListFailureSentence(subject argoReadSubject, err error) string {
 		// address ArgoCD sent Sharko to is ArgoCD's words, not Sharko's.
 		return "ArgoCD tried to send Sharko from https to plain http, so Sharko did not list " + noun + ". Sharko does not follow that, so the ArgoCD token is never sent unencrypted. Check the ArgoCD address on the connection in Settings and any proxy in front of ArgoCD, then try again."
 	case errors.Is(err, argocd.ErrTLSCertificateNotTrusted):
-		return "Sharko reached ArgoCD but could not verify its certificate, so it did not list " + noun + ". Add the certificate authority to the ArgoCD connection in Settings and try again."
+		// L16: the same advice as the connection test's certificate
+		// sentence, word for word (argocdCertificateAdvice).
+		return "Sharko reached ArgoCD but could not verify its certificate, so it did not list " + noun + ". " + argocdCertificateAdvice + " Then try again."
 	default:
 		return "Sharko could not reach the ArgoCD API to list " + noun + ". Check that the ArgoCD server address on the connection is correct and that ArgoCD is reachable from Sharko, then try again."
 	}

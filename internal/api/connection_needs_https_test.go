@@ -166,7 +166,7 @@ func TestDiscoverClusters_ArgoCDSentences(t *testing.T) {
 		{"token", argocd.ErrTokenInvalid,
 			"ArgoCD refused Sharko's token while listing clusters. The token may be expired or wrong — replace it on the ArgoCD connection in Settings and try again."},
 		{"certificate", &argocd.UnreachableError{Verb: "GET", Endpoint: "/api/v1/clusters", Code: argocd.UnreachableTLSUntrusted},
-			"Sharko reached ArgoCD but could not verify its certificate, so it did not list clusters. Add the certificate authority to the ArgoCD connection in Settings and try again."},
+			"Sharko reached ArgoCD but could not verify its certificate, so it did not list clusters. Give ArgoCD a trusted certificate, or, for a test setup only, tick Skip TLS certificate verification. Then try again."},
 		{"no answer", errors.New("dial tcp 10.0.0.9:443: connect: connection refused"),
 			"Sharko could not reach the ArgoCD API to list clusters. Check that the ArgoCD server address on the connection is correct and that ArgoCD is reachable from Sharko, then try again."},
 		{"http address that only sends on to https", needsHTTPSErr,

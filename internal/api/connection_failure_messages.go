@@ -295,6 +295,20 @@ const gitPermissionRefusal = "The Git server accepted the credentials but denied
 // timeframe.
 const gitPermissionNextStep = "Grant the token permission for this repository on your Git host, or replace it in Settings → Connections."
 
+// argocdCertificateAdvice is the one piece of advice Sharko gives when it
+// does not trust ArgoCD's certificate. Every ArgoCD certificate sentence uses
+// it as it is: the connection test (argocdCertificateNotTrusted below) and the
+// ArgoCD list paths (argoListFailureSentence). Before L16 the two gave
+// different advice: the connection test said to give ArgoCD a trusted
+// certificate, install it with server.insecure, or tick the box, and the list
+// paths said to add a certificate authority to the connection, which is a
+// field the connection does not have.
+//
+// Pinned by exact text in connection_failure_messages_test.go and
+// argocd_certificate_advice_test.go.
+const argocdCertificateAdvice = "Give ArgoCD a trusted certificate, or, for a test setup only, " +
+	"tick Skip TLS certificate verification."
+
 // argocdCertificateNotTrusted is the whole sentence for an ArgoCD connection
 // test that failed on the certificate (VF-1, video finding V2).
 //
@@ -303,15 +317,13 @@ const gitPermissionNextStep = "Grant the token permission for this repository on
 // Check the server's TLS configuration." That is wrong on both halves for the
 // most common case, a default ArgoCD install: Sharko DID reach ArgoCD, and
 // "check the TLS configuration" does not say what to do. A default ArgoCD has
-// TLS on with a certificate it signed itself, and the operator has exactly
-// three honest ways forward, so the sentence names all three in the user's
-// words. Verification is never turned off for them.
+// TLS on with a certificate it signed itself, so the sentence says what to do
+// in the user's words (argocdCertificateAdvice). Verification is never turned
+// off for them.
 //
 // Pinned by exact text in connection_failure_messages_test.go. Do not reword
 // it without changing that test in the same commit.
-const argocdCertificateNotTrusted = "ArgoCD uses a certificate Sharko does not trust. " +
-	"Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure " +
-	"or tick Skip TLS certificate verification."
+const argocdCertificateNotTrusted = "ArgoCD uses a certificate Sharko does not trust. " + argocdCertificateAdvice
 
 // argocdNeedsHTTPS is the whole sentence for an http ArgoCD address that only
 // answers by sending Sharko on to https (L7, video finding). Before, this

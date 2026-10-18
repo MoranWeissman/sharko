@@ -62,7 +62,7 @@ func TestConnectionFailure_EveryVariantRendersItsSentence(t *testing.T) {
 
 		// ── argocd ───────────────────────────────────────────────────────
 		{connectionKindArgoCD, verify.ERR_NETWORK, "Sharko can't reach ArgoCD — the host could not be reached. Check the URL and network access."},
-		{connectionKindArgoCD, verify.ERR_TLS, "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure or tick Skip TLS certificate verification."},
+		{connectionKindArgoCD, verify.ERR_TLS, "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or, for a test setup only, tick Skip TLS certificate verification."},
 		{connectionKindArgoCD, verify.ERR_AUTH, "Sharko can't reach ArgoCD — the cluster rejected the credentials (HTTP 401) — the token may be expired or invalid; regenerate the kubeconfig/token and try again."},
 		{connectionKindArgoCD, verify.ERR_RBAC, "Sharko can't reach ArgoCD — the cluster accepted the credentials but denied the action (HTTP 403) — grant the service account the required RBAC permissions and try again."},
 		{connectionKindArgoCD, verify.ERR_AWS_STS, "Sharko can't reach ArgoCD — AWS STS token minting failed — check that Sharko's identity has permission to mint tokens for this cluster and that the cluster region is correctly configured."},
@@ -899,7 +899,7 @@ func TestConnectionMessages_HoldNoProse(t *testing.T) {
 // comparing against the hintTLS constant would stay green if that constant
 // were the thing that changed.
 func TestConnectionFailure_ArgoCDCertificateSentence(t *testing.T) {
-	const want = "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure or tick Skip TLS certificate verification."
+	const want = "ArgoCD uses a certificate Sharko does not trust. Give ArgoCD a trusted certificate, or, for a test setup only, tick Skip TLS certificate verification."
 	const oldGeneric = "a certificate error occurred while connecting. Check the server's TLS configuration."
 	const oldWhole = "Sharko can't reach ArgoCD — a certificate error occurred while connecting. Check the server's TLS configuration."
 

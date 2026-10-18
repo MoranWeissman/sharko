@@ -2052,6 +2052,9 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     const sentence = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDTLS
     expect(sentence).toMatch(/^ArgoCD uses a certificate Sharko does not trust\./)
     expect(sentence).toMatch(/Skip TLS certificate verification\.$/)
+    // L16: one advice only. The old sentence also told the user to install
+    // ArgoCD with server.insecure.
+    expect(sentence).not.toMatch(/server\.insecure/)
 
     mockState.connections = [resumeConnection]
     renderWizard(4)

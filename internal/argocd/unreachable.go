@@ -49,8 +49,9 @@ package argocd
 // decided by a type or a sentinel, never by reading words:
 //
 //   - errors.Is against ErrTLSCertificateNotTrusted still matches, so the
-//     "add the certificate authority" sentence still reaches the operator who
-//     needs it;
+//     certificate sentence (give ArgoCD a trusted certificate, or for a test
+//     setup only tick Skip TLS certificate verification) still reaches the
+//     operator who needs it;
 //   - errors.Is against context.Canceled and context.DeadlineExceeded still
 //     matches when that is genuinely what happened, so internal/audit still
 //     records a cancel as a cancel and a deadline as a deadline;
