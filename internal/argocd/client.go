@@ -232,8 +232,10 @@ func refuseSchemeChange(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// plainHTTPGuardTransport makes sure the ArgoCD token is never sent to a plain
-// http address that sends Sharko on to https.
+// plainHTTPGuardTransport keeps the ArgoCD token away from a plain http
+// address that sends Sharko on to https. Once such a redirect is seen, the
+// token is never sent to that host over http again; before that, see "What
+// this does not cover" below.
 //
 // A redirect cannot be refused before the request that triggered it was sent,
 // and that request carries the token. So this transport follows two rules
@@ -262,6 +264,15 @@ func refuseSchemeChange(req *http.Request, via []*http.Request) error {
 // A check that gets no answer at all stops the request too, so the token is
 // never sent to a host whose answer is not known. The real request would
 // have failed the same way.
+//
+// What this does not cover (LO-7 R4): the check is a GET with no query,
+// asked once per path. So the token can still go out over plain http ONCE,
+// on the real request, when a proxy sends only some methods (only POST, say)
+// or only some query strings on to https, or when a path that answered the
+// check over plain http only later starts sending Sharko on to https. That
+// real request's answer is the redirect, so rule 1 stops every later one.
+// The operator docs (docs/site/operator/argocd-upstream-unreachable.md) say
+// the same.
 //
 // The state is per client (per transport), never package-level.
 type plainHTTPGuardTransport struct {

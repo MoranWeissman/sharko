@@ -54,16 +54,34 @@ and ArgoCD answers there only by sending Sharko on to `https://`. Sharko did
 reach ArgoCD, so **Test ArgoCD** does not say `Sharko can't reach ArgoCD`. It
 says `ArgoCD answers only over https at this address.` and tells you to change
 the address. When the https address is on the same host, the message names it,
-for example `https://argocd.example.com`. Change the ArgoCD address in
-**Settings > Connections** to that address and test again. Sharko never sends
-the ArgoCD token to an `http://` address that sent it on to https.
+for example `https://argocd.example.com`. If ArgoCD runs under a path, the
+address keeps it: `http://argocd.example.com/argocd` gives
+`https://argocd.example.com/argocd`. Change the ArgoCD address in
+**Settings > Connections** to that address and test again.
+
+Once an `http://` address has sent Sharko on to https, Sharko never sends the
+ArgoCD token to that host over plain http again. Before the token goes to a
+path over plain http for the first time, Sharko first asks that path without
+the token, so an address that always sends Sharko on to https never gets the
+token. There are two cases where the token can still go out over plain http
+once, before Sharko sees the redirect:
+
+- a path that answered over plain http when Sharko first asked, and only later
+  starts sending Sharko on to https;
+- a proxy that sends only some requests on to https, for example only writes
+  (`POST`, `PUT`, `DELETE`) or only some query strings. Sharko asks without
+  the token as a plain `GET` with no query, so that question gets no redirect.
+
+After that one request, the host is marked as https only. The real fix is the
+same in every case: use an `https://` address for ArgoCD.
 
 The other way round looks like this too, but is not: the ArgoCD address starts
 with `https://`, and ArgoCD, or a proxy in front of it, sends Sharko on to plain
 `http://`. Sharko does not follow that, so the ArgoCD token is never sent
-unencrypted. Where Sharko lists clusters or applications from ArgoCD, for
-example when it looks for clusters you can add, the message starts with
-`ArgoCD tried to send Sharko from https to plain http`. Check the ArgoCD address
+unencrypted. **Test ArgoCD** says
+`ArgoCD tried to send Sharko from https to plain http.` Where Sharko lists
+clusters or applications from ArgoCD, for example when it looks for clusters
+you can add, the message starts with the same words. Check the ArgoCD address
 in **Settings > Connections** and any proxy in front of ArgoCD.
 
 The `code` part tells you what kind of failure it was:
