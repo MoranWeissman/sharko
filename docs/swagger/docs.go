@@ -2559,7 +2559,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3085,7 +3085,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult"
                         }
@@ -3172,7 +3172,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3274,7 +3274,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult"
                         }
@@ -3373,7 +3373,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult"
                         }
@@ -5163,7 +5163,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult"
                         }

@@ -107,7 +107,7 @@ When `SHARKO_CONN_GITOPS_PR_AUTO_MERGE=true`, the PR is merged immediately after
 | 429 | Too many requests — rate limited (login only) |
 | 500 | Internal server error |
 | 502 | Bad gateway — upstream service (ArgoCD, Git, provider) unreachable |
-| 207 | Partial success — some steps completed, see response body |
+| 207 | Did not fully finish — some steps ran and one failed. Read `failed_step`, `error` and `message` in the response body |
 
 ---
 
