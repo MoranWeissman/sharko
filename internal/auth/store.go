@@ -131,6 +131,14 @@ type Store struct {
 	localPass string
 
 	mu sync.RWMutex
+	// createMu is held across the whole of CreateUser, from the "already
+	// exists" check to the in-memory update. Sharko runs as one instance, so
+	// this is what stops two creates of the same name from running at the
+	// same time: the second one waits, then sees the user and stops. Without
+	// it both could pass the check, and a lost answer on one of them could
+	// make it report a user the other one made (LO-7 R1). It is a separate
+	// lock from mu, because CreateUser takes mu for short reads and writes.
+	createMu sync.Mutex
 	// Cached data from K8s
 	users    map[string]*UserAccount
 	passHash map[string]string // username -> bcrypt hash
@@ -353,6 +361,10 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 		return "", inputErrorf("role must be admin, operator, or viewer")
 	}
 
+	// One create at a time, from the check below to the in-memory update.
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+
 	// Check if user already exists
 	s.mu.RLock()
 	if _, exists := s.users[username]; exists {
@@ -492,7 +504,7 @@ func (s *Store) createUserK8s(username, role string, hash []byte) error {
 		// leave a user who has no password. So read the user list again
 		// before any undo.
 		if stage == "updating ConfigMap" {
-			made, checkErr := s.userWasSaved(ctx, cmName, username, passKey, hash)
+			made, checkErr := s.userWasSaved(ctx, cmName, username, role, passKey, hash)
 			if checkErr != nil {
 				// We cannot tell. Leave the password where it is: a
 				// password with no user entry cannot be used to log in,
@@ -518,15 +530,22 @@ func (s *Store) createUserK8s(username, role string, hash []byte) error {
 }
 
 // userWasSaved reads the users ConfigMap and the Secret fresh, and reports
-// whether the user entry is there AND the Secret still holds the password
-// hash we wrote. Both must be true: then the user can log in with the
-// password CreateUser hands back, so the create counts as done.
-func (s *Store) userWasSaved(ctx context.Context, cmName, username, passKey string, ours []byte) (bool, error) {
+// whether the user entry we wrote is there AND the Secret still holds the
+// password hash we wrote. All of it must be true: then the user can log in
+// with the password CreateUser hands back, with the role that was asked for,
+// so the create counts as done.
+//
+// "The entry we wrote" means: enabled, and the role we asked for. An entry
+// with any other role, or a disabled one, was written by someone else (for
+// example another create of the same name), so it does not count (LO-7 R1).
+// A user list that cannot be read does not count either.
+func (s *Store) userWasSaved(ctx context.Context, cmName, username, role, passKey string, ours []byte) (bool, error) {
 	cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
 	if err != nil {
 		return false, fmt.Errorf("reading ConfigMap: %w", err)
 	}
-	if !accountsHasUser(cm.Data["accounts"], username) {
+	entry, ok := accountsEntry(cm.Data["accounts"], username)
+	if !ok || !entry.Enabled || entry.Role != role {
 		return false, nil
 	}
 	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
@@ -566,15 +585,23 @@ func (s *Store) undoPasswordSave(ctx context.Context, passKey string, ours []byt
 // accountsHasUser reports whether the accounts YAML from the users ConfigMap
 // has an entry for username.
 func accountsHasUser(accountsYAML, username string) bool {
+	_, ok := accountsEntry(accountsYAML, username)
+	return ok
+}
+
+// accountsEntry returns the entry for username in the users ConfigMap's
+// accounts YAML. It reports false when there is none, or when the YAML
+// cannot be read.
+func accountsEntry(accountsYAML, username string) (usersAccount, bool) {
 	if accountsYAML == "" {
-		return false
+		return usersAccount{}, false
 	}
 	accounts := make(map[string]usersAccount)
 	if err := yaml.Unmarshal([]byte(accountsYAML), &accounts); err != nil {
-		return false
+		return usersAccount{}, false
 	}
-	_, ok := accounts[username]
-	return ok
+	entry, ok := accounts[username]
+	return entry, ok
 }
 
 // UpdateUser updates a user's role and enabled status.
