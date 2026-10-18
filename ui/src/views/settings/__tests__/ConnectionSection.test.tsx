@@ -83,9 +83,9 @@ describe('ConnectionSection — ArgoCD tried to send Sharko to plain http (LO-7 
 
   it('shows its own sentence word for word, not the general one', async () => {
     const redirectToHTTP = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDRedirectToHTTP
-    expect(redirectToHTTP).toBe(
-      'ArgoCD tried to send Sharko from https to plain http. Sharko does not follow that, so the ArgoCD token is never sent unencrypted. Check the ArgoCD address and any proxy in front of ArgoCD, then test again.',
-    )
+    // The exact words are pinned on the server (Go test) and come here
+    // through the generated file; browser code may not retype them.
+    expect(redirectToHTTP).toMatch(/^ArgoCD tried to send Sharko from https to plain http\. /)
     answerArgocd(redirectToHTTP)
     render(<ConnectionSection />)
     fireEvent.click(screen.getByRole('button', { name: /Test ArgoCD/i }))
