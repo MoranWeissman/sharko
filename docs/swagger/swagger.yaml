@@ -5991,6 +5991,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "500":
+          description: The new password could not be saved
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Update password

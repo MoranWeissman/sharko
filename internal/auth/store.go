@@ -93,8 +93,8 @@ var ErrInvalidUsername error = &InputError{msg: InvalidUsernameSentence}
 
 // InputError is an error caused by what the caller asked for: a bad user
 // name or role, a user that already exists, or a user that does not exist.
-// CreateUser, UpdateUser, DeleteUser and ResetPassword return it as is, never
-// wrapped, so the API can tell it apart from a storage failure (see
+// CreateUser, UpdateUser, DeleteUser, ResetPassword and UpdatePassword return
+// it as is, never wrapped, so the API can tell it apart from a storage failure (see
 // IsInputError).
 type InputError struct{ msg string }
 
@@ -246,42 +246,58 @@ func (s *Store) ValidateCredentials(username, password string) bool {
 	return false
 }
 
-// UpdatePassword changes a user's password. Verifies the current password first.
-// In K8s mode, persists the new bcrypt hash to the Secret.
+// ErrCurrentPasswordIncorrect is returned by UpdatePassword when the current
+// password the caller typed is wrong. The API answers 401 for it. Callers spot
+// it with errors.Is, never by reading the error text.
+var ErrCurrentPasswordIncorrect = errors.New("current password is incorrect")
+
+// UpdatePassword changes a user's own password. Verifies the current password
+// first.
+//
+// A wrong current password is ErrCurrentPasswordIncorrect. A new password
+// that is too short is an input error (see IsInputError). Anything else is a
+// storage failure. In Kubernetes mode the Secret is read fresh and the write
+// retries on a conflict (retry.RetryOnConflict), the same way ResetPassword
+// does, so a change another writer made at the same time is kept. No error
+// holds the password or its hash.
 func (s *Store) UpdatePassword(username, currentPassword, newPassword string) error {
 	if !s.ValidateCredentials(username, currentPassword) {
-		return fmt.Errorf("current password is incorrect")
+		return ErrCurrentPasswordIncorrect
 	}
 
 	if len(newPassword) < 12 {
-		return fmt.Errorf("new password must be at least 12 characters")
+		return inputErrorf("new password must be at least 12 characters")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
+		return fmt.Errorf("hashing password: %w", err)
 	}
 
 	hashStr := string(hash)
 
 	if s.mode == ModeK8s {
-		// Update the K8s Secret
 		ctx := context.Background()
-		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+		secrets := s.clientset.CoreV1().Secrets(s.namespace)
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			secret, err := secrets.Get(ctx, s.secretName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("reading Secret: %w", err)
+			}
+			if secret.Data == nil {
+				secret.Data = make(map[string][]byte)
+			}
+			secret.Data[username+".password"] = hash
+			// Remove initial password key if it exists (already changed)
+			delete(secret.Data, username+".initialPassword")
+			if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+				// Wrapped with %w so RetryOnConflict still sees a conflict.
+				return fmt.Errorf("updating Secret: %w", err)
+			}
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("failed to read secret: %w", err)
-		}
-
-		if secret.Data == nil {
-			secret.Data = make(map[string][]byte)
-		}
-		secret.Data[username+".password"] = []byte(hashStr)
-		// Remove initial password key if it exists (already changed)
-		delete(secret.Data, username+".initialPassword")
-
-		_, err = s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to update secret: %w", err)
+			return err
 		}
 	} else {
 		// Local mode: update env var and in-memory

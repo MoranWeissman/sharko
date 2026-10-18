@@ -243,3 +243,89 @@ func TestHandleResetPassword_NotFoundIs400(t *testing.T) {
 		t.Errorf("error = %q", msg)
 	}
 }
+
+func doUpdatePassword(t *testing.T, s *Server, user, current, next string) (int, string, string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"current_password": current, "new_password": next})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/update-password", bytes.NewReader(body))
+	req.Header.Set("X-Sharko-User", user)
+	req.Header.Set("X-Sharko-Role", "viewer")
+	w := httptest.NewRecorder()
+	s.handleUpdatePassword(w, req)
+	return w.Code, errorField(t, w), w.Body.String()
+}
+
+// Changing your own password (L14): a storage failure is 500, a wrong current
+// password is 401, a too-short new password is 400. The status is picked by
+// error type, so these hold even if the storage error's words change.
+func TestHandleUpdatePassword_StorageFailureIs500(t *testing.T) {
+	st, cs := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	pass, err := st.CreateUser("dana", "viewer")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	failUpdates(cs, "secrets")
+
+	const next = "a-brand-new-password-1"
+	code, msg, body := doUpdatePassword(t, s, "dana", pass, next)
+	if code != http.StatusInternalServerError {
+		t.Errorf("a storage failure must be 500, got %d (%q)", code, msg)
+	}
+	const want = "updating Secret: storage is down"
+	if msg != want {
+		t.Errorf("error = %q, want %q", msg, want)
+	}
+	if strings.Contains(body, next) || strings.Contains(body, pass) || strings.Contains(body, "$2a$") {
+		t.Errorf("a failed password change answer holds a password or hash: %s", body)
+	}
+}
+
+// A storage error whose words happen to say "incorrect" or "at least" must
+// still be 500. The old handler looked for those words in the error text.
+func TestHandleUpdatePassword_StorageErrorWordsDoNotPickTheStatus(t *testing.T) {
+	st, cs := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	pass, err := st.CreateUser("dana", "viewer")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	cs.PrependReactor("update", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("disk quota incorrect, needs at least 1 GB")
+	})
+	code, msg, _ := doUpdatePassword(t, s, "dana", pass, "a-brand-new-password-1")
+	if code != http.StatusInternalServerError {
+		t.Errorf("a storage failure must be 500 whatever its words, got %d (%q)", code, msg)
+	}
+}
+
+func TestHandleUpdatePassword_WrongCurrentIs401(t *testing.T) {
+	st, _ := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	if _, err := st.CreateUser("dana", "viewer"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, msg, _ := doUpdatePassword(t, s, "dana", "not-the-password", "a-brand-new-password-1")
+	if code != http.StatusUnauthorized {
+		t.Errorf("a wrong current password must be 401, got %d", code)
+	}
+	if msg != "current password is incorrect" {
+		t.Errorf("error = %q", msg)
+	}
+}
+
+func TestHandleUpdatePassword_ShortNewPasswordIs400(t *testing.T) {
+	st, _ := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	pass, err := st.CreateUser("dana", "viewer")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	code, msg, _ := doUpdatePassword(t, s, "dana", pass, "short")
+	if code != http.StatusBadRequest {
+		t.Errorf("a too-short new password must be 400, got %d", code)
+	}
+	if msg != "new password must be at least 12 characters" {
+		t.Errorf("error = %q", msg)
+	}
+}

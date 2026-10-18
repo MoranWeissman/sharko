@@ -2181,6 +2181,7 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, stri
 // @Success 200 {object} map[string]interface{} "Password updated"
 // @Failure 400 {object} map[string]interface{} "Bad request or weak password"
 // @Failure 401 {object} map[string]interface{} "Current password incorrect"
+// @Failure 500 {object} map[string]interface{} "The new password could not be saved"
 // @Router /auth/update-password [post]
 // handleUpdatePassword allows changing the password. Verifies current password first.
 func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
@@ -2209,15 +2210,18 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authStore.UpdatePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
-		if strings.Contains(err.Error(), "incorrect") {
+		// Picked by error TYPE, never by the error's words: a wrong current
+		// password is 401, a bad new password is 400, and a storage failure
+		// is 500. The text holds no password or hash (see
+		// auth.UpdatePassword).
+		switch {
+		case errors.Is(err, auth.ErrCurrentPasswordIncorrect):
 			writeError(w, http.StatusUnauthorized, err.Error())
-			return
-		}
-		if strings.Contains(err.Error(), "at least") {
+		case auth.IsInputError(err):
 			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
 		}
-		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
