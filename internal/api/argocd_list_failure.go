@@ -34,7 +34,9 @@ import (
 // declares — picking one complete sentence from the closed set below. No
 // substring matching on error words, and no parameter for raw text: the
 // function takes an error and returns a finished sentence, and the only
-// strings it can ever return are written in this file.
+// strings it can ever return are written in this file. The one exception is
+// the https address in the "needs https" sentence, which Sharko builds itself
+// from the scheme and host only (argocd.HTTPSAddress).
 //
 // # What an operator can still work out
 //
@@ -67,6 +69,18 @@ func argoListFailureSentence(subject argoReadSubject, err error) string {
 		return "Sharko's ArgoCD account is not allowed to list " + noun + ". Grant that account permission to list " + noun + " in ArgoCD and try again."
 	case errors.Is(err, argocd.ErrTokenInvalid):
 		return "ArgoCD refused Sharko's token while listing " + noun + ". The token may be expired or wrong — replace it on the ArgoCD connection in Settings and try again."
+	case errors.Is(err, argocd.ErrArgocdNeedsHTTPS):
+		// L12: an http address that only sends Sharko on to https. Sharko
+		// did reach ArgoCD, so the general "could not reach" sentence below
+		// is wrong here. It opens with the same words as the connection
+		// test's sentence (argocdNeedsHTTPS), and names the https address
+		// when Sharko knows it. That address is "https://" plus the host
+		// and port only, built by Sharko (argocd.HTTPSAddress), never the
+		// path, user part or query, where a credential can be written.
+		if addr := argocd.HTTPSAddress(err); addr != "" {
+			return "ArgoCD answers only over https at this address, so Sharko did not list " + noun + ". Change the ArgoCD address on the connection in Settings to " + addr + " and try again."
+		}
+		return "ArgoCD answers only over https at this address, so Sharko did not list " + noun + ". Change the ArgoCD address on the connection in Settings so it starts with https:// and try again."
 	case errors.Is(err, argocd.ErrTLSCertificateNotTrusted):
 		return "Sharko reached ArgoCD but could not verify its certificate, so it did not list " + noun + ". Add the certificate authority to the ArgoCD connection in Settings and try again."
 	default:

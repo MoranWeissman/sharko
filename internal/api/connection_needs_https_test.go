@@ -135,12 +135,25 @@ func TestTestCredentials_ArgoCDNeedsHTTPSThroughTheHandler(t *testing.T) {
 
 // TestDiscoverClusters_ArgoCDSentences pins, by exact text, every sentence
 // GET /clusters/available (the cluster discovery path) can send back when
-// listing clusters in ArgoCD fails.
+// listing clusters in ArgoCD fails. L12: an http address that only sends
+// Sharko on to https gets its own sentence, not the general "could not
+// reach" one, and it names the https address only when it is the same host.
 func TestDiscoverClusters_ArgoCDSentences(t *testing.T) {
-	plainURL, _ := newHTTPToHTTPSPair(t)
+	plainURL, httpsURL := newHTTPToHTTPSPair(t)
 	_, needsHTTPSErr := argocd.NewClient(plainURL, "argo-token", false).ListClusters(context.Background())
 	if !errors.Is(needsHTTPSErr, argocd.ErrArgocdNeedsHTTPS) {
 		t.Fatalf("setup: want ErrArgocdNeedsHTTPS, got %v", needsHTTPSErr)
+	}
+	otherHost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Errorf("the ArgoCD token was sent over plain http")
+		}
+		http.Redirect(w, r, "https://somewhere-else.example/api/v1/clusters", http.StatusFound)
+	}))
+	defer otherHost.Close()
+	_, otherHostErr := argocd.NewClient(otherHost.URL, "argo-token", false).ListClusters(context.Background())
+	if !errors.Is(otherHostErr, argocd.ErrArgocdNeedsHTTPS) {
+		t.Fatalf("setup: want ErrArgocdNeedsHTTPS, got %v", otherHostErr)
 	}
 
 	cases := []struct {
@@ -157,7 +170,9 @@ func TestDiscoverClusters_ArgoCDSentences(t *testing.T) {
 		{"no answer", errors.New("dial tcp 10.0.0.9:443: connect: connection refused"),
 			"Sharko could not reach the ArgoCD API to list clusters. Check that the ArgoCD server address on the connection is correct and that ArgoCD is reachable from Sharko, then try again."},
 		{"http address that only sends on to https", needsHTTPSErr,
-			"Sharko could not reach the ArgoCD API to list clusters. Check that the ArgoCD server address on the connection is correct and that ArgoCD is reachable from Sharko, then try again."},
+			"ArgoCD answers only over https at this address, so Sharko did not list clusters. Change the ArgoCD address on the connection in Settings to " + httpsURL + " and try again."},
+		{"http address that sends on to https on another host", otherHostErr,
+			"ArgoCD answers only over https at this address, so Sharko did not list clusters. Change the ArgoCD address on the connection in Settings so it starts with https:// and try again."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,9 +192,22 @@ func TestDiscoverClusters_ArgoCDSentences(t *testing.T) {
 			if body["error"] != tc.want {
 				t.Errorf("error:\n got: %q\nwant: %q", body["error"], tc.want)
 			}
-			if strings.Contains(w.Body.String(), "10.0.0.9") || strings.Contains(w.Body.String(), "argo-token") {
+			if strings.Contains(w.Body.String(), "10.0.0.9") || strings.Contains(w.Body.String(), "argo-token") ||
+				strings.Contains(w.Body.String(), "somewhere-else") {
 				t.Errorf("an address or token leaked: %s", w.Body.String())
 			}
 		})
+	}
+}
+
+// TestArgoListFailureSentence_NeedsHTTPSApplications: the same classifier
+// serves the applications reads, with the same words.
+func TestArgoListFailureSentence_NeedsHTTPSApplications(t *testing.T) {
+	plainURL, httpsURL := newHTTPToHTTPSPair(t)
+	_, err := argocd.NewClient(plainURL, "argo-token", false).ListClusters(context.Background())
+	got := argoListFailureSentence(argoReadApplications, err)
+	want := "ArgoCD answers only over https at this address, so Sharko did not list applications. Change the ArgoCD address on the connection in Settings to " + httpsURL + " and try again."
+	if got != want {
+		t.Errorf("sentence:\n got: %q\nwant: %q", got, want)
 	}
 }
