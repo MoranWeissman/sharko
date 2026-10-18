@@ -94,6 +94,8 @@ When you register a cluster, one of the things to settle is **how should Sharko 
 
 The credentials source is the *only* thing that changes between these three. Everything else — which addons to enable, the environment label, the cluster name — works the same way no matter how Sharko reaches the cluster.
 
+The cluster address in the credentials (the `server:` line of a kubeconfig) must be a plain address, such as `https://my-cluster.example.com:6443`. If it has a user name, a password, a query (`?...`) or a fragment (`#...`) in it, Sharko does not register the cluster and answers `400`, because a password or token can hide in those parts. The answer shows the address without them, so you can fix the kubeconfig and try again.
+
 !!! tip "Credentials are entirely optional at registration"
     Since V2-cleanup-88.3, you can skip the credentials source altogether and register with none of the three. Registration always succeeds — addons deploy through the normal Git → ArgoCD path, which never needs Sharko's own cluster access. The only place credentials become required is enabling an addon that pushes its own secrets to the cluster (a `secrets:` block in its catalog entry, e.g. Datadog API keys): that specific action is rejected with a `422` naming exactly what's missing, until you add credentials. A secret-less addon enables with zero friction either way. See [Cluster Connectivity Model](../operator/cluster-connectivity-model.md#registration-works-with-zero-credentials-lazy-credentials) for the full model. In the UI, a cluster missing credentials shows a pre-warning on the Apply button for a secret-bearing addon, before you hit the same 422 the API would return.
 

@@ -67,7 +67,7 @@ var validClusterNameRe = regexp.MustCompile(models.ResourceNamePattern)
 // @Success 200 {object} map[string]interface{} "Dry-run preview"
 // @Success 201 {object} map[string]interface{} "Cluster registered"
 // @Success 207 {object} map[string]interface{} "Did not fully finish: some steps ran and one failed. Read failed_step, error and message"
-// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 400 {object} map[string]interface{} "Bad request, including a cluster address with a user name, password, query or fragment in it"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 409 {object} map[string]interface{} "Cluster already exists, or its ArgoCD connection is owned by another tool — stop that tool and use the takeover flow instead"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
@@ -226,6 +226,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		// above already catches this; the orchestrator validates too so
 		// non-HTTP callers get the same contract. Caller error → 400.
 		if orchestrator.IsInvalidConnectionMode(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// A cluster address with a user name, password, query or fragment
+		// in it (LO-9 R11). Caller error → 400. The sentence never holds
+		// those parts.
+		if orchestrator.IsClusterServerAddressRefused(err) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

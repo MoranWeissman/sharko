@@ -300,6 +300,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 	if creds != nil {
+		// LO-9 R11: an address with a user name, password, query or
+		// fragment in it is refused before anything is written or checked.
+		if addrErr := checkClusterServerAddress(creds.Server); addrErr != nil {
+			return nil, addrErr
+		}
 		result.Cluster.Server = creds.Server
 	}
 	if credsSkippedReason != "" {

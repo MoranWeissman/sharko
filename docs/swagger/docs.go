@@ -2566,7 +2566,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request, including a cluster address with a user name, password, query or fragment in it",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
