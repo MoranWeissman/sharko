@@ -246,6 +246,16 @@ const CLUSTERS_PAGE_SIZE = 100;
 // ClustersOverview.registerpartial.test.tsx.
 const REGISTER_DID_NOT_FINISH = 'Sharko did not finish registering this cluster.';
 
+// Shown when the server says the registration worked, the pull request is
+// not merged, and the answer has no pull request link (LO-9 R9). A
+// "success" answer only comes back once the pull request is open (Sharko
+// opened it, or found one already open), so the sentence says that and
+// nothing more. Before, it said "submitted as a pull request ... Check the
+// open PR list", a guess. Pinned by exact text in
+// ClustersOverview.registerpartial.test.tsx.
+const REGISTER_PR_NO_LINK =
+  "There is an open pull request that registers this cluster, but Sharko's answer had no link to it. Find it in your GitOps repo and merge it to finish the registration.";
+
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
   // Mirror the latest allClusters in a ref so fetchData's catch block can read
@@ -856,9 +866,10 @@ export function ClustersOverview() {
         // wording.
         setAddClusterResultMsg(`__pending__|${prUrl}`);
       } else {
-        // Defensive: server returned no PR URL and no merge flag. Stay
-        // truthful — don't claim "registered" without evidence.
-        setAddClusterResultMsg('Cluster registration submitted as a pull request in your GitOps repo. Check the open PR list for status.');
+        // The server said "success" but sent no PR link and no merge.
+        // Stay truthful — don't claim "registered" without evidence, and
+        // don't guess more than the answer says (LO-9 R9).
+        setAddClusterResultMsg(REGISTER_PR_NO_LINK);
       }
       setAddClusterResult(result);
       setAddClusterOpen(false);
@@ -1910,7 +1921,7 @@ export function ClustersOverview() {
         //   - "success" (green) — the PR already merged.
         const tone: 'success' | 'warn' | 'pending' = isPartial
           ? 'warn'
-          : isPendingTag
+          : isPendingTag || addClusterResultMsg === REGISTER_PR_NO_LINK
             ? 'pending'
             : 'success';
         const toneClasses =
@@ -1930,7 +1941,7 @@ export function ClustersOverview() {
         // the main outcome, so the existing outcome wording (asserted
         // exactly by ClustersOverview.pending.test.tsx) stays untouched.
         // Skipped for the untagged no-PR-URL fallback message, which
-        // already says "pull request in your GitOps repo" itself.
+        // already says "pull request" and "GitOps repo" itself.
         const showGitOpsLine = !isPartial && (isPendingTag || isMergedTag || addClusterResultMsg.startsWith('http'));
         return (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${toneClasses}`}>

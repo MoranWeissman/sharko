@@ -27,8 +27,12 @@ vi.mock('@/services/api', () => ({
   unadoptCluster: vi.fn(),
 }));
 
+// The old guess for a "success" answer with no PR link. Banned (LO-9 R9).
 const SUBMITTED_SENTENCE =
   'Cluster registration submitted as a pull request in your GitOps repo. Check the open PR list for status.';
+
+const PR_NO_LINK_SENTENCE =
+  "There is an open pull request that registers this cluster, but Sharko's answer had no link to it. Find it in your GitOps repo and merge it to finish the registration.";
 
 function renderView() {
   localStorage.setItem('sharko-auth-token', 'test-token');
@@ -79,7 +83,7 @@ describe('ClustersOverview — a registration that stopped part-way (LO-8 R6)', 
 
   it('shows the server sentence in the dialog when Sharko could not read Git, and no pull request was opened', async () => {
     const msg =
-      'Sharko could not read the cluster registry from Git, so it stopped before opening a pull request — writing one built from an empty file would have dropped every other cluster out of the registry. Nothing was committed. Try again once Git is reachable.';
+      'Sharko could not read the cluster registry from Git, so it stopped before opening a pull request — writing one built from an empty file would have dropped every other cluster out of the registry. Nothing was committed. Sharko created 1 addon secret on the cluster. Try again once Git is reachable.';
     mockRegisterCluster.mockResolvedValue({
       status: 'partial',
       failed_step: 'read_cluster_registry',
@@ -113,7 +117,7 @@ describe('ClustersOverview — a registration that stopped part-way (LO-8 R6)', 
 
   it('shows the server sentence and the PR link when the pull request was opened but auto-merge failed', async () => {
     const msg =
-      'Secrets created and PR opened, but auto-merge failed. Merge manually then ArgoCD registration will be needed: https://github.com/org/repo/pull/9';
+      'Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. Pull request: https://github.com/org/repo/pull/9';
     mockRegisterCluster.mockResolvedValue({
       status: 'partial',
       failed_step: 'pr_merge',
@@ -133,7 +137,7 @@ describe('ClustersOverview — a registration that stopped part-way (LO-8 R6)', 
   });
 
   it('does not say "Cluster registered." when the PR merged but some addon secrets failed', async () => {
-    const msg = 'Registration completed but 1 addon secret(s) failed to create.';
+    const msg = 'The cluster is registered, but 1 addon secret could not be created on it.';
     mockRegisterCluster.mockResolvedValue({
       status: 'partial',
       failed_step: 'create_secrets',
@@ -149,5 +153,22 @@ describe('ClustersOverview — a registration that stopped part-way (LO-8 R6)', 
       'https://github.com/org/repo/pull/10',
     );
     expect(screen.queryByText(/^Cluster registered\./)).not.toBeInTheDocument();
+  });
+
+  it('says there is an open pull request with no link when a success answer has no PR link (LO-9 R9)', async () => {
+    mockRegisterCluster.mockResolvedValue({
+      status: 'success',
+      completed_steps: ['validate', 'git_commit'],
+      git: { merged: false },
+    });
+
+    renderView();
+    await registerOnce();
+
+    expect(await screen.findByText(PR_NO_LINK_SENTENCE)).toBeInTheDocument();
+    expect(screen.queryByText(SUBMITTED_SENTENCE)).not.toBeInTheDocument();
+    expect(screen.queryByText(/submitted as a pull request/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Cluster registered/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /View PR/i })).not.toBeInTheDocument();
   });
 });
