@@ -190,17 +190,26 @@ func normalizeConnectionFailureCode(code verify.ErrorCode) verify.ErrorCode {
 // ERR_UNKNOWN.
 const connectionFailureCodeNeedsHTTPS verify.ErrorCode = "ERR_NEEDS_HTTPS"
 
+// connectionFailureCodeRedirectToHTTP is the second extra code, for the
+// opposite case (LO-7 R2): an https ArgoCD address that tried to send Sharko
+// on to plain http. Like connectionFailureCodeNeedsHTTPS it is about the
+// address an operator typed, not a cluster check result, so it is not added
+// to internal/verify, and it is used for the ArgoCD kind only.
+const connectionFailureCodeRedirectToHTTP verify.ErrorCode = "ERR_REDIRECT_TO_HTTP"
+
 // connectionFailureExtraCodeTokens gives the extra codes their identifier
 // tokens. Kept apart from connectionFailureCodeTokens, which must match
 // internal/verify exactly.
 var connectionFailureExtraCodeTokens = map[verify.ErrorCode]string{
-	connectionFailureCodeNeedsHTTPS: "NeedsHTTPS",
+	connectionFailureCodeNeedsHTTPS:     "NeedsHTTPS",
+	connectionFailureCodeRedirectToHTTP: "RedirectToHTTP",
 }
 
 // connectionFailureExtraPairs is every (kind, extra code) pair the catalog
 // holds. An extra code is only ever valid together with its kind.
 var connectionFailureExtraPairs = []connectionFailureKey{
 	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS},
+	{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP},
 }
 
 // normalizeConnectionFailurePair normalizes both parameters together. An
@@ -351,6 +360,19 @@ const argocdNeedsHTTPS = "ArgoCD answers only over https at this address. " +
 const argocdNeedsHTTPSAtFmt = "ArgoCD answers only over https at this address. " +
 	"Change the ArgoCD address to %s and test again."
 
+// argocdRedirectToHTTP is the whole sentence for an https ArgoCD address that
+// tried to send Sharko on to plain http (LO-7 R2). Before, the connection
+// test showed the general "Sharko can't reach ArgoCD" sentence here, which is
+// wrong: Sharko did reach ArgoCD and refused to follow. It opens with the
+// same words as the list sentence for this case (argoListFailureSentence).
+// It names no address: the http address ArgoCD sent Sharko to is ArgoCD's
+// words, not Sharko's.
+//
+// Pinned by exact text in connection_redirect_to_http_sentence_test.go.
+const argocdRedirectToHTTP = "ArgoCD tried to send Sharko from https to plain http. " +
+	"Sharko does not follow that, so the ArgoCD token is never sent unencrypted. " +
+	"Check the ArgoCD address and any proxy in front of ArgoCD, then test again."
+
 // connectionTestStatusNotTested is the "status" of a connection-test result
 // for a test that never ran. Every other result is "ok" or "error".
 const connectionTestStatusNotTested = "not_tested"
@@ -374,9 +396,10 @@ const argocdNotTestedBadGitAddress = "ArgoCD was not tested, because Sharko coul
 // ConnectionFailureMessages slice, same generated browser file. Nothing about
 // the contract changes — only where the words come from.
 var connectionFailureWholeSentences = map[connectionFailureKey]string{
-	{kind: connectionKindGit, code: verify.ERR_RBAC}:                    gitPermissionRefusal + " " + gitPermissionNextStep,
-	{kind: connectionKindArgoCD, code: verify.ERR_TLS}:                  argocdCertificateNotTrusted,
-	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS}: argocdNeedsHTTPS,
+	{kind: connectionKindGit, code: verify.ERR_RBAC}:                        gitPermissionRefusal + " " + gitPermissionNextStep,
+	{kind: connectionKindArgoCD, code: verify.ERR_TLS}:                      argocdCertificateNotTrusted,
+	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS}:     argocdNeedsHTTPS,
+	{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP}: argocdRedirectToHTTP,
 }
 
 // connectionFailureWholeSentence looks a whole-sentence variant up. Both
@@ -477,11 +500,17 @@ func connectionFailureIDFor(kind connectionKind, code verify.ErrorCode) string {
 
 // connectionFailureCodeFor picks the failure code for a failed connection
 // test. An ArgoCD error that says "this http address only sends Sharko on to
-// https" gets its own code, picked by error TYPE (errors.Is), never by its
-// words. Everything else goes through verify.ClassifyError as before.
+// https", or "this https address tried to send Sharko on to plain http", gets
+// its own code, picked by error TYPE (errors.Is), never by its words.
+// Everything else goes through verify.ClassifyError as before.
 func connectionFailureCodeFor(kind connectionKind, err error) verify.ErrorCode {
-	if normalizeConnectionKind(kind) == connectionKindArgoCD && errors.Is(err, argocd.ErrArgocdNeedsHTTPS) {
-		return connectionFailureCodeNeedsHTTPS
+	if normalizeConnectionKind(kind) == connectionKindArgoCD {
+		switch {
+		case errors.Is(err, argocd.ErrArgocdNeedsHTTPS):
+			return connectionFailureCodeNeedsHTTPS
+		case errors.Is(err, argocd.ErrArgocdRedirectToHTTP):
+			return connectionFailureCodeRedirectToHTTP
+		}
 	}
 	return verify.ClassifyError(err)
 }

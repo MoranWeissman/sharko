@@ -74,6 +74,7 @@ func TestConnectionFailure_EveryVariantRendersItsSentence(t *testing.T) {
 		// The one extra pair (L7): an http address that only sends Sharko on
 		// to https. This is the form without the address — the catalog form.
 		{connectionKindArgoCD, connectionFailureCodeNeedsHTTPS, "ArgoCD answers only over https at this address. Change the ArgoCD address so it starts with https:// and test again."},
+		{connectionKindArgoCD, connectionFailureCodeRedirectToHTTP, "ArgoCD tried to send Sharko from https to plain http. Sharko does not follow that, so the ArgoCD token is never sent unencrypted. Check the ArgoCD address and any proxy in front of ArgoCD, then test again."},
 
 		// ── vault ────────────────────────────────────────────────────────
 		{connectionKindVault, verify.ERR_NETWORK, "Sharko can't reach your secrets store — the host could not be reached. Check the URL and network access."},
@@ -209,6 +210,7 @@ func TestConnectionFailure_JoinPunctuation(t *testing.T) {
 		{kind: connectionKindGit, code: verify.ERR_RBAC},
 		{kind: connectionKindArgoCD, code: verify.ERR_TLS},
 		{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS},
+		{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP},
 	}
 	isWholeSentence := map[connectionFailureKey]bool{}
 	for _, key := range wholeSentenceVariants {
@@ -447,15 +449,16 @@ func TestConnectionFailure_OtherKindsKeepTheirPermissionWording(t *testing.T) {
 
 	// The places a whole-sentence variant exists must be exactly the ruled
 	// ones: git/ERR_RBAC (2026-08-20), argocd/ERR_TLS (VF-1, video
-	// finding V2, 2026-10-15) and argocd/ERR_NEEDS_HTTPS (L7, epic
-	// video-leftovers, 2026-10-18). Compared as an exact list, never a count.
+	// finding V2, 2026-10-15), argocd/ERR_NEEDS_HTTPS (L7, epic
+	// video-leftovers, 2026-10-18) and argocd/ERR_REDIRECT_TO_HTTP (LO-7 R2,
+	// same epic). Compared as an exact list, never a count.
 	var names []string
 	for key := range connectionFailureWholeSentences {
 		names = append(names, string(key.kind)+"/"+string(key.code))
 	}
 	sort.Strings(names)
-	if strings.Join(names, ",") != "argocd/ERR_NEEDS_HTTPS,argocd/ERR_TLS,git/ERR_RBAC" {
-		t.Errorf("whole-sentence variants: %v — only argocd/ERR_NEEDS_HTTPS, argocd/ERR_TLS and git/ERR_RBAC were ruled on. "+
+	if strings.Join(names, ",") != "argocd/ERR_NEEDS_HTTPS,argocd/ERR_REDIRECT_TO_HTTP,argocd/ERR_TLS,git/ERR_RBAC" {
+		t.Errorf("whole-sentence variants: %v — only argocd/ERR_NEEDS_HTTPS, argocd/ERR_REDIRECT_TO_HTTP, argocd/ERR_TLS and git/ERR_RBAC were ruled on. "+
 			"A new one is a product decision, not a refactor: name it in TestConnectionFailure_JoinPunctuation "+
 			"and write its literal out in TestConnectionFailure_EveryVariantRendersItsSentence.",
 			names)
@@ -505,6 +508,13 @@ func TestConnectionFailure_UnsupportedParameterValues(t *testing.T) {
 			code:   connectionFailureCodeNeedsHTTPS,
 			wantID: "connectionFailureGitUnknown",
 			want:   "Sharko can't reach your Git host. Check the connection settings and try again.",
+		},
+		{
+			name:   "the second ArgoCD-only code with another kind renders as unknown",
+			kind:   connectionKindVault,
+			code:   connectionFailureCodeRedirectToHTTP,
+			wantID: "connectionFailureVaultUnknown",
+			want:   "Sharko can't reach your secrets store. Check the connection settings and try again.",
 		},
 		{
 			name:   "both parameters unsupported",
@@ -687,13 +697,13 @@ func TestConnectionFailure_CatalogCoversEveryPair(t *testing.T) {
 	}
 	// The extra pairs, written out as literals so the list is not checked
 	// against itself.
-	for _, id := range []string{"connectionFailureArgoCDNeedsHTTPS"} {
+	for _, id := range []string{"connectionFailureArgoCDNeedsHTTPS", "connectionFailureArgoCDRedirectToHTTP"} {
 		expected[id] = true
 		if !inCatalog[id] {
 			t.Errorf("%q is not in the catalog", id)
 		}
 	}
-	if len(connectionFailureExtraPairs) != 1 {
+	if len(connectionFailureExtraPairs) != 2 {
 		t.Errorf("connectionFailureExtraPairs has %d pairs; add the new one's identifier above", len(connectionFailureExtraPairs))
 	}
 	for id := range inCatalog {

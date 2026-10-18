@@ -2104,6 +2104,20 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     expect(await screen.findByText(needsHTTPSAt)).toBeInTheDocument()
     expect(screen.queryByText(needsHTTPS)).toBeNull()
   })
+
+  // LO-7 R2. An https address that tried to send Sharko on to plain http has
+  // its own sentence now, not the general can't-reach one.
+  it('shows the ArgoCD redirect-to-http sentence word for word, not the general one', async () => {
+    const redirectToHTTP = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDRedirectToHTTP
+    expect(redirectToHTTP).toBe(
+      'ArgoCD tried to send Sharko from https to plain http. Sharko does not follow that, so the ArgoCD token is never sent unencrypted. Check the ArgoCD address and any proxy in front of ArgoCD, then test again.',
+    )
+    await testArgocdAndGet(redirectToHTTP)
+    expect(await screen.findByText(redirectToHTTP)).toBeInTheDocument()
+    expect(
+      screen.queryByText(CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDUnknown),
+    ).toBeNull()
+  })
 })
 
 // L4 — only AWS Secrets Manager uses a prefix. Kubernetes Secrets ignores it,

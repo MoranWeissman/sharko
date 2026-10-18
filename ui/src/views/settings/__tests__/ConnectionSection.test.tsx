@@ -75,3 +75,23 @@ describe('ConnectionSection — ArgoCD needs https (L13)', () => {
     expect(screen.queryByText(NEEDS_HTTPS)).toBeNull()
   })
 })
+
+describe('ConnectionSection — ArgoCD tried to send Sharko to plain http (LO-7 R2)', () => {
+  beforeEach(() => {
+    testCredentialsMock.mockReset()
+  })
+
+  it('shows its own sentence word for word, not the general one', async () => {
+    const redirectToHTTP = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDRedirectToHTTP
+    expect(redirectToHTTP).toBe(
+      'ArgoCD tried to send Sharko from https to plain http. Sharko does not follow that, so the ArgoCD token is never sent unencrypted. Check the ArgoCD address and any proxy in front of ArgoCD, then test again.',
+    )
+    answerArgocd(redirectToHTTP)
+    render(<ConnectionSection />)
+    fireEvent.click(screen.getByRole('button', { name: /Test ArgoCD/i }))
+    expect(await screen.findByText(redirectToHTTP)).toBeInTheDocument()
+    expect(
+      screen.queryByText(CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDUnknown),
+    ).toBeNull()
+  })
+})
