@@ -180,6 +180,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/auth/store.go", fn: "MaybeLogBootstrapCredential", msg: "bootstrap credential check skipped: cannot read secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "MaybeLogBootstrapCredential", msg: "could not write sharko-initial-admin-secret; fall back to logs", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "MaybeLogBootstrapCredential", msg: "failed to remove admin.initialPassword from secret after bootstrap log", carriers: "ident:updateErr", verdict: "sink"},
+	{file: "internal/auth/store.go", fn: "createUserK8s", msg: "the user list write reported an error but the user was saved", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "NewStore", msg: "failed to load auth data from K8s, will retry on requests", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "ValidateCredentials", msg: "failed to reload auth data", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/user_tokens.go", fn: "GetUserGitHubToken", msg: "failed to reload auth data for token lookup", carriers: "ident:err", verdict: "sink"},
