@@ -241,6 +241,11 @@ export const UNADOPT_FAILED_FALLBACK =
 // type error.
 const CLUSTERS_PAGE_SIZE = 100;
 
+// Shown when a registration stopped part-way and the server sent no
+// sentence of its own (LO-8 R6). Pinned by exact text in
+// ClustersOverview.registerpartial.test.tsx.
+const REGISTER_DID_NOT_FINISH = 'Sharko did not finish registering this cluster.';
+
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
   // Mirror the latest allClusters in a ref so fetchData's catch block can read
@@ -795,10 +800,30 @@ export function ClustersOverview() {
       const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
       const merged = result?.git?.merged ?? false;
       const clusterName = addClusterName.trim();
+      // The registration stopped before any pull request was opened (for
+      // example Sharko could not read the cluster registry from Git, or
+      // the Git commit failed). Show the server's sentence in the dialog,
+      // the same way the preview does, and keep what the user typed so
+      // they can try again (LO-8 R6). Before, this fell through to the
+      // "submitted as a pull request" sentence, which was not true.
+      const stoppedMsg = writeFailureMessage(result, REGISTER_DID_NOT_FINISH);
+      if (stoppedMsg) {
+        setAddClusterError(new Error(stoppedMsg));
+        void fetchData();
+        return;
+      }
       // Manual-mode register opens a PR but the cluster is NOT actually
       // registered until merge. Branch on `merged` so the toast tells
       // the user the truth.
-      if (merged) {
+      if (result?.status === 'partial') {
+        // A pull request exists, but a step did not finish (auto-merge
+        // failed, or some addon secrets were not created). The banner
+        // shows the server's sentence and the PR link (LO-8 R6).
+        setAddClusterResultMsg(result.message || REGISTER_DID_NOT_FINISH);
+        if (merged) {
+          void fetchData();
+        }
+      } else if (merged) {
         // Auto-merge succeeded (or PR-merge was implicit). Cluster is
         // truly registered.
         setAddClusterResultMsg(prUrl
@@ -1871,7 +1896,10 @@ export function ClustersOverview() {
           : isPendingTag
             ? addClusterResultMsg.slice('__pending__|'.length)
             : '';
-        const isPartial = addClusterResult?.partial;
+        const isPartial = addClusterResult?.status === 'partial' || addClusterResult?.partial;
+        const partialPrUrl = isPartial
+          ? addClusterResult?.git?.pr_url || addClusterResult?.pr_url || addClusterResult?.pull_request_url
+          : undefined;
         // Three tones (V2-cleanup-61.3, F1a):
         //   - "warn" (amber)   — a genuine partial failure, needs attention.
         //   - "pending" (blue) — the expected "PR opened, not merged yet"
@@ -1909,7 +1937,13 @@ export function ClustersOverview() {
           <div className="flex flex-col gap-0.5">
           <span>
             {isPartial
-              ? addClusterResultMsg
+              ? <>{addClusterResultMsg}
+                  {partialPrUrl && <>{' '}
+                    <a href={partialPrUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
+                      View PR <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </>}
+                </>
               : isPendingTag
                 ? <>Cluster registration PR opened — merge to activate.{' '}
                     <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
