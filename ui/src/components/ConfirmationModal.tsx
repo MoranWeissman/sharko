@@ -61,14 +61,14 @@ export function ConfirmationModal({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose() }}>
-      <DialogContent showCloseButton={false}>
-        <DialogHeader>
+      <DialogContent showCloseButton={false} className="max-h-[90%] flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         {/* Scrollable body region — contains description, typeToConfirm, and extraContent */}
-        <div className="overflow-y-auto min-w-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {typeToConfirm && (
             <div className="mt-2 space-y-1.5">
               <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -88,7 +88,7 @@ export function ConfirmationModal({
         </div>
 
         {/* Footer stays outside the scroll region, always visible */}
-        <DialogFooter className="mt-2">
+        <DialogFooter className="mt-2 shrink-0">
           <button
             type="button"
             onClick={handleClose}

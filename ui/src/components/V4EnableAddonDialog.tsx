@@ -271,11 +271,12 @@ export function V4EnableAddonDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose() }}>
-      <DialogContent className="max-w-lg bg-[#f0f7ff] dark:bg-gray-800" aria-describedby={undefined}>
-        <DialogHeader>
+      <DialogContent className="max-w-lg max-h-[90%] flex flex-col bg-[#f0f7ff] dark:bg-gray-800" aria-describedby={undefined}>
+        <DialogHeader className="shrink-0">
           <DialogTitle className="text-[#0a2a4a] dark:text-gray-100">{title}</DialogTitle>
         </DialogHeader>
 
+        <div className="min-h-0 space-y-4 overflow-y-auto">
         <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
           {mode === 'enable'
             ? 'This writes cluster-addons/' + cluster + '.yaml (v4 data-file format). Every required value and declared secret is checked before anything is written.'
@@ -424,7 +425,9 @@ export function V4EnableAddonDialog({
           <p className="text-sm text-red-600 dark:text-red-400">{errorMessage}</p>
         )}
 
-        <DialogFooter className="gap-2">
+        </div>
+
+        <DialogFooter className="shrink-0 gap-2">
           {(phase === 'form' || phase === 'error') && (
             <button
               type="button"

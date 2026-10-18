@@ -315,8 +315,8 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
 
       {/* Create token dialog */}
       <Dialog open={createOpen} onOpenChange={(v) => { if (!v) setCreateOpen(false) }}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="max-h-[90%] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
               {createdToken
@@ -324,6 +324,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                 : 'Create a new API token for programmatic access.'}
             </DialogDescription>
           </DialogHeader>
+          <div className="min-h-0 overflow-y-auto">
           {createdToken ? (
             <div className="space-y-3 py-2">
               <div className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#d0e8f8] px-3 py-2 dark:ring-gray-700 dark:bg-gray-900">
@@ -389,7 +390,8 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               {createError && <p className="text-sm text-red-600 dark:text-red-400">{createError}</p>}
             </div>
           )}
-          <DialogFooter>
+          </div>
+          <DialogFooter className="shrink-0">
             <button
               type="button"
               onClick={() => setCreateOpen(false)}

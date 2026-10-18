@@ -36,6 +36,19 @@ describe('ConfirmationModal', () => {
     // but we verify structure: body scrolls, footer is visible
   });
 
+  it('keeps the buttons inside the window: dialog is a column, only the middle scrolls (L9)', () => {
+    renderConfirmationModal({ extraContent: <div>long preview</div> });
+    const dialog = screen.getByRole('dialog');
+    // percent, not vh: vh grows under browser zoom and pushed the buttons off screen at 125%
+    expect(dialog.className).toContain('max-h-[90%]');
+    expect(dialog.className).toContain('flex-col');
+    const body = screen.getByText('long preview').closest('.overflow-y-auto') as HTMLElement;
+    expect(body.className).toContain('overflow-y-auto');
+    expect(body.className).toContain('min-h-0');
+    const footer = screen.getByText('Cancel').closest('[data-slot="dialog-footer"]') as HTMLElement;
+    expect(footer.className).toContain('shrink-0');
+  });
+
   it('renders type-to-confirm input inside scrollable body', () => {
     renderConfirmationModal({ typeToConfirm: 'DELETE' });
 

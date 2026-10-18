@@ -159,12 +159,13 @@ export function DiagnoseModal({ clusterName, open, onClose }: DiagnoseModalProps
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90%] flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{CHECK_PERMISSIONS_LABEL}: {clusterName}</DialogTitle>
           <DialogDescription>{CHECK_PERMISSIONS_HINT}</DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 space-y-4 overflow-y-auto">
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-[#2a5a7a] dark:text-gray-400" />
@@ -179,6 +180,7 @@ export function DiagnoseModal({ clusterName, open, onClose }: DiagnoseModalProps
         )}
 
         {report && !loading && <DiagnoseResultView report={report} />}
+        </div>
       </DialogContent>
     </Dialog>
   );

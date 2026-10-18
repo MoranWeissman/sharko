@@ -1479,8 +1479,8 @@ export function AddonCatalog() {
           }
         }}
       >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[90%] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Add your own chart</DialogTitle>
             <DialogDescription>
               For Helm charts <strong>not in the Marketplace</strong>. For
@@ -1500,7 +1500,7 @@ export function AddonCatalog() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-2">
+          <div className="min-h-0 space-y-3 overflow-y-auto py-2">
             {/* Display name + Namespace — simple text inputs. */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
@@ -1725,7 +1725,7 @@ export function AddonCatalog() {
               <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             {addAddonResult ? (
               // Terminal state (V2-cleanup-66.1) — keep the dialog open
               // through both outcomes and hand the user an explicit button
