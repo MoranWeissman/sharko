@@ -36,7 +36,8 @@ import (
 // function takes an error and returns a finished sentence, and the only
 // strings it can ever return are written in this file. The one exception is
 // the https address in the "needs https" sentence, which Sharko builds itself
-// from the scheme and host only (argocd.HTTPSAddress).
+// from the host and port it was sent on to, plus the path of the ArgoCD
+// address on the connection (argocd.HTTPSAddress).
 //
 // # What an operator can still work out
 //
@@ -76,8 +77,10 @@ func argoListFailureSentence(subject argoReadSubject, err error) string {
 		// is wrong here. It opens with the same words as the connection
 		// test's sentence (argocdNeedsHTTPS), and names the https address
 		// when Sharko knows it. That address is "https://" plus the host
-		// and port only, built by Sharko (argocd.HTTPSAddress), never the
-		// path, user part or query, where a credential can be written.
+		// and port, plus the path of the ArgoCD address on the connection
+		// (http://host/argocd gives https://host/argocd), built by Sharko
+		// (argocd.HTTPSAddress). Never the user part or the query, where a
+		// credential can be written.
 		if addr := argocd.HTTPSAddress(err); addr != "" {
 			return "ArgoCD answers only over https at this address, so Sharko did not list " + noun + ". Change the ArgoCD address on the connection in Settings to " + addr + " and try again."
 		}

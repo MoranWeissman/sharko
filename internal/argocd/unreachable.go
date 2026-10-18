@@ -117,8 +117,11 @@ type UnreachableError struct {
 	timedOut bool
 	// httpsAddress is set only for UnreachableNeedsHTTPS, and only when the
 	// redirect went to https on the SAME host name. It is "https://" plus the
-	// host and port — never the user-info, path, query or fragment, which are
-	// the parts an operator's credential can be written into.
+	// host and port it was sent on to. A Client then adds the path of the
+	// ArgoCD address it was given (see Client.withBasePath), so ArgoCD under a
+	// path keeps it. Never the user-info, query or fragment, which are the
+	// parts an operator's credential can be written into, and never any path
+	// ArgoCD sent back.
 	httpsAddress string
 }
 
@@ -217,8 +220,11 @@ func unreachableCallError(verb, path string, cause error) error {
 
 // HTTPSAddress returns the https address to use instead, when err says an
 // http ArgoCD address only answers by sending Sharko on to https on the SAME
-// host. It is "https://" plus the host and port, and nothing else. It returns
-// "" when err is not that, or when the redirect went somewhere else.
+// host. It is "https://" plus the host and port, plus the path of the ArgoCD
+// address the Client was given (http://host/argocd gives
+// https://host/argocd), and nothing else. It returns "" when err is not
+// that, when the redirect went somewhere else, or when the path of the
+// address Sharko was given is not a plain path.
 //
 // The connection test uses it to name the address in its sentence. Like the
 // rest of this file it reads a field Sharko set itself, never error words.

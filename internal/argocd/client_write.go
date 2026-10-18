@@ -113,7 +113,7 @@ func (c *Client) doPost(ctx context.Context, path string, payload []byte) ([]byt
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, unreachableCallError(http.MethodPost, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodPost, path, err))
 	}
 	defer resp.Body.Close()
 
@@ -144,7 +144,7 @@ func (c *Client) doPut(ctx context.Context, path string, payload []byte) ([]byte
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, unreachableCallError(http.MethodPut, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodPut, path, err))
 	}
 	defer resp.Body.Close()
 
@@ -175,7 +175,7 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, unreachableCallError(http.MethodDelete, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodDelete, path, err))
 	}
 	defer resp.Body.Close()
 

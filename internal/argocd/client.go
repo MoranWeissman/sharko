@@ -388,6 +388,43 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	token      string
+	// basePath is the path of the ArgoCD address Sharko was given, with no
+	// trailing slash: "/argocd" for http://host/argocd (ArgoCD running under
+	// server.rootpath), "" for http://host. basePathOK is false when that
+	// path is not a plain path (see cleanRedirectPathPrefix). Both are used
+	// only to name the https address in the "needs https" sentence.
+	basePath   string
+	basePathOK bool
+}
+
+// addressBasePath returns the path of an ArgoCD address, cleaned, with no
+// trailing slash, and false when the address cannot be read or its path is
+// not a plain path. It never returns the user part, the query or the
+// fragment.
+func addressBasePath(serverURL string) (string, bool) {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return "", false
+	}
+	return cleanRedirectPathPrefix(u.EscapedPath())
+}
+
+// withBasePath takes what unreachableCallError returned. When it says the
+// http address only answers over https on the same host, the https address
+// it names gets the path of the address Sharko was given, so
+// http://host/argocd gives https://host/argocd, not https://host. When that
+// path is not a plain path, no address is named at all, and the sentence
+// says to change the address so it starts with https:// instead.
+func (c *Client) withBasePath(err error) error {
+	var out *UnreachableError
+	if errors.As(err, &out) && out.Code == UnreachableNeedsHTTPS && out.httpsAddress != "" {
+		if c.basePathOK {
+			out.httpsAddress += c.basePath
+		} else {
+			out.httpsAddress = ""
+		}
+	}
+	return err
 }
 
 // NewClient creates an ArgoCD client with bearer token authentication.
@@ -405,13 +442,16 @@ func NewClient(serverURL, token string, insecure bool) *Client {
 		}
 	}
 
+	basePath, basePathOK := addressBasePath(strings.TrimRight(serverURL, "/"))
 	return &Client{
 		baseURL: strings.TrimRight(serverURL, "/"),
 		httpClient: &http.Client{
 			Transport:     &tlsExplainTransport{base: &plainHTTPGuardTransport{base: transport}},
 			CheckRedirect: refuseSchemeChange,
 		},
-		token: token,
+		token:      token,
+		basePath:   basePath,
+		basePathOK: basePathOK,
 	}
 }
 
@@ -867,7 +907,7 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 		// The address Sharko dialled does not travel out of here — see
 		// unreachable.go. The cause still goes to the log sink, which prints
 		// it through credsafe.LogClass by type.
-		return nil, unreachableCallError(http.MethodGet, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodGet, path, err))
 	}
 	defer resp.Body.Close()
 

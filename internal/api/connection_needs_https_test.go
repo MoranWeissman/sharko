@@ -211,3 +211,29 @@ func TestArgoListFailureSentence_NeedsHTTPSApplications(t *testing.T) {
 		t.Errorf("sentence:\n got: %q\nwant: %q", got, want)
 	}
 }
+
+// TestConnectionFailure_ArgoCDNeedsHTTPSKeepsThePath — LO-7 R3: ArgoCD under
+// a path. The address in the sentence keeps that path, so following the
+// advice does not drop it.
+func TestConnectionFailure_ArgoCDNeedsHTTPSKeepsThePath(t *testing.T) {
+	plainURL, httpsURL := newHTTPToHTTPSPair(t)
+	c := argocd.NewClient(plainURL+"/argocd", "argo-token", false)
+
+	testErr := c.TestConnection(context.Background())
+	body := connectionErrorFields(connectionKindArgoCD, testErr)
+	want := "ArgoCD answers only over https at this address. Change the ArgoCD address to " + httpsURL + "/argocd and test again."
+	if body["message"] != want {
+		t.Errorf("connection test message:\n got: %q\nwant: %q", body["message"], want)
+	}
+	// The old sentence, the one without the path.
+	if body["message"] == "ArgoCD answers only over https at this address. Change the ArgoCD address to "+httpsURL+" and test again." {
+		t.Error("the sentence dropped the /argocd path")
+	}
+
+	_, listErr := c.ListClusters(context.Background())
+	got := argoListFailureSentence(argoReadClusters, listErr)
+	wantList := "ArgoCD answers only over https at this address, so Sharko did not list clusters. Change the ArgoCD address on the connection in Settings to " + httpsURL + "/argocd and try again."
+	if got != wantList {
+		t.Errorf("list sentence:\n got: %q\nwant: %q", got, wantList)
+	}
+}

@@ -339,10 +339,11 @@ const argocdNeedsHTTPS = "ArgoCD answers only over https at this address. " +
 	"Change the ArgoCD address so it starts with https:// and test again."
 
 // argocdNeedsHTTPSAtFmt is the same sentence when Sharko knows the https
-// address: the same host and port it was sent on to. That address is built
-// from the scheme and host only (see argocd.HTTPSAddress), never from the
-// path, the user part or the query, which is where a credential can be
-// written. The one argument is that address.
+// address: the same host and port it was sent on to, plus the path of the
+// ArgoCD address the operator typed (http://host/argocd gives
+// https://host/argocd, see argocd.HTTPSAddress). It is never built from the
+// user part or the query, which is where a credential can be written. The
+// one argument is that address.
 //
 // The catalog cannot hold this form, because the address is different for
 // every setup. It holds argocdNeedsHTTPS under the same identifier instead,
