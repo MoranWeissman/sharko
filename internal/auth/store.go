@@ -449,6 +449,27 @@ func (s *Store) createUserK8s(username, role string, hash []byte) error {
 		if stage != "" {
 			firstErr = fmt.Errorf("%s: %w", stage, err)
 		}
+		// The ConfigMap write may have landed even though we got an error
+		// back (for example the answer was lost to a timeout). Then the
+		// user is already made, and taking the password back out would
+		// leave a user who has no password. So read the user list again
+		// before any undo.
+		if stage == "updating ConfigMap" {
+			made, checkErr := s.userWasSaved(ctx, cmName, username, passKey, hash)
+			if checkErr != nil {
+				// We cannot tell. Leave the password where it is: a
+				// password with no user entry cannot be used to log in,
+				// but a user entry with no password locks that user out.
+				return errors.Join(firstErr, fmt.Errorf(
+					"could not check whether user %q was saved, so the password entry was left in the Secret: %w",
+					username, checkErr))
+			}
+			if made {
+				slog.Warn("the user list write reported an error but the user was saved",
+					"username", username, "error", err)
+				return nil
+			}
+		}
 		if undoErr := s.undoPasswordSave(ctx, passKey, hash, hadOldPass, oldPass); undoErr != nil {
 			return errors.Join(firstErr, fmt.Errorf(
 				"could not take the password entry for user %q back out of the Secret, so it is still there with no user to go with it: %w",
@@ -457,6 +478,25 @@ func (s *Store) createUserK8s(username, role string, hash []byte) error {
 		return firstErr
 	}
 	return nil
+}
+
+// userWasSaved reads the users ConfigMap and the Secret fresh, and reports
+// whether the user entry is there AND the Secret still holds the password
+// hash we wrote. Both must be true: then the user can log in with the
+// password CreateUser hands back, so the create counts as done.
+func (s *Store) userWasSaved(ctx context.Context, cmName, username, passKey string, ours []byte) (bool, error) {
+	cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("reading ConfigMap: %w", err)
+	}
+	if !accountsHasUser(cm.Data["accounts"], username) {
+		return false, nil
+	}
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("reading Secret: %w", err)
+	}
+	return string(secret.Data[passKey]) == string(ours), nil
 }
 
 // undoPasswordSave takes back the password entry createUserK8s wrote. It
