@@ -595,6 +595,13 @@ func (s *Store) UpdateUser(username string, enabled bool, role string) error {
 }
 
 // DeleteUser removes a user account.
+//
+// In Kubernetes mode it takes the user entry out of the users ConfigMap
+// first, then the password out of the Secret. Once the user entry is gone
+// nobody can log in as that user, so that write goes first. Each write reads
+// the object fresh and retries on a conflict (retry.RetryOnConflict), the
+// same way createUserK8s does, and every error is returned. No error holds a
+// password or its hash.
 func (s *Store) DeleteUser(username string) error {
 	s.mu.RLock()
 	_, exists := s.users[username]
@@ -605,30 +612,17 @@ func (s *Store) DeleteUser(username string) error {
 
 	if s.mode == ModeK8s {
 		ctx := context.Background()
-
-		// Remove from ConfigMap
-		cmName := s.secretName + "-users"
-		cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
-		if err == nil {
-			if cm.Data == nil {
-				cm.Data = make(map[string]string)
-			}
-			accounts := make(map[string]interface{})
-			if existing, ok := cm.Data["accounts"]; ok {
-				yaml.Unmarshal([]byte(existing), &accounts)
-			}
-			delete(accounts, username)
-			data, _ := yaml.Marshal(accounts)
-			cm.Data["accounts"] = string(data)
-			s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
+		if err := s.removeUserEntryK8s(ctx, username); err != nil {
+			return fmt.Errorf("removing user %q from the user list: %w", username, err)
 		}
-
-		// Remove from Secret
-		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
-		if err == nil {
-			delete(secret.Data, username+".password")
-			delete(secret.Data, username+".initialPassword")
-			s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+		if err := s.removeUserPasswordK8s(ctx, username); err != nil {
+			// The user entry is already gone, so this user cannot log in.
+			// Drop it from memory too, and say what is left behind.
+			s.mu.Lock()
+			delete(s.users, username)
+			delete(s.passHash, username)
+			s.mu.Unlock()
+			return fmt.Errorf("user %q was removed from the user list, but the password entry could not be taken out of the Secret: %w", username, err)
 		}
 	}
 
@@ -639,6 +633,74 @@ func (s *Store) DeleteUser(username string) error {
 
 	slog.Info("user deleted", "username", username)
 	return nil
+}
+
+// removeUserEntryK8s takes username out of the users ConfigMap. A missing
+// ConfigMap or a missing entry means there is nothing to remove. A user list
+// that cannot be read is an error: writing it back would throw away every
+// other user.
+func (s *Store) removeUserEntryK8s(ctx context.Context, username string) error {
+	cms := s.clientset.CoreV1().ConfigMaps(s.namespace)
+	cmName := s.secretName + "-users"
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cm, err := cms.Get(ctx, cmName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reading ConfigMap: %w", err)
+		}
+		accounts := make(map[string]interface{})
+		if existing := cm.Data["accounts"]; existing != "" {
+			if err := yaml.Unmarshal([]byte(existing), &accounts); err != nil {
+				return fmt.Errorf("reading the user list in the ConfigMap: %w", err)
+			}
+		}
+		if _, ok := accounts[username]; !ok {
+			return nil
+		}
+		delete(accounts, username)
+		data, err := yaml.Marshal(accounts)
+		if err != nil {
+			return fmt.Errorf("writing the user list: %w", err)
+		}
+		cm.Data["accounts"] = string(data)
+		if _, err := cms.Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			// Wrapped with %w so RetryOnConflict still sees a conflict.
+			return fmt.Errorf("updating ConfigMap: %w", err)
+		}
+		return nil
+	})
+}
+
+// removeUserPasswordK8s takes the password keys for username out of the
+// auth Secret. A missing Secret or missing keys mean there is nothing to do.
+func (s *Store) removeUserPasswordK8s(ctx context.Context, username string) error {
+	secrets := s.clientset.CoreV1().Secrets(s.namespace)
+	keys := []string{username + ".password", username + ".initialPassword"}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		secret, err := secrets.Get(ctx, s.secretName, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reading Secret: %w", err)
+		}
+		changed := false
+		for _, k := range keys {
+			if _, ok := secret.Data[k]; ok {
+				delete(secret.Data, k)
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
+		if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating Secret: %w", err)
+		}
+		return nil
+	})
 }
 
 // ResetPassword generates a new temporary password for a user.
