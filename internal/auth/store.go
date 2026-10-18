@@ -617,11 +617,12 @@ func (s *Store) UpdateUser(username string, enabled bool, role string) error {
 // DeleteUser removes a user account.
 //
 // In Kubernetes mode it takes the user entry out of the users ConfigMap
-// first, then the password out of the Secret. Once the user entry is gone
-// nobody can log in as that user, so that write goes first. Each write reads
-// the object fresh and retries on a conflict (retry.RetryOnConflict), the
-// same way createUserK8s does, and every error is returned. No error holds a
-// password or its hash.
+// first, then the user's keys out of the Secret: the password, the first
+// password, and the saved GitHub token. Once the user entry is gone nobody
+// can log in as that user, so that write goes first. Each write reads the
+// object fresh and retries on a conflict (retry.RetryOnConflict), the same
+// way createUserK8s does, and every error is returned. No error holds a
+// password, its hash, or a token.
 func (s *Store) DeleteUser(username string) error {
 	s.mu.RLock()
 	_, exists := s.users[username]
@@ -635,24 +636,28 @@ func (s *Store) DeleteUser(username string) error {
 		if err := s.removeUserEntryK8s(ctx, username); err != nil {
 			return fmt.Errorf("removing user %q from the user list: %w", username, err)
 		}
-		if err := s.removeUserPasswordK8s(ctx, username); err != nil {
+		if err := s.removeUserKeysK8s(ctx, username); err != nil {
 			// The user entry is already gone, so this user cannot log in.
 			// Drop it from memory too, and say what is left behind.
-			s.mu.Lock()
-			delete(s.users, username)
-			delete(s.passHash, username)
-			s.mu.Unlock()
-			return fmt.Errorf("user %q was removed from the user list, but the password entry could not be taken out of the Secret: %w", username, err)
+			s.forgetUser(username)
+			return fmt.Errorf("user %q was removed from the user list, but the password and GitHub token entries could not be taken out of the Secret: %w", username, err)
 		}
 	}
 
-	s.mu.Lock()
-	delete(s.users, username)
-	delete(s.passHash, username)
-	s.mu.Unlock()
+	s.forgetUser(username)
 
 	slog.Info("user deleted", "username", username)
 	return nil
+}
+
+// forgetUser drops everything held in memory for username: the account, the
+// password hash and the saved GitHub token.
+func (s *Store) forgetUser(username string) {
+	s.mu.Lock()
+	delete(s.users, username)
+	delete(s.passHash, username)
+	delete(s.userTokens, username)
+	s.mu.Unlock()
 }
 
 // removeUserEntryK8s takes username out of the users ConfigMap. A missing
@@ -693,11 +698,13 @@ func (s *Store) removeUserEntryK8s(ctx context.Context, username string) error {
 	})
 }
 
-// removeUserPasswordK8s takes the password keys for username out of the
-// auth Secret. A missing Secret or missing keys mean there is nothing to do.
-func (s *Store) removeUserPasswordK8s(ctx context.Context, username string) error {
+// removeUserKeysK8s takes the keys for username out of the auth Secret:
+// the password, the first password and the saved GitHub token
+// (`<username>.github_token`, see user_tokens.go). A missing Secret or
+// missing keys mean there is nothing to do.
+func (s *Store) removeUserKeysK8s(ctx context.Context, username string) error {
 	secrets := s.clientset.CoreV1().Secrets(s.namespace)
-	keys := []string{username + ".password", username + ".initialPassword"}
+	keys := []string{username + ".password", username + ".initialPassword", username + userTokenSuffix}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		secret, err := secrets.Get(ctx, s.secretName, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {

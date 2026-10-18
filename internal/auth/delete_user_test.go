@@ -22,6 +22,8 @@ func newDeleteServer(t *testing.T) (*rvServer, *Store) {
 		"alice.password":       []byte("alice-hash"),
 		"dana.password":        []byte("dana-hash"),
 		"dana.initialPassword": []byte("dana-initial"),
+		"dana.github_token":    []byte("dana-token-ciphertext"),
+		"alice.github_token":   []byte("alice-token-ciphertext"),
 	})
 	st := srv.store()
 	if err := st.reload(); err != nil {
@@ -36,7 +38,7 @@ func newDeleteServer(t *testing.T) (*rvServer, *Store) {
 // assertNoHashInError checks the error text holds none of the stored values.
 func assertNoHashInError(t *testing.T, err error) {
 	t.Helper()
-	for _, v := range []string{"alice-hash", "dana-hash", "dana-initial", "$2a$"} {
+	for _, v := range []string{"alice-hash", "dana-hash", "dana-initial", "$2a$", "dana-token-ciphertext", "alice-token-ciphertext"} {
 		if strings.Contains(err.Error(), v) {
 			t.Errorf("the error text holds a stored password value: %q", err.Error())
 		}
@@ -151,7 +153,7 @@ func TestDeleteUserK8s_SecretWriteFails(t *testing.T) {
 	if !errors.Is(err, errBoom) {
 		t.Errorf("the API error is not in the result: %v", err)
 	}
-	const want = `user "dana" was removed from the user list, but the password entry could not be taken out of the Secret: updating Secret: `
+	const want = `user "dana" was removed from the user list, but the password and GitHub token entries could not be taken out of the Secret: updating Secret: `
 	if !strings.HasPrefix(err.Error(), want) {
 		t.Errorf("error %q does not start with %q", err.Error(), want)
 	}
@@ -245,5 +247,87 @@ func TestCreateUserK8s_ExistsButUndoFailsIsNotInputError(t *testing.T) {
 	}
 	if !errors.Is(err, errBoom) {
 		t.Errorf("the undo error is missing: %v", err)
+	}
+}
+
+// TestDeleteUserK8s_RemovesGitHubToken: the saved GitHub token
+// (`<username>.github_token`) goes with the user, from the Secret and from
+// memory. Before, it was left behind in the Secret.
+func TestDeleteUserK8s_RemovesGitHubToken(t *testing.T) {
+	srv, st := newDeleteServer(t)
+	if !st.HasUserGitHubToken("dana") {
+		t.Fatal("setup: dana's token was not loaded into memory")
+	}
+	if err := st.DeleteUser("dana"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	data := srv.secretData(t)
+	if _, ok := data["dana.github_token"]; ok {
+		t.Error("dana's GitHub token is still in the Secret")
+	}
+	if string(data["alice.github_token"]) != "alice-token-ciphertext" {
+		t.Error("alice's GitHub token changed")
+	}
+	if st.HasUserGitHubToken("dana") {
+		t.Error("dana's GitHub token is still in memory")
+	}
+	if !st.HasUserGitHubToken("alice") {
+		t.Error("alice's GitHub token was dropped from memory")
+	}
+}
+
+// TestDeleteUserK8s_TokenOnlyLeftIsStillRemoved: the password keys are
+// already gone and only the token is left. It must still be taken out.
+func TestDeleteUserK8s_TokenOnlyLeftIsStillRemoved(t *testing.T) {
+	srv := newRVServer(t, delAccounts, map[string][]byte{
+		"alice.password":    []byte("alice-hash"),
+		"dana.github_token": []byte("dana-token-ciphertext"),
+	})
+	st := srv.store()
+	if err := st.reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if err := st.DeleteUser("dana"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if _, ok := srv.secretData(t)["dana.github_token"]; ok {
+		t.Error("dana's GitHub token is still in the Secret")
+	}
+}
+
+// TestDeleteUserK8s_TokenRemovalFailsSaysSo: the Secret write that takes the
+// token out is refused. The error says so and holds no token value.
+func TestDeleteUserK8s_TokenRemovalFailsSaysSo(t *testing.T) {
+	srv, st := newDeleteServer(t)
+	srv.failCall("update", "secrets", 1, errBoom)
+	err := st.DeleteUser("dana")
+	if err == nil {
+		t.Fatal("want an error, got none")
+	}
+	assertNoHashInError(t, err)
+	const want = `user "dana" was removed from the user list, but the password and GitHub token entries could not be taken out of the Secret: updating Secret: `
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("error %q does not start with %q", err.Error(), want)
+	}
+	if string(srv.secretData(t)["dana.github_token"]) != "dana-token-ciphertext" {
+		t.Error("setup: the refused write changed the Secret")
+	}
+}
+
+// TestDeleteUserLocal_DropsGitHubTokenFromMemory: in local mode the token
+// lives only in memory, and it must go with the user too.
+func TestDeleteUserLocal_DropsGitHubTokenFromMemory(t *testing.T) {
+	st := &Store{
+		mode:       ModeLocal,
+		users:      map[string]*UserAccount{"dana": {Username: "dana", Enabled: true, Role: "viewer"}},
+		passHash:   map[string]string{"dana": "dana-hash"},
+		userTokens: map[string]string{"dana": "dana-token-ciphertext"},
+		tokens:     map[string]*APIToken{},
+	}
+	if err := st.DeleteUser("dana"); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if st.HasUserGitHubToken("dana") {
+		t.Error("dana's GitHub token is still in memory")
 	}
 }
