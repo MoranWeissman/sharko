@@ -693,9 +693,9 @@ func TestGiteaProviderWritePath(t *testing.T) {
 // (github_write_test.go) decodes the raw request body rather than trusting
 // the SDK's own round-trip.
 type giteaFileRequestBody struct {
-	Message   string `json:"message"`
-	Branch    string `json:"branch"`
-	Author    struct {
+	Message string `json:"message"`
+	Branch  string `json:"branch"`
+	Author  struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
 	} `json:"author"`

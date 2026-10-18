@@ -63,12 +63,12 @@ var ActionRequirements = map[string]Role{
 	// Renewing somebody ELSE's token. The own/other split mirrors revoke:
 	// pushing out the expiry of a token you do not own keeps a credential
 	// alive that only its owner should be able to keep alive.
-	"token.renew-other":                    RoleAdmin,
-	"audit.clear":                          RoleAdmin,
-	"ai.config":                            RoleAdmin,
-	"ai.provider":                          RoleAdmin,
-	"dashboard.save":                       RoleAdmin,
-	"argocd.resource-exclusions":           RoleAdmin,
+	"token.renew-other":          RoleAdmin,
+	"audit.clear":                RoleAdmin,
+	"ai.config":                  RoleAdmin,
+	"ai.provider":                RoleAdmin,
+	"dashboard.save":             RoleAdmin,
+	"argocd.resource-exclusions": RoleAdmin,
 	// addon-secret.create / addon-secret.delete / addon-secret.list are
 	// GONE (task #152, story 152.A) — the /addon-secrets definition-CRUD
 	// endpoints were removed with them. The Git catalog is the only source
