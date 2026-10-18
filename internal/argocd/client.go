@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -150,14 +151,63 @@ func isRedirectStatus(code int) bool {
 // sameHostHTTPSAddress returns "https://<host>" when to is an https URL on the
 // same host name as from, and "" otherwise. Only the host (and port) is used:
 // never the user-info, path, query or fragment of either URL.
+//
+// It also returns "" when the redirect carries a user part, or a port that is
+// not a number from 1 to 65535: Sharko does not hand an operator an address
+// it would not use itself.
 func sameHostHTTPSAddress(from, to *url.URL) string {
 	if to == nil || from == nil || to.Scheme != "https" || to.Hostname() == "" {
+		return ""
+	}
+	if to.User != nil {
 		return ""
 	}
 	if !strings.EqualFold(to.Hostname(), from.Hostname()) {
 		return ""
 	}
+	if !validPort(to.Port()) {
+		return ""
+	}
 	return "https://" + to.Host
+}
+
+// validPort reports whether p is empty (the default port) or a number from 1
+// to 65535.
+func validPort(p string) bool {
+	if p == "" {
+		return true
+	}
+	n, err := strconv.Atoi(p)
+	return err == nil && n >= 1 && n <= 65535 && strconv.Itoa(n) == p
+}
+
+// cleanRedirectPathPrefix checks the path prefix discovery copies from a
+// redirect's Location (ArgoCD running under server.rootpath). It returns the
+// prefix with no trailing slash, and false when the prefix is not a plain
+// path: a ".." part, a doubled slash, a user part ("@"), a backslash, or any
+// other character outside letters, digits and "-._~/".
+func cleanRedirectPathPrefix(prefix string) (string, bool) {
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		return "", true
+	}
+	if !strings.HasPrefix(prefix, "/") || strings.Contains(prefix, "//") {
+		return "", false
+	}
+	for _, part := range strings.Split(prefix[1:], "/") {
+		if part == "." || part == ".." {
+			return "", false
+		}
+	}
+	for _, r := range prefix {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-', r == '.', r == '_', r == '~', r == '/':
+		default:
+			return "", false
+		}
+	}
+	return prefix, true
 }
 
 // refuseSchemeChange is the client's CheckRedirect. It refuses any redirect
@@ -183,74 +233,152 @@ func refuseSchemeChange(req *http.Request, via []*http.Request) error {
 }
 
 // plainHTTPGuardTransport makes sure the ArgoCD token is never sent to a plain
-// http address that only exists to redirect to https.
+// http address that sends Sharko on to https.
 //
 // A redirect cannot be refused before the request that triggered it was sent,
-// and that request carries the token. So before the FIRST request with an
-// Authorization header goes to an http:// host, this transport asks the same
-// host GET /api/version with no credential and does not follow the answer. A
-// redirect to https stops everything with ErrArgocdNeedsHTTPS, and the token
-// never left. Any other answer marks the host as fine for this client, so the
-// check costs one extra request per client per host. A check that gets no
-// answer at all is not remembered, and the real request goes ahead as it
-// always did — there is no redirect to refuse when nothing answered.
+// and that request carries the token. So this transport follows two rules
+// for every request to an http:// address that carries an Authorization
+// header:
+//
+//  1. Once ANY request to a host over http was sent on to https — a check
+//     request or a real one, on any path — the token is never sent to that
+//     host over http again. The request stops with ErrArgocdNeedsHTTPS
+//     before anything is sent.
+//  2. Otherwise the request is first sent WITHOUT the token, as a GET with
+//     no body, no query and no other header, to the same host and path. Only
+//     when that answer is not a redirect to https does the real request go
+//     out. The answer is remembered for that exact host and path, so the
+//     check runs once per path per client, not once per call.
+//
+// Why per path and not per host: before, the check asked only /api/version,
+// once per host. A proxy that sends only some paths to https would pass that
+// check and then get the token over http on the first real call to one of
+// the other paths.
+//
+// Why the check is a GET even when the real request is a POST or a DELETE:
+// an ArgoCD with anonymous access turned on would carry out a write that
+// arrives without a token. A GET changes nothing.
+//
+// A check that gets no answer at all stops the request too, so the token is
+// never sent to a host whose answer is not known. The real request would
+// have failed the same way.
 //
 // The state is per client (per transport), never package-level.
 type plainHTTPGuardTransport struct {
 	base http.RoundTripper
 
-	mu      sync.Mutex
-	checked map[string]bool
+	mu sync.Mutex
+	// plainOK holds "host + path" keys known to answer plain http with no
+	// redirect to https.
+	plainOK map[string]bool
+	// httpsOnly holds every host name (lower case, no port) that has sent an
+	// http request on to https, with the https address to name ("" when the
+	// redirect went to another host).
+	httpsOnly map[string]string
 }
 
+// maxPlainOKPaths caps how many paths one client remembers. Past it the list
+// starts again empty, which only means a path is checked once more.
+const maxPlainOKPaths = 1024
+
+// plainHTTPCheckHeader marks the credential-free check request.
+const plainHTTPCheckHeader = "X-Sharko-Plain-Http-Check"
+
 func (t *plainHTTPGuardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if strings.EqualFold(req.URL.Scheme, "http") && req.Header.Get("Authorization") != "" {
-		if err := t.checkPlainHTTPHost(req); err != nil {
+	if !strings.EqualFold(req.URL.Scheme, "http") {
+		return t.base.RoundTrip(req)
+	}
+	if req.Header.Get("Authorization") != "" {
+		if addr, ok := t.httpsOnlyAddress(req.URL); ok {
+			return nil, &schemeChangeError{httpsAddress: addr}
+		}
+		if err := t.checkPlainHTTPPath(req); err != nil {
 			return nil, err
 		}
 	}
-	return t.base.RoundTrip(req)
+	resp, err := t.base.RoundTrip(req)
+	if err == nil {
+		// A real request can be sent on to https too (a proxy that changed
+		// its mind). The token already went with this one; make sure it is
+		// the last.
+		t.noteRedirectToHTTPS(req.URL, resp)
+	}
+	return resp, err
 }
 
-func (t *plainHTTPGuardTransport) checkPlainHTTPHost(req *http.Request) error {
-	host := strings.ToLower(req.URL.Host)
+func (t *plainHTTPGuardTransport) httpsOnlyAddress(u *url.URL) (string, bool) {
 	t.mu.Lock()
-	done := t.checked[host]
+	defer t.mu.Unlock()
+	addr, ok := t.httpsOnly[strings.ToLower(u.Hostname())]
+	return addr, ok
+}
+
+// noteRedirectToHTTPS remembers the host when resp sends an http request on
+// to https. It reports whether it did.
+func (t *plainHTTPGuardTransport) noteRedirectToHTTPS(from *url.URL, resp *http.Response) bool {
+	if !isRedirectStatus(resp.StatusCode) {
+		return false
+	}
+	loc, err := resp.Location()
+	if err != nil || !strings.EqualFold(loc.Scheme, "https") {
+		return false
+	}
+	host := strings.ToLower(from.Hostname())
+	addr := sameHostHTTPSAddress(from, loc)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.httpsOnly == nil {
+		t.httpsOnly = map[string]string{}
+	}
+	if old, seen := t.httpsOnly[host]; !seen || old == "" {
+		t.httpsOnly[host] = addr
+	}
+	return true
+}
+
+func plainOKKey(u *url.URL) string {
+	return strings.ToLower(u.Host) + u.EscapedPath()
+}
+
+func (t *plainHTTPGuardTransport) checkPlainHTTPPath(req *http.Request) error {
+	key := plainOKKey(req.URL)
+	t.mu.Lock()
+	done := t.plainOK[key]
 	t.mu.Unlock()
 	if done {
 		return nil
 	}
 
-	// Built from scheme + host only: no user-info, no query, no fragment,
-	// and no header of the real request.
-	probeURL := &url.URL{Scheme: "http", Host: req.URL.Host, Path: "/api/version"}
+	// Built from scheme, host and path only: no user-info, no query, no
+	// fragment, no body, and no header of the real request.
+	probeURL := &url.URL{Scheme: "http", Host: req.URL.Host, Path: req.URL.Path, RawPath: req.URL.RawPath}
 	probe, err := http.NewRequestWithContext(req.Context(), http.MethodGet, probeURL.String(), nil)
 	if err != nil {
 		// Never the cause (BF12): a *url.Error's words are the address.
 		return errors.New("Sharko could not build its plain-http check request for ArgoCD, so it did not send the ArgoCD token")
 	}
+	// Says what this request is, so a log on the far side can tell it apart.
+	// It carries nothing secret.
+	probe.Header.Set(plainHTTPCheckHeader, "1")
 	resp, err := t.base.RoundTrip(probe)
 	if err != nil {
-		// No answer to the check. Nothing is learned and nothing is
-		// remembered; the real request goes ahead exactly as it did before
-		// this guard existed, and fails on its own if the host is down.
-		return nil
+		// No answer to the check, so the token is not sent. The caller
+		// turns this into the usual "no answer" error.
+		return err
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 
-	if isRedirectStatus(resp.StatusCode) {
-		loc, locErr := resp.Location()
-		if locErr == nil && strings.EqualFold(loc.Scheme, "https") {
-			return &schemeChangeError{httpsAddress: sameHostHTTPSAddress(probeURL, loc)}
-		}
+	if t.noteRedirectToHTTPS(probeURL, resp) {
+		addr, _ := t.httpsOnlyAddress(probeURL)
+		return &schemeChangeError{httpsAddress: addr}
 	}
 
 	t.mu.Lock()
-	if t.checked == nil {
-		t.checked = map[string]bool{}
+	if t.plainOK == nil || len(t.plainOK) >= maxPlainOKPaths {
+		t.plainOK = map[string]bool{}
 	}
-	t.checked[host] = true
+	t.plainOK[key] = true
 	t.mu.Unlock()
 	return nil
 }
@@ -473,17 +601,27 @@ func probeArgoCD(baseURL string, insecure bool) string {
 	if err != nil || !strings.EqualFold(from.Scheme, "http") {
 		return ""
 	}
-	loc, err := resp.Location()
-	if err != nil {
+	// The Location header exactly as sent. resp.Location() would resolve it
+	// first, and resolving quietly takes ".." parts away, so a redirect that
+	// carries them could not be refused. A move to https always needs a full
+	// address, so a relative Location is not one anyway.
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil || !loc.IsAbs() {
 		return ""
 	}
 	httpsBase := sameHostHTTPSAddress(from, loc)
 	if httpsBase == "" {
 		return ""
 	}
-	// Keep a path prefix if ArgoCD runs under one (server.rootpath).
+	// Keep a path prefix if ArgoCD runs under one (server.rootpath). A
+	// prefix that is not a plain path means the redirect is not one Sharko
+	// trusts, so nothing is discovered.
 	if prefix, ok := strings.CutSuffix(loc.Path, probeVersionPath); ok {
-		httpsBase += strings.TrimRight(prefix, "/")
+		clean, ok := cleanRedirectPathPrefix(prefix)
+		if !ok {
+			return ""
+		}
+		httpsBase += clean
 	}
 	return httpsBase
 }

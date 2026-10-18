@@ -184,20 +184,23 @@ func TestClient_RefusesRedirectFromHTTPSToHTTP(t *testing.T) {
 }
 
 // A plain http ArgoCD that does NOT redirect (server.insecure=true) keeps
-// working, and the credential-free check is asked once per client, not once
-// per call.
+// working, and the credential-free check is asked once per path per client,
+// not once per call.
 func TestClient_PlainHTTPArgoCDCheckedOnce(t *testing.T) {
 	seen := &authRecorder{}
 	var versionChecks int
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen.see(r)
-		if r.URL.Path == "/api/version" {
+		if r.Header.Get(plainHTTPCheckHeader) != "" {
 			mu.Lock()
 			versionChecks++
 			mu.Unlock()
 			if r.Header.Get("Authorization") != "" {
 				t.Errorf("the check request carried an Authorization header")
+			}
+			if r.Method != http.MethodGet {
+				t.Errorf("the check request was a %s, want GET", r.Method)
 			}
 		}
 		w.WriteHeader(http.StatusOK)
@@ -214,18 +217,18 @@ func TestClient_PlainHTTPArgoCDCheckedOnce(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if versionChecks != 1 {
-		t.Errorf("the credential-free check ran %d times for one client, want 1", versionChecks)
+		t.Errorf("the credential-free check ran %d times for one path and one client, want 1", versionChecks)
 	}
 }
 
 // newPlainArgoTestServer starts a plain http test server that answers the
-// client's credential-free GET /api/version check itself (an ArgoCD with
+// client's credential-free check requests itself (an ArgoCD with
 // server.insecure=true answers it with 200), and hands every other request to
 // h. Tests that assert the method or path of EVERY request they see use this,
 // so the check does not trip their assertions.
 func newPlainArgoTestServer(h http.Handler) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/version" && r.Header.Get("Authorization") == "" {
+		if r.Header.Get(plainHTTPCheckHeader) != "" && r.Header.Get("Authorization") == "" {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"Version":"test"}`))
 			return
