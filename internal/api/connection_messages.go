@@ -43,8 +43,8 @@ func connectionErrorFields(kind connectionKind, err error) map[string]interface{
 	if err == nil {
 		return map[string]interface{}{"status": "ok"}
 	}
-	failureCode := verify.ClassifyError(err)
-	msg := renderConnectionFailure(kind, failureCode)
+	failureCode := connectionFailureCodeFor(kind, err)
+	msg := renderConnectionFailureFor(kind, failureCode, err)
 	body := map[string]interface{}{
 		"status":     "error",
 		"message":    msg,
@@ -72,7 +72,7 @@ func connectionErrorFields(kind connectionKind, err error) map[string]interface{
 	// Git operator about "the cluster" in the hint field after the ruled
 	// sentence had already stopped saying it in the message.
 	if hint != "" && connectionFailureFamilyOwnsHint(kind, verify.ErrorCode(code)) {
-		hint = connectionFailureHint(normalizeConnectionKind(kind), normalizeConnectionFailureCode(verify.ErrorCode(code)))
+		hint = connectionFailureHint(normalizeConnectionFailurePair(kind, verify.ErrorCode(code)))
 	}
 	if cause != "" {
 		body["cause"] = cause

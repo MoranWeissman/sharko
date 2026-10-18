@@ -71,6 +71,9 @@ func TestConnectionFailure_EveryVariantRendersItsSentence(t *testing.T) {
 		{connectionKindArgoCD, verify.ERR_NAMESPACE, "Sharko can't reach ArgoCD. Check the connection settings and try again."},
 		{connectionKindArgoCD, verify.ERR_TIMEOUT, "Sharko can't reach ArgoCD — the request timed out. Check the URL and network access."},
 		{connectionKindArgoCD, verify.ERR_UNKNOWN, "Sharko can't reach ArgoCD. Check the connection settings and try again."},
+		// The one extra pair (L7): an http address that only sends Sharko on
+		// to https. This is the form without the address — the catalog form.
+		{connectionKindArgoCD, connectionFailureCodeNeedsHTTPS, "ArgoCD answers only over https at this address. Change the ArgoCD address so it starts with https:// and test again."},
 
 		// ── vault ────────────────────────────────────────────────────────
 		{connectionKindVault, verify.ERR_NETWORK, "Sharko can't reach your secrets store — the host could not be reached. Check the URL and network access."},
@@ -205,6 +208,7 @@ func TestConnectionFailure_JoinPunctuation(t *testing.T) {
 	wholeSentenceVariants := []connectionFailureKey{
 		{kind: connectionKindGit, code: verify.ERR_RBAC},
 		{kind: connectionKindArgoCD, code: verify.ERR_TLS},
+		{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS},
 	}
 	isWholeSentence := map[connectionFailureKey]bool{}
 	for _, key := range wholeSentenceVariants {
@@ -442,15 +446,16 @@ func TestConnectionFailure_OtherKindsKeepTheirPermissionWording(t *testing.T) {
 	}
 
 	// The places a whole-sentence variant exists must be exactly the ruled
-	// ones: git/ERR_RBAC (2026-08-20) and argocd/ERR_TLS (VF-1, video
-	// finding V2, 2026-10-15). Compared as an exact list, never a count.
+	// ones: git/ERR_RBAC (2026-08-20), argocd/ERR_TLS (VF-1, video
+	// finding V2, 2026-10-15) and argocd/ERR_NEEDS_HTTPS (L7, epic
+	// video-leftovers, 2026-10-18). Compared as an exact list, never a count.
 	var names []string
 	for key := range connectionFailureWholeSentences {
 		names = append(names, string(key.kind)+"/"+string(key.code))
 	}
 	sort.Strings(names)
-	if strings.Join(names, ",") != "argocd/ERR_TLS,git/ERR_RBAC" {
-		t.Errorf("whole-sentence variants: %v — only argocd/ERR_TLS and git/ERR_RBAC were ruled on. "+
+	if strings.Join(names, ",") != "argocd/ERR_NEEDS_HTTPS,argocd/ERR_TLS,git/ERR_RBAC" {
+		t.Errorf("whole-sentence variants: %v — only argocd/ERR_NEEDS_HTTPS, argocd/ERR_TLS and git/ERR_RBAC were ruled on. "+
 			"A new one is a product decision, not a refactor: name it in TestConnectionFailure_JoinPunctuation "+
 			"and write its literal out in TestConnectionFailure_EveryVariantRendersItsSentence.",
 			names)
@@ -491,6 +496,13 @@ func TestConnectionFailure_UnsupportedParameterValues(t *testing.T) {
 			name:   "a code that is in no const block renders as unknown",
 			kind:   connectionKindGit,
 			code:   verify.ErrorCode("ERR_NOT_IMPLEMENTED"),
+			wantID: "connectionFailureGitUnknown",
+			want:   "Sharko can't reach your Git host. Check the connection settings and try again.",
+		},
+		{
+			name:   "the ArgoCD-only code with another kind renders as unknown",
+			kind:   connectionKindGit,
+			code:   connectionFailureCodeNeedsHTTPS,
 			wantID: "connectionFailureGitUnknown",
 			want:   "Sharko can't reach your Git host. Check the connection settings and try again.",
 		},
@@ -672,6 +684,17 @@ func TestConnectionFailure_CatalogCoversEveryPair(t *testing.T) {
 				t.Errorf("kind=%s code=%s renders a sentence but %q is not in the catalog", kind, code, id)
 			}
 		}
+	}
+	// The extra pairs, written out as literals so the list is not checked
+	// against itself.
+	for _, id := range []string{"connectionFailureArgoCDNeedsHTTPS"} {
+		expected[id] = true
+		if !inCatalog[id] {
+			t.Errorf("%q is not in the catalog", id)
+		}
+	}
+	if len(connectionFailureExtraPairs) != 1 {
+		t.Errorf("connectionFailureExtraPairs has %d pairs; add the new one's identifier above", len(connectionFailureExtraPairs))
 	}
 	for id := range inCatalog {
 		if !expected[id] {

@@ -214,6 +214,25 @@ func unreachableCallError(verb, path string, cause error) error {
 	return out
 }
 
+// HTTPSAddress returns the https address to use instead, when err says an
+// http ArgoCD address only answers by sending Sharko on to https on the SAME
+// host. It is "https://" plus the host and port, and nothing else. It returns
+// "" when err is not that, or when the redirect went somewhere else.
+//
+// The connection test uses it to name the address in its sentence. Like the
+// rest of this file it reads a field Sharko set itself, never error words.
+func HTTPSAddress(err error) string {
+	var unreachable *UnreachableError
+	if errors.As(err, &unreachable) && unreachable.Code == UnreachableNeedsHTTPS {
+		return unreachable.httpsAddress
+	}
+	var sc *schemeChangeError
+	if errors.As(err, &sc) && !sc.toHTTP {
+		return sc.httpsAddress
+	}
+	return ""
+}
+
 // SafeReadFailure is the sentence a boundary may show a person for a failed
 // ArgoCD READ. It is the sibling of SafeWriteFailure and picks between fixed
 // sentences by TYPE, never by reading the words of the error it was given.

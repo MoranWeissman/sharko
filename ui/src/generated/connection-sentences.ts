@@ -130,6 +130,7 @@ export const CONNECTION_FAILURE_MESSAGES = {
   connectionFailureArgoCDAWSSTS: "Sharko can't reach ArgoCD — AWS STS token minting failed — check that Sharko's identity has permission to mint tokens for this cluster and that the cluster region is correctly configured.",
   connectionFailureArgoCDAuth: "Sharko can't reach ArgoCD — the cluster rejected the credentials (HTTP 401) — the token may be expired or invalid; regenerate the kubeconfig/token and try again.",
   connectionFailureArgoCDNamespace: "Sharko can't reach ArgoCD. Check the connection settings and try again.",
+  connectionFailureArgoCDNeedsHTTPS: "ArgoCD answers only over https at this address. Change the ArgoCD address so it starts with https:// and test again.",
   connectionFailureArgoCDNetwork: "Sharko can't reach ArgoCD — the host could not be reached. Check the URL and network access.",
   connectionFailureArgoCDQuota: "Sharko can't reach ArgoCD. Check the connection settings and try again.",
   connectionFailureArgoCDRBAC: "Sharko can't reach ArgoCD — the cluster accepted the credentials but denied the action (HTTP 403) — grant the service account the required RBAC permissions and try again.",

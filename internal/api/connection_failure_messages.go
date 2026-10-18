@@ -58,8 +58,11 @@ package api
 // so a re-typed half-sentence cannot come back next door to where it was.
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
@@ -178,6 +181,53 @@ func normalizeConnectionFailureCode(code verify.ErrorCode) verify.ErrorCode {
 	return verify.ERR_UNKNOWN
 }
 
+// connectionFailureCodeNeedsHTTPS is a failure code this catalog adds on top
+// of verify's closed set. verify.ClassifyError has no code for "this http
+// address only sends Sharko on to https" — that is not a cluster check
+// result, it is about the address an operator typed for ArgoCD. So it is not
+// added to internal/verify, and it is used for ONE kind only (see
+// connectionFailureExtraPairs). Any other kind with this code renders as
+// ERR_UNKNOWN.
+const connectionFailureCodeNeedsHTTPS verify.ErrorCode = "ERR_NEEDS_HTTPS"
+
+// connectionFailureExtraCodeTokens gives the extra codes their identifier
+// tokens. Kept apart from connectionFailureCodeTokens, which must match
+// internal/verify exactly.
+var connectionFailureExtraCodeTokens = map[verify.ErrorCode]string{
+	connectionFailureCodeNeedsHTTPS: "NeedsHTTPS",
+}
+
+// connectionFailureExtraPairs is every (kind, extra code) pair the catalog
+// holds. An extra code is only ever valid together with its kind.
+var connectionFailureExtraPairs = []connectionFailureKey{
+	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS},
+}
+
+// normalizeConnectionFailurePair normalizes both parameters together. An
+// extra code is kept only for the kind it was written for; with any other
+// kind it becomes ERR_UNKNOWN, like every other code nobody wrote down.
+func normalizeConnectionFailurePair(kind connectionKind, code verify.ErrorCode) (connectionKind, verify.ErrorCode) {
+	kind = normalizeConnectionKind(kind)
+	if _, extra := connectionFailureExtraCodeTokens[code]; extra {
+		for _, pair := range connectionFailureExtraPairs {
+			if pair.kind == kind && pair.code == code {
+				return kind, code
+			}
+		}
+		return kind, verify.ERR_UNKNOWN
+	}
+	return kind, normalizeConnectionFailureCode(code)
+}
+
+// connectionFailureCodeToken returns the identifier token for a code that is
+// already normalized.
+func connectionFailureCodeToken(code verify.ErrorCode) string {
+	if token, ok := connectionFailureExtraCodeTokens[code]; ok {
+		return token
+	}
+	return connectionFailureCodeTokens[code]
+}
+
 // ── the hint half ───────────────────────────────────────────────────────
 
 // The kind-aware ERR_AUTH hints. verify.Hint's ERR_AUTH wording is written for
@@ -263,6 +313,31 @@ const argocdCertificateNotTrusted = "ArgoCD uses a certificate Sharko does not t
 	"Give ArgoCD a trusted certificate, or for a test setup, install ArgoCD with server.insecure " +
 	"or tick Skip TLS certificate verification."
 
+// argocdNeedsHTTPS is the whole sentence for an http ArgoCD address that only
+// answers by sending Sharko on to https (L7, video finding). Before, this
+// case showed the general "Sharko can't reach ArgoCD" sentence, which is
+// wrong: Sharko did reach it, and the fix is one change to the address.
+//
+// This is the form the catalog (and so the browser's generated file) holds.
+// The server sends it as it is when it does not know the https address — the
+// redirect went to another host, or its address could not be used.
+//
+// Pinned by exact text in connection_failure_messages_test.go.
+const argocdNeedsHTTPS = "ArgoCD answers only over https at this address. " +
+	"Change the ArgoCD address so it starts with https:// and test again."
+
+// argocdNeedsHTTPSAtFmt is the same sentence when Sharko knows the https
+// address: the same host and port it was sent on to. That address is built
+// from the scheme and host only (see argocd.HTTPSAddress), never from the
+// path, the user part or the query, which is where a credential can be
+// written. The one argument is that address.
+//
+// The catalog cannot hold this form, because the address is different for
+// every setup. It holds argocdNeedsHTTPS under the same identifier instead,
+// and the browser shows whatever sentence the server sent.
+const argocdNeedsHTTPSAtFmt = "ArgoCD answers only over https at this address. " +
+	"Change the ArgoCD address to %s and test again."
+
 // connectionTestStatusNotTested is the "status" of a connection-test result
 // for a test that never ran. Every other result is "ok" or "error".
 const connectionTestStatusNotTested = "not_tested"
@@ -286,18 +361,17 @@ const argocdNotTestedBadGitAddress = "ArgoCD was not tested, because Sharko coul
 // ConnectionFailureMessages slice, same generated browser file. Nothing about
 // the contract changes — only where the words come from.
 var connectionFailureWholeSentences = map[connectionFailureKey]string{
-	{kind: connectionKindGit, code: verify.ERR_RBAC}:   gitPermissionRefusal + " " + gitPermissionNextStep,
-	{kind: connectionKindArgoCD, code: verify.ERR_TLS}: argocdCertificateNotTrusted,
+	{kind: connectionKindGit, code: verify.ERR_RBAC}:                    gitPermissionRefusal + " " + gitPermissionNextStep,
+	{kind: connectionKindArgoCD, code: verify.ERR_TLS}:                  argocdCertificateNotTrusted,
+	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS}: argocdNeedsHTTPS,
 }
 
 // connectionFailureWholeSentence looks a whole-sentence variant up. Both
 // parameters are normalized here so a caller cannot miss the pair by passing
 // an unsupported value.
 func connectionFailureWholeSentence(kind connectionKind, code verify.ErrorCode) (string, bool) {
-	sentence, ok := connectionFailureWholeSentences[connectionFailureKey{
-		kind: normalizeConnectionKind(kind),
-		code: normalizeConnectionFailureCode(code),
-	}]
+	kind, code = normalizeConnectionFailurePair(kind, code)
+	sentence, ok := connectionFailureWholeSentences[connectionFailureKey{kind: kind, code: code}]
 	return sentence, ok
 }
 
@@ -345,7 +419,8 @@ func connectionFailureFamilyOwnsHint(kind connectionKind, code verify.ErrorCode)
 	if _, ok := connectionFailureWholeSentence(kind, code); ok {
 		return true
 	}
-	return normalizeConnectionFailureCode(code) == verify.ERR_AUTH && isKindAwareAuthKind(kind)
+	_, code = normalizeConnectionFailurePair(kind, code)
+	return code == verify.ERR_AUTH && isKindAwareAuthKind(kind)
 }
 
 // ── the rendering function ──────────────────────────────────────────────
@@ -355,8 +430,7 @@ func connectionFailureFamilyOwnsHint(kind connectionKind, code verify.ErrorCode)
 // here, the wire carries the result, and the browser is never handed two
 // halves to join.
 func renderConnectionFailure(kind connectionKind, code verify.ErrorCode) string {
-	kind = normalizeConnectionKind(kind)
-	code = normalizeConnectionFailureCode(code)
+	kind, code = normalizeConnectionFailurePair(kind, code)
 
 	if whole, ok := connectionFailureWholeSentence(kind, code); ok {
 		return whole
@@ -384,9 +458,33 @@ func renderConnectionFailure(kind connectionKind, code verify.ErrorCode) string 
 // connection_sentences.go. The browser depends on them; renaming one is a wire
 // change. Change the words freely, change a name only deliberately.
 func connectionFailureIDFor(kind connectionKind, code verify.ErrorCode) string {
-	return "connectionFailure" +
-		connectionKindTokens[normalizeConnectionKind(kind)] +
-		connectionFailureCodeTokens[normalizeConnectionFailureCode(code)]
+	kind, code = normalizeConnectionFailurePair(kind, code)
+	return "connectionFailure" + connectionKindTokens[kind] + connectionFailureCodeToken(code)
+}
+
+// connectionFailureCodeFor picks the failure code for a failed connection
+// test. An ArgoCD error that says "this http address only sends Sharko on to
+// https" gets its own code, picked by error TYPE (errors.Is), never by its
+// words. Everything else goes through verify.ClassifyError as before.
+func connectionFailureCodeFor(kind connectionKind, err error) verify.ErrorCode {
+	if normalizeConnectionKind(kind) == connectionKindArgoCD && errors.Is(err, argocd.ErrArgocdNeedsHTTPS) {
+		return connectionFailureCodeNeedsHTTPS
+	}
+	return verify.ClassifyError(err)
+}
+
+// renderConnectionFailureFor returns the finished sentence for a failed
+// connection test, for the code connectionFailureCodeFor picked. It is
+// renderConnectionFailure, except that the ArgoCD "needs https" sentence names
+// the https address when Sharko knows it.
+func renderConnectionFailureFor(kind connectionKind, code verify.ErrorCode, err error) string {
+	kind, code = normalizeConnectionFailurePair(kind, code)
+	if kind == connectionKindArgoCD && code == connectionFailureCodeNeedsHTTPS {
+		if addr := argocd.HTTPSAddress(err); addr != "" {
+			return fmt.Sprintf(argocdNeedsHTTPSAtFmt, addr)
+		}
+	}
+	return renderConnectionFailure(kind, code)
 }
 
 // ── the catalog ─────────────────────────────────────────────────────────
@@ -418,16 +516,22 @@ type ConnectionFailureMessage struct {
 var ConnectionFailureMessages = buildConnectionFailureMessages()
 
 func buildConnectionFailureMessages() []ConnectionFailureMessage {
-	out := make([]ConnectionFailureMessage, 0, len(connectionKinds)*len(connectionFailureCodes))
+	out := make([]ConnectionFailureMessage, 0, len(connectionKinds)*len(connectionFailureCodes)+len(connectionFailureExtraPairs))
+	add := func(kind connectionKind, code verify.ErrorCode) {
+		out = append(out, ConnectionFailureMessage{
+			ID:       connectionFailureIDFor(kind, code),
+			Kind:     string(kind),
+			Code:     string(code),
+			Sentence: renderConnectionFailure(kind, code),
+		})
+	}
 	for _, kind := range connectionKinds {
 		for _, code := range connectionFailureCodes {
-			out = append(out, ConnectionFailureMessage{
-				ID:       connectionFailureIDFor(kind, code),
-				Kind:     string(kind),
-				Code:     string(code),
-				Sentence: renderConnectionFailure(kind, code),
-			})
+			add(kind, code)
 		}
+	}
+	for _, pair := range connectionFailureExtraPairs {
+		add(pair.kind, pair.code)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
