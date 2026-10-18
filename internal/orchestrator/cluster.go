@@ -13,11 +13,22 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
+
+// registerPreviewReadFailedFmt is the error when a RegisterCluster dry run
+// cannot read the cluster list for a reason other than "file not found".
+// Arguments: file path, branch, cluster name, the Git error.
+const registerPreviewReadFailedFmt = "could not read %s from the %s branch, so Sharko could not show what registering cluster %s would change: %w"
+
+// updateAddonsReadFailedFmt is the error when UpdateClusterAddons cannot read
+// the cluster list for a reason other than "file not found".
+// Arguments: file path, branch, cluster name, the Git error.
+const updateAddonsReadFailedFmt = "could not read %s from the %s branch, so Sharko stopped before changing the addons of cluster %s: %w"
 
 // supportedProviders enumerates the cluster-provider values RegisterCluster
 // accepts. "kubeconfig" is the inline-kubeconfig path used by the wizard's
@@ -383,9 +394,15 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 
 		// Generate the cluster registry update for preview
+		// Only a real "file not found" means the file is missing. Any other
+		// Git error (no access, a network failure) is returned: showing a
+		// "create the file" preview then would be a wrong answer.
 		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if clusterAddonsErr != nil && !errors.Is(clusterAddonsErr, gitprovider.ErrFileNotFound) {
+			return nil, fmt.Errorf(registerPreviewReadFailedFmt, clusterAddonsPath, o.gitops.BaseBranch, req.Name, clusterAddonsErr)
+		}
 		clusterAddonsFileMissing := clusterAddonsErr != nil
-		if clusterAddonsErr != nil {
+		if clusterAddonsFileMissing {
 			clusterAddonsData = []byte("clusters:\n")
 		}
 		clusterLabels := make(map[string]string, len(req.Addons))
@@ -421,7 +438,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 
 		if addEntryErr == nil && previewClusterAddons != nil {
-			clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
+			// The read above already told us whether the file is there, so
+			// use that instead of reading it again.
+			clusterAddonsAction := "update"
+			if clusterAddonsFileMissing {
+				clusterAddonsAction = "create"
+			}
 			// For a brand-new file, pass empty old content so the diff header
 			// shows @@ -0,0 +1,N @@ instead of @@ -1,1 +1,N @@.
 			oldContentForDiff := clusterAddonsData
@@ -975,45 +997,46 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 	valuesContent := generateClusterValues(name, region, addons, catalog)
 
-	// Read and mutate managed-clusters.yaml if addons are specified
+	// Read and mutate managed-clusters.yaml if addons are specified.
+	//
+	// A dry run must give the same answer as the real run. So when the file
+	// is missing, or the cluster is not in it, both stop here with the same
+	// failed result. Only a real "file not found" counts as missing; any
+	// other Git error is returned as it is.
 	var updatedMC []byte
+	var oldMC []byte
 	if len(addons) > 0 {
 		clusterAddonsData, mcErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if mcErr != nil && !errors.Is(mcErr, gitprovider.ErrFileNotFound) {
+			return nil, fmt.Errorf(updateAddonsReadFailedFmt, clusterAddonsPath, o.gitops.BaseBranch, name, mcErr)
+		}
 		if mcErr != nil || clusterAddonsData == nil {
-			// For dry-run, report what would happen; for real path, abort below
-			if !dryRun {
+			result.Status = "failed"
+			result.CompletedSteps = []string{}
+			result.FailedStep = "update_addon_label"
+			result.Error = "managed-clusters.yaml not found"
+			result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+			return result, nil
+		}
+		oldMC = clusterAddonsData
+		updatedMC = clusterAddonsData
+		for addon, enabled := range addons {
+			var mutated []byte
+			var labelErr error
+			if enabled {
+				mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
+			} else {
+				mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
+			}
+			if labelErr != nil {
 				result.Status = "failed"
 				result.CompletedSteps = []string{}
 				result.FailedStep = "update_addon_label"
-				result.Error = "managed-clusters.yaml not found"
-				result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+				result.Error = labelErr.Error()
+				result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
 				return result, nil
 			}
-		} else {
-			updatedMC = clusterAddonsData
-			for addon, enabled := range addons {
-				var mutated []byte
-				var labelErr error
-				if enabled {
-					mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
-				} else {
-					mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
-				}
-				if labelErr != nil {
-					if !dryRun {
-						result.Status = "failed"
-						result.CompletedSteps = []string{}
-						result.FailedStep = "update_addon_label"
-						result.Error = labelErr.Error()
-						result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
-						return result, nil
-					}
-					// Dry-run: note the error but continue to show preview
-					updatedMC = nil
-					break
-				}
-				updatedMC = mutated
-			}
+			updatedMC = mutated
 		}
 	}
 
@@ -1030,20 +1053,14 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 			Diff:   o.buildFileDiff(valuesPath, oldValues, valuesContent, valuesAction),
 		})
 
-		// Managed-clusters preview (if addons are updated)
-		if len(addons) > 0 && updatedMC != nil {
-			oldMC, _ := o.readFileIfExists(ctx, clusterAddonsPath)
-			mcAction := o.fileAction(ctx, clusterAddonsPath)
-			// For a brand-new file, pass empty old content so the diff header
-			// shows @@ -0,0 +1,N @@ instead of @@ -1,1 +1,N @@.
-			oldMCForDiff := oldMC
-			if oldMC == nil {
-				oldMCForDiff = []byte{}
-			}
+		// Managed-clusters preview (if addons are updated). We only get here
+		// when the file was read above, so it is always an update of the
+		// content we already have.
+		if len(addons) > 0 {
 			filePreviews = append(filePreviews, FilePreview{
 				Path:   clusterAddonsPath,
-				Action: mcAction,
-				Diff:   o.buildFileDiff(clusterAddonsPath, oldMCForDiff, updatedMC, mcAction),
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, oldMC, updatedMC, "update"),
 			})
 		}
 
