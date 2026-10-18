@@ -103,6 +103,10 @@ the address):
 argocd call got no answer
 ```
 
+The `endpoint` field is the ArgoCD API path Sharko called, never the ArgoCD
+address. When the path names a cluster, the cluster address in it has no user
+name, password, query or fragment.
+
 **If ArgoCD answers but says no**, the log line is instead
 `argocd call failed` with a `status` field (`401` or `403`), and the message
 says `invalid ArgoCD token` or `ArgoCD access denied`. That is a token problem:

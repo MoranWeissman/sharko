@@ -201,6 +201,7 @@ func unreachableCode(cause error) (UnreachableCode, bool) {
 // types and sentinels and cannot print an address; a returned error's words go
 // to people.
 func unreachableCallError(verb, path string, cause error) error {
+	path = safeEndpoint(path) // a cluster server address in the path keeps no credential (LO-8 R7)
 	slog.Error("argocd call got no answer", "verb", verb, "endpoint", path, "error", cause)
 	code, timedOut := unreachableCode(cause)
 	out := &UnreachableError{

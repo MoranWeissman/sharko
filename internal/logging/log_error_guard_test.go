@@ -117,7 +117,13 @@ import (
 // tests import it. It makes no slog call and no log call of any kind: every
 // failure goes back to the caller as a returned error. It does not search
 // for credential characters either.
-const wantSweptGoFiles = 434
+//
+// 435 since LO-8 R7 added internal/argocd/endpoint.go, which takes the
+// credential part off a cluster server address in an ArgoCD request path
+// before the path is logged. It makes no slog call; it splits Sharko's own
+// query off with strings.Cut("?") and is listed for that in
+// credential_rule_guard_test.go.
+const wantSweptGoFiles = 435
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by

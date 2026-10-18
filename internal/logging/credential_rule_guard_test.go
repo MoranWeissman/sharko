@@ -113,6 +113,14 @@ var characterRuleAllowed = []characterRuleSite{
 			"the same address. No safety decision hangs on it.",
 	},
 	{
+		file:  "internal/argocd/endpoint.go",
+		sites: `strings.Cut("?")`,
+		why: "Splits Sharko's own query (updateMask, refresh) off an ArgoCD " +
+			"request path so only the path segments are looked at. Whether a " +
+			"segment carries a credential is still asked of credsafe " +
+			"(ContainsCredentialCarrierRune, SafeRepoURL), never decided here.",
+	},
+	{
 		file:  "internal/helm/fetcher.go",
 		sites: `strings.IndexAny("?#")`,
 		why: "Builds a cache key from a chart repository address, so two " +

@@ -909,7 +909,7 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 		// been address-free since unreachable.go was written; this one was
 		// the leftover. The verb and the endpoint are Sharko's own words.
 		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
-			http.MethodGet, path, credsafe.PlainFailureReason(err))
+			http.MethodGet, safeEndpoint(path), credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
@@ -936,7 +936,7 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 		// error-classifier cannot see a type to strip; the only safe place to
 		// drop it is here. The endpoint and the status code say which call
 		// failed and how, which is what triage actually needs.
-		slog.Error("argocd call failed", "endpoint", path, "status", resp.StatusCode)
+		slog.Error("argocd call failed", "endpoint", safeEndpoint(path), "status", resp.StatusCode)
 		// Translate common errors into user-friendly messages
 		switch resp.StatusCode {
 		case 401:
@@ -951,9 +951,9 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 			// RBAC-focused message instead of "bootstrap missing or unhealthy".
 			return nil, fmt.Errorf("%w", ErrPermissionDenied)
 		case 404:
-			return nil, fmt.Errorf("ArgoCD endpoint not found (%s) — check the server URL", path)
+			return nil, fmt.Errorf("ArgoCD endpoint not found (%s) — check the server URL", safeEndpoint(path))
 		default:
-			return nil, fmt.Errorf("ArgoCD returned status %d from %s", resp.StatusCode, path)
+			return nil, fmt.Errorf("ArgoCD returned status %d from %s", resp.StatusCode, safeEndpoint(path))
 		}
 	}
 
