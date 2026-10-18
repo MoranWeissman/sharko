@@ -985,9 +985,11 @@ func (s *Server) ReinitializeFromConnection() {
 		//   1. cfg.ArgoCDNamespace (empty here, by design)
 		//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
 		//   3. "argocd" hardcoded default
-		// For k8s-secrets, namespace (SHARKO_NAMESPACE default,
-		// overridden by pc.Namespace) flows into the DISTINCT
-		// Namespace field, matching the addon-side convention.
+		// For k8s-secrets, only the connection's own namespace
+		// (pc.Namespace) goes into the DISTINCT Namespace field.
+		// SHARKO_NAMESPACE is NOT used here: when pc.Namespace is
+		// empty, the provider reads from "sharko" (see
+		// newKubernetesSecretProviderForNamespace).
 		testCfg := providers.ClusterTestProviderConfig{}
 		if pc != nil {
 			testCfg = providers.ClusterTestConfigFromConnection(
