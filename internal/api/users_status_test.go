@@ -140,3 +140,106 @@ func TestHandleDeleteUser_NotFoundIs400(t *testing.T) {
 		t.Error("hash in error")
 	}
 }
+
+func doUpdateUser(t *testing.T, s *Server, name, body string) (int, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/"+name, strings.NewReader(body))
+	req.SetPathValue("username", name)
+	req.Header.Set("X-Sharko-User", "admin")
+	req.Header.Set("X-Sharko-Role", "admin")
+	w := httptest.NewRecorder()
+	s.handleUpdateUser(w, req)
+	return w.Code, errorField(t, w)
+}
+
+func doResetPassword(t *testing.T, s *Server, name string) (int, string, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/"+name+"/reset-password", nil)
+	req.SetPathValue("username", name)
+	req.Header.Set("X-Sharko-User", "admin")
+	req.Header.Set("X-Sharko-Role", "admin")
+	w := httptest.NewRecorder()
+	s.handleResetPassword(w, req)
+	return w.Code, errorField(t, w), w.Body.String()
+}
+
+// Updating a user: a storage failure is 500, an unknown user or role is 400.
+func TestHandleUpdateUser_StorageFailureIs500(t *testing.T) {
+	st, cs := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	if code, msg := doCreateUser(t, s, "dana"); code != http.StatusCreated {
+		t.Fatalf("create: %d %q", code, msg)
+	}
+	failUpdates(cs, "configmaps")
+
+	code, msg := doUpdateUser(t, s, "dana", `{"role":"operator"}`)
+	if code != http.StatusInternalServerError {
+		t.Errorf("a storage failure must be 500, got %d (%q)", code, msg)
+	}
+	const want = "updating ConfigMap: storage is down"
+	if msg != want {
+		t.Errorf("error = %q, want %q", msg, want)
+	}
+}
+
+func TestHandleUpdateUser_NotFoundIs400(t *testing.T) {
+	st, _ := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	code, msg := doUpdateUser(t, s, "nobody", `{"role":"viewer"}`)
+	if code != http.StatusBadRequest {
+		t.Errorf("an unknown user must be 400, got %d", code)
+	}
+	if msg != `user "nobody" not found` {
+		t.Errorf("error = %q", msg)
+	}
+}
+
+func TestHandleUpdateUser_BadRoleIs400(t *testing.T) {
+	st, _ := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	if code, msg := doCreateUser(t, s, "dana"); code != http.StatusCreated {
+		t.Fatalf("create: %d %q", code, msg)
+	}
+	code, msg := doUpdateUser(t, s, "dana", `{"role":"boss"}`)
+	if code != http.StatusBadRequest {
+		t.Errorf("an unknown role must be 400, got %d", code)
+	}
+	if msg != "role must be admin, operator, or viewer" {
+		t.Errorf("error = %q", msg)
+	}
+}
+
+// Resetting a password: a storage failure is 500, an unknown user is 400,
+// and the answer to a failure carries no password or hash.
+func TestHandleResetPassword_StorageFailureIs500(t *testing.T) {
+	st, cs := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	if code, msg := doCreateUser(t, s, "dana"); code != http.StatusCreated {
+		t.Fatalf("create: %d %q", code, msg)
+	}
+	failUpdates(cs, "secrets")
+
+	code, msg, body := doResetPassword(t, s, "dana")
+	if code != http.StatusInternalServerError {
+		t.Errorf("a storage failure must be 500, got %d (%q)", code, msg)
+	}
+	const want = "updating Secret: storage is down"
+	if msg != want {
+		t.Errorf("error = %q, want %q", msg, want)
+	}
+	if strings.Contains(body, "temp_password") || strings.Contains(body, "$2a$") {
+		t.Errorf("a failed reset answer holds a password or hash: %s", body)
+	}
+}
+
+func TestHandleResetPassword_NotFoundIs400(t *testing.T) {
+	st, _ := newTestAuthStoreWithClient(t)
+	s := &Server{authStore: st, auditLog: audit.NewLog(100)}
+	code, msg, _ := doResetPassword(t, s, "nobody")
+	if code != http.StatusBadRequest {
+		t.Errorf("an unknown user must be 400, got %d", code)
+	}
+	if msg != `user "nobody" not found` {
+		t.Errorf("error = %q", msg)
+	}
+}

@@ -93,8 +93,9 @@ var ErrInvalidUsername error = &InputError{msg: InvalidUsernameSentence}
 
 // InputError is an error caused by what the caller asked for: a bad user
 // name or role, a user that already exists, or a user that does not exist.
-// CreateUser and DeleteUser return it as is, never wrapped, so the API can
-// tell it apart from a storage failure (see IsInputError).
+// CreateUser, UpdateUser, DeleteUser and ResetPassword return it as is, never
+// wrapped, so the API can tell it apart from a storage failure (see
+// IsInputError).
 type InputError struct{ msg string }
 
 func (e *InputError) Error() string { return e.msg }
@@ -561,48 +562,30 @@ func accountsHasUser(accountsYAML, username string) bool {
 }
 
 // UpdateUser updates a user's role and enabled status.
+//
+// A user that does not exist or a role that is not known is an input error
+// (see IsInputError). In Kubernetes mode the users ConfigMap is read fresh
+// and the write retries on a conflict (retry.RetryOnConflict), the same way
+// createUserK8s does. A user list that cannot be read is never written back:
+// that would throw away every other user. Every storage error is returned.
 func (s *Store) UpdateUser(username string, enabled bool, role string) error {
 	s.mu.RLock()
 	user, exists := s.users[username]
 	s.mu.RUnlock()
 	if !exists {
-		return fmt.Errorf("user %q not found", username)
+		return inputErrorf("user %q not found", username)
 	}
 
 	if role != "" && role != "admin" && role != "operator" && role != "viewer" {
-		return fmt.Errorf("role must be admin, operator, or viewer")
+		return inputErrorf("role must be admin, operator, or viewer")
 	}
 	if role == "" {
 		role = user.Role
 	}
 
 	if s.mode == ModeK8s {
-		ctx := context.Background()
-		cmName := s.secretName + "-users"
-		cm, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Get(ctx, cmName, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("reading ConfigMap: %w", err)
-		}
-
-		if cm.Data == nil {
-			cm.Data = make(map[string]string)
-		}
-		accounts := make(map[string]struct {
-			Enabled bool   `yaml:"enabled"`
-			Role    string `yaml:"role"`
-		})
-		if existing, ok := cm.Data["accounts"]; ok {
-			yaml.Unmarshal([]byte(existing), &accounts)
-		}
-		accounts[username] = struct {
-			Enabled bool   `yaml:"enabled"`
-			Role    string `yaml:"role"`
-		}{Enabled: enabled, Role: role}
-
-		data, _ := yaml.Marshal(accounts)
-		cm.Data["accounts"] = string(data)
-		if _, err := s.clientset.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("updating ConfigMap: %w", err)
+		if err := s.updateUserEntryK8s(context.Background(), username, enabled, role); err != nil {
+			return err
 		}
 	}
 
@@ -612,6 +595,39 @@ func (s *Store) UpdateUser(username string, enabled bool, role string) error {
 
 	slog.Info("user updated", "username", username, "role", role, "enabled", enabled)
 	return nil
+}
+
+// updateUserEntryK8s writes the new role and enabled status for username
+// into the users ConfigMap.
+func (s *Store) updateUserEntryK8s(ctx context.Context, username string, enabled bool, role string) error {
+	cms := s.clientset.CoreV1().ConfigMaps(s.namespace)
+	cmName := s.secretName + "-users"
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		cm, err := cms.Get(ctx, cmName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("reading ConfigMap: %w", err)
+		}
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		accounts := make(map[string]usersAccount)
+		if existing := cm.Data["accounts"]; existing != "" {
+			if err := yaml.Unmarshal([]byte(existing), &accounts); err != nil {
+				return fmt.Errorf("reading the user list in the ConfigMap: %w", err)
+			}
+		}
+		accounts[username] = usersAccount{Enabled: enabled, Role: role}
+		data, err := yaml.Marshal(accounts)
+		if err != nil {
+			return fmt.Errorf("writing the user list: %w", err)
+		}
+		cm.Data["accounts"] = string(data)
+		if _, err := cms.Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			// Wrapped with %w so RetryOnConflict still sees a conflict.
+			return fmt.Errorf("updating ConfigMap: %w", err)
+		}
+		return nil
+	})
 }
 
 // DeleteUser removes a user account.
@@ -731,12 +747,16 @@ func (s *Store) removeUserKeysK8s(ctx context.Context, username string) error {
 }
 
 // ResetPassword generates a new temporary password for a user.
+//
+// A user that does not exist is an input error (see IsInputError). In
+// Kubernetes mode the Secret is read fresh and the write retries on a
+// conflict (retry.RetryOnConflict). No error holds the password or its hash.
 func (s *Store) ResetPassword(username string) (string, error) {
 	s.mu.RLock()
 	_, exists := s.users[username]
 	s.mu.RUnlock()
 	if !exists {
-		return "", fmt.Errorf("user %q not found", username)
+		return "", inputErrorf("user %q not found", username)
 	}
 
 	tempPass := generateTempPassword()
@@ -747,16 +767,24 @@ func (s *Store) ResetPassword(username string) (string, error) {
 
 	if s.mode == ModeK8s {
 		ctx := context.Background()
-		secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+		secrets := s.clientset.CoreV1().Secrets(s.namespace)
+		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			secret, err := secrets.Get(ctx, s.secretName, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("reading Secret: %w", err)
+			}
+			if secret.Data == nil {
+				secret.Data = make(map[string][]byte)
+			}
+			secret.Data[username+".password"] = hash
+			if _, err := secrets.Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+				// Wrapped with %w so RetryOnConflict still sees a conflict.
+				return fmt.Errorf("updating Secret: %w", err)
+			}
+			return nil
+		})
 		if err != nil {
-			return "", fmt.Errorf("reading Secret: %w", err)
-		}
-		if secret.Data == nil {
-			secret.Data = make(map[string][]byte)
-		}
-		secret.Data[username+".password"] = hash
-		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
-			return "", fmt.Errorf("updating Secret: %w", err)
+			return "", err
 		}
 	}
 

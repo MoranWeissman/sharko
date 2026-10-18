@@ -11332,6 +11332,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "500":
+          description: The user could not be saved
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Update user
@@ -11367,6 +11372,11 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: The new password could not be saved
           schema:
             additionalProperties: true
             type: object
