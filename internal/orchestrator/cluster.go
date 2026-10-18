@@ -613,7 +613,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.CompletedSteps = steps
 			result.FailedStep = "create_secrets"
 			result.Error = secretErr.Error()
-			result.Message = "Addon secret creation failed. ArgoCD registration and PR not started."
+			result.Message = registerConnectFailedMessage(registerOutcome{steps: steps})
 			return result, nil
 		}
 		if len(secretResult.Created) > 0 || len(secretResult.Failed) > 0 {
@@ -711,7 +711,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		result.CompletedSteps = steps
 		result.FailedStep = "read_cluster_registry"
 		result.Error = clusterAddonsErr.Error()
-		result.Message = "Sharko could not read the cluster registry from Git, so it stopped before opening a pull request — writing one built from an empty file would have dropped every other cluster out of the registry. Nothing was committed. Try again once Git is reachable."
+		result.Message = registerRegistryReadFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)})
 		return result, nil
 	}
 	if !clusterAddonsExists {
@@ -794,7 +794,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.CompletedSteps = steps
 			result.FailedStep = "pr_merge"
 			result.Error = err.Error()
-			result.Message = "Secrets created and PR opened, but auto-merge failed. Merge manually then ArgoCD registration will be needed: " + gitResult.PRUrl
+			result.Message = registerMergeFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)}, gitResult.PRUrl)
 			result.Git = gitResult
 			return result, nil
 		}
@@ -807,7 +807,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		result.CompletedSteps = steps
 		result.FailedStep = "git_commit"
 		result.Error = err.Error()
-		result.Message = "Secrets created but values file commit failed. ArgoCD registration not started. Manual Git commit required."
+		result.Message = registerCommitFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)})
 		return result, nil
 	}
 	steps = append(steps, "git_commit")
@@ -847,7 +847,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if len(result.FailedSecrets) > 0 {
 		result.Status = "partial"
 		result.FailedStep = "create_secrets"
-		result.Message = fmt.Sprintf("Registration completed but %d addon secret(s) failed to create.", len(result.FailedSecrets))
+		result.Message = registerSecretsFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets), prMerged: gitResult != nil && gitResult.Merged})
 	} else {
 		result.Status = "success"
 	}
