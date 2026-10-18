@@ -58,6 +58,14 @@ for example `https://argocd.example.com`. Change the ArgoCD address in
 **Settings > Connections** to that address and test again. Sharko never sends
 the ArgoCD token to an `http://` address that sent it on to https.
 
+The other way round looks like this too, but is not: the ArgoCD address starts
+with `https://`, and ArgoCD, or a proxy in front of it, sends Sharko on to plain
+`http://`. Sharko does not follow that, so the ArgoCD token is never sent
+unencrypted. Where Sharko lists clusters or applications from ArgoCD, for
+example when it looks for clusters you can add, the message starts with
+`ArgoCD tried to send Sharko from https to plain http`. Check the ArgoCD address
+in **Settings > Connections** and any proxy in front of ArgoCD.
+
 The `code` part tells you what kind of failure it was:
 
 | `code` | What it means |
@@ -65,6 +73,8 @@ The `code` part tells you what kind of failure it was:
 | `argocd_no_answer` | The address did not resolve, the connection was refused, or it dropped |
 | `argocd_timed_out` | ArgoCD took too long to answer |
 | `argocd_tls_untrusted` | Sharko does not trust ArgoCD's TLS certificate (see [Corporate TLS](corporate-mitm-tls.md)) |
+| `argocd_needs_https` | The `http://` address only sends Sharko on to `https://`. Change the address to `https://` |
+| `argocd_redirect_to_http` | The `https://` address sends Sharko on to plain `http://`. Sharko does not follow it |
 | `argocd_canceled` | The caller gave up (for example, the browser tab closed). Not a problem on its own |
 
 The log has this line at level `ERROR`, once per failed call, with `verb`,
