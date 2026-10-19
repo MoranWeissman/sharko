@@ -36,11 +36,26 @@ type fakeGit struct {
 	prsErr error
 	// prCalls counts ListPullRequests calls.
 	prCalls int
+	// onListPRs, when set, runs inside ListPullRequests before it answers,
+	// so a test can change Git between the tick's two reads (LO-11 B1).
+	onListPRs func(f *fakeGit)
+	// errAfterPRs, when set, is returned from GetFileContent once
+	// ListPullRequests has been called (LO-11 B1).
+	errAfterPRs error
+	// readsAfterPRs counts GetFileContent calls made after ListPullRequests
+	// was first called.
+	readsAfterPRs int
 }
 
 func (f *fakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	if f.prCalls > 0 {
+		f.readsAfterPRs++
+	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.errAfterPRs != nil && f.prCalls > 0 {
+		return nil, f.errAfterPRs
 	}
 	if body, ok := f.files[path]; ok {
 		return body, nil
@@ -85,6 +100,9 @@ func (f *fakeGit) ListDirectory(_ context.Context, dir, _ string) ([]string, err
 // — "no open PRs" unless a fixture seeds one.
 func (f *fakeGit) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	f.prCalls++
+	if f.onListPRs != nil {
+		f.onListPRs(f)
+	}
 	return f.prs, f.prsErr
 }
 func (f *fakeGit) TestConnection(_ context.Context) error { return nil }

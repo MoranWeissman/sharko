@@ -813,6 +813,39 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 // the ref straight through to its file API, so a SHA works wherever a branch
 // name does.
 func (r *Reconciler) readDesiredStateAtRef(ctx context.Context, gp gitprovider.GitProvider, ref string) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
+	// Steps 1 and 2: read, parse and schema-check the managed-clusters file.
+	parsedSpec, body, readPath, err := r.readManagedClustersFile(ctx, gp, ref)
+	if err != nil || parsedSpec == nil {
+		return nil, nil, false, readPath, err
+	}
+
+	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
+	// cluster-addons/*.yaml. On a v4 repo the connection record's own labels
+	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
+	// the ClusterAddons files do — so without this read the desired
+	// label set would be empty and enabling an addon would deploy nothing.
+	// Gated on readPath so a v3 repo does not pay for a directory listing
+	// it can never use, and so the v3 desired-label computation stays
+	// byte-identical.
+	if readPath == V4ManagedClustersPath {
+		v4 = readV4AddonLabels(ctx, gp, ref)
+	}
+
+	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
+	// a file that EXISTS with content but parses to zero clusters is the
+	// signature of a version/format mismatch, not of an intentionally
+	// emptied fleet — see orphanSweepHeld.
+	return parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, readPath, nil
+}
+
+// readManagedClustersFile is Steps 1 and 2 of readDesiredStateAtRef: read the
+// managed-clusters file at ref (configured path first, then the v4 path) and
+// parse it. It reads one file and no per-cluster files, so the orphan sweep
+// can call it again cheaply (LO-11 B1).
+//
+// spec == nil with err == nil means the file is absent. A non-nil error is
+// always a *desiredStateReadError.
+func (r *Reconciler) readManagedClustersFile(ctx context.Context, gp gitprovider.GitProvider, ref string) (spec *models.ManagedClustersSpec, body []byte, readPath string, err error) {
 	log := logging.LoggerFromContext(ctx)
 
 	// Step 1: read the managed-clusters file from git. Tries the configured
@@ -844,35 +877,19 @@ func (r *Reconciler) readDesiredStateAtRef(ctx context.Context, gp gitprovider.G
 		// caller diffs against argocd correctly either way (no creates,
 		// only the deletes that would have happened anyway).
 		if errors.Is(readErr, gitprovider.ErrFileNotFound) {
-			return nil, nil, false, readPath, nil
+			return nil, nil, readPath, nil
 		}
-		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
+		return nil, nil, readPath, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
 	}
 
 	// Step 2: parse + schema-validate. Same kind (ManagedClusters), same
 	// reader, regardless of which path Step 1 actually read from.
 	parsedSpec, parseErr := models.LoadManagedClusters(body)
 	if parseErr != nil {
-		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
+		return nil, nil, readPath, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
 	}
 
-	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
-	// cluster-addons/*.yaml. On a v4 repo the connection record's own labels
-	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
-	// the ClusterAddons files do — so without this read the desired
-	// label set would be empty and enabling an addon would deploy nothing.
-	// Gated on readPath so a v3 repo does not pay for a directory listing
-	// it can never use, and so the v3 desired-label computation stays
-	// byte-identical.
-	if readPath == V4ManagedClustersPath {
-		v4 = readV4AddonLabels(ctx, gp, ref)
-	}
-
-	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
-	// a file that EXISTS with content but parses to zero clusters is the
-	// signature of a version/format mismatch, not of an intentionally
-	// emptied fleet — see orphanSweepHeld.
-	return &parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, readPath, nil
+	return &parsedSpec, body, readPath, nil
 }
 
 // orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
@@ -1097,6 +1114,9 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 	// The open pull request list is read at most once per tick, and only
 	// when a registration-pending candidate needs it (LO-10 R13).
 	var openPRs openRegisterPRs
+	// The cluster list is read once more, at most once per tick, right
+	// before a registration-pending connection would be deleted (LO-11 B1).
+	var registryNow registryRecheck
 	for name := range existing {
 		if _, present := desired[name]; present {
 			continue // in both sets — handled by the clear-pending pass below.
@@ -1140,7 +1160,8 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 		// an open pull request registers this cluster, and also when Sharko
 		// cannot read the pull request list (LO-10 R13). It is removed only
 		// when no open pull request registers it (the pull request was
-		// closed without merging, or there never was one).
+		// closed without merging, or there never was one) AND a fresh read
+		// of the cluster list still does not hold it (LO-11 B1).
 		pending, malformed := models.IsRegistrationPending(annotationsOf(secret), now)
 		if malformed {
 			logging.LoggerFromContext(ctx).Warn(
@@ -1178,6 +1199,30 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 						"cluster", name, "namespace", r.namespace, "pr_url", prURL,
 					)
 				}
+				continue
+			}
+			// No open pull request registers it. But the cluster list above
+			// was read BEFORE the open pull request list, so a pull request
+			// merged in between is in neither. Read the cluster list again,
+			// once per tick and only now, and keep every name it holds. Keep
+			// on a failed read too: never delete on an unknown (LO-11 B1).
+			if !registryNow.loaded {
+				registryNow.load(ctx, r, gp)
+			}
+			if registryNow.err != nil {
+				stats.SkippedOpenPR++
+				logging.LoggerFromContext(ctx).Warn(
+					"[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the cluster list again to check whether its pull request was just merged",
+					"cluster", name, "namespace", r.namespace, "error", registryNow.err,
+				)
+				continue
+			}
+			if _, inGitNow := registryNow.names[name]; inGitNow {
+				stats.SkippedOpenPR++
+				logging.LoggerFromContext(ctx).Info(
+					"[clusterreconciler] keeping a registration-pending connection — its pull request was merged during this check, so the cluster is in Git now",
+					"cluster", name, "namespace", r.namespace,
+				)
 				continue
 			}
 		}
@@ -2602,8 +2647,9 @@ func normalizeLabels(raw interface{}) map[string]string {
 // cluster, or when the list could not be read (Sharko never deletes on an
 // unknown). Remove it only when the list was read and no open pull request
 // registers it — the pull request was closed without merging, or there was
-// never one. A merged pull request puts the cluster in the registry, so it
-// is not an orphan at all.
+// never one. A merged pull request puts the cluster in the registry; when it
+// merged after the tick's first cluster list read, registryRecheck reads the
+// list again before anything is deleted, so it is still not an orphan.
 type openRegisterPRs struct {
 	loaded bool
 	err    error
@@ -2617,6 +2663,43 @@ func (o *openRegisterPRs) load(ctx context.Context, gp gitprovider.GitProvider) 
 		return
 	}
 	o.prs, o.err = gp.ListPullRequests(ctx, "open")
+}
+
+// registryRecheck is the cluster list the orphan sweep reads a second time,
+// after the open pull request list, before it deletes a registration-pending
+// connection (LO-11 B1). The first read happens at the start of the tick; a
+// register pull request merged between that read and the open pull request
+// read is in neither list, and without this second read Sharko would delete
+// the connection of a cluster that is now in Git.
+//
+// It reads only the managed-clusters file at the branch head, never the
+// per-cluster files. A failed read sets err, and the caller keeps the
+// connection.
+type registryRecheck struct {
+	loaded bool
+	err    error
+	names  map[string]struct{}
+}
+
+func (c *registryRecheck) load(ctx context.Context, r *Reconciler, gp gitprovider.GitProvider) {
+	c.loaded = true
+	if gp == nil {
+		c.err = errors.New("no Git provider is set up")
+		return
+	}
+	spec, _, _, err := r.readManagedClustersFile(ctx, gp, r.branch)
+	if err != nil {
+		c.err = err
+		return
+	}
+	c.names = make(map[string]struct{})
+	if spec != nil {
+		for _, cl := range spec.Clusters {
+			if cl.Name != "" {
+				c.names[cl.Name] = struct{}{}
+			}
+		}
+	}
 }
 
 // keepPending says whether the named connection must be kept. When an open
