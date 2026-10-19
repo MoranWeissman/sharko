@@ -459,7 +459,7 @@ func (p *ArgoCDProvider) getCredentials(clusterName string) (*Kubeconfig, error)
 // (client-certificate) shape written by argosecrets.buildSecretConfig's cert
 // branch (V2-cleanup-56.1). CertData / KeyData / CAData are base64-decoded
 // from tlsClientConfig. The Raw field is a synthesized kubeconfig YAML that
-// round-trips through clientcmd.RESTConfigFromKubeConfig cleanly so downstream
+// round-trips through BuildRESTConfig cleanly so downstream
 // consumers (remoteclient.NewClientFromKubeconfig) can use it as-is.
 func (p *ArgoCDProvider) buildCertKubeconfig(name, server string, cfg argoCDClusterConfig) (*Kubeconfig, error) {
 	if server == "" {
@@ -521,7 +521,7 @@ users:
 	// Verify the synthesized YAML round-trips through clientcmd. This is the
 	// same call downstream consumers make; failing here surfaces the bug at
 	// fetch time instead of inside remoteclient.
-	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfigYAML)); err != nil {
+	if _, err := BuildRESTConfig([]byte(kubeconfigYAML)); err != nil {
 		return nil, fmt.Errorf("synthesized kubeconfig for cluster %q failed to parse: %w", name, err)
 	}
 
@@ -557,7 +557,7 @@ func (p *ArgoCDProvider) buildBearerTokenKubeconfig(name, server string, cfg arg
 // buildTokenKubeconfig constructs a *Kubeconfig carrying token as the bearer
 // token. CAData is base64-decoded from tls.CAData (or left empty when
 // tls.Insecure). The Raw field is a synthesized kubeconfig YAML that
-// round-trips through clientcmd.RESTConfigFromKubeConfig cleanly so
+// round-trips through BuildRESTConfig cleanly so
 // downstream consumers (remoteclient.NewClientFromKubeconfig) can use it
 // as-is. Used both for the ArgoCD-supplied bearerToken shape and for tokens
 // Sharko mints itself against the awsAuthConfig / execProviderConfig shapes
@@ -648,7 +648,7 @@ users:
 	// Verify the synthesized YAML round-trips through clientcmd. This is the
 	// same call downstream consumers make; failing here surfaces the bug at
 	// fetch time instead of inside remoteclient.
-	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfigYAML)); err != nil {
+	if _, err := BuildRESTConfig([]byte(kubeconfigYAML)); err != nil {
 		return nil, fmt.Errorf("synthesized kubeconfig for cluster %q failed to parse: %w", name, err)
 	}
 

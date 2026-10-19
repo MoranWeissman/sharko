@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // tlsguard.go — task #152 lane C: Sharko refuses to deliver a secret value
@@ -131,7 +132,7 @@ func CheckDestinationTLS(kubeconfig []byte) error {
 	if allowUnverifiedDestinations {
 		return nil
 	}
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	restConfig, err := providers.BuildRESTConfig(kubeconfig)
 	if err != nil {
 		return nil
 	}

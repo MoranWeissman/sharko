@@ -13,7 +13,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
@@ -282,6 +281,13 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 		if err == nil {
 			return kc, nil
 		}
+		// Found, but the kubeconfig in it was refused (it points at a file
+		// or runs a program). Stop here: that is not "not found", and trying
+		// another name would hide the real reason. buildFromRawKubeconfig
+		// has already logged which field was refused.
+		if _, refused := AsKubeconfigRefusal(err); refused {
+			return nil, err
+		}
 		note(err)
 	}
 
@@ -293,6 +299,9 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 	kc, err := p.fetchSecret(clusterName, clusterRoleARN)
 	if err == nil {
 		return kc, nil
+	}
+	if _, refused := AsKubeconfigRefusal(err); refused {
+		return nil, err
 	}
 	note(err)
 
@@ -584,8 +593,9 @@ users:
 func (p *AWSSecretsManagerProvider) buildFromRawKubeconfig(raw []byte, secretName string) (*Kubeconfig, error) {
 	kc := &Kubeconfig{Raw: raw}
 
-	config, err := clientcmd.RESTConfigFromKubeConfig(raw)
+	config, err := BuildRESTConfig(raw)
 	if err != nil {
+		logStoredKubeconfigRefusal("aws-secrets-manager", secretName, err)
 		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", secretName, err)
 	}
 

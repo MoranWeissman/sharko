@@ -164,8 +164,9 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 
 	kc := &Kubeconfig{Raw: raw}
 
-	config, err := clientcmd.RESTConfigFromKubeConfig(raw)
+	config, err := BuildRESTConfig(raw)
 	if err != nil {
+		logStoredKubeconfigRefusal("kubernetes-secrets", secretName, err)
 		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", secretName, err)
 	}
 
@@ -203,6 +204,14 @@ func (p *KubernetesSecretProvider) getCredentials(clusterName string) (*Kubeconf
 	kc, fetchErr := p.fetchK8sSecret(clusterName)
 	if fetchErr == nil {
 		return kc, nil
+	}
+	// The Secret is there, but its kubeconfig was refused (it points at a
+	// file or runs a program). That is not "not found": return the refusal
+	// as it is, so a caller can find it with AsKubeconfigRefusal under the
+	// credsafe mark, and offer no similar names. fetchK8sSecret has already
+	// logged which field was refused.
+	if _, refused := AsKubeconfigRefusal(fetchErr); refused {
+		return nil, fetchErr
 	}
 	// fetchK8sSecret already marked a genuine Kubernetes NotFound. Anything
 	// else — Forbidden, a timeout, a Secret that exists but has no kubeconfig

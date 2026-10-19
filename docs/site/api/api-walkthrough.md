@@ -129,7 +129,7 @@ the optional `creds_source` field:
 
 | `creds_source` | What it means | You supply |
 |----------------|---------------|------------|
-| `inline-kubeconfig` | Legacy, **off by default**: you paste a kubeconfig right in the request. Bearer-token auth only. Refused unless an admin has turned on **Allow legacy inline credentials** in Settings. | `kubeconfig` (the YAML) |
+| `inline-kubeconfig` | Legacy, **off by default**: you paste a kubeconfig right in the request. It signs in with a bearer token or an inline client certificate. Refused unless an admin has turned on **Allow legacy inline credentials** in Settings. | `kubeconfig` (the YAML) |
 | `secret-kubeconfig` | You point at a kubeconfig already stored in your secret backend. Works for **any** cluster, including local / on-prem. | `secret_path` |
 | `eks-token` | Sharko mints a short-lived token from your EKS cloud identity. Amazon EKS only. | `region` (+ `role_arn` for a cross-account cluster) |
 
@@ -142,7 +142,7 @@ registration is addon-free there, and you enable each addon afterward via
 #### Paste a kubeconfig (`inline-kubeconfig`) — legacy, off by default
 
 You hand Sharko the kubeconfig YAML directly in the request. The kubeconfig must
-use bearer-token auth.
+sign in with a bearer token or an inline client certificate.
 
 !!! warning "Refused unless an admin enables the legacy setting"
     A pasted credential exists only in the live ArgoCD cluster Secret — it is

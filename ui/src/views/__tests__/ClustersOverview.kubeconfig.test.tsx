@@ -154,11 +154,13 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     expect(screen.queryByPlaceholderText(/arn:aws:iam/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/Override AWS SM secret name/i)).not.toBeInTheDocument();
 
-    // Kubeconfig textarea + bearer-token-only helper text present (inside Advanced settings).
+    // Kubeconfig textarea + sign-in helper text present (inside Advanced settings).
     const textarea = screen.getByPlaceholderText(/apiVersion: v1/i) as HTMLTextAreaElement;
     expect(textarea).toBeInTheDocument();
     expect(textarea.tagName).toBe('TEXTAREA');
-    expect(screen.getByText(/only bearer-token auth is supported/i)).toBeInTheDocument();
+    expect(screen.getByText(/a bearer token or an inline client certificate both work/i)).toBeInTheDocument();
+    // The old wording said only a bearer token works, which stopped being true.
+    expect(screen.queryByText(/only bearer-token auth/i)).not.toBeInTheDocument();
     expect(screen.getByText(/kubectl create token/i)).toBeInTheDocument();
   });
 

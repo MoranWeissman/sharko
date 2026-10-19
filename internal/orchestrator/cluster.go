@@ -292,6 +292,19 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			// identity later fetches will use (V2-cleanup-62.2).
 			var fetchErr error
 			creds, fetchErr = providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupName, req.RoleARN)
+			if refusal, refused := providers.AsKubeconfigRefusal(fetchErr); refused {
+				// The backend HAS a kubeconfig for this cluster, but it was
+				// refused: it points at a file or runs a program inside
+				// Sharko's pod. That is not the "nothing stored" case below,
+				// so it must not quietly turn into a register with no
+				// credentials — the caller asked for this kubeconfig to be
+				// used. Stop, and say why. Only the refusal itself is
+				// wrapped, never fetchErr: the refusal is Sharko's own fixed
+				// text, while fetchErr carries the credsafe mark whose text
+				// is the fixed credentials sentence, which would hide the
+				// reason again. The API answers 400 for this.
+				return nil, fmt.Errorf("the kubeconfig stored for cluster %q cannot be used: %w", req.Name, refusal)
+			}
 			if fetchErr != nil {
 				// V2-cleanup-88.3 — lazy credentials: a failed backend
 				// lookup is the NORMAL case for a connection-only

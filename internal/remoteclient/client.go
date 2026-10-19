@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // defaultRequestTimeout caps every K8s API call made through clients built
@@ -38,7 +38,7 @@ func NewClientFromKubeconfig(kubeconfig []byte) (kubernetes.Interface, error) {
 	// verify.ClassifyError still picks the right code: it steps past the mark
 	// with credsafe.Cause to read the real message, and returns one of its own
 	// fixed codes.
-	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	restConfig, err := providers.BuildRESTConfig(kubeconfig)
 	if err != nil {
 		return nil, credsafe.Mark(fmt.Errorf("parsing kubeconfig: %w", err))
 	}

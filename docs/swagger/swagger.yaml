@@ -6478,7 +6478,7 @@ paths:
         Pass "dry_run": true to preview what would happen without making changes.
         Provider may be "eks" (default; uses configured secrets provider) or
         "kubeconfig" (caller supplies kubeconfig YAML inline via the
-        "kubeconfig" field — bearer-token auth only).
+        "kubeconfig" field — a bearer token or an inline client certificate).
         Optionally set "creds_source" to state explicitly where credentials come
         from: "inline-kubeconfig", "secret-kubeconfig", or "eks-token". When omitted
         it is derived: provider "kubeconfig" → inline; a pasted "kubeconfig" with no
@@ -6531,7 +6531,9 @@ paths:
             type: object
         "400":
           description: Bad request, including a cluster address with a user name,
-            password, query or fragment in it
+            password, query or fragment in it, and a pasted or stored kubeconfig Sharko
+            cannot use (it points at a file, runs a program, or has no token or inline
+            client certificate)
           schema:
             additionalProperties: true
             type: object
