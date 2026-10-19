@@ -2166,3 +2166,109 @@ describe('FirstRunWizard — Prefix field belongs to AWS Secrets Manager only (L
     expect(payload.provider.prefix).toBeUndefined()
   })
 })
+
+// LO-11 B2 — a resume-mode save sends back the saved values the wizard does
+// not show. The server replaces the whole provider block, and keeps a saved
+// GitOps value only when the request leaves it empty.
+describe('FirstRunWizard — resume-mode save keeps saved settings (LO-11 B2)', () => {
+  async function saveFromResume(connection: Record<string, unknown>) {
+    mockState.connections = [connection]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    return updateMock.mock.calls[0][1]
+  }
+
+  it('keeps the prefix when the saved type uses the other name "aws-secrets-manager"', async () => {
+    const payload = await saveFromResume({
+      ...resumeConnection,
+      provider: { type: 'aws-secrets-manager', region: 'eu-west-1', prefix: 'k8s-' },
+    })
+    expect(payload.provider.type).toBe('aws-sm')
+    expect(payload.provider.region).toBe('eu-west-1')
+    expect(payload.provider.prefix).toBe('k8s-')
+  })
+
+  it('keeps a saved role ARN the wizard does not show', async () => {
+    const payload = await saveFromResume({
+      ...resumeConnection,
+      provider: {
+        type: 'aws-sm',
+        region: 'eu-west-1',
+        prefix: 'k8s-',
+        role_arn: 'arn:aws:iam::000000000000:role/sharko-test',
+      },
+    })
+    expect(payload.provider.role_arn).toBe('arn:aws:iam::000000000000:role/sharko-test')
+    expect(payload.provider.prefix).toBe('k8s-')
+  })
+
+  it('keeps saved GitOps settings instead of sending the defaults', async () => {
+    const payload = await saveFromResume({
+      ...resumeConnection,
+      gitops: {
+        base_branch: 'develop',
+        branch_prefix: 'team/',
+        commit_prefix: 'team:',
+        pr_auto_merge: true,
+      },
+    })
+    expect(payload.gitops).toEqual({
+      base_branch: 'develop',
+      branch_prefix: 'team/',
+      commit_prefix: 'team:',
+      pr_auto_merge: true,
+    })
+  })
+
+  it('does not carry saved AWS fields over to Kubernetes Secrets', async () => {
+    mockState.connections = [
+      {
+        ...resumeConnection,
+        provider: {
+          type: 'aws-sm',
+          region: 'eu-west-1',
+          prefix: 'k8s-',
+          role_arn: 'arn:aws:iam::000000000000:role/sharko-test',
+        },
+      },
+    ]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Secrets Provider \(optional\)/i }))
+    fireEvent.change(await screen.findByRole('combobox'), { target: { value: 'k8s-secrets' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, payload] = updateMock.mock.calls[0]
+    expect(payload.provider.type).toBe('k8s-secrets')
+    expect(payload.provider.role_arn).toBeUndefined()
+  })
+
+  it('still sends the GitOps defaults when nothing is saved', async () => {
+    const payload = await saveFromResume({ ...resumeConnection })
+    expect(payload.gitops).toEqual({
+      base_branch: 'main',
+      branch_prefix: 'sharko/',
+      commit_prefix: 'sharko:',
+      pr_auto_merge: false,
+    })
+  })
+})

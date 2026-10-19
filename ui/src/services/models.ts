@@ -1003,6 +1003,8 @@ export interface ConnectionResponse {
     type: _ProviderType
     region?: string
     prefix?: string
+    namespace?: string
+    role_arn?: string
   }
   addon_secret_provider?: {
     type: _ProviderType
