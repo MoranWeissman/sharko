@@ -8,8 +8,8 @@ Before you start, set up the shell variables from [First checks](troubleshooting
 
 ## What you see
 
-- The action answers with HTTP 207 and `"status": "partial"`. The message is one of these, with the pull request link at the end:
-  - `Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. … Pull request: <url>` (adding a cluster). Between the two parts, the message says what Sharko already did: how many addon secrets it created or could not create, and whether it already saved the cluster's connection in ArgoCD.
+- The action answers with HTTP 207 and `"status": "partial"`. The message is one of these:
+  - `Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. …` (adding a cluster). After that, the message says what Sharko already did: how many addon secrets it created or could not create, and whether it already saved the cluster's connection in ArgoCD. The pull request link is not in this message. It is in `git.pr_url`, and the UI shows it as a **View PR** link.
   - `PR created but merge failed: <url>` (addon changes, removing, letting go of a cluster)
   - `PR created but merge failed for cluster <name>: <url>` (adopting a cluster)
   - `Pull request opened for cluster <name> but auto-merge failed. Merge manually: <url>` (changing a cluster's addons)

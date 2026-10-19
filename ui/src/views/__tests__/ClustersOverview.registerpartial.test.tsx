@@ -116,13 +116,16 @@ describe('ClustersOverview — a registration that stopped part-way (LO-8 R6)', 
   });
 
   it('shows the server sentence and the PR link when the pull request was opened but auto-merge failed', async () => {
+    // The server no longer puts the address in the message; it is in
+    // git.pr_url only (LO-10 R16).
     const msg =
-      'Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. Pull request: https://github.com/org/repo/pull/9';
+      'Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration.';
+    const prUrl = 'https://github.com/org/repo/pull/9';
     mockRegisterCluster.mockResolvedValue({
       status: 'partial',
       failed_step: 'pr_merge',
       message: msg,
-      git: { merged: false, pr_url: 'https://github.com/org/repo/pull/9' },
+      git: { merged: false, pr_url: prUrl },
     });
 
     renderView();
@@ -130,7 +133,13 @@ describe('ClustersOverview — a registration that stopped part-way (LO-8 R6)', 
 
     expect(await screen.findByText(msg)).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /View PR/i }) as HTMLAnchorElement;
-    expect(link.href).toBe('https://github.com/org/repo/pull/9');
+    expect(link.href).toBe(prUrl);
+    // LO-10 R16: the address shows once — as the "View PR" link — and is
+    // not also printed as text. Before, the dialog showed it twice.
+    const linksToPR = screen.getAllByRole('link').filter((a) => (a as HTMLAnchorElement).href === prUrl);
+    expect(linksToPR).toHaveLength(1);
+    expect(document.body.textContent ?? '').not.toContain(prUrl);
+    expect(document.body.textContent ?? '').not.toContain('Pull request: ');
     // Not the normal blue "PR opened" outcome: a step did not finish.
     expect(screen.queryByText(/merge to activate/i)).not.toBeInTheDocument();
     expect(screen.queryByText(SUBMITTED_SENTENCE)).not.toBeInTheDocument();
