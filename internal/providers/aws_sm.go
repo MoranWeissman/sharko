@@ -13,7 +13,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
@@ -584,7 +583,7 @@ users:
 func (p *AWSSecretsManagerProvider) buildFromRawKubeconfig(raw []byte, secretName string) (*Kubeconfig, error) {
 	kc := &Kubeconfig{Raw: raw}
 
-	config, err := clientcmd.RESTConfigFromKubeConfig(raw)
+	config, err := BuildRESTConfig(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", secretName, err)
 	}

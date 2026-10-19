@@ -164,7 +164,7 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 
 	kc := &Kubeconfig{Raw: raw}
 
-	config, err := clientcmd.RESTConfigFromKubeConfig(raw)
+	config, err := BuildRESTConfig(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", secretName, err)
 	}
