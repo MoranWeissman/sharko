@@ -651,13 +651,6 @@ var userFacingWordingAllowed = map[string]string{
 	"Items processed per reconciler":          metricHelpReason,
 	"Reconciler writes to Kubernetes by kind": metricHelpReason,
 
-	"RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)": "" +
-		"a slog.Error message, not a sentence on anybody's screen. It opens with a capital because it " +
-		"opens with a Go identifier, which is what makes the prose rule pick it up now that the guard " +
-		"walks internal/orchestrator. Naming the component is right here: the reader is whoever is " +
-		"holding the server log open. Reported to the product owner rather than reworded — the same " +
-		"class as internal/clusterreconciler/repair.go:160.",
-
 	"Block until the PR is merged (exit 0), closed without merge (exit 1),\nor the timeout expires (exit 2). Polls every 5 seconds.": "" +
 		"`sharko pr wait`'s own help text. The five seconds is a compiled-in constant of that " +
 		"command's loop (cmd/sharko/pr.go), not a settable server interval, and it describes what " +
