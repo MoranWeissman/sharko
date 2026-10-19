@@ -1165,12 +1165,19 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 			if !openPRs.loaded {
 				openPRs.load(ctx, gp)
 			}
-			if keep, why := openPRs.keepPending(name); keep {
+			if keep, prURL := openPRs.keepPending(name); keep {
 				stats.SkippedOpenPR++
-				logging.LoggerFromContext(ctx).Info(
-					"[clusterreconciler] keeping a registration-pending connection past its grace window — "+why,
-					"cluster", name, "namespace", r.namespace,
-				)
+				if openPRs.err != nil {
+					logging.LoggerFromContext(ctx).Warn(
+						"[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the open pull requests, so it does not know whether one still registers this cluster",
+						"cluster", name, "namespace", r.namespace, "error", openPRs.err,
+					)
+				} else {
+					logging.LoggerFromContext(ctx).Info(
+						"[clusterreconciler] keeping a registration-pending connection past its grace window — an open pull request registers this cluster",
+						"cluster", name, "namespace", r.namespace, "pr_url", prURL,
+					)
+				}
 				continue
 			}
 		}
@@ -2612,14 +2619,16 @@ func (o *openRegisterPRs) load(ctx context.Context, gp gitprovider.GitProvider) 
 	o.prs, o.err = gp.ListPullRequests(ctx, "open")
 }
 
-// keepPending says whether the named connection must be kept, and why.
+// keepPending says whether the named connection must be kept. When an open
+// pull request registers it, the second value is that pull request's
+// address.
 func (o *openRegisterPRs) keepPending(name string) (bool, string) {
 	if o.err != nil {
-		return true, "Sharko could not read the open pull requests, so it does not know whether one still registers this cluster: " + o.err.Error()
+		return true, ""
 	}
 	for _, pr := range o.prs {
 		if prRegistersCluster(pr, name) {
-			return true, "an open pull request registers this cluster: " + pr.URL
+			return true, pr.URL
 		}
 	}
 	return false, ""
