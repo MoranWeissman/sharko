@@ -2,6 +2,7 @@ package clusterreconciler
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
@@ -309,5 +311,199 @@ func TestPollOnce_MalformedPendingAnnotation_TreatedAsOrphan(t *testing.T) {
 
 	if _, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "malformed", metav1.GetOptions{}); err == nil {
 		t.Fatal("Secret with a malformed registration-pending annotation should be reaped as a normal orphan, but it survived")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LO-10 R13 — a pasted-kubeconfig registration's ArgoCD connection is kept
+// past the 10-minute window while an open pull request registers the
+// cluster, and when Sharko cannot read the pull requests. It is removed only
+// when no open pull request registers it.
+// ---------------------------------------------------------------------------
+
+// sweepPastWindow runs one tick with "ghost" stamped 11 minutes ago (past
+// the 10-minute window) and not in Git, and reports whether "ghost"
+// survived. "keeper" keeps the fleet-wipe guard from holding the sweep.
+func sweepPastWindow(t *testing.T, prs []gitprovider.PullRequest, prsErr error) (survived bool, fg *fakeGit, r *Reconciler) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	k8sClient := fake.NewSimpleClientset(pendingSecret("ghost", now.Add(-11*time.Minute)), keeperSecret())
+	fg = &fakeGit{
+		files:  map[string][]byte{DefaultManagedClustersPath: envelopedManagedClusters("keeper")},
+		prs:    prs,
+		prsErr: prsErr,
+	}
+	r = newReconcilerForTest(t, fg, k8sClient, &fakeVault{}, &auditCollector{}, nil)
+	r.nowFn = func() time.Time { return now }
+	r.pollOnce(ctx)
+	_, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "ghost", metav1.GetOptions{})
+	return err == nil, fg, r
+}
+
+func registerPR(status, title, branch string) gitprovider.PullRequest {
+	return gitprovider.PullRequest{
+		ID: 7, Status: status, Title: title, SourceBranch: branch,
+		URL: "https://git.example.com/o/r/pull/7", TargetBranch: "main",
+	}
+}
+
+func TestOrphanSweep_OpenRegisterPROlderThanWindow_KeepsConnection(t *testing.T) {
+	t.Parallel()
+	survived, fg, _ := sweepPastWindow(t, []gitprovider.PullRequest{
+		registerPR("open", "sharko: register cluster ghost", "sharko/register-cluster-ghost-0a1b2c3d"),
+	}, nil)
+	if !survived {
+		t.Fatal("the connection was removed while an open pull request still registers the cluster")
+	}
+	if fg.prCalls != 1 {
+		t.Errorf("open pull requests were read %d times this tick, want 1", fg.prCalls)
+	}
+}
+
+func TestOrphanSweep_OpenRegisterPR_MatchedByBranchOnly_KeepsConnection(t *testing.T) {
+	t.Parallel()
+	// Someone renamed the pull request; the branch still says what it does.
+	survived, _, _ := sweepPastWindow(t, []gitprovider.PullRequest{
+		registerPR("open", "renamed by hand", "custom/register-cluster-ghost-deadbeef"),
+	}, nil)
+	if !survived {
+		t.Fatal("the connection was removed while an open pull request (matched by its branch) still registers the cluster")
+	}
+}
+
+func TestOrphanSweep_PRClosedWithoutMerge_RemovesConnection(t *testing.T) {
+	t.Parallel()
+	// A closed pull request is not in the "open" list on a real host; a
+	// provider that still returns it with status "closed" must not keep
+	// the connection either.
+	survived, _, _ := sweepPastWindow(t, []gitprovider.PullRequest{
+		registerPR("closed", "sharko: register cluster ghost", "sharko/register-cluster-ghost-0a1b2c3d"),
+	}, nil)
+	if survived {
+		t.Fatal("the connection was kept although its pull request was closed without merging")
+	}
+}
+
+func TestOrphanSweep_NoPR_RemovesConnection(t *testing.T) {
+	t.Parallel()
+	survived, _, _ := sweepPastWindow(t, nil, nil)
+	if survived {
+		t.Fatal("the connection was kept although no pull request registers the cluster")
+	}
+}
+
+func TestOrphanSweep_PRForAnotherClusterOrDeregister_RemovesConnection(t *testing.T) {
+	t.Parallel()
+	// "prod-ghost" ends with "ghost"; it must not keep "ghost". An open
+	// "deregister cluster ghost" pull request does not register it either.
+	survived, _, _ := sweepPastWindow(t, []gitprovider.PullRequest{
+		registerPR("open", "sharko: deregister cluster ghost", "sharko/deregister-cluster-ghost-0a1b2c3d"),
+		registerPR("open", "sharko: register cluster prod-ghost", "sharko/register-cluster-prod-ghost-0a1b2c3d"),
+		registerPR("open", "sharko: register cluster ghost-2", "sharko/register-cluster-ghost-2-0a1b2c3d"),
+	}, nil)
+	if survived {
+		t.Fatal("an open pull request for another cluster kept this connection")
+	}
+}
+
+func TestOrphanSweep_GitReadError_KeepsConnection(t *testing.T) {
+	t.Parallel()
+	survived, _, _ := sweepPastWindow(t, nil, errors.New("git host timed out"))
+	if !survived {
+		t.Fatal("the connection was removed although Sharko could not read the open pull requests")
+	}
+}
+
+func TestOrphanSweep_NoPendingMark_DoesNotReadPRs(t *testing.T) {
+	t.Parallel()
+	// A plain orphan (no registration-pending mark) is swept as before, and
+	// the pull request list is not read at all.
+	ctx := context.Background()
+	orphan := pendingSecret("plain-orphan", time.Now())
+	orphan.Annotations = nil
+	k8sClient := fake.NewSimpleClientset(orphan, keeperSecret())
+	fg := &fakeGit{files: map[string][]byte{DefaultManagedClustersPath: envelopedManagedClusters("keeper")}}
+	r := newReconcilerForTest(t, fg, k8sClient, &fakeVault{}, &auditCollector{}, nil)
+	r.pollOnce(ctx)
+	if _, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "plain-orphan", metav1.GetOptions{}); err == nil {
+		t.Fatal("a plain orphan connection was not swept")
+	}
+	if fg.prCalls != 0 {
+		t.Errorf("open pull requests were read %d times for a plain orphan, want 0", fg.prCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LO-11 B1: the tick reads the cluster list first and the open pull requests
+// later. A register pull request merged between the two reads is in neither,
+// so before deleting a registration-pending connection the sweep reads the
+// cluster list once more.
+// ---------------------------------------------------------------------------
+
+// sweepWithGit is sweepPastWindow with the fake Git set up by the caller and
+// any number of marked connections, all stamped 11 minutes ago.
+func sweepWithGit(t *testing.T, fg *fakeGit, marked ...string) (survivors map[string]bool) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	objs := []runtime.Object{keeperSecret()}
+	for _, n := range marked {
+		objs = append(objs, pendingSecret(n, now.Add(-11*time.Minute)))
+	}
+	k8sClient := fake.NewSimpleClientset(objs...)
+	r := newReconcilerForTest(t, fg, k8sClient, &fakeVault{}, &auditCollector{}, nil)
+	r.nowFn = func() time.Time { return now }
+	r.pollOnce(ctx)
+	survivors = make(map[string]bool)
+	for _, n := range marked {
+		_, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, n, metav1.GetOptions{})
+		survivors[n] = err == nil
+	}
+	return survivors
+}
+
+func TestOrphanSweep_PRMergedBetweenTheTwoReads_KeepsConnection(t *testing.T) {
+	t.Parallel()
+	fg := &fakeGit{files: map[string][]byte{DefaultManagedClustersPath: envelopedManagedClusters("keeper")}}
+	// The pull request is merged while Sharko reads the open pull requests:
+	// the cluster lands in Git and the pull request is no longer open.
+	fg.onListPRs = func(f *fakeGit) {
+		f.files[DefaultManagedClustersPath] = envelopedManagedClusters("keeper", "ghost")
+		f.prs = nil
+	}
+	if got := sweepWithGit(t, fg, "ghost"); !got["ghost"] {
+		t.Fatal("the connection was removed although its pull request was merged during the check and the cluster is in Git now")
+	}
+	if fg.readsAfterPRs != 1 {
+		t.Errorf("the cluster list was read %d times after the open pull requests, want 1", fg.readsAfterPRs)
+	}
+}
+
+func TestOrphanSweep_ClusterListReReadFails_KeepsConnection(t *testing.T) {
+	t.Parallel()
+	fg := &fakeGit{
+		files:       map[string][]byte{DefaultManagedClustersPath: envelopedManagedClusters("keeper")},
+		errAfterPRs: errors.New("git host timed out"),
+	}
+	if got := sweepWithGit(t, fg, "ghost"); !got["ghost"] {
+		t.Fatal("the connection was removed although Sharko could not read the cluster list again")
+	}
+}
+
+func TestOrphanSweep_TrulyAbandoned_RemovedAndClusterListReadAgainOnce(t *testing.T) {
+	t.Parallel()
+	// Two abandoned connections: both are removed, and the second read of
+	// the cluster list happens once for the whole tick, not once each.
+	fg := &fakeGit{files: map[string][]byte{DefaultManagedClustersPath: envelopedManagedClusters("keeper")}}
+	got := sweepWithGit(t, fg, "ghost", "ghost-two")
+	if got["ghost"] || got["ghost-two"] {
+		t.Fatalf("an abandoned connection was kept: %v", got)
+	}
+	if fg.prCalls != 1 {
+		t.Errorf("open pull requests were read %d times this tick, want 1", fg.prCalls)
+	}
+	if fg.readsAfterPRs != 1 {
+		t.Errorf("the cluster list was read %d times after the open pull requests, want 1", fg.readsAfterPRs)
 	}
 }

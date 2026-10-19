@@ -117,7 +117,21 @@ import (
 // tests import it. It makes no slog call and no log call of any kind: every
 // failure goes back to the caller as a returned error. It does not search
 // for credential characters either.
-const wantSweptGoFiles = 434
+//
+// 435 since LO-8 R7 added internal/argocd/endpoint.go, which takes the
+// credential part off a cluster server address in an ArgoCD request path
+// before the path is logged. It makes no slog call; it splits Sharko's own
+// query off with strings.Cut("?") and is listed for that in
+// credential_rule_guard_test.go.
+//
+// 437 since LO-9 added two files to internal/orchestrator.
+// register_messages.go builds the message of a registration that stopped
+// part-way (R8), and cluster_server_address.go refuses a cluster address
+// with a user name, password, query or fragment in it (R11). Neither makes
+// a slog call or a log call of any kind. Neither searches for credential
+// characters: cluster_server_address.go only asks credsafe.ClassifyAddress
+// and credsafe.SafeRepoURL, so the rule stays in credsafe.
+const wantSweptGoFiles = 437
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -180,6 +194,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/auth/store.go", fn: "MaybeLogBootstrapCredential", msg: "bootstrap credential check skipped: cannot read secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "MaybeLogBootstrapCredential", msg: "could not write sharko-initial-admin-secret; fall back to logs", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "MaybeLogBootstrapCredential", msg: "failed to remove admin.initialPassword from secret after bootstrap log", carriers: "ident:updateErr", verdict: "sink"},
+	{file: "internal/auth/store.go", fn: "createUserK8s", msg: "the user list write reported an error but the user was saved", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "NewStore", msg: "failed to load auth data from K8s, will retry on requests", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/store.go", fn: "ValidateCredentials", msg: "failed to reload auth data", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/auth/user_tokens.go", fn: "GetUserGitHubToken", msg: "failed to reload auth data for token lookup", carriers: "ident:err", verdict: "sink"},
@@ -207,6 +222,8 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/clusterreconciler/connection_drift_notice.go", fn: "noticeConnectionShapeDrift", msg: "[clusterreconciler] this cluster's ArgoCD connection has drifted from the shape Sharko writes — nothing was changed; a repair is a separate, asked-for action", carriers: "ident:problems", verdict: "safe", reason: "problems is a slice of ConnectionShapeProblem, a typed enum this package defines. Every value it can hold is written in source, so nothing on the Secret can reach this line."},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "applyV4AddonLabels", msg: "[clusterreconciler] applying addon labels from the cluster's assignment file — this is the step that makes enable and disable take effect", carriers: "ident:added ident:changed ident:removed", verdict: "safe", reason: "the three slices hold LABEL KEYS — addons.sharko.dev/<addon> — derived from addon names in the cluster's assignment file. Names, never values, and the operator needs to see which addon is being turned on or off."},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "clearRegistrationPending", msg: "[clusterreconciler] clearing registration-pending annotation failed — continuing", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/clusterreconciler/reconciler.go", fn: "reconcileDiff", msg: "[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the open pull requests, so it does not know whether one still registers this cluster", carriers: "ident:openPRs.err", verdict: "sink"},
+	{file: "internal/clusterreconciler/reconciler.go", fn: "reconcileDiff", msg: "[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the cluster list again to check whether its pull request was just merged", carriers: "ident:registryNow.err", verdict: "sink"},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "clearRegistrationPending", msg: "[clusterreconciler] re-reading registration-pending Secret before annotation clear failed — continuing", carriers: "ident:getErr", verdict: "sink"},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "createOne", msg: "[clusterreconciler] Secret Create failed — skipping cluster", carriers: "ident:createErr", verdict: "sink"},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "createOne", msg: "[clusterreconciler] building Secret payload failed — skipping cluster", carriers: "ident:buildErr", verdict: "sink"},
@@ -263,7 +280,8 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/ai_annotate.go", fn: "AnnotateValues", msg: "ai annotate response parse failed; using heuristic only", carriers: "ident:parseErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: PR opened but auto-merge failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: could not read the cluster registry — refusing to rewrite it from scratch", carriers: "ident:clusterAddonsErr", verdict: "sink"},
-	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)", carriers: "ident:ensureErr", verdict: "sink"},
+	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster dry run: could not read the cluster registry", carriers: "ident:clusterAddonsErr", verdict: "sink"},
+	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: direct ArgoCD cluster Secret write failed — stopping before addon secrets and the PR", carriers: "ident:ensureErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: git commit failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "could not check cluster secret for foreign ArgoCD ownership — proceeding with registration", carriers: "ident:warnErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "failed to add cluster entry to cluster-addons.yaml — continuing with values file only", carriers: "ident:addEntryErr", verdict: "sink"},

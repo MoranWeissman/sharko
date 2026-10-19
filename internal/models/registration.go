@@ -23,8 +23,11 @@ import "time"
 // annotation while the timestamp is within RegistrationPendingGraceWindow,
 // giving the PR time to merge. Once the cluster appears in
 // managed-clusters.yaml the reconciler strips the annotation (converting the
-// Secret to a normal managed Secret). If the PR never merges, the annotation
-// expires and the Secret is reaped on a later sweep — no permanent leak.
+// Secret to a normal managed Secret). Once the window ends, the sweep still
+// keeps the Secret while an open pull request registers the cluster, or
+// while it cannot read the open pull requests (LO-10 R13). It is reaped on a
+// later sweep only when no open pull request registers it (closed without
+// merging, or never opened) — no permanent leak.
 //
 // These two values are defined here, in the shared leaf package both writers
 // already import, so the writer and the sweep can never disagree about the
@@ -78,7 +81,8 @@ func RegistrationPendingTimestamp(now time.Time) string {
 //     the grace window; the orphan sweep must NOT delete it.
 //   - pending == false, malformed == false → no annotation present, or the
 //     annotation timestamp is older than the grace window (expired). Eligible
-//     for the normal orphan sweep.
+//     for the normal orphan sweep, which still keeps an expired marked Secret
+//     while an open pull request registers its cluster (LO-10 R13).
 //   - pending == false, malformed == true → the annotation is present but its
 //     value is not a parseable RFC3339 timestamp. Treated as NOT pending
 //     (fail-safe: an unparseable marker must never make a Secret immune to

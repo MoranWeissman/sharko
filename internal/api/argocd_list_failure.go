@@ -34,13 +34,17 @@ import (
 // declares — picking one complete sentence from the closed set below. No
 // substring matching on error words, and no parameter for raw text: the
 // function takes an error and returns a finished sentence, and the only
-// strings it can ever return are written in this file.
+// strings it can ever return are written in this file. The one exception is
+// the https address in the "needs https" sentence, which Sharko builds itself
+// from the host and port it was sent on to, plus the path of the ArgoCD
+// address on the connection (argocd.HTTPSAddress).
 //
 // # What an operator can still work out
 //
-// Deliberately not one flat sentence. The four outcomes are four different
-// things to go and look at: a permission problem on the ArgoCD account, a
-// token that needs replacing, a certificate to trust, or an ArgoCD that is not
+// Deliberately not one flat sentence. The outcomes are different things to go
+// and look at: a permission problem on the ArgoCD account, a token that needs
+// replacing, an address that needs https, an https address (or a proxy) that
+// sends Sharko to plain http, a certificate to trust, or an ArgoCD that is not
 // answering. Each sentence names its own next step. The raw text goes to the
 // server log, found by the request id.
 
@@ -67,8 +71,32 @@ func argoListFailureSentence(subject argoReadSubject, err error) string {
 		return "Sharko's ArgoCD account is not allowed to list " + noun + ". Grant that account permission to list " + noun + " in ArgoCD and try again."
 	case errors.Is(err, argocd.ErrTokenInvalid):
 		return "ArgoCD refused Sharko's token while listing " + noun + ". The token may be expired or wrong — replace it on the ArgoCD connection in Settings and try again."
+	case errors.Is(err, argocd.ErrArgocdNeedsHTTPS):
+		// L12: an http address that only sends Sharko on to https. Sharko
+		// did reach ArgoCD, so the general "could not reach" sentence below
+		// is wrong here. It opens with the same words as the connection
+		// test's sentence (argocdNeedsHTTPS), and names the https address
+		// when Sharko knows it. That address is "https://" plus the host
+		// and port, plus the path of the ArgoCD address on the connection
+		// (http://host/argocd gives https://host/argocd), built by Sharko
+		// (argocd.HTTPSAddress). Never the user part or the query, where a
+		// credential can be written.
+		if addr := argocd.HTTPSAddress(err); addr != "" {
+			return "ArgoCD answers only over https at this address, so Sharko did not list " + noun + ". Change the ArgoCD address on the connection in Settings to " + addr + " and try again."
+		}
+		return "ArgoCD answers only over https at this address, so Sharko did not list " + noun + ". Change the ArgoCD address on the connection in Settings so it starts with https:// and try again."
+	case errors.Is(err, argocd.ErrArgocdRedirectToHTTP):
+		// L15: an https address that sends Sharko on to plain http. Sharko
+		// did reach ArgoCD and refused to follow, so the general "could not
+		// reach" sentence below is wrong here too. It opens with the same
+		// words as the sentence the connection test gives for this case
+		// (argocd.ErrArgocdRedirectToHTTP). It names no address: the http
+		// address ArgoCD sent Sharko to is ArgoCD's words, not Sharko's.
+		return "ArgoCD tried to send Sharko from https to plain http, so Sharko did not list " + noun + ". Sharko does not follow that, so the ArgoCD token is never sent unencrypted. Check the ArgoCD address on the connection in Settings and any proxy in front of ArgoCD, then try again."
 	case errors.Is(err, argocd.ErrTLSCertificateNotTrusted):
-		return "Sharko reached ArgoCD but could not verify its certificate, so it did not list " + noun + ". Add the certificate authority to the ArgoCD connection in Settings and try again."
+		// L16: the same advice as the connection test's certificate
+		// sentence, word for word (argocdCertificateAdvice).
+		return "Sharko reached ArgoCD but could not verify its certificate, so it did not list " + noun + ". " + argocdCertificateAdvice + " Then try again."
 	default:
 		return "Sharko could not reach the ArgoCD API to list " + noun + ". Check that the ArgoCD server address on the connection is correct and that ArgoCD is reachable from Sharko, then try again."
 	}

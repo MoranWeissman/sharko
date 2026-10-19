@@ -30,11 +30,12 @@ import {
   isUnauthorizedError,
 } from '@/services/api'
 import type { OperationStep, InitStatus } from '@/services/api'
-import type { AddToCatalogResult, CatalogEntry, CatalogRepoChartsResponse } from '@/services/models'
+import type { AddToCatalogResult, CatalogEntry, CatalogRepoChartsResponse, ConnectionResponse } from '@/services/models'
 import { useConnections } from '@/hooks/useConnections'
 import { clearSession } from '@/lib/authStorage'
 import { MigrationBanner } from '@/components/MigrationBanner'
 import { extractPR, PRLink } from '@/components/PRFeedback'
+import { canonicalizeProviderType } from '@/views/settings/SecretsProviderSection'
 
 /* ------------------------------------------------------------------ */
 /*  Shared styles                                                       */
@@ -47,6 +48,15 @@ const inputCls =
 /* ------------------------------------------------------------------ */
 /*  Types                                                               */
 /* ------------------------------------------------------------------ */
+
+// wizardProviderType maps a saved provider type, including another name for
+// it such as "aws-secrets-manager", onto the types the wizard offers. A type
+// the wizard does not offer maps to '' and the wizard then leaves the saved
+// provider block alone.
+function wizardProviderType(raw: string | undefined | null): '' | 'aws-sm' | 'k8s-secrets' {
+  const canonical = canonicalizeProviderType(raw)
+  return canonical === 'aws-sm' || canonical === 'k8s-secrets' ? canonical : ''
+}
 
 interface WizardForm {
   git_url: string
@@ -478,7 +488,7 @@ function StepArgoCD({
                 />
               </div>
             )}
-            {form.provider_type && (
+            {form.provider_type === 'aws-sm' && (
               <div>
                 <label className={labelCls}>Prefix (optional)</label>
                 <input
@@ -1734,6 +1744,15 @@ export function FirstRunWizard({
   // token-preserving merge update (vs POST upsert-by-derived-name).
   const existingConnection = connections[0]
   const [loadedConnectionName, setLoadedConnectionName] = useState<string | null>(null)
+  // The saved provider block and GitOps settings, kept as they were loaded.
+  // The server replaces the whole provider block on save, and it keeps a
+  // saved GitOps value only when the request leaves it empty — so a save
+  // must send back the saved values the wizard does not show (role ARN,
+  // namespace, branch and commit prefixes, auto-merge), not defaults.
+  const [savedSettings, setSavedSettings] = useState<{
+    provider?: ConnectionResponse['provider']
+    gitops?: ConnectionResponse['gitops']
+  }>({})
   useEffect(() => {
     if (initialStep === 4 && existingConnection && loadedConnectionName === null) {
       let gitUrl = ''
@@ -1754,12 +1773,15 @@ export function FirstRunWizard({
         argocd_server_url: existingConnection.argocd_server_url,
         argocd_namespace: existingConnection.argocd_namespace || 'argocd',
         argocd_insecure: existingConnection.argocd_insecure ?? false,
-        provider_type:
-          (existingConnection.provider?.type as '' | 'aws-sm' | 'k8s-secrets') || '',
+        provider_type: wizardProviderType(existingConnection.provider?.type),
         provider_region: existingConnection.provider?.region || '',
         provider_prefix: existingConnection.provider?.prefix || '',
       }))
       setLoadedConnectionName(existingConnection.name)
+      setSavedSettings({
+        provider: existingConnection.provider,
+        gitops: existingConnection.gitops,
+      })
     }
   }, [initialStep, existingConnection, loadedConnectionName])
 
@@ -1801,9 +1823,16 @@ export function FirstRunWizard({
     },
     provider: form.provider_type
       ? {
+          // Keep the saved fields the wizard does not show, but only while
+          // the type is still the saved one.
+          ...(wizardProviderType(savedSettings.provider?.type) === form.provider_type
+            ? savedSettings.provider
+            : {}),
           type: form.provider_type,
           region: form.provider_region || undefined,
-          prefix: form.provider_prefix || undefined,
+          // Only AWS Secrets Manager uses a prefix. A value left over from
+          // switching away from it must not be sent for Kubernetes Secrets.
+          prefix: form.provider_type === 'aws-sm' ? form.provider_prefix || undefined : undefined,
         }
       : undefined,
     gitops: {
@@ -1811,6 +1840,7 @@ export function FirstRunWizard({
       branch_prefix: 'sharko/',
       commit_prefix: 'sharko:',
       pr_auto_merge: false,
+      ...savedSettings.gitops,
     },
   })
 

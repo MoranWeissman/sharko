@@ -43,6 +43,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 500 {object} map[string]interface{} "The user could not be saved"
 // @Router /users [post]
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "user.create") {
@@ -69,7 +70,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, auth.InvalidUsernameSentence)
 			return
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		// What the caller asked for was wrong: 400. Anything else is a
+		// storage failure on our side: 500. The text holds no password or
+		// hash (see createUserK8s).
+		writeError(w, userErrorStatus(err), err.Error())
 		return
 	}
 
@@ -100,6 +104,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 500 {object} map[string]interface{} "The user could not be saved"
 // @Router /users/{username} [put]
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "user.change-role") {
@@ -128,7 +133,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authStore.UpdateUser(username, enabled, req.Role); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, userErrorStatus(err), err.Error())
 		return
 	}
 
@@ -152,6 +157,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 500 {object} map[string]interface{} "The user could not be removed"
 // @Router /users/{username} [delete]
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "user.delete") {
@@ -165,7 +171,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authStore.DeleteUser(username); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, userErrorStatus(err), err.Error())
 		return
 	}
 
@@ -188,6 +194,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 500 {object} map[string]interface{} "The new password could not be saved"
 // @Router /users/{username}/reset-password [post]
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "user.change-role") {
@@ -202,7 +209,8 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	tempPassword, err := s.authStore.ResetPassword(username)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		// The text holds no password or hash (see auth.ResetPassword).
+		writeError(w, userErrorStatus(err), err.Error())
 		return
 	}
 
@@ -215,4 +223,14 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		"temp_password": tempPassword,
 		"message":       "Password reset. Share the new temporary password.",
 	})
+}
+
+// userErrorStatus picks the status for an error from CreateUser,
+// UpdateUser, DeleteUser or ResetPassword: 400 when what the caller asked for
+// was wrong, 500 when saving to storage failed.
+func userErrorStatus(err error) int {
+	if auth.IsInputError(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }

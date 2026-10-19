@@ -142,21 +142,23 @@ func firstHunkHeader(t *testing.T, diff string) string {
 }
 
 // TestUpdateClusterAddons_NewFilePreview covers the brand-new-file preview in
-// UpdateClusterAddons (VF-7). The cluster has no values file yet and the repo
-// has no managed-clusters.yaml. The catalog is the default test catalog, so
-// the addon is known and the call really reaches the preview.
+// UpdateClusterAddons (VF-7). The cluster is registered in
+// managed-clusters.yaml but has no values file yet. The catalog is the
+// default test catalog, so the addon is known and the call really reaches
+// the preview.
 //
-// What must be true:
-//   - the values file is shown as "create" with exactly "@@ -0,0 +1,N @@",
-//     and every line in it is an added line;
-//   - managed-clusters.yaml is NOT shown at all. UpdateClusterAddons never
-//     creates that file (the real run stops with "not registered"), so a
-//     "create" preview for it would show a change that can never happen.
+// What must be true: the values file is shown as "create" with exactly
+// "@@ -0,0 +1,N @@", and every line in it is an added line.
+//
+// (When managed-clusters.yaml itself is missing, the dry run stops with the
+// same failed result as the real run — see
+// TestUpdateClusterAddons_DryRunMatchesRealRunWhenFileMissing.)
 func TestUpdateClusterAddons_NewFilePreview(t *testing.T) {
 	git := newMockGitProvider() // seeds configuration/addons-catalog.yaml (has keda)
 	if _, ok := git.files["configuration/addons-catalog.yaml"]; !ok {
 		t.Fatal("test setup: the mock has no addon catalog")
 	}
+	git.files["configuration/managed-clusters.yaml"] = []byte(managedClustersWithKedaEnabled)
 	o := setupUpdateClusterAddonsOrch(git)
 
 	result, err := o.UpdateClusterAddons(context.Background(), "test", "https://k8s.example.com", "us-east-1",
@@ -186,10 +188,6 @@ func TestUpdateClusterAddons_NewFilePreview(t *testing.T) {
 		if !strings.HasPrefix(line, "+") {
 			t.Errorf("values file line %d: a new file can only have added lines, got %q", i+1, line)
 		}
-	}
-
-	if mc := findPreview(result.DryRun.FilesToWrite, "configuration/managed-clusters.yaml"); mc != nil {
-		t.Errorf("managed-clusters.yaml must not be previewed when it does not exist (the real run never creates it); got action %q:\n%s", mc.Action, mc.Diff)
 	}
 }
 

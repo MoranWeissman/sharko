@@ -5991,6 +5991,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "500":
+          description: The new password could not be saved
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Update password
@@ -6519,12 +6524,14 @@ paths:
             additionalProperties: true
             type: object
         "207":
-          description: Partial success
+          description: 'Did not fully finish: some steps ran and one failed. Read
+            failed_step, error and message'
           schema:
             additionalProperties: true
             type: object
         "400":
-          description: Bad request
+          description: Bad request, including a cluster address with a user name,
+            password, query or fragment in it
           schema:
             additionalProperties: true
             type: object
@@ -6719,7 +6726,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult'
         "207":
-          description: Partial success
+          description: 'Did not fully finish: some steps ran and one failed. Read
+            failed_step, error and message'
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult'
         "400":
@@ -6817,7 +6825,8 @@ paths:
             additionalProperties: true
             type: object
         "207":
-          description: Partial success
+          description: 'Did not fully finish: some steps ran and one failed. Read
+            failed_step, error and message'
           schema:
             additionalProperties: true
             type: object
@@ -6890,7 +6899,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult'
         "207":
-          description: Partial success
+          description: 'Did not fully finish: some steps ran and one failed. Read
+            failed_step, error and message'
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult'
         "400":
@@ -6961,7 +6971,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult'
         "207":
-          description: Partial success
+          description: 'Did not fully finish: some steps ran and one failed. Read
+            failed_step, error and message'
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult'
         "400":
@@ -8318,7 +8329,8 @@ paths:
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult'
         "207":
-          description: Partial success
+          description: 'Did not fully finish: some steps ran and one failed. Read
+            error and message'
           schema:
             $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult'
         "400":
@@ -11240,6 +11252,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "500":
+          description: The user could not be saved
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Create user
@@ -11274,6 +11291,11 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: The user could not be removed
           schema:
             additionalProperties: true
             type: object
@@ -11322,6 +11344,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "500":
+          description: The user could not be saved
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Update user
@@ -11357,6 +11384,11 @@ paths:
             type: object
         "403":
           description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: The new password could not be saved
           schema:
             additionalProperties: true
             type: object

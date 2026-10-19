@@ -280,8 +280,8 @@ export function AdoptClustersDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose() }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90%] flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Adopt Clusters</DialogTitle>
           <DialogDescription>
             {phase === 'verifying' && 'Verifying cluster connectivity...'}
@@ -293,7 +293,7 @@ export function AdoptClustersDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="min-h-0 space-y-4 overflow-y-auto py-2">
           {/* Preview section */}
           {(phase === 'previewing' || phase === 'preview-ready') && (
             <div className="space-y-3">
@@ -504,7 +504,7 @@ export function AdoptClustersDialog({
           )}
         </div>
 
-        <DialogFooter className="flex-wrap gap-2">
+        <DialogFooter className="shrink-0 flex-wrap gap-2">
           {phase !== 'done' && (
             <button
               type="button"

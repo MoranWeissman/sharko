@@ -106,14 +106,14 @@ func (c *Client) doPost(ctx context.Context, path string, payload []byte) ([]byt
 	if err != nil {
 		// Address-free for the same reason as the read path (BF12).
 		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
-			http.MethodPost, path, credsafe.PlainFailureReason(err))
+			http.MethodPost, safeEndpoint(path), credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, unreachableCallError(http.MethodPost, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodPost, path, err))
 	}
 	defer resp.Body.Close()
 
@@ -137,14 +137,14 @@ func (c *Client) doPut(ctx context.Context, path string, payload []byte) ([]byte
 	if err != nil {
 		// Address-free for the same reason as the read path (BF12).
 		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
-			http.MethodPut, path, credsafe.PlainFailureReason(err))
+			http.MethodPut, safeEndpoint(path), credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, unreachableCallError(http.MethodPut, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodPut, path, err))
 	}
 	defer resp.Body.Close()
 
@@ -168,14 +168,14 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		// Address-free for the same reason as the read path (BF12).
 		return nil, fmt.Errorf("the %s call to %s could not be built (%s)",
-			http.MethodDelete, path, credsafe.PlainFailureReason(err))
+			http.MethodDelete, safeEndpoint(path), credsafe.PlainFailureReason(err))
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, unreachableCallError(http.MethodDelete, path, err)
+		return nil, c.withBasePath(unreachableCallError(http.MethodDelete, path, err))
 	}
 	defer resp.Body.Close()
 
@@ -300,6 +300,7 @@ func writeRefusalCodeFor(status int) WriteRefusalCode {
 // the response body so the connection can be reused, and none of them may hand
 // it to this function: there is no parameter to hand it to.
 func writeCallError(verb, path string, status int) error {
+	path = safeEndpoint(path) // a cluster server address in the path keeps no credential (LO-8 R7)
 	slog.Error("argocd write call failed", "verb", verb, "endpoint", path, "status", status)
 	return &WriteRefusedError{
 		Verb:     verb,
@@ -373,7 +374,7 @@ func (c *Client) DeleteCluster(ctx context.Context, serverURL string) error {
 	path := "/api/v1/clusters/" + escapeServerURL(serverURL)
 	_, err := c.doDelete(ctx, path)
 	if err != nil {
-		return fmt.Errorf("deleting cluster %q: %w", serverURL, err)
+		return fmt.Errorf("deleting cluster %s: %w", safeClusterServer(serverURL), err)
 	}
 	return nil
 }
@@ -385,7 +386,7 @@ func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labe
 	getPath := "/api/v1/clusters/" + escapeServerURL(serverURL)
 	body, err := c.doGet(ctx, getPath)
 	if err != nil {
-		return fmt.Errorf("fetching cluster %q for label update: %w", serverURL, err)
+		return fmt.Errorf("fetching cluster %s for label update: %w", safeClusterServer(serverURL), err)
 	}
 
 	var cluster map[string]interface{}
@@ -411,7 +412,7 @@ func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labe
 	putPath := "/api/v1/clusters/" + escapeServerURL(serverURL) + "?updateMask=metadata.labels"
 	_, err = c.doPut(ctx, putPath, updated)
 	if err != nil {
-		return fmt.Errorf("updating labels on cluster %q: %w", serverURL, err)
+		return fmt.Errorf("updating labels on cluster %s: %w", safeClusterServer(serverURL), err)
 	}
 	return nil
 }

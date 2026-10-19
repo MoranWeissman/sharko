@@ -13,11 +13,34 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
+
+// registerPreviewReadFailedFmt is the "error" of a RegisterCluster dry run
+// that cannot read the cluster list for a reason other than "file not
+// found" (the detail; the message is registerPreviewReadFailedMessage).
+// Arguments: file path, branch, cluster name, the Git error.
+const registerPreviewReadFailedFmt = "could not read %s from the %s branch, so Sharko could not show what registering cluster %s would change: %w"
+
+// registerPreviewReadFailedMessage is the message of a RegisterCluster dry
+// run that cannot read the cluster registry for a reason other than "file
+// not found". The answer has the same shape as the real registration's
+// answer for the same failure: status "partial", failed step
+// "read_cluster_registry", the Git error in "error" (LO-7 R5). Before, the
+// dry run returned a Go error instead, so the same failure came back as a
+// 502 with other words.
+//
+// Pinned by exact text in cluster_dryrun_match_test.go.
+const registerPreviewReadFailedMessage = "Sharko could not read the cluster registry from Git, so it could not show what registering this cluster would change. Nothing was changed. Try again once Git is reachable."
+
+// updateAddonsReadFailedFmt is the error when UpdateClusterAddons cannot read
+// the cluster list for a reason other than "file not found".
+// Arguments: file path, branch, cluster name, the Git error.
+const updateAddonsReadFailedFmt = "could not read %s from the %s branch, so Sharko stopped before changing the addons of cluster %s: %w"
 
 // supportedProviders enumerates the cluster-provider values RegisterCluster
 // accepts. "kubeconfig" is the inline-kubeconfig path used by the wizard's
@@ -47,10 +70,21 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 //  6. Trigger the reconciler so the ArgoCD cluster Secret is created/updated
 //     immediately post-merge rather than waiting for the 30s safety-net tick.
 //
-// The register flow never writes anything in the argocd namespace before
-// the managed-clusters.yaml PR merges — the reconciler owns the entire
-// ArgoCD cluster-Secret lifecycle, which closes the orphan-on-PR-close
-// bug class at the architectural level.
+// What is written in the argocd namespace before the managed-clusters.yaml
+// PR merges depends on where the credentials come from:
+//
+//   - Secrets backend (EKS / AWS Secrets Manager and similar): nothing. The
+//     reconciler creates the ArgoCD cluster Secret after the merge, reading
+//     the credentials from the backend.
+//   - Pasted kubeconfig: the ArgoCD cluster Secret is written right after
+//     the connection check, before addon secrets and before the PR, with
+//     the registration-pending mark. Those credentials live in no backend,
+//     so the reconciler could never create that Secret itself. The
+//     reconciler's orphan sweep keeps it while the mark is new or an open
+//     PR registers the cluster, and removes it otherwise (LO-10 R13). If
+//     this write fails, the registration stops there and answers "partial"
+//     with failed step "write_argocd_secret" (LO-10 R14).
+//   - Self-managed connections: never. The user creates the Secret.
 //
 // Step 3 credentials are OPTIONAL (V2-cleanup-88.3 — lazy credentials):
 // registration succeeds with zero Sharko-side credentials for every
@@ -277,6 +311,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 	if creds != nil {
+		// LO-9 R11: an address with a user name, password, query or
+		// fragment in it is refused before anything is written or checked.
+		if addrErr := checkClusterServerAddress(creds.Server); addrErr != nil {
+			return nil, addrErr
+		}
 		result.Cluster.Server = creds.Server
 	}
 	if credsSkippedReason != "" {
@@ -383,9 +422,24 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 
 		// Generate the cluster registry update for preview
+		// Only a real "file not found" means the file is missing. Any other
+		// Git error (no access, a network failure) stops the preview:
+		// showing a "create the file" preview then would be a wrong answer.
+		// The answer has the same shape as the real registration's answer
+		// for the same failure (see below, read_cluster_registry).
 		clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if clusterAddonsErr != nil && !errors.Is(clusterAddonsErr, gitprovider.ErrFileNotFound) {
+			log.Error("RegisterCluster dry run: could not read the cluster registry",
+				"cluster", req.Name, "path", clusterAddonsPath, "error", clusterAddonsErr)
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "read_cluster_registry"
+			result.Error = fmt.Errorf(registerPreviewReadFailedFmt, clusterAddonsPath, o.gitops.BaseBranch, req.Name, clusterAddonsErr).Error()
+			result.Message = registerPreviewReadFailedMessage
+			return result, nil
+		}
 		clusterAddonsFileMissing := clusterAddonsErr != nil
-		if clusterAddonsErr != nil {
+		if clusterAddonsFileMissing {
 			clusterAddonsData = []byte("clusters:\n")
 		}
 		clusterLabels := make(map[string]string, len(req.Addons))
@@ -421,7 +475,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 
 		if addEntryErr == nil && previewClusterAddons != nil {
-			clusterAddonsAction := o.fileAction(ctx, clusterAddonsPath)
+			// The read above already told us whether the file is there, so
+			// use that instead of reading it again.
+			clusterAddonsAction := "update"
+			if clusterAddonsFileMissing {
+				clusterAddonsAction = "create"
+			}
 			// For a brand-new file, pass empty old content so the diff header
 			// shows @@ -0,0 +1,N @@ instead of @@ -1,1 +1,N @@.
 			oldContentForDiff := clusterAddonsData
@@ -484,10 +543,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// The write uses the same Manager the reconciler uses (same labels + the
 	// bearerToken config shape), so a later reconcile tick adopts rather than
 	// fights it, and the managed-by=sharko label lets the reconciler's orphan
-	// sweep reclaim it should the registration PR never merge. The write is
-	// best-effort: a failure is logged and recorded but does not abort
-	// registration (the Git source of truth and reconciler can still
-	// converge). When no manager is wired (out-of-cluster), this is skipped.
+	// sweep reclaim it should the registration PR be closed without merging.
+	// A failed write stops the registration (LO-10 R14): nothing else can
+	// create this Secret later, so going on would open a PR for a cluster
+	// ArgoCD can never reach. When no manager is wired (out-of-cluster),
+	// this is skipped.
 	// SELF-MANAGED GUARD (V2-cleanup-57.2): when the connection is managed by
 	// the user, Sharko NEVER writes the ArgoCD cluster Secret — not here at
 	// registration, not in the reconcilers. The user creates the Secret by
@@ -548,13 +608,18 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			Annotations: pendingAnnotations,
 		})
 		if ensureErr != nil {
-			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)",
+			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed — stopping before addon secrets and the PR",
 				"cluster", req.Name, "error", ensureErr)
-		} else {
-			steps = append(steps, "write_argocd_secret")
-			log.Info("ArgoCD cluster Secret written directly from kubeconfig credentials",
-				"cluster", req.Name, "server", creds.Server)
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = stepWriteArgoSecret
+			result.Error = ensureErr.Error()
+			result.Message = registerArgoWriteFailedMessage()
+			return result, nil
 		}
+		steps = append(steps, stepWriteArgoSecret)
+		log.Info("ArgoCD cluster Secret written directly from kubeconfig credentials",
+			"cluster", req.Name, "server", creds.Server)
 	}
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
@@ -570,7 +635,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.CompletedSteps = steps
 			result.FailedStep = "create_secrets"
 			result.Error = secretErr.Error()
-			result.Message = "Addon secret creation failed. ArgoCD registration and PR not started."
+			result.Message = registerConnectFailedMessage(registerOutcome{steps: steps})
 			return result, nil
 		}
 		if len(secretResult.Created) > 0 || len(secretResult.Failed) > 0 {
@@ -668,7 +733,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		result.CompletedSteps = steps
 		result.FailedStep = "read_cluster_registry"
 		result.Error = clusterAddonsErr.Error()
-		result.Message = "Sharko could not read the cluster registry from Git, so it stopped before opening a pull request — writing one built from an empty file would have dropped every other cluster out of the registry. Nothing was committed. Try again once Git is reachable."
+		result.Message = registerRegistryReadFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)})
 		return result, nil
 	}
 	if !clusterAddonsExists {
@@ -751,7 +816,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.CompletedSteps = steps
 			result.FailedStep = "pr_merge"
 			result.Error = err.Error()
-			result.Message = "Secrets created and PR opened, but auto-merge failed. Merge manually then ArgoCD registration will be needed: " + gitResult.PRUrl
+			result.Message = registerMergeFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)})
 			result.Git = gitResult
 			return result, nil
 		}
@@ -764,7 +829,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		result.CompletedSteps = steps
 		result.FailedStep = "git_commit"
 		result.Error = err.Error()
-		result.Message = "Secrets created but values file commit failed. ArgoCD registration not started. Manual Git commit required."
+		result.Message = registerCommitFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)})
 		return result, nil
 	}
 	steps = append(steps, "git_commit")
@@ -804,7 +869,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if len(result.FailedSecrets) > 0 {
 		result.Status = "partial"
 		result.FailedStep = "create_secrets"
-		result.Message = fmt.Sprintf("Registration completed but %d addon secret(s) failed to create.", len(result.FailedSecrets))
+		result.Message = registerSecretsFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets), prMerged: gitResult != nil && gitResult.Merged})
 	} else {
 		result.Status = "success"
 	}
@@ -975,45 +1040,46 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 	valuesContent := generateClusterValues(name, region, addons, catalog)
 
-	// Read and mutate managed-clusters.yaml if addons are specified
+	// Read and mutate managed-clusters.yaml if addons are specified.
+	//
+	// A dry run must give the same answer as the real run. So when the file
+	// is missing, or the cluster is not in it, both stop here with the same
+	// failed result. Only a real "file not found" counts as missing; any
+	// other Git error is returned as it is.
 	var updatedMC []byte
+	var oldMC []byte
 	if len(addons) > 0 {
 		clusterAddonsData, mcErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if mcErr != nil && !errors.Is(mcErr, gitprovider.ErrFileNotFound) {
+			return nil, fmt.Errorf(updateAddonsReadFailedFmt, clusterAddonsPath, o.gitops.BaseBranch, name, mcErr)
+		}
 		if mcErr != nil || clusterAddonsData == nil {
-			// For dry-run, report what would happen; for real path, abort below
-			if !dryRun {
+			result.Status = "failed"
+			result.CompletedSteps = []string{}
+			result.FailedStep = "update_addon_label"
+			result.Error = "managed-clusters.yaml not found"
+			result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+			return result, nil
+		}
+		oldMC = clusterAddonsData
+		updatedMC = clusterAddonsData
+		for addon, enabled := range addons {
+			var mutated []byte
+			var labelErr error
+			if enabled {
+				mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
+			} else {
+				mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
+			}
+			if labelErr != nil {
 				result.Status = "failed"
 				result.CompletedSteps = []string{}
 				result.FailedStep = "update_addon_label"
-				result.Error = "managed-clusters.yaml not found"
-				result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+				result.Error = labelErr.Error()
+				result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
 				return result, nil
 			}
-		} else {
-			updatedMC = clusterAddonsData
-			for addon, enabled := range addons {
-				var mutated []byte
-				var labelErr error
-				if enabled {
-					mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
-				} else {
-					mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
-				}
-				if labelErr != nil {
-					if !dryRun {
-						result.Status = "failed"
-						result.CompletedSteps = []string{}
-						result.FailedStep = "update_addon_label"
-						result.Error = labelErr.Error()
-						result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
-						return result, nil
-					}
-					// Dry-run: note the error but continue to show preview
-					updatedMC = nil
-					break
-				}
-				updatedMC = mutated
-			}
+			updatedMC = mutated
 		}
 	}
 
@@ -1030,20 +1096,14 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 			Diff:   o.buildFileDiff(valuesPath, oldValues, valuesContent, valuesAction),
 		})
 
-		// Managed-clusters preview (if addons are updated)
-		if len(addons) > 0 && updatedMC != nil {
-			oldMC, _ := o.readFileIfExists(ctx, clusterAddonsPath)
-			mcAction := o.fileAction(ctx, clusterAddonsPath)
-			// For a brand-new file, pass empty old content so the diff header
-			// shows @@ -0,0 +1,N @@ instead of @@ -1,1 +1,N @@.
-			oldMCForDiff := oldMC
-			if oldMC == nil {
-				oldMCForDiff = []byte{}
-			}
+		// Managed-clusters preview (if addons are updated). We only get here
+		// when the file was read above, so it is always an update of the
+		// content we already have.
+		if len(addons) > 0 {
 			filePreviews = append(filePreviews, FilePreview{
 				Path:   clusterAddonsPath,
-				Action: mcAction,
-				Diff:   o.buildFileDiff(clusterAddonsPath, oldMCForDiff, updatedMC, mcAction),
+				Action: "update",
+				Diff:   o.buildFileDiff(clusterAddonsPath, oldMC, updatedMC, "update"),
 			})
 		}
 

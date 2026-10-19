@@ -66,8 +66,8 @@ var validClusterNameRe = regexp.MustCompile(models.ResourceNamePattern)
 // @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request (supports dry_run + kubeconfig fields)"
 // @Success 200 {object} map[string]interface{} "Dry-run preview"
 // @Success 201 {object} map[string]interface{} "Cluster registered"
-// @Success 207 {object} map[string]interface{} "Partial success"
-// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Success 207 {object} map[string]interface{} "Did not fully finish: some steps ran and one failed. Read failed_step, error and message"
+// @Failure 400 {object} map[string]interface{} "Bad request, including a cluster address with a user name, password, query or fragment in it"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 409 {object} map[string]interface{} "Cluster already exists, or its ArgoCD connection is owned by another tool — stop that tool and use the takeover flow instead"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
@@ -229,6 +229,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// A cluster address with a user name, password, query or fragment
+		// in it (LO-9 R11). Caller error → 400. The sentence never holds
+		// those parts.
+		if orchestrator.IsClusterServerAddressRefused(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		// Referential-integrity rejection (V2-cleanup-22): one or more
 		// requested addons are not in the catalog. Caller error → 422 with
 		// the orchestrator's message listing the bad name(s).
@@ -248,9 +255,15 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dry-run: return preview without side effects.
+	// Dry-run: return preview without side effects. A dry run that stopped
+	// part-way (it could not read the cluster registry) answers 207, the
+	// same as the real registration does for the same failure (LO-7 R5).
 	if req.DryRun {
-		writeJSON(w, http.StatusOK, result)
+		dryStatus := http.StatusOK
+		if result.Status == "partial" {
+			dryStatus = http.StatusMultiStatus
+		}
+		writeJSON(w, dryStatus, result)
 		return
 	}
 
@@ -304,7 +317,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 // @Param name path string true "Cluster name"
 // @Param body body orchestrator.RemoveClusterRequest true "Removal request"
 // @Success 200 {object} orchestrator.RemoveClusterResult "Cluster removed (or dry-run preview)"
-// @Success 207 {object} orchestrator.RemoveClusterResult "Partial success"
+// @Success 207 {object} orchestrator.RemoveClusterResult "Did not fully finish: some steps ran and one failed. Read failed_step, error and message"
 // @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
@@ -417,7 +430,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // @Param name path string true "Cluster name"
 // @Param body body map[string]interface{} true "Cluster update request with addons map and/or secret_path"
 // @Success 200 {object} map[string]interface{} "Addons updated"
-// @Success 207 {object} map[string]interface{} "Partial success"
+// @Success 207 {object} map[string]interface{} "Did not fully finish: some steps ran and one failed. Read failed_step, error and message"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not found (code cluster_not_found on a v4 repo)"

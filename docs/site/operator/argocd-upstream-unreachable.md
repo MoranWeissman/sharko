@@ -49,6 +49,41 @@ is short and names the step that failed, for example
 Sharko could not get an answer from ArgoCD, so it has nothing to show for this. Check the ArgoCD server address and token in Settings, then try again. (code=argocd_no_answer call=GET /api/v1/clusters)
 ```
 
+One case looks like this but is not: the ArgoCD address starts with `http://`,
+and ArgoCD answers there only by sending Sharko on to `https://`. Sharko did
+reach ArgoCD, so **Test ArgoCD** does not say `Sharko can't reach ArgoCD`. It
+says `ArgoCD answers only over https at this address.` and tells you to change
+the address. When the https address is on the same host, the message names it,
+for example `https://argocd.example.com`. If ArgoCD runs under a path, the
+address keeps it: `http://argocd.example.com/argocd` gives
+`https://argocd.example.com/argocd`. Change the ArgoCD address in
+**Settings > Connections** to that address and test again.
+
+Once an `http://` address has sent Sharko on to https, Sharko never sends the
+ArgoCD token to that host over plain http again. Before the token goes to a
+path over plain http for the first time, Sharko first asks that path without
+the token, so an address that always sends Sharko on to https never gets the
+token. There are two cases where the token can still go out over plain http
+once, before Sharko sees the redirect:
+
+- a path that answered over plain http when Sharko first asked, and only later
+  starts sending Sharko on to https;
+- a proxy that sends only some requests on to https, for example only writes
+  (`POST`, `PUT`, `DELETE`) or only some query strings. Sharko asks without
+  the token as a plain `GET` with no query, so that question gets no redirect.
+
+After that one request, the host is marked as https only. The real fix is the
+same in every case: use an `https://` address for ArgoCD.
+
+The other way round looks like this too, but is not: the ArgoCD address starts
+with `https://`, and ArgoCD, or a proxy in front of it, sends Sharko on to plain
+`http://`. Sharko does not follow that, so the ArgoCD token is never sent
+unencrypted. **Test ArgoCD** says
+`ArgoCD tried to send Sharko from https to plain http.` Where Sharko lists
+clusters or applications from ArgoCD, for example when it looks for clusters
+you can add, the message starts with the same words. Check the ArgoCD address
+in **Settings > Connections** and any proxy in front of ArgoCD.
+
 The `code` part tells you what kind of failure it was:
 
 | `code` | What it means |
@@ -56,6 +91,8 @@ The `code` part tells you what kind of failure it was:
 | `argocd_no_answer` | The address did not resolve, the connection was refused, or it dropped |
 | `argocd_timed_out` | ArgoCD took too long to answer |
 | `argocd_tls_untrusted` | Sharko does not trust ArgoCD's TLS certificate (see [Corporate TLS](corporate-mitm-tls.md)) |
+| `argocd_needs_https` | The `http://` address only sends Sharko on to `https://`. Change the address to `https://` |
+| `argocd_redirect_to_http` | The `https://` address sends Sharko on to plain `http://`. Sharko does not follow it |
 | `argocd_canceled` | The caller gave up (for example, the browser tab closed). Not a problem on its own |
 
 The log has this line at level `ERROR`, once per failed call, with `verb`,
@@ -65,6 +102,10 @@ the address):
 ```
 argocd call got no answer
 ```
+
+The `endpoint` field is the ArgoCD API path Sharko called, never the ArgoCD
+address. When the path names a cluster, the cluster address in it has no user
+name, password, query or fragment.
 
 **If ArgoCD answers but says no**, the log line is instead
 `argocd call failed` with a `status` field (`401` or `403`), and the message

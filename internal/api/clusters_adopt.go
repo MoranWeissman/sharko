@@ -217,7 +217,7 @@ func adoptHTTPStatus(result *orchestrator.AdoptClustersResult) int {
 // @Param name path string true "Cluster name"
 // @Param body body orchestrator.UnadoptClusterRequest true "Unadopt request (requires yes: true)"
 // @Success 200 {object} orchestrator.UnadoptClusterResult "Cluster unadopted"
-// @Success 207 {object} orchestrator.UnadoptClusterResult "Partial success"
+// @Success 207 {object} orchestrator.UnadoptClusterResult "Did not fully finish: some steps ran and one failed. Read error and message"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"

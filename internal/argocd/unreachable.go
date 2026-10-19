@@ -49,8 +49,9 @@ package argocd
 // decided by a type or a sentinel, never by reading words:
 //
 //   - errors.Is against ErrTLSCertificateNotTrusted still matches, so the
-//     "add the certificate authority" sentence still reaches the operator who
-//     needs it;
+//     certificate sentence (give ArgoCD a trusted certificate, or for a test
+//     setup only tick Skip TLS certificate verification) still reaches the
+//     operator who needs it;
 //   - errors.Is against context.Canceled and context.DeadlineExceeded still
 //     matches when that is genuinely what happened, so internal/audit still
 //     records a cancel as a cancel and a deadline as a deadline;
@@ -116,8 +117,11 @@ type UnreachableError struct {
 	timedOut bool
 	// httpsAddress is set only for UnreachableNeedsHTTPS, and only when the
 	// redirect went to https on the SAME host name. It is "https://" plus the
-	// host and port — never the user-info, path, query or fragment, which are
-	// the parts an operator's credential can be written into.
+	// host and port it was sent on to. A Client then adds the path of the
+	// ArgoCD address it was given (see Client.withBasePath), so ArgoCD under a
+	// path keeps it. Never the user-info, query or fragment, which are the
+	// parts an operator's credential can be written into, and never any path
+	// ArgoCD sent back.
 	httpsAddress string
 }
 
@@ -197,6 +201,7 @@ func unreachableCode(cause error) (UnreachableCode, bool) {
 // types and sentinels and cannot print an address; a returned error's words go
 // to people.
 func unreachableCallError(verb, path string, cause error) error {
+	path = safeEndpoint(path) // a cluster server address in the path keeps no credential (LO-8 R7)
 	slog.Error("argocd call got no answer", "verb", verb, "endpoint", path, "error", cause)
 	code, timedOut := unreachableCode(cause)
 	out := &UnreachableError{
@@ -212,6 +217,28 @@ func unreachableCallError(verb, path string, cause error) error {
 		}
 	}
 	return out
+}
+
+// HTTPSAddress returns the https address to use instead, when err says an
+// http ArgoCD address only answers by sending Sharko on to https on the SAME
+// host. It is "https://" plus the host and port, plus the path of the ArgoCD
+// address the Client was given (http://host/argocd gives
+// https://host/argocd), and nothing else. It returns "" when err is not
+// that, when the redirect went somewhere else, or when the path of the
+// address Sharko was given is not a plain path.
+//
+// The connection test uses it to name the address in its sentence. Like the
+// rest of this file it reads a field Sharko set itself, never error words.
+func HTTPSAddress(err error) string {
+	var unreachable *UnreachableError
+	if errors.As(err, &unreachable) && unreachable.Code == UnreachableNeedsHTTPS {
+		return unreachable.httpsAddress
+	}
+	var sc *schemeChangeError
+	if errors.As(err, &sc) && !sc.toHTTP {
+		return sc.httpsAddress
+	}
+	return ""
 }
 
 // SafeReadFailure is the sentence a boundary may show a person for a failed

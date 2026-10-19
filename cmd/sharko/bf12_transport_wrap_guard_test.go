@@ -240,7 +240,7 @@ var bf12Sites = map[string]bf12Site{
 	// internal/argocd/client.go:502
 	"internal/argocd/client.go::Client.doGet::NewRequestWithContext": {bf12Described, ""},
 	// internal/argocd/client.go — the plain-http check (VF-1)
-	"internal/argocd/client.go::plainHTTPGuardTransport.checkPlainHTTPHost::NewRequestWithContext": {bf12Dropped, ""},
+	"internal/argocd/client.go::plainHTTPGuardTransport.checkPlainHTTPPath::NewRequestWithContext": {bf12Dropped, ""},
 	// internal/argocd/client_write.go:176
 	"internal/argocd/client_write.go::Client.doDelete::Client.Do": {bf12Raw,
 		"the error is handed to unreachableCallError, which drops the cause and " +

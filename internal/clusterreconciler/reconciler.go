@@ -45,7 +45,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -583,6 +585,7 @@ type reconcileStats struct {
 	SkippedUnlabeled int // existing same-name unlabeled Secret — Adopt territory
 	SkippedPending   int // orphan candidate skipped — registration-pending within grace (V2-cleanup-11.1)
 	SkippedAdopted   int // orphan candidate skipped — adopted annotation present (V2-cleanup-28)
+	SkippedOpenPR    int // orphan candidate skipped — registration-pending past grace, but an open PR registers it or the PR list could not be read (LO-10 R13)
 	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
 	UserLabelSynced  int // self-managed connection — addon labels merged onto the user's Secret (V2-cleanup-57.2)
 	UserPending      int // self-managed connection — user's Secret not created yet; visible wait, no write (V2-cleanup-57.2)
@@ -735,7 +738,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// so every recordReconcile call below carries them (P2-C1).
 	r.setPassCompared(revision, readPath)
 
-	r.reconcileDiff(ctx, spec, fileNonEmpty, v4, &stats)
+	r.reconcileDiff(ctx, gp, spec, fileNonEmpty, v4, &stats)
 	r.emitSummaryAudit(ctx, stats)
 
 	// P2-D D1: itemsChecked is the count of cluster entries this pass read
@@ -810,6 +813,39 @@ func (r *Reconciler) readDesiredState(ctx context.Context, gp gitprovider.GitPro
 // the ref straight through to its file API, so a SHA works wherever a branch
 // name does.
 func (r *Reconciler) readDesiredStateAtRef(ctx context.Context, gp gitprovider.GitProvider, ref string) (spec *models.ManagedClustersSpec, v4 *v4Assignments, fileNonEmpty bool, readPath string, err error) {
+	// Steps 1 and 2: read, parse and schema-check the managed-clusters file.
+	parsedSpec, body, readPath, err := r.readManagedClustersFile(ctx, gp, ref)
+	if err != nil || parsedSpec == nil {
+		return nil, nil, false, readPath, err
+	}
+
+	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
+	// cluster-addons/*.yaml. On a v4 repo the connection record's own labels
+	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
+	// the ClusterAddons files do — so without this read the desired
+	// label set would be empty and enabling an addon would deploy nothing.
+	// Gated on readPath so a v3 repo does not pay for a directory listing
+	// it can never use, and so the v3 desired-label computation stays
+	// byte-identical.
+	if readPath == V4ManagedClustersPath {
+		v4 = readV4AddonLabels(ctx, gp, ref)
+	}
+
+	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
+	// a file that EXISTS with content but parses to zero clusters is the
+	// signature of a version/format mismatch, not of an intentionally
+	// emptied fleet — see orphanSweepHeld.
+	return parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, readPath, nil
+}
+
+// readManagedClustersFile is Steps 1 and 2 of readDesiredStateAtRef: read the
+// managed-clusters file at ref (configured path first, then the v4 path) and
+// parse it. It reads one file and no per-cluster files, so the orphan sweep
+// can call it again cheaply (LO-11 B1).
+//
+// spec == nil with err == nil means the file is absent. A non-nil error is
+// always a *desiredStateReadError.
+func (r *Reconciler) readManagedClustersFile(ctx context.Context, gp gitprovider.GitProvider, ref string) (spec *models.ManagedClustersSpec, body []byte, readPath string, err error) {
 	log := logging.LoggerFromContext(ctx)
 
 	// Step 1: read the managed-clusters file from git. Tries the configured
@@ -841,35 +877,19 @@ func (r *Reconciler) readDesiredStateAtRef(ctx context.Context, gp gitprovider.G
 		// caller diffs against argocd correctly either way (no creates,
 		// only the deletes that would have happened anyway).
 		if errors.Is(readErr, gitprovider.ErrFileNotFound) {
-			return nil, nil, false, readPath, nil
+			return nil, nil, readPath, nil
 		}
-		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
+		return nil, nil, readPath, &desiredStateReadError{Kind: desiredStateReadKindGit, Path: readPath, Err: readErr}
 	}
 
 	// Step 2: parse + schema-validate. Same kind (ManagedClusters), same
 	// reader, regardless of which path Step 1 actually read from.
 	parsedSpec, parseErr := models.LoadManagedClusters(body)
 	if parseErr != nil {
-		return nil, nil, false, readPath, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
+		return nil, nil, readPath, &desiredStateReadError{Kind: desiredStateReadKindSchema, Path: readPath, Err: parseErr}
 	}
 
-	// Step 2b (v4 only): derive each cluster's addon-enablement labels from
-	// cluster-addons/*.yaml. On a v4 repo the connection record's own labels
-	// block no longer carries addon on/off keys (design doc §2.4 / D9) —
-	// the ClusterAddons files do — so without this read the desired
-	// label set would be empty and enabling an addon would deploy nothing.
-	// Gated on readPath so a v3 repo does not pay for a directory listing
-	// it can never use, and so the v3 desired-label computation stays
-	// byte-identical.
-	if readPath == V4ManagedClustersPath {
-		v4 = readV4AddonLabels(ctx, gp, ref)
-	}
-
-	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
-	// a file that EXISTS with content but parses to zero clusters is the
-	// signature of a version/format mismatch, not of an intentionally
-	// emptied fleet — see orphanSweepHeld.
-	return &parsedSpec, v4, len(bytes.TrimSpace(body)) > 0, readPath, nil
+	return &parsedSpec, body, readPath, nil
 }
 
 // orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
@@ -914,7 +934,11 @@ func orphanSweepHeld(desiredCount int, fileNonEmpty bool, observedManaged int) b
 // below is a no-op when nil — the v3 path computes its desired labels
 // exactly as it always did, from the connection record's own labels block,
 // and keeps every one of its old write rules.
-func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, v4 *v4Assignments, stats *reconcileStats) {
+//
+// gp is only read for the open pull request list, and only when an orphan
+// candidate carries the registration-pending mark past its grace window
+// (LO-10 R13). It may be nil; then such a candidate is kept.
+func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvider, spec *models.ManagedClustersSpec, fileNonEmpty bool, v4 *v4Assignments, stats *reconcileStats) {
 	// Build the desired set (in-git names).
 	desired := make(map[string]models.ManagedClusterEntry)
 	if spec != nil {
@@ -1087,6 +1111,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 
 	now := r.now()
 	toDelete := make([]string, 0)
+	// The open pull request list is read at most once per tick, and only
+	// when a registration-pending candidate needs it (LO-10 R13).
+	var openPRs openRegisterPRs
+	// The cluster list is read once more, at most once per tick, right
+	// before a registration-pending connection would be deleted (LO-11 B1).
+	var registryNow registryRecheck
 	for name := range existing {
 		if _, present := desired[name]; present {
 			continue // in both sets — handled by the clear-pending pass below.
@@ -1126,8 +1156,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		// carries the registration-pending annotation and is NOT yet in git
 		// because its registration PR has not merged. Skip it while the grace
 		// window is open so the orphan sweep does not race the PR merge
-		// (V2-cleanup-11.1). Once the window expires (PR never merged) it
-		// falls through and is reaped — no permanent leak.
+		// (V2-cleanup-11.1). Once the window ends, it is kept for as long as
+		// an open pull request registers this cluster, and also when Sharko
+		// cannot read the pull request list (LO-10 R13). It is removed only
+		// when no open pull request registers it (the pull request was
+		// closed without merging, or there never was one) AND a fresh read
+		// of the cluster list still does not hold it (LO-11 B1).
 		pending, malformed := models.IsRegistrationPending(annotationsOf(secret), now)
 		if malformed {
 			logging.LoggerFromContext(ctx).Warn(
@@ -1147,6 +1181,50 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				"cluster", name, "namespace", r.namespace,
 			)
 			continue
+		}
+		if _, marked := models.RegistrationPendingValue(annotationsOf(secret)); marked {
+			if !openPRs.loaded {
+				openPRs.load(ctx, gp)
+			}
+			if keep, prURL := openPRs.keepPending(name); keep {
+				stats.SkippedOpenPR++
+				if openPRs.err != nil {
+					logging.LoggerFromContext(ctx).Warn(
+						"[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the open pull requests, so it does not know whether one still registers this cluster",
+						"cluster", name, "namespace", r.namespace, "error", openPRs.err,
+					)
+				} else {
+					logging.LoggerFromContext(ctx).Info(
+						"[clusterreconciler] keeping a registration-pending connection past its grace window — an open pull request registers this cluster",
+						"cluster", name, "namespace", r.namespace, "pr_url", prURL,
+					)
+				}
+				continue
+			}
+			// No open pull request registers it. But the cluster list above
+			// was read BEFORE the open pull request list, so a pull request
+			// merged in between is in neither. Read the cluster list again,
+			// once per tick and only now, and keep every name it holds. Keep
+			// on a failed read too: never delete on an unknown (LO-11 B1).
+			if !registryNow.loaded {
+				registryNow.load(ctx, r, gp)
+			}
+			if registryNow.err != nil {
+				stats.SkippedOpenPR++
+				logging.LoggerFromContext(ctx).Warn(
+					"[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the cluster list again to check whether its pull request was just merged",
+					"cluster", name, "namespace", r.namespace, "error", registryNow.err,
+				)
+				continue
+			}
+			if _, inGitNow := registryNow.names[name]; inGitNow {
+				stats.SkippedOpenPR++
+				logging.LoggerFromContext(ctx).Info(
+					"[clusterreconciler] keeping a registration-pending connection — its pull request was merged during this check, so the cluster is in Git now",
+					"cluster", name, "namespace", r.namespace,
+				)
+				continue
+			}
 		}
 		toDelete = append(toDelete, name)
 	}
@@ -2473,6 +2551,7 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 		log.Debug("[clusterreconciler] tick complete, no changes",
 			"created", stats.Created, "deleted", stats.Deleted,
 			"skipped_unlabeled", stats.SkippedUnlabeled, "skipped_pending", stats.SkippedPending,
+			"skipped_open_pr", stats.SkippedOpenPR,
 			"skipped_adopted", stats.SkippedAdopted, "cleared_pending", stats.ClearedPending,
 			"user_label_synced", stats.UserLabelSynced, "user_pending", stats.UserPending,
 			"connectivity_check_synced", stats.ConnCheckSynced,
@@ -2491,8 +2570,8 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 		Event:  "cluster_secret_reconcile_tick",
 		User:   "sharko",
 		Action: "reconcile",
-		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d user_label_synced:%d user_pending:%d connectivity_check_synced:%d errors:%d",
-			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.UserLabelSynced, stats.UserPending, stats.ConnCheckSynced, stats.Errors),
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_open_pr:%d skipped_adopted:%d cleared_pending:%d user_label_synced:%d user_pending:%d connectivity_check_synced:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedOpenPR, stats.SkippedAdopted, stats.ClearedPending, stats.UserLabelSynced, stats.UserPending, stats.ConnCheckSynced, stats.Errors),
 		Source:    "reconciler",
 		Result:    result,
 		RequestID: logging.RequestID(ctx),
@@ -2559,3 +2638,104 @@ func normalizeLabels(raw interface{}) map[string]string {
 // BuildClusterSecretLabels wrappers. createOne now calls
 // argosecrets.BuildClusterSecret — the ONE canonical builder — directly, so
 // there is a single place the finished Secret object comes from.
+
+// openRegisterPRs is the open pull request list the orphan sweep reads once
+// per tick, to decide whether a registration-pending connection past its
+// grace window is still waiting on its pull request (LO-10 R13).
+//
+// The rule: keep the connection when an open pull request registers this
+// cluster, or when the list could not be read (Sharko never deletes on an
+// unknown). Remove it only when the list was read and no open pull request
+// registers it — the pull request was closed without merging, or there was
+// never one. A merged pull request puts the cluster in the registry; when it
+// merged after the tick's first cluster list read, registryRecheck reads the
+// list again before anything is deleted, so it is still not an orphan.
+type openRegisterPRs struct {
+	loaded bool
+	err    error
+	prs    []gitprovider.PullRequest
+}
+
+func (o *openRegisterPRs) load(ctx context.Context, gp gitprovider.GitProvider) {
+	o.loaded = true
+	if gp == nil {
+		o.err = errors.New("no Git provider is set up")
+		return
+	}
+	o.prs, o.err = gp.ListPullRequests(ctx, "open")
+}
+
+// registryRecheck is the cluster list the orphan sweep reads a second time,
+// after the open pull request list, before it deletes a registration-pending
+// connection (LO-11 B1). The first read happens at the start of the tick; a
+// register pull request merged between that read and the open pull request
+// read is in neither list, and without this second read Sharko would delete
+// the connection of a cluster that is now in Git.
+//
+// It reads only the managed-clusters file at the branch head, never the
+// per-cluster files. A failed read sets err, and the caller keeps the
+// connection.
+type registryRecheck struct {
+	loaded bool
+	err    error
+	names  map[string]struct{}
+}
+
+func (c *registryRecheck) load(ctx context.Context, r *Reconciler, gp gitprovider.GitProvider) {
+	c.loaded = true
+	if gp == nil {
+		c.err = errors.New("no Git provider is set up")
+		return
+	}
+	spec, _, _, err := r.readManagedClustersFile(ctx, gp, r.branch)
+	if err != nil {
+		c.err = err
+		return
+	}
+	c.names = make(map[string]struct{})
+	if spec != nil {
+		for _, cl := range spec.Clusters {
+			if cl.Name != "" {
+				c.names[cl.Name] = struct{}{}
+			}
+		}
+	}
+}
+
+// keepPending says whether the named connection must be kept. When an open
+// pull request registers it, the second value is that pull request's
+// address.
+func (o *openRegisterPRs) keepPending(name string) (bool, string) {
+	if o.err != nil {
+		return true, ""
+	}
+	for _, pr := range o.prs {
+		if prRegistersCluster(pr, name) {
+			return true, pr.URL
+		}
+	}
+	return false, ""
+}
+
+// prRegistersCluster reports whether pr is an open pull request that
+// registers the named cluster. The register flow titles the pull request
+// "<prefix> register cluster <name>" and names its branch
+// "<prefix>register-cluster-<name>-<8 hex>"; both prefixes are settings, so
+// only the ending is matched. The match is exact on the name, so a pull
+// request for "prod-eu" does not keep a connection named "eu".
+func prRegistersCluster(pr gitprovider.PullRequest, name string) bool {
+	if name == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(pr.Status)) {
+	case "closed", "merged":
+		return false
+	}
+	title := strings.TrimSpace(pr.Title)
+	want := "register cluster " + name
+	if title == want || strings.HasSuffix(title, " "+want) {
+		return true
+	}
+	branchRe := regexp.MustCompile(`(^|[/-])register-cluster-` + regexp.QuoteMeta(name) + `-[0-9a-f]{8}$`)
+	return branchRe.MatchString(pr.SourceBranch)
+}

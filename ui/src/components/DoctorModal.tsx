@@ -139,12 +139,13 @@ export function DoctorModal({ clusterName, open, onClose }: DoctorModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="doctor-modal">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90%] flex flex-col" data-testid="doctor-modal">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{DOCTOR_LABEL}: {clusterName}</DialogTitle>
           <DialogDescription>{DOCTOR_HINT}</DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 space-y-4 overflow-y-auto">
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-[#2a5a7a] dark:text-gray-400" />
@@ -159,6 +160,7 @@ export function DoctorModal({ clusterName, open, onClose }: DoctorModalProps) {
         )}
 
         {result && !loading && <DoctorResultView result={result} />}
+        </div>
       </DialogContent>
     </Dialog>
   );

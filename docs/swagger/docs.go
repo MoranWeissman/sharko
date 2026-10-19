@@ -1896,6 +1896,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "500": {
+                        "description": "The new password could not be saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -2552,14 +2559,14 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request, including a cluster address with a user name, password, query or fragment in it",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3078,7 +3085,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult"
                         }
@@ -3165,7 +3172,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3267,7 +3274,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult"
                         }
@@ -3366,7 +3373,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read failed_step, error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult"
                         }
@@ -5156,7 +5163,7 @@ const docTemplate = `{
                         }
                     },
                     "207": {
-                        "description": "Partial success",
+                        "description": "Did not fully finish: some steps ran and one failed. Read error and message",
                         "schema": {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult"
                         }
@@ -9101,6 +9108,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "500": {
+                        "description": "The user could not be saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -9327,6 +9341,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "500": {
+                        "description": "The user could not be saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             },
@@ -9377,6 +9398,13 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "The user could not be removed",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -9433,6 +9461,13 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "The new password could not be saved",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

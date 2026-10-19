@@ -79,7 +79,7 @@ var addClusterCmd = &cobra.Command{
 			fmt.Println("failed")
 			return printAPIError(respBody, status)
 		}
-		if dryRun && status != 200 {
+		if dryRun && status != 200 && status != 207 {
 			return printAPIError(respBody, status)
 		}
 
@@ -91,12 +91,30 @@ var addClusterCmd = &cobra.Command{
 					Server        string `json:"server"`
 					ServerVersion string `json:"server_version"`
 				} `json:"cluster"`
+				FailedStep string `json:"failed_step"`
+				Error      string `json:"error"`
+				Message    string `json:"message"`
 			}
 			if err := json.Unmarshal(respBody, &result); err != nil {
 				return fmt.Errorf("invalid response: %w", err)
 			}
 
 			fmt.Println()
+
+			// 207: the preview stopped part-way (LO-7 R5) — for example
+			// Sharko could not read the cluster registry from Git. There is
+			// no preview to show, so say why and exit non-zero, as before
+			// when this came back as an error.
+			if status == 207 {
+				fmt.Printf("  %s\n", result.Message)
+				if result.FailedStep != "" {
+					fmt.Printf("  Failed step: %s\n", result.FailedStep)
+				}
+				if result.Error != "" {
+					fmt.Printf("  Error:       %s\n", result.Error)
+				}
+				return fmt.Errorf("the preview for cluster %s could not be built", name)
+			}
 
 			if result.Cluster.Server != "" {
 				fmt.Printf("  Server:  %s\n", result.Cluster.Server)

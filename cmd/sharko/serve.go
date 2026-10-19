@@ -927,9 +927,11 @@ var serveCmd = &cobra.Command{
 			// Secrets in "sharko" instead of "argocd"). Empty
 			// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
 			// through SHARKO_ARGOCD_NAMESPACE env → "argocd" default.
-			// For k8s-secrets, ns (SHARKO_NAMESPACE default, overridden
-			// by connProv.Namespace) flows into the DISTINCT Namespace
-			// field, matching the addon-side k8s-secrets convention.
+			// For k8s-secrets, only the connection's own namespace
+			// (connProv.Namespace) goes into the DISTINCT Namespace
+			// field. SHARKO_NAMESPACE is NOT used here: when the
+			// connection's namespace is empty, the provider reads from
+			// "sharko" (see newKubernetesSecretProviderForNamespace).
 			if connProv != nil {
 				resolvedTestCfg = providers.ClusterTestConfigFromConnection(
 					ccType, ccRegion, ccPrefix, ccNamespace, ccRoleARN)

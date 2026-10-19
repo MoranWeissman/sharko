@@ -31,11 +31,31 @@ import (
 type fakeGit struct {
 	files map[string][]byte
 	err   error // returned from GetFileContent on every path
+	// prs / prsErr are what ListPullRequests returns (LO-10 R13 tests).
+	prs    []gitprovider.PullRequest
+	prsErr error
+	// prCalls counts ListPullRequests calls.
+	prCalls int
+	// onListPRs, when set, runs inside ListPullRequests before it answers,
+	// so a test can change Git between the tick's two reads (LO-11 B1).
+	onListPRs func(f *fakeGit)
+	// errAfterPRs, when set, is returned from GetFileContent once
+	// ListPullRequests has been called (LO-11 B1).
+	errAfterPRs error
+	// readsAfterPRs counts GetFileContent calls made after ListPullRequests
+	// was first called.
+	readsAfterPRs int
 }
 
 func (f *fakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	if f.prCalls > 0 {
+		f.readsAfterPRs++
+	}
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.errAfterPRs != nil && f.prCalls > 0 {
+		return nil, f.errAfterPRs
 	}
 	if body, ok := f.files[path]; ok {
 		return body, nil
@@ -76,10 +96,14 @@ func (f *fakeGit) ListDirectory(_ context.Context, dir, _ string) ([]string, err
 // (called via PreviewMigration in the v4-migration-labels tests) reads
 // open PRs to report an already-open migration PR, and that is a
 // legitimate read the reconciler's read-only-against-git contract
-// tolerates same as GetFileContent/ListDirectory. Always "no open PRs" —
-// none of these fixtures seed one.
+// tolerates same as GetFileContent/ListDirectory. It returns prs / prsErr
+// — "no open PRs" unless a fixture seeds one.
 func (f *fakeGit) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
-	return nil, nil
+	f.prCalls++
+	if f.onListPRs != nil {
+		f.onListPRs(f)
+	}
+	return f.prs, f.prsErr
 }
 func (f *fakeGit) TestConnection(_ context.Context) error { return nil }
 func (f *fakeGit) CreateBranch(_ context.Context, _, _ string) error {

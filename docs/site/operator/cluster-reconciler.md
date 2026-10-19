@@ -205,6 +205,7 @@ cluster.
 | Entry removed from `managed-clusters.yaml` | Deletes the Secret with Sharko's label | Git → ArgoCD (on its own) |
 | A Secret **without** Sharko's label shows up in ArgoCD | Leaves it alone. You can adopt it. | ArgoCD → Git (only when you adopt) |
 | A Secret with Sharko's label was deleted outside Sharko | Creates it again on the next check | Git → ArgoCD (on its own) |
+| A cluster registered with a pasted kubeconfig, not in `managed-clusters.yaml` yet | Keeps the Secret Sharko saved for it for 10 minutes. After that, keeps it while an open pull request registers this cluster, or while Sharko cannot read the open pull requests. Deletes it when no open pull request registers this cluster (the pull request was closed without merging, or there never was one). | Git → ArgoCD (on its own) |
 | A Secret without Sharko's label was deleted | Nothing. It was never Sharko's. | none |
 
 Why the two directions are different:

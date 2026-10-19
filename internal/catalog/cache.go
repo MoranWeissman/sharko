@@ -191,7 +191,7 @@ func NewBackoff() *Backoff {
 				return d
 			}
 			delta := time.Duration(rand.Int63n(int64(d) / 2)) // #nosec G404 -- retry-backoff jitter; only spreads retries in time, no security use
-			if rand.Intn(2) == 0 { // #nosec G404 -- coin flip for jitter direction, same non-security use as the line above
+			if rand.Intn(2) == 0 {                            // #nosec G404 -- coin flip for jitter direction, same non-security use as the line above
 				return d + delta
 			}
 			return d - delta

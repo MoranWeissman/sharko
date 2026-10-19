@@ -2052,6 +2052,9 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     const sentence = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDTLS
     expect(sentence).toMatch(/^ArgoCD uses a certificate Sharko does not trust\./)
     expect(sentence).toMatch(/Skip TLS certificate verification\.$/)
+    // L16: one advice only. The old sentence also told the user to install
+    // ArgoCD with server.insecure.
+    expect(sentence).not.toMatch(/server\.insecure/)
 
     mockState.connections = [resumeConnection]
     renderWizard(4)
@@ -2066,5 +2069,206 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
     expect(await screen.findByText(sentence)).toBeInTheDocument()
+  })
+
+  // L13. The needs-https sentence has two forms. The generated file holds the
+  // one without an address. When Sharko knows the https address, the server
+  // sends the same sentence with the address in it, and the wizard must show
+  // that one. The address form is built from the generated sentence, because
+  // browser code may not retype a server sentence.
+  const needsHTTPS = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDNeedsHTTPS
+  const needsHTTPSAt = needsHTTPS.replace('so it starts with https://', 'to https://argocd.example.test:8443')
+
+  async function testArgocdAndGet(message: string) {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    apiMock.testCredentials.mockResolvedValueOnce({
+      git: { status: 'ok' },
+      argocd: { status: 'error', message },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+  }
+
+  it('shows the ArgoCD needs-https sentence word for word', async () => {
+    expect(needsHTTPS).toMatch(/^ArgoCD answers only over https at this address\./)
+    await testArgocdAndGet(needsHTTPS)
+    expect(await screen.findByText(needsHTTPS)).toBeInTheDocument()
+  })
+
+  it('shows the needs-https sentence with the address the server sent, not the generated copy', async () => {
+    expect(needsHTTPSAt).not.toBe(needsHTTPS)
+    expect(needsHTTPSAt).toContain('https://argocd.example.test:8443 and test again.')
+    await testArgocdAndGet(needsHTTPSAt)
+    expect(await screen.findByText(needsHTTPSAt)).toBeInTheDocument()
+    expect(screen.queryByText(needsHTTPS)).toBeNull()
+  })
+
+  // LO-7 R2. An https address that tried to send Sharko on to plain http has
+  // its own sentence now, not the general can't-reach one.
+  it('shows the ArgoCD redirect-to-http sentence word for word, not the general one', async () => {
+    const redirectToHTTP = CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDRedirectToHTTP
+    // The exact words are pinned on the server (Go test) and come here
+    // through the generated file; browser code may not retype them.
+    expect(redirectToHTTP).toMatch(/^ArgoCD tried to send Sharko from https to plain http\. /)
+    await testArgocdAndGet(redirectToHTTP)
+    expect(await screen.findByText(redirectToHTTP)).toBeInTheDocument()
+    expect(
+      screen.queryByText(CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDUnknown),
+    ).toBeNull()
+  })
+})
+
+// L4 — only AWS Secrets Manager uses a prefix. Kubernetes Secrets ignores it,
+// so the field is hidden there and a value left over from aws-sm is not sent.
+describe('FirstRunWizard — Prefix field belongs to AWS Secrets Manager only (L4)', () => {
+  async function openProviderSection() {
+    mockState.connections = [
+      { ...resumeConnection, provider: { type: 'aws-sm', region: 'eu-west-1', prefix: 'k8s-' } },
+    ]
+    renderWizard(4)
+    // Step 4 -> Back lands on the ArgoCD step, which holds the provider block.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Secrets Provider \(optional\)/i }))
+    return screen.findByRole('combobox')
+  }
+
+  it('shows the Prefix field for AWS Secrets Manager', async () => {
+    const select = await openProviderSection()
+    expect((select as HTMLSelectElement).value).toBe('aws-sm')
+    expect(screen.getByText('Prefix (optional)')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('k8s-')
+  })
+
+  it('hides the Prefix field for Kubernetes Secrets', async () => {
+    const select = await openProviderSection()
+    fireEvent.change(select, { target: { value: 'k8s-secrets' } })
+    expect(screen.queryByText('Prefix (optional)')).toBeNull()
+    expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+  })
+
+  it('does not send a prefix left over from aws-sm once Kubernetes Secrets is chosen', async () => {
+    const select = await openProviderSection()
+    fireEvent.change(select, { target: { value: 'k8s-secrets' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, payload] = updateMock.mock.calls[0]
+    expect(payload.provider.type).toBe('k8s-secrets')
+    expect(payload.provider.prefix).toBeUndefined()
+  })
+})
+
+// LO-11 B2 — a resume-mode save sends back the saved values the wizard does
+// not show. The server replaces the whole provider block, and keeps a saved
+// GitOps value only when the request leaves it empty.
+describe('FirstRunWizard — resume-mode save keeps saved settings (LO-11 B2)', () => {
+  async function saveFromResume(connection: Record<string, unknown>) {
+    mockState.connections = [connection]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await screen.findByRole('button', { name: /Save & Continue/i })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    return updateMock.mock.calls[0][1]
+  }
+
+  it('keeps the prefix when the saved type uses the other name "aws-secrets-manager"', async () => {
+    const payload = await saveFromResume({
+      ...resumeConnection,
+      provider: { type: 'aws-secrets-manager', region: 'eu-west-1', prefix: 'k8s-' },
+    })
+    expect(payload.provider.type).toBe('aws-sm')
+    expect(payload.provider.region).toBe('eu-west-1')
+    expect(payload.provider.prefix).toBe('k8s-')
+  })
+
+  it('keeps a saved role ARN the wizard does not show', async () => {
+    const payload = await saveFromResume({
+      ...resumeConnection,
+      provider: {
+        type: 'aws-sm',
+        region: 'eu-west-1',
+        prefix: 'k8s-',
+        role_arn: 'arn:aws:iam::000000000000:role/sharko-test',
+      },
+    })
+    expect(payload.provider.role_arn).toBe('arn:aws:iam::000000000000:role/sharko-test')
+    expect(payload.provider.prefix).toBe('k8s-')
+  })
+
+  it('keeps saved GitOps settings instead of sending the defaults', async () => {
+    const payload = await saveFromResume({
+      ...resumeConnection,
+      gitops: {
+        base_branch: 'develop',
+        branch_prefix: 'team/',
+        commit_prefix: 'team:',
+        pr_auto_merge: true,
+      },
+    })
+    expect(payload.gitops).toEqual({
+      base_branch: 'develop',
+      branch_prefix: 'team/',
+      commit_prefix: 'team:',
+      pr_auto_merge: true,
+    })
+  })
+
+  it('does not carry saved AWS fields over to Kubernetes Secrets', async () => {
+    mockState.connections = [
+      {
+        ...resumeConnection,
+        provider: {
+          type: 'aws-sm',
+          region: 'eu-west-1',
+          prefix: 'k8s-',
+          role_arn: 'arn:aws:iam::000000000000:role/sharko-test',
+        },
+      },
+    ]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Secrets Provider \(optional\)/i }))
+    fireEvent.change(await screen.findByRole('combobox'), { target: { value: 'k8s-secrets' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    const [, payload] = updateMock.mock.calls[0]
+    expect(payload.provider.type).toBe('k8s-secrets')
+    expect(payload.provider.role_arn).toBeUndefined()
+  })
+
+  it('still sends the GitOps defaults when nothing is saved', async () => {
+    const payload = await saveFromResume({ ...resumeConnection })
+    expect(payload.gitops).toEqual({
+      base_branch: 'main',
+      branch_prefix: 'sharko/',
+      commit_prefix: 'sharko:',
+      pr_auto_merge: false,
+    })
   })
 })

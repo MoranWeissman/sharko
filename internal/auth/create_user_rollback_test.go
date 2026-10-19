@@ -50,6 +50,10 @@ type rvServer struct {
 	// checked. Tests use it to change the object behind CreateUser's back,
 	// the way another writer would.
 	beforeUpdate map[string]func(n int)
+	// lost maps "verb resource" to the numbers of the calls that must LAND
+	// on the server but then come back as an error, the way a write does
+	// when its answer is lost to a timeout.
+	lost map[string]map[int]error
 	// sentHashes records every password value sent in a Secret update, so a
 	// test can check no error text carries one.
 	sentHashes [][]byte
@@ -71,6 +75,7 @@ func newRVServer(t *testing.T, accounts string, secretData map[string][]byte) *r
 	srv := &rvServer{
 		cs:           fake.NewSimpleClientset(cm, sec),
 		fail:         map[string]map[int]error{},
+		lost:         map[string]map[int]error{},
 		calls:        map[string]int{},
 		beforeUpdate: map[string]func(int){},
 	}
@@ -92,12 +97,25 @@ func (s *rvServer) failCall(verb, resource string, n int, err error) {
 	s.fail[key][n] = err
 }
 
+// loseAnswer makes call n of that kind land on the server and then return
+// err, as if the answer was lost on the way back.
+func (s *rvServer) loseAnswer(verb, resource string, n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := verb + " " + resource
+	if s.lost[key] == nil {
+		s.lost[key] = map[int]error{}
+	}
+	s.lost[key][n] = err
+}
+
 func (s *rvServer) injectFailure(action k8stesting.Action) (bool, runtime.Object, error) {
 	key := action.GetVerb() + " " + action.GetResource().Resource
 	s.mu.Lock()
 	s.calls[key]++
 	n := s.calls[key]
 	err := s.fail[key][n]
+	lostErr := s.lost[key][n]
 	if u, ok := action.(k8stesting.UpdateAction); ok {
 		if sec, ok := u.GetObject().(*corev1.Secret); ok {
 			for k, v := range sec.Data {
@@ -116,6 +134,13 @@ func (s *rvServer) injectFailure(action k8stesting.Action) (bool, runtime.Object
 	}
 	if err != nil {
 		return true, nil, err
+	}
+	if lostErr != nil {
+		// Let the write land, then lose the answer.
+		if handled, _, landErr := s.enforceResourceVersion(action); handled && landErr != nil {
+			return true, nil, landErr
+		}
+		return true, nil, lostErr
 	}
 	return false, nil, nil
 }
@@ -579,5 +604,121 @@ func TestRVServer_RefusesStaleUpdate(t *testing.T) {
 	_, err = cms.Update(ctx, stale, metav1.UpdateOptions{})
 	if !apierrors.IsConflict(err) {
 		t.Fatalf("stale update: want 409 Conflict, got %v", err)
+	}
+}
+
+// errAnswerLost is what a client sees when its write landed on the server
+// but the answer never came back.
+var errAnswerLost = apierrors.NewTimeoutError("the answer was lost on the way back", 0)
+
+// TestRVServer_LoseAnswerLandsTheWrite proves the fake: a call marked with
+// loseAnswer returns an error, but the write is really on the server.
+func TestRVServer_LoseAnswerLandsTheWrite(t *testing.T) {
+	srv := newRVServer(t, "", nil)
+	srv.loseAnswer("update", "configmaps", 1, errAnswerLost)
+	ctx := context.Background()
+	cms := srv.cs.CoreV1().ConfigMaps(rvNS)
+	cm, err := cms.Get(ctx, rvCM, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm.Data["accounts"] = "x: {}\n"
+	if _, err := cms.Update(ctx, cm, metav1.UpdateOptions{}); !errors.Is(err, errAnswerLost) {
+		t.Fatalf("want the lost-answer error, got %v", err)
+	}
+	if got := srv.accounts(t); got != "x: {}\n" {
+		t.Fatalf("the write did not land: %q", got)
+	}
+}
+
+// TestCreateUserK8s_ConfigMapWriteLandsAnswerLost: the user list write
+// lands, but its answer is lost. The user IS made, so CreateUser must keep
+// the password and succeed. Before the fix the undo took the password out,
+// leaving a user with no password who could never log in.
+func TestCreateUserK8s_ConfigMapWriteLandsAnswerLost(t *testing.T) {
+	srv := newRVServer(t, "alice:\n  enabled: true\n  role: admin\n", nil)
+	srv.loseAnswer("update", "configmaps", 1, errAnswerLost)
+	st := srv.store()
+
+	pass, err := st.CreateUser("dana", "operator")
+	if err != nil {
+		t.Fatalf("CreateUser: want success (the user was saved), got %v", err)
+	}
+	if pass == "" {
+		t.Fatal("no password came back")
+	}
+	if !accountsHasUser(srv.accounts(t), "dana") {
+		t.Fatalf("dana is not in the users ConfigMap: %q", srv.accounts(t))
+	}
+	if _, ok := srv.secretData(t)["dana.password"]; !ok {
+		t.Fatal("USER WITH NO PASSWORD: the undo took dana's password out although she was saved")
+	}
+	if !st.ValidateCredentials("dana", pass) {
+		t.Error("dana cannot log in with the password she was given")
+	}
+}
+
+// TestCreateUserK8s_AnswerLostAndCheckFails: the user list write lands, its
+// answer is lost, and then the read that checks it fails too. CreateUser
+// cannot tell whether the user was made, so it must leave the password in
+// place (a password alone cannot log anyone in) and say so in plain words.
+func TestCreateUserK8s_AnswerLostAndCheckFails(t *testing.T) {
+	srv := newRVServer(t, "", nil)
+	srv.loseAnswer("update", "configmaps", 1, errAnswerLost)
+	// ConfigMap get 1 is the look-before-write, 2 is inside the write
+	// retry, 3 is the check after the lost answer.
+	srv.failCall("get", "configmaps", 3, errBoom)
+	st := srv.store()
+
+	_, err := st.CreateUser("dana", "viewer")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	const want = `could not check whether user "dana" was saved, so the password entry was left in the Secret`
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not say %q", err.Error(), want)
+	}
+	if !errors.Is(err, errAnswerLost) || !errors.Is(err, errBoom) {
+		t.Errorf("both errors must be in the result: %v", err)
+	}
+	if _, ok := srv.secretData(t)["dana.password"]; !ok {
+		t.Error("the password was taken out although CreateUser could not tell whether dana was saved")
+	}
+	if st.GetUser("dana") != nil {
+		t.Error("dana is in memory after a failed create")
+	}
+	assertNoSecretInError(t, srv, err)
+}
+
+// TestCreateUserK8s_AnswerLostButAnotherCreateWon: our user list write's
+// answer is lost, and the Secret now holds a password that is not ours
+// (another create of the same name got in). The create must NOT be reported
+// as done with our password, and the other password must stay.
+func TestCreateUserK8s_AnswerLostButAnotherCreateWon(t *testing.T) {
+	srv := newRVServer(t, "", nil)
+	srv.loseAnswer("update", "configmaps", 1, errAnswerLost)
+	srv.beforeUpdate["configmaps"] = func(n int) {
+		if n == 1 {
+			gvr := corev1.SchemeGroupVersion.WithResource("secrets")
+			obj, err := srv.cs.Tracker().Get(gvr, rvNS, rvSecret)
+			if err != nil {
+				t.Fatalf("beforeUpdate get: %v", err)
+			}
+			sec := obj.(*corev1.Secret)
+			v, _ := strconv.Atoi(sec.ResourceVersion)
+			sec.ResourceVersion = strconv.Itoa(v + 1)
+			sec.Data["dana.password"] = []byte("other-create-hash")
+			if err := srv.cs.Tracker().Update(gvr, sec, rvNS); err != nil {
+				t.Fatalf("beforeUpdate update: %v", err)
+			}
+		}
+	}
+	st := srv.store()
+
+	if _, err := st.CreateUser("dana", "viewer"); err == nil {
+		t.Fatal("want an error, got success with a password that does not work")
+	}
+	if got := string(srv.secretData(t)["dana.password"]); got != "other-create-hash" {
+		t.Errorf("the other create's password was changed: %q", got)
 	}
 }

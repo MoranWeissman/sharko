@@ -1003,6 +1003,8 @@ export interface ConnectionResponse {
     type: _ProviderType
     region?: string
     prefix?: string
+    namespace?: string
+    role_arn?: string
   }
   addon_secret_provider?: {
     type: _ProviderType
@@ -2135,6 +2137,11 @@ export interface RegisterClusterResult {
   dry_run?: DryRunResult
   errors?: string[]
   partial?: boolean
+  // Set when the registration (or its dry run) stopped part-way, e.g.
+  // failed_step "read_cluster_registry". message is the server's sentence.
+  failed_step?: string
+  error?: string
+  message?: string
   // Plain-English advisories that do NOT fail the operation — e.g. a
   // self-managed connection's ArgoCD cluster secret turning out to be
   // rendered by another ArgoCD Application (V2-cleanup-89.5).

@@ -130,12 +130,13 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="test-connection-modal">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90%] flex flex-col" data-testid="test-connection-modal">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{TEST_CONNECTION_LABEL}: {clusterName}</DialogTitle>
           <DialogDescription>{TEST_CONNECTION_HINT}</DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 space-y-4 overflow-y-auto">
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-[#2a5a7a] dark:text-gray-400" />
@@ -247,6 +248,7 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
             )}
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );
