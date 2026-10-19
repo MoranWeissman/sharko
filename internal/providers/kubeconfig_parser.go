@@ -3,6 +3,7 @@ package providers
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"k8s.io/client-go/rest"
@@ -29,7 +30,13 @@ import (
 // for the same reason: client-go would open that path INSIDE the Sharko pod,
 // so a kubeconfig naming, say, the pod's own ServiceAccount token file would
 // make Sharko send its own token to whatever server the kubeconfig names.
-var ErrUnsupportedKubeconfigAuth = errors.New("unsupported kubeconfig auth method")
+var ErrUnsupportedKubeconfigAuth = errors.New(unsupportedKubeconfigAuthText)
+
+// unsupportedKubeconfigAuthText is the text of ErrUnsupportedKubeconfigAuth.
+// KubeconfigRefusal builds its message from this constant, not by calling
+// .Error() on the sentinel: the credential-path guard in internal/verify
+// forbids reading an error's words directly in this package.
+const unsupportedKubeconfigAuthText = "unsupported kubeconfig auth method"
 
 // The refusal sentences, one per refused field. Each is wrapped behind
 // ErrUnsupportedKubeconfigAuth ("unsupported kubeconfig auth method: ...").
@@ -37,10 +44,86 @@ var ErrUnsupportedKubeconfigAuth = errors.New("unsupported kubeconfig auth metho
 const (
 	refuseExecSentence         = "exec-plugin auth (e.g. aws-iam-authenticator, gke-gcloud-auth-plugin) is not supported; use a bearer token (`kubectl create token <serviceaccount> --duration=24h`) or a client-certificate kubeconfig with inline data"
 	refuseAuthProviderSentence = "auth-provider sign-in (e.g. oidc, gcp, azure) is not supported; use a bearer token (`kubectl create token <serviceaccount> --duration=24h`) or a client-certificate kubeconfig with inline data"
-	refuseTokenFileSentence    = "kubeconfig reads its bearer token from a file path (tokenFile); Sharko never reads files from its own disk, so put the token itself in the kubeconfig (token) or generate one with `kubectl create token <serviceaccount> --duration=24h`"
-	refuseCertFileSentence     = "kubeconfig references client certificate/key by file path; embed the data inline first (`kubectl config view --flatten`) or use a bearer token"
-	refuseCAFileSentence       = "kubeconfig references the cluster certificate authority by file path (certificate-authority); embed the data inline first (`kubectl config view --flatten`)"
+	refuseTokenFileSentence    = "kubeconfig reads its bearer token from a file path (tokenFile); Sharko does not read a kubeconfig's files from its own disk, so put the token itself in the kubeconfig (token) or generate one with `kubectl create token <serviceaccount> --duration=24h`"
+	refuseCertFileSentence     = "kubeconfig references client certificate/key by file path; embed the data inline first (`kubectl config view --flatten --minify`) or use a bearer token"
+	refuseCAFileSentence       = "kubeconfig references the cluster certificate authority by file path (certificate-authority); embed the data inline first (`kubectl config view --flatten --minify`)"
 )
+
+// The kubeconfig keys a KubeconfigRefusal can name. A fixed set, so the
+// field a log line or a caller reads off a refusal is always one of these
+// words and never anything taken from the kubeconfig itself.
+const (
+	RefusedFieldExec              = "exec"
+	RefusedFieldAuthProvider      = "auth-provider"
+	RefusedFieldTokenFile         = "tokenFile"
+	RefusedFieldClientCertificate = "client-certificate"
+	RefusedFieldClientKey         = "client-key"
+	RefusedFieldCertAuthority     = "certificate-authority"
+)
+
+// KubeconfigRefusal is the error refusePodLocalReferences returns: the
+// kubeconfig has a field that would make client-go read a file or run a
+// program inside the Sharko pod.
+//
+// It is a type, not just text, so a caller can tell a refused kubeconfig
+// apart from a missing one without reading any words. The stored-kubeconfig
+// providers wrap it on the way out and then put a credsafe mark on top,
+// which replaces the text with the fixed credentials sentence. errors.As
+// still finds the refusal under the mark, and both of its parts are
+// Sharko's own fixed text: Field is one of the RefusedField constants and
+// Sentence is one of the refuse*Sentence constants. Nothing in a
+// KubeconfigRefusal comes from the kubeconfig, so it is safe to show.
+//
+// errors.Is(refusal, ErrUnsupportedKubeconfigAuth) is true, and Error()
+// reads exactly as the fmt.Errorf("%w: %s") form it replaced.
+type KubeconfigRefusal struct {
+	field    string
+	sentence string
+}
+
+// Field is the kubeconfig key that was refused (a RefusedField constant).
+func (r *KubeconfigRefusal) Field() string { return r.field }
+
+// Sentence is the plain refusal sentence, without the
+// ErrUnsupportedKubeconfigAuth prefix.
+func (r *KubeconfigRefusal) Sentence() string { return r.sentence }
+
+func (r *KubeconfigRefusal) Error() string {
+	return unsupportedKubeconfigAuthText + ": " + r.sentence
+}
+
+func (r *KubeconfigRefusal) Unwrap() error { return ErrUnsupportedKubeconfigAuth }
+
+// AsKubeconfigRefusal finds a KubeconfigRefusal anywhere in err's chain,
+// including under a credsafe mark.
+func AsKubeconfigRefusal(err error) (*KubeconfigRefusal, bool) {
+	var r *KubeconfigRefusal
+	if errors.As(err, &r) && r != nil {
+		return r, true
+	}
+	return nil, false
+}
+
+func refuse(field, sentence string) error {
+	return &KubeconfigRefusal{field: field, sentence: sentence}
+}
+
+// logStoredKubeconfigRefusal writes one log line when a kubeconfig read from
+// a secrets backend was refused, naming the refused field. Without it the
+// operator only ever saw the fixed credentials sentence and had no way to
+// learn that the stored kubeconfig was found but cannot be used.
+//
+// The line carries only fixed text: the backend word the caller passes, the
+// secret name (the operator's own configuration), and the refused field
+// (a RefusedField constant). No error value and nothing from the kubeconfig.
+func logStoredKubeconfigRefusal(backend, secretName string, err error) {
+	r, ok := AsKubeconfigRefusal(err)
+	if !ok {
+		return
+	}
+	slog.Warn("[provider] stored kubeconfig refused: it would make Sharko read a file or run a program inside its own pod",
+		"backend", backend, "secretName", secretName, "field", r.Field())
+}
 
 // BuildRESTConfig is the one way Sharko turns kubeconfig bytes into a
 // *rest.Config. It is clientcmd.RESTConfigFromKubeConfig with one step added
@@ -99,17 +182,19 @@ func refusePodLocalReferences(apiCfg *clientcmdapi.Config) error {
 	if authInfo := apiCfg.AuthInfos[userName]; authInfo != nil {
 		switch {
 		case authInfo.Exec != nil:
-			return fmt.Errorf("%w: %s", ErrUnsupportedKubeconfigAuth, refuseExecSentence)
+			return refuse(RefusedFieldExec, refuseExecSentence)
 		case authInfo.AuthProvider != nil:
-			return fmt.Errorf("%w: %s", ErrUnsupportedKubeconfigAuth, refuseAuthProviderSentence)
+			return refuse(RefusedFieldAuthProvider, refuseAuthProviderSentence)
 		case authInfo.TokenFile != "":
-			return fmt.Errorf("%w: %s", ErrUnsupportedKubeconfigAuth, refuseTokenFileSentence)
-		case authInfo.ClientCertificate != "" || authInfo.ClientKey != "":
-			return fmt.Errorf("%w: %s", ErrUnsupportedKubeconfigAuth, refuseCertFileSentence)
+			return refuse(RefusedFieldTokenFile, refuseTokenFileSentence)
+		case authInfo.ClientCertificate != "":
+			return refuse(RefusedFieldClientCertificate, refuseCertFileSentence)
+		case authInfo.ClientKey != "":
+			return refuse(RefusedFieldClientKey, refuseCertFileSentence)
 		}
 	}
 	if cluster := apiCfg.Clusters[clusterName]; cluster != nil && cluster.CertificateAuthority != "" {
-		return fmt.Errorf("%w: %s", ErrUnsupportedKubeconfigAuth, refuseCAFileSentence)
+		return refuse(RefusedFieldCertAuthority, refuseCAFileSentence)
 	}
 	return nil
 }

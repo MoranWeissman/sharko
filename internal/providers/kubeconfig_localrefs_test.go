@@ -13,8 +13,10 @@ package providers
 // never opened — not "opened and closed quickly", never opened at all.
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,9 +36,9 @@ import (
 const (
 	wantExecRefusal         = "unsupported kubeconfig auth method: exec-plugin auth (e.g. aws-iam-authenticator, gke-gcloud-auth-plugin) is not supported; use a bearer token (`kubectl create token <serviceaccount> --duration=24h`) or a client-certificate kubeconfig with inline data"
 	wantAuthProviderRefusal = "unsupported kubeconfig auth method: auth-provider sign-in (e.g. oidc, gcp, azure) is not supported; use a bearer token (`kubectl create token <serviceaccount> --duration=24h`) or a client-certificate kubeconfig with inline data"
-	wantTokenFileRefusal    = "unsupported kubeconfig auth method: kubeconfig reads its bearer token from a file path (tokenFile); Sharko never reads files from its own disk, so put the token itself in the kubeconfig (token) or generate one with `kubectl create token <serviceaccount> --duration=24h`"
-	wantCertFileRefusal     = "unsupported kubeconfig auth method: kubeconfig references client certificate/key by file path; embed the data inline first (`kubectl config view --flatten`) or use a bearer token"
-	wantCAFileRefusal       = "unsupported kubeconfig auth method: kubeconfig references the cluster certificate authority by file path (certificate-authority); embed the data inline first (`kubectl config view --flatten`)"
+	wantTokenFileRefusal    = "unsupported kubeconfig auth method: kubeconfig reads its bearer token from a file path (tokenFile); Sharko does not read a kubeconfig's files from its own disk, so put the token itself in the kubeconfig (token) or generate one with `kubectl create token <serviceaccount> --duration=24h`"
+	wantCertFileRefusal     = "unsupported kubeconfig auth method: kubeconfig references client certificate/key by file path; embed the data inline first (`kubectl config view --flatten --minify`) or use a bearer token"
+	wantCAFileRefusal       = "unsupported kubeconfig auth method: kubeconfig references the cluster certificate authority by file path (certificate-authority); embed the data inline first (`kubectl config view --flatten --minify`)"
 )
 
 // newTrapFile makes a FIFO in a temp dir. Any attempt to open it for reading
@@ -88,24 +90,93 @@ func trapKubeconfig(userLines, clusterLines string) string {
 }
 
 type localRefCase struct {
-	name string
-	kc   string
-	want string
+	name  string
+	kc    string
+	want  string
+	field string // the kubeconfig key the refusal names
 }
 
 // localRefCases is every refused field. trap is the FIFO path the field
 // points at (where the field takes a path).
 func localRefCases(trap string) []localRefCase {
 	return []localRefCase{
-		{"tokenFile", trapKubeconfig("    tokenFile: "+trap+"\n", ""), wantTokenFileRefusal},
+		{"tokenFile", trapKubeconfig("    tokenFile: "+trap+"\n", ""), wantTokenFileRefusal, RefusedFieldTokenFile},
 		// client-go re-reads tokenFile on every request even when token is
 		// set too, so token + tokenFile is refused as well.
-		{"token and tokenFile", trapKubeconfig("    token: inline-token\n    tokenFile: "+trap+"\n", ""), wantTokenFileRefusal},
-		{"client-certificate and client-key by path, with a token", trapKubeconfig("    token: inline-token\n    client-certificate: "+trap+"\n    client-key: "+trap+"\n", ""), wantCertFileRefusal},
-		{"client-key by path with inline cert data", trapKubeconfig("    client-certificate-data: dGVzdC1jZXJ0\n    client-key: "+trap+"\n", ""), wantCertFileRefusal},
-		{"certificate-authority by path", trapKubeconfig("    token: inline-token\n", "    certificate-authority: "+trap+"\n"), wantCAFileRefusal},
-		{"exec", trapKubeconfig("    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: "+trap+"\n", ""), wantExecRefusal},
-		{"auth-provider", trapKubeconfig("    auth-provider:\n      name: oidc\n      config:\n        idp-issuer-url: https://issuer.example\n        client-id: sharko\n        idp-certificate-authority: "+trap+"\n", ""), wantAuthProviderRefusal},
+		{"token and tokenFile", trapKubeconfig("    token: inline-token\n    tokenFile: "+trap+"\n", ""), wantTokenFileRefusal, RefusedFieldTokenFile},
+		{"client-certificate and client-key by path, with a token", trapKubeconfig("    token: inline-token\n    client-certificate: "+trap+"\n    client-key: "+trap+"\n", ""), wantCertFileRefusal, RefusedFieldClientCertificate},
+		{"client-key by path with inline cert data", trapKubeconfig("    client-certificate-data: dGVzdC1jZXJ0\n    client-key: "+trap+"\n", ""), wantCertFileRefusal, RefusedFieldClientKey},
+		{"certificate-authority by path", trapKubeconfig("    token: inline-token\n", "    certificate-authority: "+trap+"\n"), wantCAFileRefusal, RefusedFieldCertAuthority},
+		{"exec", trapKubeconfig("    exec:\n      apiVersion: client.authentication.k8s.io/v1\n      command: "+trap+"\n", ""), wantExecRefusal, RefusedFieldExec},
+		{"auth-provider", trapKubeconfig("    auth-provider:\n      name: oidc\n      config:\n        idp-issuer-url: https://issuer.example\n        client-id: sharko\n        idp-certificate-authority: "+trap+"\n", ""), wantAuthProviderRefusal, RefusedFieldAuthProvider},
+	}
+}
+
+// LO-13 K5: the tokenFile sentence used to say Sharko "never reads files from
+// its own disk". That is not true — Sharko reads its own ServiceAccount token
+// and its own config files. The sentence now says it does not read a
+// KUBECONFIG's files. The old words must not come back.
+func TestRefusalSentences_OldWordingIsGone(t *testing.T) {
+	banned := []string{
+		"never reads files from its own disk",
+		"`kubectl config view --flatten`",
+	}
+	for _, s := range []string{refuseExecSentence, refuseAuthProviderSentence, refuseTokenFileSentence, refuseCertFileSentence, refuseCAFileSentence} {
+		for _, b := range banned {
+			if strings.Contains(s, b) {
+				t.Errorf("refusal sentence still says %q: %s", b, s)
+			}
+		}
+	}
+}
+
+// storedRefusalLog is the fixed text of the log line a stored-kubeconfig
+// refusal writes (LO-13 K1).
+const storedRefusalLog = "[provider] stored kubeconfig refused: it would make Sharko read a file or run a program inside its own pod"
+
+// captureWarnLog sends slog's default logger to a buffer for one test.
+func captureWarnLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	return &buf
+}
+
+// assertStoredRefusal checks what GetCredentials hands back for a refused
+// stored kubeconfig: a refusal, not a "not found"; the public text is still
+// the fixed credentials sentence; the refusal and its field are reachable by
+// type under the mark; and one log line names the field and nothing from the
+// kubeconfig.
+func assertStoredRefusal(t *testing.T, err error, tc localRefCase, trap, backend string, logs *bytes.Buffer) {
+	t.Helper()
+	if !errors.Is(err, ErrUnsupportedKubeconfigAuth) {
+		t.Fatalf("GetCredentials: want ErrUnsupportedKubeconfigAuth, got %v", err)
+	}
+	if credsafe.IsNotFound(err) {
+		t.Errorf("GetCredentials: a refused kubeconfig must not be marked not found")
+	}
+	if err.Error() != credsafe.Message {
+		t.Errorf("GetCredentials public sentence: got %q", err.Error())
+	}
+	refusal, ok := AsKubeconfigRefusal(err)
+	if !ok {
+		t.Fatalf("GetCredentials: refusal not reachable under the mark: %v", err)
+	}
+	if refusal.Field() != tc.field {
+		t.Errorf("refused field: got %q, want %q", refusal.Field(), tc.field)
+	}
+	if refusal.Error() != tc.want {
+		t.Errorf("refusal:\n got: %s\nwant: %s", refusal.Error(), tc.want)
+	}
+	line := logs.String()
+	want := `"msg":"` + storedRefusalLog + `","backend":"` + backend + `","secretName":"prod","field":"` + tc.field + `"`
+	if !strings.Contains(line, want) {
+		t.Errorf("log line:\n got: %s\nwant to contain: %s", line, want)
+	}
+	if strings.Contains(line, trap) || strings.Contains(line, "inline-token") {
+		t.Errorf("log line carries kubeconfig contents: %s", line)
 	}
 }
 
@@ -124,6 +195,9 @@ func TestBuildRESTConfig_RefusesPodLocalReferences(t *testing.T) {
 			}
 			if err.Error() != tc.want {
 				t.Errorf("sentence:\n got: %s\nwant: %s", err.Error(), tc.want)
+			}
+			if r, ok := AsKubeconfigRefusal(err); !ok || r.Field() != tc.field {
+				t.Errorf("refusal type: got %#v, want field %q", r, tc.field)
 			}
 		})
 	}
@@ -215,13 +289,14 @@ func TestKubernetesSecretProvider_RefusesPodLocalReferences(t *testing.T) {
 				t.Fatalf("fetchK8sSecret: got %v", err)
 			}
 
-			// The public fetch. (This provider reports any failed read with
-			// its own "not found" sentence; see the LO-12 result.)
+			// The public fetch: a refusal, kept apart from "not found".
+			logs := captureWarnLog(t)
 			var kc *Kubeconfig
 			assertNeverOpened(t, trap, func() { kc, err = p.GetCredentials("prod") })
-			if kc != nil || err == nil {
-				t.Fatalf("GetCredentials: want a refusal, got kc=%+v err=%v", kc, err)
+			if kc != nil {
+				t.Fatalf("GetCredentials: want no credentials, got %+v", kc)
 			}
+			assertStoredRefusal(t, err, tc, trap, "kubernetes-secrets", logs)
 
 			// The read-only comparison path keeps the cause under the mark,
 			// and what a person sees stays the one fixed credentials sentence.
@@ -272,13 +347,14 @@ func TestAWSSecretsManagerProvider_RefusesPodLocalReferences(t *testing.T) {
 				t.Fatalf("buildFromRawKubeconfig: got %v", err)
 			}
 
-			// The public fetch. (This provider reports any failed lookup with
-			// its own "not found" sentence; see the LO-12 result.)
+			// The public fetch: a refusal, kept apart from "not found".
+			logs := captureWarnLog(t)
 			var kc *Kubeconfig
 			assertNeverOpened(t, trap, func() { kc, err = p.GetCredentials("prod") })
-			if kc != nil || err == nil {
-				t.Fatalf("GetCredentials: want a refusal, got kc=%+v err=%v", kc, err)
+			if kc != nil {
+				t.Fatalf("GetCredentials: want no credentials, got %+v", kc)
 			}
+			assertStoredRefusal(t, err, tc, trap, "aws-secrets-manager", logs)
 
 			// The read-only comparison path.
 			var facts *StoredConnectionFacts

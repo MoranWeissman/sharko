@@ -1738,7 +1738,7 @@ export function ClustersOverview() {
                         className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                       />
                       <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                        Sharko extracts the server URL, CA certificate, and bearer token (only bearer-token auth is supported). For kind, generate one with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
+                        Sharko reads the server address, the CA certificate, and how to sign in: a bearer token or an inline client certificate both work. For kind, make a token with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
                       </p>
                     </div>
                   </>
