@@ -123,7 +123,15 @@ import (
 // before the path is logged. It makes no slog call; it splits Sharko's own
 // query off with strings.Cut("?") and is listed for that in
 // credential_rule_guard_test.go.
-const wantSweptGoFiles = 435
+//
+// 437 since LO-9 added two files to internal/orchestrator.
+// register_messages.go builds the message of a registration that stopped
+// part-way (R8), and cluster_server_address.go refuses a cluster address
+// with a user name, password, query or fragment in it (R11). Neither makes
+// a slog call or a log call of any kind. Neither searches for credential
+// characters: cluster_server_address.go only asks credsafe.ClassifyAddress
+// and credsafe.SafeRepoURL, so the rule stays in credsafe.
+const wantSweptGoFiles = 437
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
