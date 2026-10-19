@@ -50,15 +50,25 @@ const (
 	registerMsgSecretsCreatedFmt    = "Sharko created %s on the cluster."
 	registerMsgSecretsNotCreatedFmt = "%s could not be created on the cluster."
 
-	// registerMsgArgoSavedFmt: the connection was written straight into
-	// ArgoCD with the registration-pending mark. The cluster reconciler
-	// removes it once the grace window ends if the cluster is still not in
-	// the cluster registry in Git. Argument: the window in minutes.
-	registerMsgArgoSavedFmt = "Sharko had already saved the cluster's connection in ArgoCD. If the cluster is not in the cluster registry in Git within about %d minutes, Sharko removes that connection again."
+	// registerMsgArgoSavedNoPRFmt / registerMsgArgoSavedPROpen: the
+	// connection was written straight into ArgoCD with the
+	// registration-pending mark. The cluster reconciler keeps it for the
+	// grace window, then for as long as an open pull request registers the
+	// cluster, and removes it once none does (LO-10 R13). NoPR is for a
+	// registration that stopped before any pull request was opened;
+	// argument: the window in minutes. PROpen is for one whose pull request
+	// is open and not merged.
+	registerMsgArgoSavedNoPRFmt = "Sharko had already saved the cluster's connection in ArgoCD. If no open pull request registers this cluster after about %d minutes, Sharko removes that connection again."
+	registerMsgArgoSavedPROpen  = "Sharko had already saved the cluster's connection in ArgoCD. Sharko keeps it while this pull request is open, and removes it if the pull request is closed without being merged."
+
+	// registerMsgArgoWriteFailed: the pasted-kubeconfig connection could not
+	// be written into ArgoCD. The registration stops right there (LO-10
+	// R14): the pasted credentials live in no secrets backend, so a merged
+	// pull request alone would leave a cluster ArgoCD cannot reach.
+	registerMsgArgoWriteFailed = "Sharko could not save the cluster's connection in ArgoCD, so it stopped before creating addon secrets or opening a pull request. Nothing was changed on the cluster and nothing was committed to Git. Check that Sharko can write Secrets in the ArgoCD namespace, then try again."
 
 	registerMsgTryAgainGit     = "Try again once Git is reachable."
 	registerMsgTryAgainCluster = "Check that Sharko can reach the cluster, then try again."
-	registerMsgPRLinkFmt       = "Pull request: %s"
 )
 
 // addonSecretCount is "1 addon secret" or "N addon secrets".
@@ -76,6 +86,9 @@ type registerOutcome struct {
 	secretsFailed  int
 	// prMerged is true only when the registration pull request is merged.
 	prMerged bool
+	// prOpen is true when the registration pull request is open and not
+	// merged.
+	prOpen bool
 }
 
 func (r registerOutcome) argoSecretWritten() bool {
@@ -99,7 +112,11 @@ func (r registerOutcome) doneSoFar(withFailed bool) []string {
 		out = append(out, fmt.Sprintf(registerMsgSecretsNotCreatedFmt, addonSecretCount(r.secretsFailed)))
 	}
 	if r.argoSecretWritten() && !r.prMerged {
-		out = append(out, fmt.Sprintf(registerMsgArgoSavedFmt, int(models.RegistrationPendingGraceWindow.Minutes())))
+		if r.prOpen {
+			out = append(out, registerMsgArgoSavedPROpen)
+		} else {
+			out = append(out, fmt.Sprintf(registerMsgArgoSavedNoPRFmt, int(models.RegistrationPendingGraceWindow.Minutes())))
+		}
 	}
 	return out
 }
@@ -128,16 +145,26 @@ func registerCommitFailedMessage(r registerOutcome) string {
 	return joinSentences([]string{registerMsgCommitFailed}, r.doneSoFar(true), []string{registerMsgTryAgainGit})
 }
 
+// registerArgoWriteFailedMessage: the connection could not be written into
+// ArgoCD; nothing else was done.
+func registerArgoWriteFailedMessage() string {
+	return registerMsgArgoWriteFailed
+}
+
 // registerMergeFailedMessage: the pull request is open, the merge failed.
-// The pull request address stays at the end of the message.
-func registerMergeFailedMessage(r registerOutcome, prURL string) string {
+// The pull request address is not in the message: the answer carries it in
+// git.pr_url, and the UI and CLI show it from there (LO-10 R16). Before, it
+// was in both places, so the dialog showed it twice.
+func registerMergeFailedMessage(r registerOutcome) string {
 	r.prMerged = false
-	return joinSentences([]string{registerMsgMergeFailed}, r.doneSoFar(true), []string{fmt.Sprintf(registerMsgPRLinkFmt, prURL)})
+	r.prOpen = true
+	return joinSentences([]string{registerMsgMergeFailed}, r.doneSoFar(true))
 }
 
 // registerSecretsFailedMessage: everything ran, some addon secrets failed.
 func registerSecretsFailedMessage(r registerOutcome) string {
 	lead := fmt.Sprintf(registerMsgSecretsFailedOpenFmt, addonSecretCount(r.secretsFailed))
+	r.prOpen = !r.prMerged
 	if r.prMerged {
 		lead = fmt.Sprintf(registerMsgSecretsFailedMergedFmt, addonSecretCount(r.secretsFailed))
 	}

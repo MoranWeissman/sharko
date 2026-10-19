@@ -70,10 +70,21 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 //  6. Trigger the reconciler so the ArgoCD cluster Secret is created/updated
 //     immediately post-merge rather than waiting for the 30s safety-net tick.
 //
-// The register flow never writes anything in the argocd namespace before
-// the managed-clusters.yaml PR merges — the reconciler owns the entire
-// ArgoCD cluster-Secret lifecycle, which closes the orphan-on-PR-close
-// bug class at the architectural level.
+// What is written in the argocd namespace before the managed-clusters.yaml
+// PR merges depends on where the credentials come from:
+//
+//   - Secrets backend (EKS / AWS Secrets Manager and similar): nothing. The
+//     reconciler creates the ArgoCD cluster Secret after the merge, reading
+//     the credentials from the backend.
+//   - Pasted kubeconfig: the ArgoCD cluster Secret is written right after
+//     the connection check, before addon secrets and before the PR, with
+//     the registration-pending mark. Those credentials live in no backend,
+//     so the reconciler could never create that Secret itself. The
+//     reconciler's orphan sweep keeps it while the mark is new or an open
+//     PR registers the cluster, and removes it otherwise (LO-10 R13). If
+//     this write fails, the registration stops there and answers "partial"
+//     with failed step "write_argocd_secret" (LO-10 R14).
+//   - Self-managed connections: never. The user creates the Secret.
 //
 // Step 3 credentials are OPTIONAL (V2-cleanup-88.3 — lazy credentials):
 // registration succeeds with zero Sharko-side credentials for every
@@ -532,10 +543,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// The write uses the same Manager the reconciler uses (same labels + the
 	// bearerToken config shape), so a later reconcile tick adopts rather than
 	// fights it, and the managed-by=sharko label lets the reconciler's orphan
-	// sweep reclaim it should the registration PR never merge. The write is
-	// best-effort: a failure is logged and recorded but does not abort
-	// registration (the Git source of truth and reconciler can still
-	// converge). When no manager is wired (out-of-cluster), this is skipped.
+	// sweep reclaim it should the registration PR be closed without merging.
+	// A failed write stops the registration (LO-10 R14): nothing else can
+	// create this Secret later, so going on would open a PR for a cluster
+	// ArgoCD can never reach. When no manager is wired (out-of-cluster),
+	// this is skipped.
 	// SELF-MANAGED GUARD (V2-cleanup-57.2): when the connection is managed by
 	// the user, Sharko NEVER writes the ArgoCD cluster Secret — not here at
 	// registration, not in the reconcilers. The user creates the Secret by
@@ -596,13 +608,18 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			Annotations: pendingAnnotations,
 		})
 		if ensureErr != nil {
-			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)",
+			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed — stopping before addon secrets and the PR",
 				"cluster", req.Name, "error", ensureErr)
-		} else {
-			steps = append(steps, "write_argocd_secret")
-			log.Info("ArgoCD cluster Secret written directly from kubeconfig credentials",
-				"cluster", req.Name, "server", creds.Server)
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = stepWriteArgoSecret
+			result.Error = ensureErr.Error()
+			result.Message = registerArgoWriteFailedMessage()
+			return result, nil
 		}
+		steps = append(steps, stepWriteArgoSecret)
+		log.Info("ArgoCD cluster Secret written directly from kubeconfig credentials",
+			"cluster", req.Name, "server", creds.Server)
 	}
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
@@ -799,7 +816,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.CompletedSteps = steps
 			result.FailedStep = "pr_merge"
 			result.Error = err.Error()
-			result.Message = registerMergeFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)}, gitResult.PRUrl)
+			result.Message = registerMergeFailedMessage(registerOutcome{steps: steps, secretsCreated: len(result.Secrets), secretsFailed: len(result.FailedSecrets)})
 			result.Git = gitResult
 			return result, nil
 		}

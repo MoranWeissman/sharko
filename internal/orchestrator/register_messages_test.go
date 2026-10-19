@@ -27,6 +27,11 @@ var oldRegisterPartialWords = []string{
 	"Registration completed but",
 	"addon secret(s)",
 	"Try again once Git is reachable. Try again", // no doubled ending
+	// LO-10 R13: the connection is no longer removed just because 10
+	// minutes passed; an open pull request keeps it.
+	"If the cluster is not in the cluster registry in Git within about",
+	// LO-10 R16: the pull request address is in git.pr_url only.
+	"Pull request: ",
 }
 
 func assertRegisterMessage(t *testing.T, res *RegisterClusterResult, wantStep, want string) {
@@ -90,7 +95,53 @@ func registerInline(t *testing.T, o *Orchestrator) *RegisterClusterResult {
 	return res
 }
 
-const argoSavedSentence = "Sharko had already saved the cluster's connection in ArgoCD. If the cluster is not in the cluster registry in Git within about 10 minutes, Sharko removes that connection again."
+// argoSavedNoPRSentence / argoSavedPROpenSentence: what happens to the
+// ArgoCD connection a pasted-kubeconfig registration saved, when no pull
+// request was opened, and when the pull request is open (LO-10 R13).
+const (
+	argoSavedNoPRSentence   = "Sharko had already saved the cluster's connection in ArgoCD. If no open pull request registers this cluster after about 10 minutes, Sharko removes that connection again."
+	argoSavedPROpenSentence = "Sharko had already saved the cluster's connection in ArgoCD. Sharko keeps it while this pull request is open, and removes it if the pull request is closed without being merged."
+)
+
+// assertNoPRAddress fails when the message repeats the pull request address
+// that git.pr_url already carries (LO-10 R16).
+func assertNoPRAddress(t *testing.T, res *RegisterClusterResult) {
+	t.Helper()
+	if res.Git != nil && res.Git.PRUrl != "" && strings.Contains(res.Message, res.Git.PRUrl) {
+		t.Errorf("the message repeats the pull request address %q: %q", res.Git.PRUrl, res.Message)
+	}
+}
+
+// LO-10 R14: when the ArgoCD connection of a pasted-kubeconfig
+// registration cannot be saved, the registration stops there and says so.
+// Before, it only logged the failure, opened the pull request and answered
+// success — for a cluster ArgoCD could never reach.
+func TestRegisterPartialMessage_ArgoWriteFailed_StopsBeforeSecretsAndPR(t *testing.T) {
+	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
+	asm.ensureErr = errors.New("secrets is forbidden: cannot create resource")
+	o := New(nil, nil, newMockArgocd(), git, autoMergeGitOps(), defaultPaths(), nil)
+	o.SetArgoSecretManager(asm, "")
+	o.SetSecretManagement(defaultSecretDefs(), defaultSecretFetcher(), fakeClientFactory())
+
+	res := registerInline(t, o)
+	assertRegisterMessage(t, res, "write_argocd_secret",
+		"Sharko could not save the cluster's connection in ArgoCD, so it stopped before creating addon secrets or opening a pull request. Nothing was changed on the cluster and nothing was committed to Git. Check that Sharko can write Secrets in the ArgoCD namespace, then try again.")
+	if res.Error != "secrets is forbidden: cannot create resource" {
+		t.Errorf("error = %q, want the ArgoCD write error", res.Error)
+	}
+	if len(git.prs) != 0 {
+		t.Errorf("a pull request was opened: %d", len(git.prs))
+	}
+	if len(res.Secrets) != 0 {
+		t.Errorf("addon secrets were created: %v", res.Secrets)
+	}
+	for _, step := range res.CompletedSteps {
+		if step == "write_argocd_secret" || step == "git_commit" || step == "create_secrets" {
+			t.Errorf("completed steps has %q: %v", step, res.CompletedSteps)
+		}
+	}
+}
 
 func TestRegisterPartialMessage_ConnectFailed(t *testing.T) {
 	git := newMockGitProvider()
@@ -117,7 +168,7 @@ func TestRegisterPartialMessage_ConnectFailed_ArgoConnectionSaved(t *testing.T) 
 	}
 	assertRegisterMessage(t, res, "create_secrets",
 		"Sharko could not connect to the cluster to create its addon secrets, so it stopped before opening a pull request. No addon secrets were created and nothing was committed to Git. "+
-			argoSavedSentence+
+			argoSavedNoPRSentence+
 			" Check that Sharko can reach the cluster, then try again.")
 }
 
@@ -161,7 +212,7 @@ func TestRegisterPartialMessage_CommitFailed_SecretsCreatedAndArgoSaved(t *testi
 	res := registerInline(t, o)
 	assertRegisterMessage(t, res, "git_commit",
 		"Sharko could not open the pull request that registers this cluster. Sharko created 1 addon secret on the cluster. "+
-			argoSavedSentence+
+			argoSavedNoPRSentence+
 			" Try again once Git is reachable.")
 }
 
@@ -176,7 +227,8 @@ func TestRegisterPartialMessage_MergeFailed_SecretFailed(t *testing.T) {
 		t.Fatalf("no pull request in the answer: %+v", res.Git)
 	}
 	assertRegisterMessage(t, res, "pr_merge",
-		"Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. 1 addon secret could not be created on the cluster. Pull request: "+res.Git.PRUrl)
+		"Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. 1 addon secret could not be created on the cluster.")
+	assertNoPRAddress(t, res)
 }
 
 func TestRegisterPartialMessage_MergeFailed_NoSecretsAtAll(t *testing.T) {
@@ -189,7 +241,8 @@ func TestRegisterPartialMessage_MergeFailed_NoSecretsAtAll(t *testing.T) {
 		t.Fatalf("no pull request in the answer: %+v", res.Git)
 	}
 	assertRegisterMessage(t, res, "pr_merge",
-		"Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. Pull request: "+res.Git.PRUrl)
+		"Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration.")
+	assertNoPRAddress(t, res)
 }
 
 func TestRegisterPartialMessage_MergeFailed_ArgoSaved(t *testing.T) {
@@ -205,8 +258,23 @@ func TestRegisterPartialMessage_MergeFailed_ArgoSaved(t *testing.T) {
 	}
 	assertRegisterMessage(t, res, "pr_merge",
 		"Sharko opened the pull request that registers this cluster, but could not merge it. Merge it by hand to finish the registration. "+
-			argoSavedSentence+
-			" Pull request: "+res.Git.PRUrl)
+			argoSavedPROpenSentence)
+	assertNoPRAddress(t, res)
+}
+
+func TestRegisterPartialMessage_SecretsFailed_PROpen_ArgoSaved(t *testing.T) {
+	asm := newMockArgoSecretManager()
+	o := New(nil, nil, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
+	o.SetArgoSecretManager(asm, "")
+	o.SetSecretManagement(defaultSecretDefs(), &mockSecretFetcher{err: errors.New("vault connection refused")}, fakeClientFactory())
+
+	res := registerInline(t, o)
+	if res.Git == nil || res.Git.Merged {
+		t.Fatalf("the pull request is not open; the test does not test the case: %+v", res.Git)
+	}
+	assertRegisterMessage(t, res, "create_secrets",
+		"Sharko opened the pull request that registers this cluster, but 1 addon secret could not be created on it. The registration finishes when the pull request is merged. "+
+			argoSavedPROpenSentence)
 }
 
 func TestRegisterPartialMessage_SecretsFailed_PROpen(t *testing.T) {

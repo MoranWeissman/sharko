@@ -280,7 +280,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: PR opened but auto-merge failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: could not read the cluster registry — refusing to rewrite it from scratch", carriers: "ident:clusterAddonsErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster dry run: could not read the cluster registry", carriers: "ident:clusterAddonsErr", verdict: "sink"},
-	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)", carriers: "ident:ensureErr", verdict: "sink"},
+	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: direct ArgoCD cluster Secret write failed — stopping before addon secrets and the PR", carriers: "ident:ensureErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: git commit failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "could not check cluster secret for foreign ArgoCD ownership — proceeding with registration", carriers: "ident:warnErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "failed to add cluster entry to cluster-addons.yaml — continuing with values file only", carriers: "ident:addEntryErr", verdict: "sink"},
