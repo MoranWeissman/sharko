@@ -41,12 +41,12 @@ Pick the version, then run:
 
 ```bash
 helm upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
-  --version 4.0.7 \
+  --version 4.0.8 \
   -n sharko \
   -f sharko-values.yaml
 ```
 
-Change `4.0.7` to the version you want. Always pass `-f` with your values
+Change `4.0.8` to the version you want. Always pass `-f` with your values
 file. Without it, Helm goes back to the chart's defaults for anything you
 had set.
 

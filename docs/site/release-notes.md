@@ -14,6 +14,44 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v4.0.8 — Clearer first-run steps, a kind walkthrough, and true text in the cluster screens
+
+**Status:** a patch in the v4 code line. Which versions have been
+released, which one is the latest, and what each one published are all listed on
+[the releases page](https://github.com/MoranWeissman/sharko/releases) — read it
+there rather than here, because a sentence on this page can only describe the day
+somebody wrote it.
+
+**Sharko v4 is a technical preview. Do not use Sharko in production.**
+See the [v3.0.0 entry](#v300-first-public-release) below.
+
+### What changed
+
+- **The first-run guide now shows how to make the ArgoCD token, from the
+  start.** It explains how to create the `sharko` account in ArgoCD and how to
+  log in with the `argocd` tool's own port forward. A plain `kubectl
+  port-forward` can drop on a kind cluster and make the login fail, so the guide
+  no longer uses one. After that it shows how to make the token. The quick
+  start, the connections page and the page about an expired ArgoCD token point
+  to the same steps.
+- **New page: "Try it on your laptop with kind".** It builds two small clusters
+  in Docker, one where ArgoCD and Sharko run and one that Sharko registers. It
+  goes from install to a registered cluster, and it ends with how to clean up.
+  The install and quick start pages link to it.
+- **The text in the Register New Cluster window is now true.** It used to say
+  the connection details are optional and to pick "one of the three options",
+  which did not match the screen. It now says the details under Advanced
+  settings are optional, and to choose one of the options in the list.
+- **The empty Clusters page now says what to do.** With no clusters, it says
+  "No clusters are registered yet. Click Add Cluster to register your first
+  one." If you set a filter that hides every cluster, it still says that no
+  managed clusters match the filters.
+
+### Upgrade note
+
+Nothing to change when you upgrade. There are no config changes. Upgrade the
+same way as for any patch.
+
 ## v4.0.7 — Safer kubeconfigs, a more reliable ArgoCD connection, and fixes found while recording a real install
 
 **Status:** a patch in the v4 code line. Which versions have been
