@@ -12,7 +12,7 @@ Registering a cluster is an API call that tells ArgoCD about a new cluster and i
 
 ## Prerequisites
 
-- Kubernetes with ArgoCD installed (tested against 1.31 in CI — see [Installation prerequisites](installation.md#prerequisites) for the full range). If you need to install ArgoCD, see [Install ArgoCD for Sharko](../operator/install-argocd.md).
+- Kubernetes with ArgoCD installed (tested against 1.31 in CI — see [Installation prerequisites](installation.md#prerequisites) for the full range). If you need to install ArgoCD, see [Install ArgoCD for Sharko](../operator/install-argocd.md). Want to try everything on your own computer first? See [Try it on your laptop with kind](try-on-your-laptop.md).
 - Helm 3.x
 
 ## 1. Install Sharko
@@ -53,7 +53,7 @@ The wizard appears automatically on first access.
 
 **Step 2 — Git connection:** Enter your addons repo URL and a personal access token with read/write access.
 
-**Step 3 — ArgoCD connection:** Sharko auto-discovers the ArgoCD service in-cluster. Confirm the server URL and enter an ArgoCD account token. Optionally configure a secrets provider (AWS Secrets Manager or Kubernetes Secrets) for cluster credentials.
+**Step 3 — ArgoCD connection:** Sharko auto-discovers the ArgoCD service in-cluster. Confirm the server URL and enter an ArgoCD account token ([how to make one](first-run.md#make-the-argocd-token-first)). Optionally configure a secrets provider (AWS Secrets Manager or Kubernetes Secrets) for cluster credentials.
 
 **Step 4 — Initialize repository:** Sharko opens a pull request with the starting layout — the empty `cluster-addons/` and `values/` folders, the engine pin `sharko-engine.yaml` (the one file that says which version of Sharko's engine chart runs), and a `README.md` explaining the layout. That's it: no `catalog.yaml` and no `managed-clusters.yaml` yet. Sharko writes each of those the first time it has something to put in them — `catalog.yaml` when you add your first addon, `managed-clusters.yaml` when you register your first cluster. Choose **auto-merge** to merge the PR immediately, or review it yourself in GitHub/Azure DevOps first.
 

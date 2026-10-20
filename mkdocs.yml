@@ -48,6 +48,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Installation: getting-started/installation.md
     - First Run: getting-started/first-run.md
+    - Try It on Your Laptop with kind: getting-started/try-on-your-laptop.md
     - Three Doors to the Same Pipeline: getting-started/three-doors.md
   - User Guide:
     - Why Sharko?: user-guide/why-sharko.md

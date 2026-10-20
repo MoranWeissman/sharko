@@ -8,7 +8,7 @@
 
 ## Prerequisites
 
-- Kubernetes with **ArgoCD** installed and running (tested against **1.31** in CI — see [Operator prerequisites](../operator/installation.md#prerequisites) for the full Kubernetes and ArgoCD compatibility range). If you need to install ArgoCD, see [Install ArgoCD for Sharko](../operator/install-argocd.md).
+- Kubernetes with **ArgoCD** installed and running (tested against **1.31** in CI — see [Operator prerequisites](../operator/installation.md#prerequisites) for the full Kubernetes and ArgoCD compatibility range). If you need to install ArgoCD, see [Install ArgoCD for Sharko](../operator/install-argocd.md). To try Sharko on your own computer, see [Try it on your laptop with kind](try-on-your-laptop.md).
 - **Helm 3.x** (`helm version` to verify)
 
 That's it. Connection credentials (Git token, ArgoCD token) are entered through the first-run wizard after install — not at Helm install time.
