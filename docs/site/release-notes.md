@@ -14,6 +14,85 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v4.0.7 — Safer kubeconfigs, a more reliable ArgoCD connection, and fixes found while recording a real install
+
+**Status:** a patch in the v4 code line. Which versions have been
+released, which one is the latest, and what each one published are all listed on
+[the releases page](https://github.com/MoranWeissman/sharko/releases) — read it
+there rather than here, because a sentence on this page can only describe the day
+somebody wrote it.
+
+**Sharko v4 is a technical preview. Do not use Sharko in production.**
+See the [v3.0.0 entry](#v300-first-public-release) below.
+
+### What changed
+
+- **Sharko now refuses kubeconfig fields that make it read a file or run a
+  program inside its own pod.** Before, a kubeconfig with `tokenFile` that
+  pointed at Sharko's own ServiceAccount token made Sharko send that token to
+  the server named in the kubeconfig, and save it in ArgoCD. Sharko now refuses
+  `tokenFile`, a client certificate, a client key or a CA given as a file path,
+  `exec`, and `auth-provider`. This applies to a pasted kubeconfig and to
+  kubeconfigs stored in Kubernetes Secrets or AWS Secrets Manager. A bearer
+  token or a client certificate written inline in the kubeconfig still works.
+  A refused kubeconfig answers with a plain sentence and a 400 error. A refused
+  stored kubeconfig no longer turns quietly into a register with no
+  credentials. The Add Cluster dialog and the cluster guide now say which
+  kubeconfig forms work, and what to do if yours uses `tokenFile`, `exec` or
+  `auth-provider` (create a token with `kubectl create token`).
+- **Sharko finds the https address of a normal ArgoCD install.** An ArgoCD with
+  TLS on, a certificate it signed itself, and http that redirects to https used
+  to make Sharko fall back to http. Sharko now finds the https address. It never
+  follows a redirect that switches between http and https. It checks a plain
+  http address without a token first, so the ArgoCD token is never sent over
+  plain http. TLS checks stay on unless you tick "Skip TLS certificate
+  verification".
+- **Clear sentences for ArgoCD address and certificate problems.** An ArgoCD
+  certificate Sharko does not trust now gets one plain sentence that says what
+  to do. So do "this http address needs https" and "this https address sends
+  you to http". The setup wizard no longer changes an https address to http.
+  When the Git address cannot be read, the ArgoCD check now says "not tested"
+  instead of "ok".
+- **Setting up the ArgoCD repository again with a changed setting now works.**
+  ArgoCD ignored the "update if it exists" flag because Sharko sent it in the
+  wrong place. An error from this call also no longer shows the repository
+  address with its password.
+- **Changing one setup field clears only its own test result.** Changing a Git
+  field clears only the Git result. Changing an ArgoCD field clears only the
+  ArgoCD result. Changing the secrets provider keeps both.
+- **The Register New Cluster dialog keeps its buttons on screen.** After a
+  preview, a long line no longer makes the dialog wider than the window. Cancel,
+  Preview and Register stay visible, and only the middle part scrolls. Eight
+  other dialogs got the same fix, so they keep their buttons at 125% zoom
+  (the Remove Cluster preview was cut off before). The Prefix field is hidden
+  for Kubernetes Secrets, because it does nothing there.
+- **A preview of a brand-new file shows it as all added lines.** It shows
+  `@@ -0,0 +1,N @@` with the action "create". A dry run of an addon change now
+  gives the same answer as the real run, and only a real "file not found"
+  counts as a missing file.
+- **User names have one rule everywhere.** Letters, numbers, dots, dashes and
+  underscores, with no spaces. The API, the UI and the CLI show the same
+  sentence. Users that already exist keep working.
+- **Creating or deleting a user can no longer leave a half-finished user.** The
+  password is saved first and the user second. Sharko reads fresh data and
+  retries, so a lost reply no longer leaves a user with no password. Deleting a
+  user now also removes the saved GitHub token. When saving fails, create,
+  update, reset password and change password answer with a 500 error. Bad input
+  still gets 400 or 401.
+- **Docs:** the first-run guide now shows the real Kubernetes Secrets setup, the
+  real "Set Up & Auto-Merge" and "Set Up (Manual PR Review)" buttons, and what
+  the ArgoCD account needs. The security page lists the smallest ArgoCD policy
+  for the sharko account. The ArgoCD install page has a test-setup option
+  (`server.insecure`) and says when Skip TLS is fine (test setups only). The
+  secrets provider and ArgoCD troubleshooting pages were brought up to date.
+
+### Upgrade note
+
+Nothing to change when you upgrade. If a cluster you registered uses a stored
+kubeconfig with `tokenFile`, a file path for a certificate, `exec` or
+`auth-provider`, Sharko now refuses it. Replace it with a kubeconfig that holds
+a bearer token or an inline client certificate.
+
 ## v4.0.6 — Previews write nothing on your clusters, safer previews, demo fixed
 
 **Status:** a patch in the v4 code line. Which versions have been

@@ -40,7 +40,7 @@ brew install cosign      # macOS
 ## Check the container image
 
 ```bash
-TAG=v4.0.6
+TAG=v4.0.7
 cosign verify ghcr.io/moranweissman/sharko:${TAG} \
   --certificate-identity-regexp '^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -58,7 +58,7 @@ list that points to both, so this one command checks both. If you run
 ## Check the Helm chart
 
 ```bash
-VERSION=4.0.6
+VERSION=4.0.7
 cosign verify ghcr.io/moranweissman/sharko/sharko:${VERSION} \
   --certificate-identity-regexp '^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/heads/main$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
@@ -105,7 +105,7 @@ Each archive on the releases page has a `.sig` file (the signature) and a
 `checksums.txt`, then:
 
 ```bash
-TAG=v4.0.6
+TAG=v4.0.7
 ARCHIVE=sharko_${TAG#v}_linux_amd64.tar.gz
 cosign verify-blob ${ARCHIVE} \
   --signature  ${ARCHIVE}.sig \
@@ -136,7 +136,7 @@ up the digest (the fixed fingerprint) of the architecture you want, then
 check it:
 
 ```bash
-TAG=v4.0.6
+TAG=v4.0.7
 IMAGE=ghcr.io/moranweissman/sharko
 ARCH=amd64          # or arm64
 
