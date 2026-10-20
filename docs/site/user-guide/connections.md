@@ -20,7 +20,7 @@ Sharko maintains one active ArgoCD connection and one active Git connection. You
     ```bash
     argocd account generate-token --account sharko
     ```
-    Create a dedicated `sharko` account with read permissions. Do not use the admin token.
+    Create a dedicated `sharko` account with read permissions. Do not use the admin token. The steps to create the account and log in first are in [Make the ArgoCD token first](../getting-started/first-run.md#make-the-argocd-token-first).
 
 ### Git
 

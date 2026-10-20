@@ -216,15 +216,17 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     });
   });
 
-  it('the optional-credentials note names "connection credentials" and "addon secrets" plainly', async () => {
+  it('the optional-details note says the Advanced settings details are optional and why you may add them later', async () => {
     mockGetSystemCapabilities.mockResolvedValue({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' });
 
     renderView();
     await openAddDialog();
 
     expect(
-      screen.getByText(/Connection credentials below are\s*optional/),
+      screen.getByText(
+        'The details under Advanced settings are optional. You can add them later if an addon needs secrets on this cluster.',
+      ),
     ).toBeInTheDocument();
-    expect(screen.getByText(/enable an addon with addon secrets/)).toBeInTheDocument();
+    expect(screen.queryByText(/Connection credentials below are\s*optional/)).not.toBeInTheDocument();
   });
 });

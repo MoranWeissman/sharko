@@ -163,6 +163,12 @@ function compareServerVersionsDesc(a?: string, b?: string): number {
   return 0;
 }
 
+// Empty Clusters page: one sentence when nothing is registered, another when a filter hides every row.
+export const EMPTY_CLUSTERS_MESSAGE =
+  'No clusters are registered yet. Click Add Cluster to register your first one.';
+export const EMPTY_CLUSTERS_FILTERED_MESSAGE =
+  'No managed clusters match the current filters.';
+
 // V2-cleanup-55.3: one plain-English line per credential-source option,
 // shown under the dropdown so a non-expert knows what each choice means
 // before the option-specific fields appear.
@@ -1132,6 +1138,17 @@ export function ClustersOverview() {
     [filteredClusters, pendingNames, orphanNames],
   );
 
+  // A filter is hiding rows only when one is actually set. With no filter
+  // and no rows, nothing is registered yet, so say that instead.
+  const clusterFilterActive =
+    statusFilter !== 'all' ||
+    filters.name !== '' ||
+    filters.versions.length > 0 ||
+    filters.connectionTypes.length > 0;
+  const emptyManagedMessage = clusterFilterActive
+    ? EMPTY_CLUSTERS_FILTERED_MESSAGE
+    : EMPTY_CLUSTERS_MESSAGE;
+
   const discoveredClusters = useMemo(
     () => filteredClusters.filter(
       (c) => (c.managed === false || c.connection_status === 'not_in_git') && !pendingNames.has(c.name) && !orphanNames.has(c.name),
@@ -1459,7 +1476,7 @@ export function ClustersOverview() {
                 Cluster location
               </p>
               <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
-                Connection credentials below are optional — add them later if you enable an addon with addon secrets.
+                The details under Advanced settings are optional. You can add them later if an addon needs secrets on this cluster.
               </p>
             </div>
 
@@ -1671,7 +1688,7 @@ export function ClustersOverview() {
                     {credsSource === ''
                       ? userManagedWithNothingToAdopt
                         ? 'Pick a credential source if you want to test connectivity now.'
-                        : 'Required — pick one of the three options before registering.'
+                        : 'Required — choose one of the options in the list before registering.'
                       : CREDS_SOURCE_HINTS[credsSource]}
                   </p>
                 </div>
@@ -1714,7 +1731,7 @@ export function ClustersOverview() {
                   Advanced settings
                 </button>
                 <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
-                  Connection credentials are optional — you can add them later if needed for addon secrets.
+                  These details are optional. You can add them later if an addon needs secrets on this cluster.
                 </p>
 
                 {showAdvancedSettings && (
@@ -2515,7 +2532,7 @@ export function ClustersOverview() {
                 {managedClusters.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500">
-                      No managed clusters match the current filters.
+                      {emptyManagedMessage}
                     </td>
                   </tr>
                 )}
@@ -2608,7 +2625,7 @@ export function ClustersOverview() {
             })}
             {managedClusters.length === 0 && (
               <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-500">
-                No managed clusters match the current filters.
+                {emptyManagedMessage}
               </div>
             )}
           </div>
