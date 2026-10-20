@@ -10,6 +10,62 @@ Have these ready:
 - **Addons repo URL** — the Git repository where Sharko will store cluster configuration and addon assignments (can be an existing repo or a new empty one)
 - **ArgoCD account token** — an ArgoCD account token with at minimum `applications:get` and `projects:get` permissions
 
+## Make the ArgoCD token first
+
+Step 3 of the wizard asks for an ArgoCD token. Make it before you open the wizard. You need the `argocd` command line tool, and ArgoCD must already be installed (see [Install ArgoCD for Sharko](../operator/install-argocd.md)). The commands below use the namespace `argocd`. If yours is different, use yours.
+
+### 1. Create the `sharko` account and give it rights
+
+Do not use the `admin` account for Sharko. Create an account just for Sharko. Save this as `sharko-account-patch.yaml`:
+
+```yaml
+data:
+  accounts.sharko: apiKey
+```
+
+Apply it:
+
+```bash
+kubectl patch configmap argocd-cm -n argocd \
+  --type merge --patch-file sharko-account-patch.yaml
+```
+
+`apiKey` means the account can have tokens, but it cannot log in with a password.
+
+A new account can do nothing yet. Give it rights with the policy in [Smallest ArgoCD policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko). That page has the patch file and the command to apply it.
+
+### 2. Log in to ArgoCD with the command line tool
+
+Do not start your own `kubectl port-forward` for this. On a kind cluster it drops with `connection reset by peer`, and the login then fails. Let the `argocd` tool open its own port forward instead. This needs the name of the kubectl context of the cluster where ArgoCD runs. `kubectl config get-contexts` lists them.
+
+Put the flags in a small function, because every `argocd` command needs the same flags. Replace `<argocd-context>` with your context name:
+
+```bash
+argo() {
+  argocd "$@" --port-forward --port-forward-namespace argocd \
+    --kube-context <argocd-context> --plaintext
+}
+```
+
+`--plaintext` is right when ArgoCD serves plain http, as in the test setup in [Install ArgoCD for Sharko](../operator/install-argocd.md). If your ArgoCD uses TLS, take `--plaintext` out.
+
+Log in as `admin`. The password is read from ArgoCD's secret inside the command, so it is never printed:
+
+```bash
+argo login --username admin --password "$(
+  kubectl get secret argocd-initial-admin-secret -n argocd \
+    --context <argocd-context> -o jsonpath='{.data.password}' | base64 -d
+)"
+```
+
+### 3. Make the token
+
+```bash
+argo account generate-token --account sharko
+```
+
+The token is printed once. Copy it and keep it private. You paste it into step 3 of the wizard. To see the tokens the account has, run `argo account get --account sharko`.
+
 ## Step 1: Welcome
 
 An overview of what the wizard will set up. Read through it and click **Get Started**.
@@ -39,10 +95,9 @@ Sharko reads cluster health, sync status, and resource trees from ArgoCD.
     Sharko probes all services in the ArgoCD namespace and suggests the correct URL. In most cases you can accept the suggested value without changes.
 
 !!! tip "Generating a token"
-    ```bash
-    argocd account generate-token --account sharko
-    ```
-    Create a dedicated `sharko` account. The account reads cluster and application status, and also writes a few things during repository setup and cluster registration (creates the repository connection, updates cluster labels). See [ArgoCD RBAC policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko) for the exact policy. Do not use the admin token.
+    See [Make the ArgoCD token first](#make-the-argocd-token-first) above for the exact steps: create the `sharko` account, log in, and run `argocd account generate-token --account sharko`.
+
+    Use a dedicated `sharko` account. The account reads cluster and application status, and also writes a few things during repository setup and cluster registration (creates the repository connection, updates cluster labels). See [ArgoCD RBAC policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko) for the exact policy. Do not use the admin token.
 
 **Secrets Provider (optional, same step):** If you use AWS Secrets Manager or Kubernetes Secrets to store cluster kubeconfigs, configure the provider here:
 

@@ -124,16 +124,21 @@ Sharko does not change that ConfigMap for you. See
 [Smallest ArgoCD policy for Sharko](security.md#smallest-argocd-policy-for-sharko)
 for the exact policy and how to apply it.
 
-Make the token:
+Log in to ArgoCD with the command line tool first. The exact way, with
+the `argocd` tool's own port forward (a plain `kubectl port-forward` can
+drop on a kind cluster), is in
+[Make the ArgoCD token first](../getting-started/first-run.md#make-the-argocd-token-first).
+It defines a small `argo` function that adds the flags every `argocd`
+command needs. With it, make the token:
 
 ```sh
-argocd account generate-token --account sharko
+argo account generate-token --account sharko
 ```
 
 To see the tokens the account has and when they end:
 
 ```sh
-argocd account get --account sharko
+argo account get --account sharko
 ```
 
 If your rules say tokens must end, give it an end date with
