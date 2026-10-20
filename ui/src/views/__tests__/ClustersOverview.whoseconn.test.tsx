@@ -214,8 +214,10 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
       // No silent eks-token default anymore.
       expect(credsSourceSelect().value).toBe('');
       expect(
-        screen.getByText('Required — pick one of the three options before registering.'),
+        screen.getByText('Required — choose one of the options in the list before registering.'),
       ).toBeInTheDocument();
+      // The old sentence counted options that were not all on screen.
+      expect(screen.queryByText(/three options/)).not.toBeInTheDocument();
       expect(screen.queryByText(/short-lived AWS tokens/)).not.toBeInTheDocument();
 
       fireEvent.change(credsSourceSelect(), { target: { value: 'eks-token' } });
