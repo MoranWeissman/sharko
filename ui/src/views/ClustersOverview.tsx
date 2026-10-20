@@ -163,15 +163,16 @@ function compareServerVersionsDesc(a?: string, b?: string): number {
   return 0;
 }
 
-// V2-cleanup-55.3: one plain-English line per credential-source option,
-// shown under the dropdown so a non-expert knows what each choice means
-// before the option-specific fields appear.
-// V3-CC2: clarified to state what-you-provide + expiry + AWS/IAM requirement.
+// Empty Clusters page: one sentence when nothing is registered, another when a filter hides every row.
 export const EMPTY_CLUSTERS_MESSAGE =
   'No clusters are registered yet. Click Add Cluster to register your first one.';
 export const EMPTY_CLUSTERS_FILTERED_MESSAGE =
   'No managed clusters match the current filters.';
 
+// V2-cleanup-55.3: one plain-English line per credential-source option,
+// shown under the dropdown so a non-expert knows what each choice means
+// before the option-specific fields appear.
+// V3-CC2: clarified to state what-you-provide + expiry + AWS/IAM requirement.
 const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
   'inline-kubeconfig':
     'Paste the file once — Sharko stores it. Works for any cluster. The token inside can expire; re-paste when it does.',
