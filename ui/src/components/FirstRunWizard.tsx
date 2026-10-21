@@ -36,6 +36,7 @@ import { clearSession } from '@/lib/authStorage'
 import { MigrationBanner } from '@/components/MigrationBanner'
 import { extractPR, PRLink } from '@/components/PRFeedback'
 import { canonicalizeProviderType } from '@/views/settings/SecretsProviderSection'
+import { ARGOCD_TOKEN_HELP, ARGOCD_TOKEN_HELP_URL } from '@/components/argocdTokenHelp'
 
 // Story G2 (episode 2, take 2): "Set Up & Auto-Merge" merges only the setup
 // pull request (POST /init auto_merge). It never turns on the GitOps
@@ -392,7 +393,18 @@ function StepArgoCD({
           <p className="mt-1 text-sm text-[#3a6a8a]">
             {hasSavedToken
               ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
-              : 'Falls back to ARGOCD_TOKEN env var if not provided.'}
+              : 'Leave blank if you have no token yet.'}
+          </p>
+          <p className="mt-1 text-sm text-[#3a6a8a]">
+            {ARGOCD_TOKEN_HELP}{' '}
+            <a
+              href={ARGOCD_TOKEN_HELP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-teal-600"
+            >
+              Make the ArgoCD token first
+            </a>
           </p>
         </div>
 

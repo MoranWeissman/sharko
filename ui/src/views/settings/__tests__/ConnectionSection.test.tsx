@@ -95,3 +95,21 @@ describe('ConnectionSection — ArgoCD tried to send Sharko to plain http (LO-7 
     ).toBeNull()
   })
 })
+
+// The ArgoCD token field says what the token is and how to make one. Exact
+// text pinned; the old env-var wording is banned.
+describe('ConnectionSection — ArgoCD token help line', () => {
+  it('says what the token is, how to make it, and links to the docs', async () => {
+    render(<ConnectionSection />)
+    const help = await screen.findByText(/A token for the sharko account in ArgoCD\./)
+    expect(help.textContent).toContain(
+      'A token for the sharko account in ArgoCD. To make one, open the ArgoCD web page, go to Settings, then Accounts, then sharko, and click Generate New.',
+    )
+    const link = screen.getByRole('link', { name: 'Make the ArgoCD token first' })
+    expect(link).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/getting-started/first-run/#make-the-argocd-token-first',
+    )
+    expect(screen.queryByText(/ARGOCD_TOKEN/)).toBeNull()
+  })
+})

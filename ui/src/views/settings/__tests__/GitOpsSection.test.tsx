@@ -291,13 +291,16 @@ describe('GitOpsSection — Default Addons hidden on v4 repos (walk finding)', (
 describe('GitOpsSection — auto-merge help text (story G2)', () => {
   it('says plainly what the auto-merge switch does', async () => {
     expect(GITOPS_AUTO_MERGE_HELP).toBe(
-      'Sharko merges each pull request it opens right away, without waiting for you.',
+      'Sharko merges each pull request it opens right away, without waiting for you. The setup pull request follows the button you pick.',
     )
     render(<GitOpsSection />)
     expect(
-      await screen.findByText('Sharko merges each pull request it opens right away, without waiting for you.'),
+      await screen.findByText('Sharko merges each pull request it opens right away, without waiting for you. The setup pull request follows the button you pick.'),
     ).toBeInTheDocument()
     expect(screen.getByText('Auto-merge PRs')).toBeInTheDocument()
+    expect(GITOPS_AUTO_MERGE_HELP).not.toBe(
+      'Sharko merges each pull request it opens right away, without waiting for you.',
+    )
     expect(screen.queryByText(/when checks pass/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Automatically merge addon change PRs/i)).not.toBeInTheDocument()
   })

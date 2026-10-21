@@ -161,6 +161,8 @@ func TestDocsEp2Take2NoSecretOnTheScreen(t *testing.T) {
 		"so it is never printed on the screen",
 		"**Option 1: the ArgoCD web page.**",
 		"**Option 2: the command line.**",
+		"kubectl port-forward svc/argocd-server 8081:80 -n argocd --context <argocd-context>",
+		"**Whichever option you used, when the wizard has accepted the token,** delete the private files:",
 	} {
 		if !strings.Contains(firstRun, want) {
 			t.Errorf("first-run: missing the exact text %q", want)
@@ -181,6 +183,10 @@ func TestDocsEp2Take2NoSecretOnTheScreen(t *testing.T) {
 	// The web page way comes first, the command line way second.
 	if i, j := strings.Index(firstRun, "Option 1"), strings.Index(firstRun, "Option 2"); i < 0 || j < 0 || i > j {
 		t.Errorf("first-run: the web page way must come before the command line way")
+	}
+	// The delete step is after both options, so readers of option 1 see it.
+	if i, j := strings.Index(firstRun, "**Option 2"), strings.Index(firstRun, "rm -f ~/argocd-admin-password.txt"); i < 0 || j < i {
+		t.Errorf("first-run: the step that deletes the private files must come after both options")
 	}
 }
 

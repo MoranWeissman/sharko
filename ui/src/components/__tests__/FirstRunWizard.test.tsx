@@ -2015,6 +2015,19 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     ).toBeInTheDocument()
   })
 
+  it('the ArgoCD token field says what the token is and how to make one', async () => {
+    await walkToArgocdStepWithBothTested()
+    const help = screen.getByText(/A token for the sharko account in ArgoCD\./)
+    expect(help.textContent).toContain(
+      'A token for the sharko account in ArgoCD. To make one, open the ArgoCD web page, go to Settings, then Accounts, then sharko, and click Generate New.',
+    )
+    expect(screen.getByRole('link', { name: 'Make the ArgoCD token first' })).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/getting-started/first-run/#make-the-argocd-token-first',
+    )
+    expect(screen.queryByText(/ARGOCD_TOKEN/)).toBeNull()
+  })
+
   it('changing the secrets provider keeps the ArgoCD "Connected" result', async () => {
     await walkToArgocdStepWithBothTested()
     fireEvent.click(screen.getByRole('button', { name: /Secrets Provider \(optional\)/i }))

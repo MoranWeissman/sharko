@@ -55,7 +55,13 @@ There are two ways. The first one is the simplest.
 
 **Option 1: the ArgoCD web page.**
 
-1. Open the ArgoCD web page and log in as `admin`. You must type the password, so this one step must show it on the screen. Do it where nobody is looking: run `cat ~/argocd-admin-password.txt`, copy the password, then clear the terminal with `clear`.
+1. Open the ArgoCD web page. To reach it, run this in a second terminal and go to [http://localhost:8081](http://localhost:8081):
+
+   ```bash
+   kubectl port-forward svc/argocd-server 8081:80 -n argocd --context <argocd-context>
+   ```
+
+   Log in as `admin`. You must type the password, so this one step must show it on the screen. Do it where nobody is looking: run `cat ~/argocd-admin-password.txt`, copy the password, then clear the terminal with `clear`.
 2. In the menu on the left, click **Settings**, then **Accounts**, then the account **sharko**.
 3. Under **Tokens**, click **Generate New**.
 4. Copy the token right away. ArgoCD shows it only once. You paste it into step 3 of the wizard.
@@ -89,13 +95,13 @@ cat ~/sharko-argocd-token.txt
 
 Copy the token, then clear the terminal with `clear`.
 
-**When the wizard has accepted the token,** delete the private files:
+To see the tokens the account has, run `argo account get --account sharko` (option 2), or look at the **Tokens** list of the account in the web page.
+
+**Whichever option you used, when the wizard has accepted the token,** delete the private files:
 
 ```bash
 rm -f ~/argocd-admin-password.txt ~/sharko-argocd-token.txt
 ```
-
-To see the tokens the account has, run `argo account get --account sharko` (option 2), or look at the **Tokens** list of the account in the web page.
 
 ## Step 1: Welcome
 
