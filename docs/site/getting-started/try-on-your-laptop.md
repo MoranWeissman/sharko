@@ -34,13 +34,15 @@ kubectl get nodes --context kind-spoke-1
 This is the test setup from [Install ArgoCD for Sharko](../operator/install-argocd.md), with the context added. It turns off ArgoCD's TLS server, which is fine for a laptop test.
 
 ```bash
-helm repo add argo https://argoproj.github.io/argo-helm
+helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm install argocd argo/argo-cd \
   --version 10.9.6 \
   --namespace argocd --create-namespace \
   --set configs.params."server\.insecure"=true \
   --kube-context kind-hub
 ```
+
+`--force-update` makes `helm repo add` work even if an old helm setup in your home folder already has a repository called `argo`. Without it, you could see an "already exists" message. That message is fine and you can go on.
 
 Wait for it to be ready:
 
@@ -67,14 +69,30 @@ kubectl get pods -n sharko --context kind-hub
 
 Follow [Make the ArgoCD token first](first-run.md#make-the-argocd-token-first). Use `kind-hub` as the ArgoCD context.
 
-## 5. Open Sharko and run the wizard
-
-Read the admin password. It is printed on the screen, so do this where nobody is looking:
+The simplest way is the ArgoCD web page: log in as `admin`, then go to **Settings**, **Accounts**, **sharko**, and under **Tokens** click **Generate New**. Copy the token right away. ArgoCD shows it only once. To open the web page, run this in a second terminal and go to [http://localhost:8081](http://localhost:8081):
 
 ```bash
-kubectl get secret sharko-initial-admin-secret -n sharko --context kind-hub \
-  -o jsonpath='{.data.password}' | base64 -d
+kubectl port-forward svc/argocd-server 8081:80 -n argocd --context kind-hub
 ```
+
+The `admin` password is saved to a private file by the steps in the first-run page (`umask 077`, in `~/argocd-admin-password.txt`). The other way, the command line, saves the token to the private file `~/sharko-argocd-token.txt`. Both ways are described there, including when to delete the files.
+
+## 5. Open Sharko and run the wizard
+
+Save the admin password to a private file. The `umask 077` part makes the file readable by you only, and nothing is printed:
+
+```bash
+(umask 077; kubectl get secret sharko-initial-admin-secret -n sharko --context kind-hub \
+  -o jsonpath='{.data.password}' | base64 -d > ~/sharko-admin-password.txt)
+```
+
+The password is in `~/sharko-admin-password.txt`. You must type it on the login page, so the next command shows it on the screen. Do it where nobody is looking:
+
+```bash
+cat ~/sharko-admin-password.txt
+```
+
+Clear the terminal with `clear` after you have copied it. When you are logged in, delete the file with `rm ~/sharko-admin-password.txt`.
 
 Open the page:
 

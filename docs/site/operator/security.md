@@ -300,8 +300,11 @@ Apply it:
 
 ```bash
 kubectl patch configmap argocd-rbac-cm -n argocd \
+  --context <argocd-context> \
   --type merge --patch-file sharko-rbac-patch.yaml
 ```
+
+Replace `<argocd-context>` with the name of the kubectl context of the cluster where ArgoCD runs (`kubectl config get-contexts` lists them). Do not leave the flag out, or the change may go to the wrong cluster.
 
 If you already have other policy lines in `policy.csv`, add the new lines to the existing content instead of replacing it.
 

@@ -14,6 +14,8 @@ Have these ready:
 
 Step 3 of the wizard asks for an ArgoCD token. Make it before you open the wizard. You need the `argocd` command line tool, and ArgoCD must already be installed (see [Install ArgoCD for Sharko](../operator/install-argocd.md)). The commands below use the namespace `argocd`. If yours is different, use yours.
 
+Your computer may have more than one cluster in its kubectl settings, and the default one may not be the cluster where ArgoCD runs. So every `kubectl` line below names the cluster with `--context <argocd-context>`. Replace `<argocd-context>` with the name of the kubectl context of the cluster where ArgoCD runs. `kubectl config get-contexts` lists them. Do not leave the flag out.
+
 ### 1. Create the `sharko` account and give it rights
 
 Do not use the `admin` account for Sharko. Create an account just for Sharko. Save this as `sharko-account-patch.yaml`:
@@ -27,18 +29,40 @@ Apply it:
 
 ```bash
 kubectl patch configmap argocd-cm -n argocd \
+  --context <argocd-context> \
   --type merge --patch-file sharko-account-patch.yaml
 ```
 
 `apiKey` means the account can have tokens, but it cannot log in with a password.
 
-A new account can do nothing yet. Give it rights with the policy in [Smallest ArgoCD policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko). That page has the patch file and the command to apply it.
+A new account can do nothing yet. Give it rights with the policy in [Smallest ArgoCD policy for Sharko](../operator/security.md#smallest-argocd-policy-for-sharko). That page has the patch file and the command to apply it. Use the same `--context <argocd-context>` flag on that command.
 
-### 2. Log in to ArgoCD with the command line tool
+### 2. Save the ArgoCD admin password to a private file
 
-Do not start your own `kubectl port-forward` for this. On a kind cluster it drops with `connection reset by peer`, and the login then fails. Let the `argocd` tool open its own port forward instead. This needs the name of the kubectl context of the cluster where ArgoCD runs. `kubectl config get-contexts` lists them.
+You need the `admin` password of ArgoCD for the next step. Save it to a private file, so it is not printed on the screen. The `umask 077` part makes the file readable by you only:
 
-Put the flags in a small function, because every `argocd` command needs the same flags. Replace `<argocd-context>` with your context name:
+```bash
+(umask 077; kubectl get secret argocd-initial-admin-secret -n argocd \
+  --context <argocd-context> -o jsonpath='{.data.password}' | base64 -d \
+  > ~/argocd-admin-password.txt)
+```
+
+The password is now in `~/argocd-admin-password.txt`. Delete the file when you have the token (the last part of step 3).
+
+### 3. Make the token
+
+There are two ways. The first one is the simplest.
+
+**Option 1: the ArgoCD web page.**
+
+1. Open the ArgoCD web page and log in as `admin`. You must type the password, so this one step must show it on the screen. Do it where nobody is looking: run `cat ~/argocd-admin-password.txt`, copy the password, then clear the terminal with `clear`.
+2. In the menu on the left, click **Settings**, then **Accounts**, then the account **sharko**.
+3. Under **Tokens**, click **Generate New**.
+4. Copy the token right away. ArgoCD shows it only once. You paste it into step 3 of the wizard.
+
+**Option 2: the command line.** Do not start your own `kubectl port-forward` for this. On a kind cluster it drops with `connection reset by peer`, and the login then fails. Let the `argocd` tool open its own port forward instead. This needs the same `<argocd-context>` name as above.
+
+Put the flags in a small function, because every `argocd` command needs the same flags:
 
 ```bash
 argo() {
@@ -49,22 +73,29 @@ argo() {
 
 `--plaintext` is right when ArgoCD serves plain http, as in the test setup in [Install ArgoCD for Sharko](../operator/install-argocd.md). If your ArgoCD uses TLS, take `--plaintext` out.
 
-Log in as `admin`. The password is read from ArgoCD's secret inside the command, so it is never printed:
+Log in as `admin`. The password is read from the file, so it is never printed on the screen. Then save the token to a private file too:
 
 ```bash
-argo login --username admin --password "$(
-  kubectl get secret argocd-initial-admin-secret -n argocd \
-    --context <argocd-context> -o jsonpath='{.data.password}' | base64 -d
-)"
+argo login --username admin --password "$(cat ~/argocd-admin-password.txt)"
+
+(umask 077; argo account generate-token --account sharko > ~/sharko-argocd-token.txt)
 ```
 
-### 3. Make the token
+The token is made once, and it is now in `~/sharko-argocd-token.txt`. You paste the token into step 3 of the wizard, so this one step must show it on the screen. Do it where nobody is looking:
 
 ```bash
-argo account generate-token --account sharko
+cat ~/sharko-argocd-token.txt
 ```
 
-The token is printed once. Copy it and keep it private. You paste it into step 3 of the wizard. To see the tokens the account has, run `argo account get --account sharko`.
+Copy the token, then clear the terminal with `clear`.
+
+**When the wizard has accepted the token,** delete the private files:
+
+```bash
+rm -f ~/argocd-admin-password.txt ~/sharko-argocd-token.txt
+```
+
+To see the tokens the account has, run `argo account get --account sharko` (option 2), or look at the **Tokens** list of the account in the web page.
 
 ## Step 1: Welcome
 
