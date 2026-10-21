@@ -12,10 +12,10 @@ You can check which version Sharko found after connecting to it. The **System** 
 
 This is the recommended way. The Helm chart lets you change settings by editing your values file.
 
-Add the ArgoCD Helm repository and install the chart. Chart version `10.9.6` installs ArgoCD v3.5.3:
+Add the ArgoCD Helm repository and install the chart. Chart version `10.9.6` installs ArgoCD v3.5.3. `--force-update` makes the add work even if an old helm setup already has a repository called `argo`. The message "already exists" is fine, and you can go on:
 
 ```bash
-helm repo add argo https://argoproj.github.io/argo-helm
+helm repo add argo https://argoproj.github.io/argo-helm --force-update
 helm install argocd argo/argo-cd \
   --version 10.9.6 \
   --namespace argocd --create-namespace
