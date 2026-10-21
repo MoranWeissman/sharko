@@ -152,6 +152,8 @@ You have two choices for how the PR is merged:
 - **Set Up & Auto-Merge** — Sharko opens the PR and merges it immediately. The setup completes without you needing to visit GitHub or Azure DevOps.
 - **Set Up (Manual PR Review)** — Sharko opens the PR but does not merge it. You review and merge it yourself in GitHub or Azure DevOps.
 
+This choice is only for this one setup pull request. It does not change how later pull requests are merged. Those follow the **Auto-merge PRs** switch in **Settings**, **GitOps**, which is off until you turn it on. So with the switch off, the pull request Sharko opens when you register a cluster or add an addon waits for you to merge it.
+
 Click the button that matches how you want to work. When the step completes, you move to the Catalog step.
 
 ## Step 5: Catalog

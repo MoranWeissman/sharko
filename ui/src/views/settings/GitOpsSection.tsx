@@ -15,6 +15,13 @@ import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { AddonCatalogItem, DryRunResult } from '@/services/models'
 import { buildConnectionUpdatePayload } from './connectionUpdate'
 
+// Story G2: what the switch really does. Sharko merges right after it opens
+// the pull request (it does not wait for checks), and the switch covers
+// every pull request Sharko opens, not only addon changes. Pinned by exact
+// text in GitOpsSection.test.tsx.
+export const GITOPS_AUTO_MERGE_HELP =
+  'Sharko merges each pull request it opens right away, without waiting for you.'
+
 interface GitOpsFormData {
   gitops_base_branch: string
   gitops_pr_auto_merge: boolean
@@ -219,7 +226,7 @@ export function GitOpsSection() {
           </div>
           <div>
             <span className="text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Auto-merge PRs</span>
-            <p className="text-xs text-[#3a6a8a]">Automatically merge addon change PRs when checks pass</p>
+            <p className="text-xs text-[#3a6a8a]">{GITOPS_AUTO_MERGE_HELP}</p>
           </div>
         </label>
       </div>

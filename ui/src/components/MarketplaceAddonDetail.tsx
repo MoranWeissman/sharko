@@ -40,6 +40,7 @@ import {
   SubmitResultBanner,
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
+import { AutoMergeNote } from '@/components/AutoMergeNote'
 
 /**
  * In-page Marketplace detail view. Embedded form (NOT a modal) — clicking
@@ -980,15 +981,9 @@ export function MarketplaceAddonDetail({
               />
             )}
 
-            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
+            {/* Auto-merge is a global setting — no per-flow checkbox. The note says what it is set to (story G2). */}
             {!submitResult && (
-              <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
-                Auto-merge follows your{' '}
-                <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
-                  global GitOps setting
-                </a>
-                .
-              </p>
+              <AutoMergeNote className="text-xs" />
             )}
 
             {/* Dry-run preview panel (shared AddAddonFlow render). Shows the

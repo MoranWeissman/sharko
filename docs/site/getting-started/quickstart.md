@@ -78,7 +78,7 @@ The fastest first cluster is one **adopted** from that discovered list — a clu
 sharko adopt my-cluster
 ```
 
-Either path opens a pull request that creates `managed-clusters.yaml` (if this is your first cluster) with an entry for `my-cluster`, plus its values directory. Merge the PR — or tick auto-merge — and the cluster moves from "discovered" to **Managed Clusters** once Sharko confirms the connection.
+Either path opens a pull request that creates `managed-clusters.yaml` (if this is your first cluster) with an entry for `my-cluster`, plus its values directory. Merge the PR (or turn on **Auto-merge PRs** in **Settings**, **GitOps** before you register, and Sharko merges it for you) and the cluster moves from "discovered" to **Managed Clusters** once Sharko confirms the connection.
 
 Registering a brand-new cluster ArgoCD doesn't already know works the same way, with `sharko add-cluster my-cluster --region us-east-1` in place of `adopt`; see [Managing Clusters](../user-guide/clusters.md) for the three ways to hand Sharko its credentials.
 

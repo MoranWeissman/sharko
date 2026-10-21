@@ -75,6 +75,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { AutoMergeNote } from '@/components/AutoMergeNote';
 
 type StatusFilter =
   | 'all'
@@ -1851,14 +1852,8 @@ export function ClustersOverview() {
               </div>
             )}
 
-            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
-            <p className="text-sm text-[#2a5a7a] dark:text-gray-500">
-              Auto-merge follows your{' '}
-              <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
-                global GitOps setting
-              </a>
-              .
-            </p>
+            {/* Auto-merge is a global setting — no per-flow checkbox. The note says what it is set to (story G2). */}
+            <AutoMergeNote className="text-sm" />
 
             {dryRunResult && <DryRunPreview result={dryRunResult} />}
 
@@ -1901,7 +1896,7 @@ export function ClustersOverview() {
                 !addClusterName.trim() ||
                 directRequiredMissing
               }
-              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR. Whether that PR auto-merges follows your global GitOps setting (Settings → GitOps)."
+              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR. Whether it merges by itself is set in Settings → GitOps."
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}

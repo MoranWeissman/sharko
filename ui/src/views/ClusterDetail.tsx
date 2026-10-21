@@ -78,6 +78,7 @@ import { UnregisterConsequencesPanel } from '@/components/UnregisterConsequences
 import { TestConnectionModal } from '@/components/TestConnectionModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
+import { AutoMergeNote } from '@/components/AutoMergeNote';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
@@ -1488,13 +1489,7 @@ export function ClusterDetail() {
                 <p>{removePreviewError}</p>
               </div>
             )}
-            <p className="text-sm text-[#5a8aaa] dark:text-gray-500">
-              Auto-merge follows your{' '}
-              <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
-                global GitOps setting
-              </a>
-              .
-            </p>
+            <AutoMergeNote className="text-sm" />
           </div>
         }
       />

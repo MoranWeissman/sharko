@@ -175,6 +175,7 @@ type mockGitProvider struct {
 	deleteErr       error
 	prErr           error
 	mergeErr        error
+	mergeCalls      int   // how many times MergePullRequest was called
 	deleteBranchErr error // BUG-032: simulate gitprovider.DeleteBranch failure (e.g. AzureDevOps not-yet-implemented)
 
 	// listDirErr, when non-nil, is what ListDirectory returns for ANY
@@ -350,6 +351,7 @@ func (m *mockGitProvider) CreatePullRequest(_ context.Context, title, _, head, _
 func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.mergeCalls++
 	return m.mergeErr
 }
 func (m *mockGitProvider) GetPullRequestStatus(_ context.Context, _ int) (string, error) {

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { GitOpsSection } from '@/views/settings/GitOpsSection'
+import { GitOpsSection, GITOPS_AUTO_MERGE_HELP } from '@/views/settings/GitOpsSection'
 
 /*
  * V3-P2.2 — Default Addons UI (searchable table, Save opens a PR).
@@ -281,5 +281,24 @@ describe('GitOpsSection — Default Addons hidden on v4 repos (walk finding)', (
 
     await waitFor(() => expect(screen.getByPlaceholderText('Search addons...')).toBeInTheDocument())
     expect(screen.queryByTestId('default-addons-v4-notice')).not.toBeInTheDocument()
+  })
+})
+
+// Story G2 (episode 2, take 2): the old help text under the auto-merge
+// switch said "Automatically merge addon change PRs when checks pass". The
+// code merges every pull request Sharko opens, right away, without waiting
+// for checks. Pin the new sentence and ban the old one.
+describe('GitOpsSection — auto-merge help text (story G2)', () => {
+  it('says plainly what the auto-merge switch does', async () => {
+    expect(GITOPS_AUTO_MERGE_HELP).toBe(
+      'Sharko merges each pull request it opens right away, without waiting for you.',
+    )
+    render(<GitOpsSection />)
+    expect(
+      await screen.findByText('Sharko merges each pull request it opens right away, without waiting for you.'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Auto-merge PRs')).toBeInTheDocument()
+    expect(screen.queryByText(/when checks pass/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Automatically merge addon change PRs/i)).not.toBeInTheDocument()
   })
 })

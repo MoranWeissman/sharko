@@ -37,6 +37,14 @@ import { MigrationBanner } from '@/components/MigrationBanner'
 import { extractPR, PRLink } from '@/components/PRFeedback'
 import { canonicalizeProviderType } from '@/views/settings/SecretsProviderSection'
 
+// Story G2 (episode 2, take 2): "Set Up & Auto-Merge" merges only the setup
+// pull request (POST /init auto_merge). It never turns on the GitOps
+// auto-merge switch, so later pull requests (register a cluster, add an
+// addon) wait for a human unless the user turns that switch on. Pinned by
+// exact text in FirstRunWizard.test.tsx.
+export const WIZARD_SETUP_MERGE_NOTE =
+  'This choice is only for this setup pull request. Later ones follow Settings → GitOps.'
+
 /* ------------------------------------------------------------------ */
 /*  Shared styles                                                       */
 /* ------------------------------------------------------------------ */
@@ -1090,6 +1098,11 @@ function StepInit({
             Set Up (Manual PR Review)
           </button>
         </div>
+      )}
+      {/* Story G2: the auto-merge button merges this one setup pull
+          request only; it does not turn on the GitOps auto-merge switch. */}
+      {repoState === 'empty' && state === 'idle' && (
+        <p className="text-sm text-[#3a6a8a] dark:text-gray-400">{WIZARD_SETUP_MERGE_NOTE}</p>
       )}
 
       {/* Step-by-step progress */}

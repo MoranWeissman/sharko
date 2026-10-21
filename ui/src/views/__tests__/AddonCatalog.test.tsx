@@ -1405,10 +1405,15 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
       within(dialog).queryByLabelText(/merge pr automatically/i),
     ).not.toBeInTheDocument()
 
-    // Shows the global-setting hint text.
+    // Story G2: the auto-merge note replaces the old "global GitOps
+    // setting" sentence, and links to the GitOps settings.
+    expect(within(dialog).getByTestId('auto-merge-note')).toBeInTheDocument()
     expect(
-      within(dialog).getByText(/global GitOps setting/i),
-    ).toBeInTheDocument()
+      within(dialog).getByRole('link', { name: 'GitOps settings' }),
+    ).toHaveAttribute('href', '/settings?section=gitops')
+    expect(
+      within(dialog).queryByText(/global GitOps setting/i),
+    ).not.toBeInTheDocument()
 
     fireEvent.click(
       within(dialog).getByRole('button', { name: /add to catalog/i }),

@@ -59,6 +59,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { AutoMergeNote } from '@/components/AutoMergeNote'
 
 // The tab value is `'catalog'` (not `'installed'`) because an addon listed
 // in the catalog is not necessarily running on a cluster. The tile badge
@@ -1698,15 +1699,9 @@ export function AddonCatalog() {
               addon&rsquo;s <strong>ApplicationSet</strong> tab.
             </div>
 
-            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
+            {/* Auto-merge is a global setting — no per-flow checkbox. The note says what it is set to (story G2). */}
             {!addAddonResult && (
-              <p className="text-sm text-[#5a8aaa] dark:text-gray-500">
-                Auto-merge follows your{' '}
-                <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
-                  global GitOps setting
-                </a>
-                .
-              </p>
+              <AutoMergeNote className="text-sm" />
             )}
 
             {/* Dry-run preview (shared AddAddonFlow render) — the files the

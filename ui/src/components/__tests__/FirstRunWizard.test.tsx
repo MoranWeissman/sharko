@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
+import { FirstRunWizard, detectGitProvider, WIZARD_SETUP_MERGE_NOTE } from '@/components/FirstRunWizard'
 import * as apiModule from '@/services/api'
 import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
@@ -252,6 +252,24 @@ describe('FirstRunWizard step header', () => {
     // Defensive: explicitly assert the counter substring is absent.
     expect(label.textContent).not.toContain('Step 4 of 4')
     expect(label.textContent).not.toContain('Step 4 of 5')
+  })
+})
+
+// Story G2 (episode 2, take 2): "Set Up & Auto-Merge" merges only the setup
+// pull request. It does not turn on the GitOps auto-merge switch, so the
+// wizard must say so next to the buttons, word for word.
+describe('FirstRunWizard step 4 — setup merge note (story G2)', () => {
+  it('says the auto-merge choice is only for the setup pull request', async () => {
+    expect(WIZARD_SETUP_MERGE_NOTE).toBe(
+      'This choice is only for this setup pull request. Later ones follow Settings → GitOps.',
+    )
+    renderWizard(4)
+    await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+    expect(
+      screen.getByText(
+        'This choice is only for this setup pull request. Later ones follow Settings → GitOps.',
+      ),
+    ).toBeInTheDocument()
   })
 })
 

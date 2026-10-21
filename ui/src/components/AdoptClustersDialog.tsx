@@ -19,6 +19,7 @@ import { testClusterConnection, adoptClusters, isTestClusterUnavailable, isCrede
 import type { Cluster, AdoptResult, VerifyResult, DryRunResult } from '@/services/models'
 import { CHECK_PERMISSIONS_LABEL } from '@/components/ClusterActionHints'
 import { DryRunPreview } from '@/components/AddAddonFlow'
+import { AutoMergeNote } from '@/components/AutoMergeNote'
 
 interface AdoptClustersDialogProps {
   open: boolean
@@ -443,15 +444,9 @@ export function AdoptClustersDialog({
             </div>
           )}
 
-          {/* Auto-merge is now a global setting — no per-flow checkbox. */}
+          {/* Auto-merge is a global setting — no per-flow checkbox. The note says what it is set to (story G2). */}
           {(phase === 'review') && (
-            <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
-              Auto-merge follows your{' '}
-              <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
-                global GitOps setting
-              </a>
-              .
-            </p>
+            <AutoMergeNote className="text-xs" many />
           )}
 
           {/* Adoption error */}

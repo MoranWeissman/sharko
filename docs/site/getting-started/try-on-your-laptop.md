@@ -141,7 +141,7 @@ In Sharko, open **Clusters** and click **Add Cluster**.
 4. Click **Preview**. You should see one new file, `managed-clusters.yaml`.
 5. Click **Register**.
 
-Sharko opens a pull request. Merge it in Git (unless you turned on auto merge). After that, `spoke-1` shows as **Connected** on the Clusters page, and in ArgoCD under **Settings, Clusters** with the address `https://spoke-1-control-plane:6443`.
+Sharko opens a pull request. Merge it in Git. Sharko merges it for you only if you turned on **Auto-merge PRs** in **Settings**, **GitOps**. Picking **Set Up & Auto-Merge** in the first-run wizard does not turn that on; it only merged the setup pull request. After that, `spoke-1` shows as **Connected** on the Clusters page, and in ArgoCD under **Settings, Clusters** with the address `https://spoke-1-control-plane:6443`.
 
 ## Clean up
 
