@@ -131,7 +131,13 @@ import (
 // a slog call or a log call of any kind. Neither searches for credential
 // characters: cluster_server_address.go only asks credsafe.ClassifyAddress
 // and credsafe.SafeRepoURL, so the rule stays in credsafe.
-const wantSweptGoFiles = 437
+//
+// 438 since story G1 (episode 2, take 2) added
+// internal/orchestrator/register_registry_file.go. It builds the
+// managed-clusters.yaml text a register writes, so the preview and the pull
+// request use the same builder. It makes no log call of any kind and does
+// not search for credential characters.
+const wantSweptGoFiles = 438
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
