@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -566,16 +567,30 @@ func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, targe
 	//    a body field) lets the V2-1 perf-loop register the same server URL
 	//    repeatedly with fresh SA tokens without ArgoCD complaining that the
 	//    cluster spec is different from the previous registration.
+	//
+	//    Story H (episode 2, take 2): this POST timed out ("context deadline
+	//    exceeded ... awaiting headers") in TestClusterTest_ArgoCDProvider and
+	//    TestClusterTest_ProviderCrossContamination_NamespaceSwitch. ArgoCD
+	//    dials the new cluster before it answers, and on a busy kind host that
+	//    can take longer than 30s. So: a longer timeout, plus ONE more try
+	//    only when the first try timed out. Safe because upsert=true makes the
+	//    same POST harmless to repeat. Any answer from ArgoCD (a 4xx included)
+	//    is never retried.
 	url := argoAccess.URL + "/api/v1/clusters?upsert=true"
-	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: insecureTransport()}
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
-	if err != nil {
-		t.Fatalf("registerClusterInArgoCDDirect(%s): build request: %v", clusterName, err)
+	httpClient := &http.Client{Timeout: argoCDRegisterTimeout, Transport: insecureTransport()}
+	newReq := func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+argoAccess.Token)
+		return req, nil
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+argoAccess.Token)
 
-	resp, err := httpClient.Do(req)
+	resp, err := postRetryOnTimeout(httpClient, newReq, func(err error) {
+		t.Logf("registerClusterInArgoCDDirect(%s): POST %s timed out, trying once more: %v", clusterName, url, err)
+	})
 	if err != nil {
 		t.Fatalf("registerClusterInArgoCDDirect(%s): POST %s: %v", clusterName, url, err)
 	}
@@ -586,6 +601,48 @@ func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, targe
 			clusterName, url, resp.StatusCode, respBody)
 	}
 	t.Logf("harness/lifecycle: registered cluster %q directly in ArgoCD [server=%s]", clusterName, server)
+}
+
+// argoCDRegisterTimeout is how long one try of the direct ArgoCD register
+// POST may wait for an answer (story H; it was 30s).
+const argoCDRegisterTimeout = 60 * time.Second
+
+// postRetryOnTimeout sends the request newReq builds. If that try times out
+// before any answer comes back, it builds a fresh request and tries once
+// more. Any answer, whatever its status code, is returned as is and never
+// retried, and so is any error that is not a timeout. onRetry is called
+// with the timeout error before the second try (may be nil).
+//
+// Only for requests that are safe to send twice.
+func postRetryOnTimeout(client *http.Client, newReq func() (*http.Request, error), onRetry func(error)) (*http.Response, error) {
+	const maxTries = 2
+	for try := 1; ; try++ {
+		req, err := newReq()
+		if err != nil {
+			return nil, err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		if try >= maxTries || !isTimeoutError(err) {
+			return nil, err
+		}
+		if onRetry != nil {
+			onRetry(err)
+		}
+	}
+}
+
+// isTimeoutError reports whether err is a timeout: the client's own
+// deadline (http.Client.Timeout surfaces as a *url.Error whose Timeout() is
+// true) or a context deadline.
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // parseKubeconfigForArgoCDRegister extracts (server, base64CAData, token) from

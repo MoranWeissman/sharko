@@ -30,6 +30,9 @@ vi.mock('@/services/api', () => ({
     health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
     // V2-cleanup-89.6 kill switch — not under test here, keep the default.
     getAllowInlineCredentials: () => Promise.resolve({ allow_inline_credentials: true }),
+    // Story G2: the auto-merge note reads the GitOps switch. Off here, the
+    // way the first-run wizard leaves it.
+    getConfig: () => Promise.resolve({ gitops: { pr_auto_merge: false } }),
   },
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
   // ErrorDetail checks `instanceof ApiError`; a plain class is enough here.
@@ -225,16 +228,25 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     expect(title!.toLowerCase()).toContain('managed-clusters');
   });
 
-  // V2-cleanup-40: per-flow auto-merge checkbox is gone. The dialog shows a
-  // muted hint linking to the global GitOps setting instead.
-  it('Shows "global GitOps setting" hint instead of auto-merge checkbox', async () => {
+  // V2-cleanup-40: per-flow auto-merge checkbox is gone. Story G2: the
+  // dialog says plainly whether the pull request merges by itself (it reads
+  // the GitOps switch), instead of "Auto-merge follows your global GitOps
+  // setting.", which did not say what the setting was.
+  it('says whether the pull request merges by itself instead of an auto-merge checkbox', async () => {
     renderView();
     await openAddDialog();
 
     // No auto-merge checkbox.
     expect(screen.queryByRole('checkbox', { name: /merge pr automatically/i })).not.toBeInTheDocument();
-    // Muted hint is visible.
-    expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument();
+    // The plain sentence, word for word.
+    await waitFor(() =>
+      expect(screen.getByTestId('auto-merge-note').textContent).toBe(
+        'This pull request waits for you to merge it. Change this in GitOps settings.',
+      ),
+    );
+    // The old sentence is gone.
+    expect(screen.queryByText(/global GitOps setting/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Auto-merge follows your/i)).not.toBeInTheDocument();
   });
 
   // Sanity: the dialog as a whole doesn't blow up after the dry-run renders;

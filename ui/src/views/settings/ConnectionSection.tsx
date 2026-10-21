@@ -19,6 +19,7 @@ import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ErrorDetail } from '@/components/ErrorDetail'
+import { ARGOCD_TOKEN_HELP, ARGOCD_TOKEN_HELP_URL } from '@/components/argocdTokenHelp'
 
 interface ConnectionFormData {
   git_url: string
@@ -473,7 +474,17 @@ export function ConnectionSection() {
                   onChange={(e) => { setForm(prev => ({ ...prev, argocd_token: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
                   placeholder={isEdit ? 'Leave blank to keep existing' : 'ArgoCD API token'}
                 />
-                <p className="mt-1 text-sm text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
+                <p className="mt-1 text-sm text-[#3a6a8a]">
+                  {ARGOCD_TOKEN_HELP}{' '}
+                  <a
+                    href={ARGOCD_TOKEN_HELP_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-teal-600"
+                  >
+                    Make the ArgoCD token first
+                  </a>
+                </p>
               </div>
               <div>
                 <label className={labelCls}>Namespace</label>

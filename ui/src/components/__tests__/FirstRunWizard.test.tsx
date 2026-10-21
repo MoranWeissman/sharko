@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
+import { FirstRunWizard, detectGitProvider, WIZARD_SETUP_MERGE_NOTE } from '@/components/FirstRunWizard'
 import * as apiModule from '@/services/api'
 import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
@@ -252,6 +252,24 @@ describe('FirstRunWizard step header', () => {
     // Defensive: explicitly assert the counter substring is absent.
     expect(label.textContent).not.toContain('Step 4 of 4')
     expect(label.textContent).not.toContain('Step 4 of 5')
+  })
+})
+
+// Story G2 (episode 2, take 2): "Set Up & Auto-Merge" merges only the setup
+// pull request. It does not turn on the GitOps auto-merge switch, so the
+// wizard must say so next to the buttons, word for word.
+describe('FirstRunWizard step 4 — setup merge note (story G2)', () => {
+  it('says the auto-merge choice is only for the setup pull request', async () => {
+    expect(WIZARD_SETUP_MERGE_NOTE).toBe(
+      'This choice is only for this setup pull request. Later ones follow Settings → GitOps.',
+    )
+    renderWizard(4)
+    await screen.findByRole('button', { name: /Set Up.*Auto-merge/i })
+    expect(
+      screen.getByText(
+        'This choice is only for this setup pull request. Later ones follow Settings → GitOps.',
+      ),
+    ).toBeInTheDocument()
   })
 })
 
@@ -1995,6 +2013,19 @@ describe('FirstRunWizard — ArgoCD address and test results (VF-1)', () => {
     expect(
       screen.getByText('Leave blank for in-cluster auto-discovery. Override for external ArgoCD.'),
     ).toBeInTheDocument()
+  })
+
+  it('the ArgoCD token field says what the token is and how to make one', async () => {
+    await walkToArgocdStepWithBothTested()
+    const help = screen.getByText(/A token for the sharko account in ArgoCD\./)
+    expect(help.textContent).toContain(
+      'A token for the sharko account in ArgoCD. To make one, open the ArgoCD web page, go to Settings, then Accounts, then sharko, and click Generate New.',
+    )
+    expect(screen.getByRole('link', { name: 'Make the ArgoCD token first' })).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/getting-started/first-run/#make-the-argocd-token-first',
+    )
+    expect(screen.queryByText(/ARGOCD_TOKEN/)).toBeNull()
   })
 
   it('changing the secrets provider keeps the ArgoCD "Connected" result', async () => {

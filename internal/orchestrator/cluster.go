@@ -452,28 +452,10 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			return result, nil
 		}
 		clusterAddonsFileMissing := clusterAddonsErr != nil
-		if clusterAddonsFileMissing {
-			clusterAddonsData = []byte("clusters:\n")
-		}
-		clusterLabels := make(map[string]string, len(req.Addons))
-		if !v4Repo {
-			for addon, enabled := range req.Addons {
-				clusterLabels[addon] = models.AddonLabelValue(enabled)
-			}
-		}
-		connMode := ""
-		if selfManaged {
-			connMode = models.ConnectionManagedByUser
-		}
-		previewClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
-			Name:                req.Name,
-			Region:              req.Region,
-			SecretPath:          req.SecretPath,
-			Labels:              clusterLabels,
-			ConnectionManagedBy: connMode,
-			CredsSource:         string(credsSource),
-			RoleARN:             req.RoleARN,
-		})
+		// Same function the real write below uses, so the preview shows the
+		// exact bytes the pull request writes — header included (story G1).
+		previewClusterAddons, addEntryErr := buildRegisterRegistryFile(clusterAddonsData, !clusterAddonsFileMissing, v4Repo,
+			registerRegistryEntry(req, v4Repo, selfManaged, credsSource))
 
 		// Build file previews with diffs. v4 repos skip the values-file
 		// preview entirely — there is no such file to write (Story 4.4).
@@ -751,50 +733,14 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	if !clusterAddonsExists {
 		log.Info("cluster registry file not found, bootstrapping", "cluster", req.Name, "path", clusterAddonsPath)
-		clusterAddonsData = []byte("clusters:\n")
-	}
-
-	// Build labels in the canonical "enabled"/"disabled" vocabulary. This is
-	// the value the live ArgoCD ApplicationSet selector + GetEnabledAddons
-	// require; the legacy "true"/"false" form read as NOT-enabled downstream
-	// and the addon never deployed (V2-cleanup-20). v4 never authors addon
-	// keys on the connection record (design doc §2.4) — clusterLabels stays
-	// empty, so the resulting entry carries no addons: block at all.
-	clusterLabels := make(map[string]string, len(req.Addons))
-	if !v4Repo {
-		for addon, enabled := range req.Addons {
-			clusterLabels[addon] = models.AddonLabelValue(enabled)
-		}
-	}
-
-	// Record the connection-ownership mode on the managed-clusters entry.
-	// Only the non-default "user" mode is written; Sharko-managed entries
-	// omit the field so pre-57.2 files stay byte-identical (absent == sharko).
-	connMode := ""
-	if selfManaged {
-		connMode = models.ConnectionManagedByUser
 	}
 
 	// AddClusterEntry is itself idempotent — if the cluster already exists, it returns
 	// the data unchanged (no error). This makes retry-after-partial-failure safe.
-	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
-		Name:                req.Name,
-		Region:              req.Region,
-		SecretPath:          req.SecretPath,
-		Labels:              clusterLabels,
-		ConnectionManagedBy: connMode,
-		// Stamp the effective creds source so later credential fetches
-		// (Test / Diagnose / secrets / addon ops) route correctly per
-		// cluster — an inline-registered cluster must be read via the
-		// ArgoCD provider under ANY backend connection (V2-cleanup-60.4).
-		CredsSource: string(credsSource),
-		// Stamp the per-cluster role ARN so token minting keeps using the
-		// identity the caller registered with — before this, the field was
-		// silently dropped and a discovery-registered cross-account cluster
-		// minted tokens with the wrong identity (V2-cleanup-62.2). Empty
-		// omits the field (pre-field files stay byte-identical).
-		RoleARN: req.RoleARN,
-	})
+	// buildRegisterRegistryFile is shared with the dry-run branch above, so
+	// the preview and this write can never drift apart (story G1).
+	updatedClusterAddons, addEntryErr := buildRegisterRegistryFile(clusterAddonsData, clusterAddonsExists, v4Repo,
+		registerRegistryEntry(req, v4Repo, selfManaged, credsSource))
 	if addEntryErr != nil {
 		log.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",
 			"cluster", req.Name, "error", addEntryErr,
@@ -808,13 +754,6 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		files[valuesPath] = valuesContent
 	}
 	if updatedClusterAddons != nil {
-		// v4 naming polish item 3: the first time Sharko creates
-		// managed-clusters.yaml for a repo, it opens with a plain-English
-		// header. !clusterAddonsExists here means the file was genuinely
-		// absent before this write — headers ride creation only.
-		if v4Repo && !clusterAddonsExists {
-			updatedClusterAddons = append([]byte(managedClustersFileHeader), updatedClusterAddons...)
-		}
 		files[clusterAddonsPath] = updatedClusterAddons
 	}
 

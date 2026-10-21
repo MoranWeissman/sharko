@@ -499,14 +499,14 @@ func collectImageRefs(t *testing.T) []imageRef {
 // appearing anywhere fails here and has to be looked at, whatever its tag.
 var imagesAsShipped = []string{
 	`Dockerfile -> alpine:3.21`,
-	`Dockerfile -> golang:1.26.9-alpine`,
+	`Dockerfile -> golang:1.26.10-alpine`,
 	`Dockerfile -> node:22-alpine`,
 	`charts/sharko/templates/deployment.yaml -> {{templated}}`,
 	`charts/sharko/templates/ollama.yaml -> ollama/ollama:0.6.8`,
 	`charts/sharko/templates/ollama.yaml -> ollama/ollama:0.6.8`,
 	`charts/sharko/values.yaml -> ollama/ollama:0.6.8`,
 	`tests/e2e/harness/gitfake/Dockerfile -> gcr.io/distroless/static-debian12:nonroot`,
-	`tests/e2e/harness/gitfake/Dockerfile -> golang:1.26.9-alpine`,
+	`tests/e2e/harness/gitfake/Dockerfile -> golang:1.26.10-alpine`,
 }
 
 // TestImages_ArePinnedAndAreExactlyTheOnesWrittenDown fails on a floating tag

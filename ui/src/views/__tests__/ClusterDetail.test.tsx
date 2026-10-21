@@ -1095,9 +1095,13 @@ describe('ClusterDetail', () => {
       expect(screen.queryByLabelText(/Merge PR automatically/i)).not.toBeInTheDocument();
     });
 
-    it('shows the "global GitOps setting" hint instead', async () => {
+    // Story G2: the auto-merge note replaces the old "global GitOps
+    // setting" sentence.
+    it('shows the auto-merge note instead', async () => {
       await openRemoveModal();
-      expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument();
+      expect(screen.getByTestId('auto-merge-note')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'GitOps settings' })).toHaveAttribute('href', '/settings?section=gitops');
+      expect(screen.queryByText(/global GitOps setting/i)).not.toBeInTheDocument();
     });
 
     // v4.0.4 review fix: a "failed" reply (HTTP 200) used to navigate away

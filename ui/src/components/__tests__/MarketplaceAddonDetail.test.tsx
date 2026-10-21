@@ -126,8 +126,11 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     // Toggle must be gone.
     expect(screen.queryByLabelText(/merge pr automatically/i)).not.toBeInTheDocument()
 
-    // Shows the global-setting hint text.
-    expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument()
+    // Story G2: the auto-merge note replaces the old "global GitOps
+    // setting" sentence.
+    expect(screen.getByTestId('auto-merge-note')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'GitOps settings' })).toHaveAttribute('href', '/settings?section=gitops')
+    expect(screen.queryByText(/global GitOps setting/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
 
