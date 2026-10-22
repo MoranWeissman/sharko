@@ -17,10 +17,13 @@ import { SHARKO_CONN_LABEL, SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnec
 // Per-error-code copy + optional action link for the Test-unavailable
 // banner. Production targets are self-hosted K8s + AWS-managed clusters;
 // kind/minikube are dev-only and must not anchor production-facing copy.
-// The aws-iam-cluster-auth docs link points at an in-app placeholder
-// today; it will resolve once the operator-docs page lands.
+// The aws-iam-cluster-auth link goes to the published docs page. There is no
+// /docs route inside the app, so a path like that would open a blank page.
 // (Moved into the modal by V2-cleanup-91.1/F5 — the Test-connection result,
 // including this typed guidance, now lives in TestConnectionModal.)
+// /en/latest/ is the readthedocs version prefix. Without it the page is a 404.
+const AWS_IAM_DOC_URL = 'https://sharko.readthedocs.io/en/latest/operator/aws-iam-cluster-auth/';
+
 function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
   let title: string;
   let body: string;
@@ -38,13 +41,13 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
       title = 'AWS IAM authentication required';
       body =
         "This cluster uses AWS IAM authentication. Configure AWS credentials for the Sharko pod's role (IRSA, EC2 instance profile, or Pod Identity) to enable Test connection for AWS-managed clusters.";
-      actionTo = '/docs/operator/aws-iam-cluster-auth';
+      actionTo = AWS_IAM_DOC_URL;
       actionLabel = 'Open IAM setup guide';
       break;
     case 'argocd_provider_exec_unsupported':
       title = 'Exec-plugin authentication not supported';
       body =
-        'This cluster uses exec-plugin auth (e.g. gcloud, azure-cli, aws-iam-authenticator). Exec plugins are not supported in Sharko v1.x — tracked for v2.';
+        'This cluster signs in with a helper program (for example gcloud, azure-cli or aws-iam-authenticator). Sharko cannot run helper programs yet, so it cannot test this cluster. Your other clusters are not affected.';
       // No action link — surface the limitation; there is no in-app fix path.
       break;
     case 'argocd_provider_unsupported_auth':
@@ -65,12 +68,23 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
       <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{title}</p>
       <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-300">{body}</p>
       {actionTo && actionLabel && (
-        <Link
-          to={actionTo}
-          className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
-        >
-          {actionLabel}
-        </Link>
+        actionTo.startsWith('http') ? (
+          <a
+            href={actionTo}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
+          >
+            {actionLabel}
+          </a>
+        ) : (
+          <Link
+            to={actionTo}
+            className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
+          >
+            {actionLabel}
+          </Link>
+        )
       )}
     </div>
   );

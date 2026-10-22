@@ -376,7 +376,7 @@ describe('ManagedSecrets', () => {
       cluster_connection_secrets: [],
       addon_values_secrets: [
         { cluster: 'c1', addon: 'zeta', state: 'in_sync', source: 'AWS Secrets Manager' },
-        { cluster: 'c2', addon: 'alpha', state: 'in_sync', source: 'a Kubernetes Secret' },
+        { cluster: 'c2', addon: 'alpha', state: 'in_sync', source: 'Kubernetes Secrets' },
       ],
     })
     renderPage()
@@ -393,7 +393,7 @@ describe('ManagedSecrets', () => {
     await waitFor(() => {
       const order = screen.getAllByTestId(/^secret-row-/).map((r) => r.getAttribute('data-testid'))
       // Ascending by row.sourceLabel: "AWS Secrets Manager" (c1) sorts
-      // before "a Kubernetes Secret" (c2) — 'A' (65) < 'a' (97) by char
+      // before "Kubernetes Secrets" (c2) — 'A' (65) < 'K' (75) by char
       // code, exactly the same plain string compare compareRows uses.
       expect(order).toEqual(['secret-row-values-c1-zeta', 'secret-row-values-c2-alpha'])
     })
@@ -1557,7 +1557,7 @@ describe('ManagedSecrets', () => {
     })
     renderPage()
 
-    await waitFor(() => expect(screen.getByTestId('engine-off-values')).toHaveTextContent('Addon values engine is switched off.'))
+    await waitFor(() => expect(screen.getByTestId('engine-off-values')).toHaveTextContent('Addon values engine is switched off. Check now and Sync still work row by row.'))
     // The connection engine has no off switch — it still reports its
     // ordinary cadence sentence, never the off sentence.
     expect(screen.queryByTestId('engine-off-connection')).not.toBeInTheDocument()
@@ -1582,6 +1582,56 @@ describe('ManagedSecrets', () => {
     // Any real cluster name works — the endpoint checks every cluster
     // regardless of which cluster name is in the path.
     expect(mockReconcileCluster).toHaveBeenCalledWith('prod-eu')
+  })
+
+  // ep3 fix 7 — the toast says exactly what the button did. The one
+  // connection check covers every cluster, so the sentence may say "every
+  // cluster connection"; with no connection rows it must not say that.
+  it('Check all now says what it started: connections and addon values', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockCheckAllAddonValuesSecrets.mockResolvedValue({ status: 'ok' })
+    mockReconcileCluster.mockResolvedValue({ status: 'ok', message: 'triggered' })
+    mockShowToast.mockClear()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('refresh-all'))
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Checking every cluster connection and every addon value now. Nothing is written.',
+        'success',
+      ),
+    )
+  })
+
+  it('Check all now with no connection rows only claims the addon values', async () => {
+    mockGetManagedSecrets.mockResolvedValue({ ...baseResponse, cluster_connection_secrets: [] })
+    mockCheckAllAddonValuesSecrets.mockResolvedValue({ status: 'ok' })
+    mockReconcileCluster.mockClear()
+    mockShowToast.mockClear()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('refresh-all'))
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Checking every addon value now. There are no cluster connections to check. Nothing is written.',
+        'success',
+      ),
+    )
+    expect(mockReconcileCluster).not.toHaveBeenCalled()
+  })
+
+  it('Check all now names the part that could not start', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockCheckAllAddonValuesSecrets.mockResolvedValue({ status: 'ok' })
+    mockReconcileCluster.mockRejectedValue(new Error('boom'))
+    mockShowToast.mockClear()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('refresh-all'))
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith('Could not start the check for cluster connections.', 'error'),
+    )
+    expect(mockShowToast).not.toHaveBeenCalledWith(expect.stringContaining('every cluster connection'), 'success')
   })
 
   // P1-A A3 — the help text has to describe what the button actually does.

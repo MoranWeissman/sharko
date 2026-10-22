@@ -148,12 +148,13 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		if req.Argocd.Token == "" {
 			req.Argocd.Token = saved.Argocd.Token
 		}
-		if req.Provider == nil {
-			req.Provider = saved.Provider
-		}
-		if req.AddonSecretProvider == nil {
-			req.AddonSecretProvider = saved.AddonSecretProvider
-		}
+		// A provider block that is missing means "not touching this
+		// section", so the saved one stays. A provider block with an EMPTY
+		// type is the explicit way to say "none": it clears the saved
+		// backend. Without this, choosing "None" in Settings could never
+		// remove a backend that was already saved.
+		req.Provider = mergeProviderConfig(req.Provider, saved.Provider)
+		req.AddonSecretProvider = mergeProviderConfig(req.AddonSecretProvider, saved.AddonSecretProvider)
 		// Preserve existing GitOps settings when not provided
 		if req.GitOps == nil {
 			req.GitOps = saved.GitOps
@@ -580,4 +581,17 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		Event: "connection_tested",
 	})
 	writeJSON(w, http.StatusOK, result)
+}
+
+// mergeProviderConfig decides what a connection update does with a provider
+// block. Missing keeps the saved block. An empty type clears it. Anything
+// else replaces it.
+func mergeProviderConfig(req, saved *models.ProviderConfig) *models.ProviderConfig {
+	if req == nil {
+		return saved
+	}
+	if req.Type == "" {
+		return nil
+	}
+	return req
 }

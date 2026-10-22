@@ -975,8 +975,8 @@ func TestAddonValuesSecretSourceLabel(t *testing.T) {
 		{"nil config", nil, "secrets store"},
 		{"aws-sm", &providers.AddonSecretProviderConfig{Type: "aws-sm"}, "AWS Secrets Manager"},
 		{"aws-secrets-manager alias", &providers.AddonSecretProviderConfig{Type: "aws-secrets-manager"}, "AWS Secrets Manager"},
-		{"k8s-secrets", &providers.AddonSecretProviderConfig{Type: "k8s-secrets"}, "a Kubernetes Secret"},
-		{"kubernetes alias", &providers.AddonSecretProviderConfig{Type: "kubernetes"}, "a Kubernetes Secret"},
+		{"k8s-secrets", &providers.AddonSecretProviderConfig{Type: "k8s-secrets"}, "Kubernetes Secrets"},
+		{"kubernetes alias", &providers.AddonSecretProviderConfig{Type: "kubernetes"}, "Kubernetes Secrets"},
 		{"gcp-sm", &providers.AddonSecretProviderConfig{Type: "gcp-sm"}, "Google Secret Manager"},
 		{"azure-kv", &providers.AddonSecretProviderConfig{Type: "azure-kv"}, "Azure Key Vault"},
 		// "vault" has no implemented factory (see AddonSecretProviderConfig.Type
@@ -998,6 +998,9 @@ func TestAddonValuesSecretSourceLabel(t *testing.T) {
 			got := srv.addonValuesSecretSourceLabel()
 			if got != tc.want {
 				t.Errorf("addonValuesSecretSourceLabel() = %q, want %q", got, tc.want)
+			}
+			if got == "a Kubernetes Secret" {
+				t.Errorf("old label %q must not come back", got)
 			}
 		})
 	}

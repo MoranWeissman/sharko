@@ -942,7 +942,8 @@ describe('ClusterDetail', () => {
       expect(banner).not.toHaveTextContent(/kind|minikube/i);
 
       const link = screen.getByRole('link', { name: /Open IAM setup guide/i });
-      expect(link).toHaveAttribute('href', '/docs/operator/aws-iam-cluster-auth');
+      expect(link).toHaveAttribute('href', 'https://sharko.readthedocs.io/en/latest/operator/aws-iam-cluster-auth/');
+      expect(link.getAttribute('href')).not.toMatch(/^\/docs\//);
     });
 
     it('renders argocd_provider_exec_unsupported banner with NO action link', async () => {
@@ -963,7 +964,11 @@ describe('ClusterDetail', () => {
       // The cloud-managed examples (gcloud / azure-cli / aws-iam-authenticator)
       // anchor the production concern.
       expect(banner).toHaveTextContent(/gcloud|azure-cli|aws-iam-authenticator/i);
-      expect(banner).toHaveTextContent(/v1\.x/);
+      expect(banner).toHaveTextContent(
+        'This cluster signs in with a helper program (for example gcloud, azure-cli or aws-iam-authenticator). Sharko cannot run helper programs yet, so it cannot test this cluster. Your other clusters are not affected.',
+      );
+      expect(banner).not.toHaveTextContent(/v1\.x/);
+      expect(banner).not.toHaveTextContent(/tracked for v2/);
       expect(banner).not.toHaveTextContent(/kind|minikube/i);
 
       // No action link inside the banner.

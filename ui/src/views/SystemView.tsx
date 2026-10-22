@@ -310,7 +310,7 @@ export function clusterStatusParts(
 
   const parts: ClusterStatusPart[] = []
   if (healthy > 0) parts.push({ text: `${healthy} healthy`, tone: 'healthy' })
-  if (degraded > 0) parts.push({ text: `${degraded} with issues`, tone: 'degraded' })
+  if (degraded > 0) parts.push({ text: `${degraded} with problems`, tone: 'degraded' })
   if (unknown > 0) parts.push({ text: `${unknown} unknown`, tone: 'unknown' })
 
   return { total, clusterWord, parts }
@@ -318,10 +318,10 @@ export function clusterStatusParts(
 
 /**
  * One honest line per cluster arrow — "N managed clusters — X healthy, Y
- * with issues" — instead of the old expandable per-cluster list (walk-day
+ * with problems" — instead of the old expandable per-cluster list (walk-day
  * finding, maintainer-approved). Counts all three buckets (healthy,
  * degraded, unknown) but only mentions the non-zero ones, so "8 managed
- * clusters — 7 healthy, 1 with issues" reads clean instead of "0 unknown".
+ * clusters — 7 healthy, 1 with problems" reads clean instead of "0 unknown".
  */
 export function summarizeClusterStatuses(statuses: ArrowStatus[]): string {
   const { total, clusterWord, parts } = clusterStatusParts(statuses)
@@ -465,7 +465,7 @@ export function SystemView() {
       <div>
         <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-white">System</h1>
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-          Read-only health of Git, Argo CD, and managed clusters.
+          Read-only health of Git, ArgoCD, and managed clusters.
         </p>
       </div>
 

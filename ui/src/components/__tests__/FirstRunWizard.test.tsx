@@ -2169,14 +2169,14 @@ describe('FirstRunWizard — Prefix field belongs to AWS Secrets Manager only (L
     const select = await openProviderSection()
     expect((select as HTMLSelectElement).value).toBe('aws-sm')
     expect(screen.getByText('Prefix (optional)')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('k8s-')
+    expect(screen.getByPlaceholderText(/added before the cluster name/i)).toHaveValue('k8s-')
   })
 
   it('hides the Prefix field for Kubernetes Secrets', async () => {
     const select = await openProviderSection()
     fireEvent.change(select, { target: { value: 'k8s-secrets' } })
     expect(screen.queryByText('Prefix (optional)')).toBeNull()
-    expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+    expect(screen.queryByPlaceholderText(/added before the cluster name/i)).toBeNull()
   })
 
   it('does not send a prefix left over from aws-sm once Kubernetes Secrets is chosen', async () => {
@@ -2301,5 +2301,74 @@ describe('FirstRunWizard — resume-mode save keeps saved settings (LO-11 B2)', 
       commit_prefix: 'sharko:',
       pr_auto_merge: false,
     })
+  })
+})
+
+// Fix 10 — the wizard and Settings share one list of secrets backends, with
+// plain names, and "None" can really remove a saved backend.
+describe('FirstRunWizard — secrets backend list (ep3 fix 10)', () => {
+  async function openProviderSection(provider?: Record<string, unknown>) {
+    mockState.connections = [{ ...resumeConnection, ...(provider ? { provider } : {}) }]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Secrets Provider \(optional\)/i }))
+    return (await screen.findByRole('combobox')) as HTMLSelectElement
+  }
+
+  it('shows the same list and plain names as Settings, with no raw ids', async () => {
+    const select = await openProviderSection()
+    const options = Array.from(select.querySelectorAll('option'))
+    expect(options.map((o) => o.value)).toEqual(['', 'argocd', 'aws-sm', 'k8s-secrets', 'azure', 'gcp'])
+    expect(options.map((o) => o.textContent)).toEqual([
+      'None',
+      'ArgoCD (uses the cluster logins ArgoCD already has)',
+      'AWS Secrets Manager',
+      'Kubernetes Secrets',
+      'Azure Key Vault — not yet supported',
+      'Google Secret Manager — not yet supported',
+    ])
+    for (const o of options) expect(o.textContent).not.toMatch(/\(aws-sm\)|\(k8s-secrets\)/)
+    expect(options.find((o) => o.value === 'azure')!.disabled).toBe(true)
+  })
+
+  it('shows a plain name on the badge, not the raw id', async () => {
+    await openProviderSection({ type: 'aws-sm', region: 'eu-west-1' })
+    expect(screen.getByText('AWS Secrets Manager', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.queryByText('aws-sm', { selector: 'span' })).toBeNull()
+  })
+
+  async function saveAndGetPayload() {
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalledTimes(1))
+    return updateMock.mock.calls[0][1]
+  }
+
+  it('choosing None over a saved backend sends an explicit clear', async () => {
+    const select = await openProviderSection({ type: 'aws-sm', region: 'eu-west-1' })
+    fireEvent.change(select, { target: { value: '' } })
+    const payload = await saveAndGetPayload()
+    expect(payload.provider).toEqual({ type: '' })
+  })
+
+  it('does not send the old AWS region once Kubernetes Secrets is chosen', async () => {
+    const select = await openProviderSection({ type: 'aws-sm', region: 'eu-west-1', prefix: 'k8s-' })
+    fireEvent.change(select, { target: { value: 'k8s-secrets' } })
+    const payload = await saveAndGetPayload()
+    expect(payload.provider.type).toBe('k8s-secrets')
+    expect(payload.provider.region).toBeUndefined()
+    expect(payload.provider.prefix).toBeUndefined()
+  })
+
+  it('has no "SM lookup" or "register-cluster" words in the section', async () => {
+    await openProviderSection({ type: 'aws-sm', region: 'eu-west-1', prefix: 'k8s-' })
+    expect(document.body.innerHTML).not.toMatch(/SM lookup|register-cluster/)
   })
 })

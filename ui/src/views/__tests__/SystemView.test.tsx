@@ -159,7 +159,7 @@ function renderPage() {
   )
 }
 
-// The cluster status line's bucket phrases ("2 healthy", "1 with issues")
+// The cluster status line's bucket phrases ("2 healthy", "1 with problems")
 // are each colored in their own nested <span>, so the full sentence is no
 // longer one text node — screen.getByText's default matcher only looks at
 // an element's own direct text, not its descendants'. Match on the link's
@@ -343,7 +343,7 @@ describe('summarizeClusterStatuses', () => {
   it('counts all three buckets but only mentions the non-zero ones', () => {
     expect(
       summarizeClusterStatuses(['healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'healthy', 'degraded']),
-    ).toBe('8 managed clusters — 7 healthy, 1 with issues')
+    ).toBe('8 managed clusters — 7 healthy, 1 with problems')
   })
   it('says "1 managed cluster" (singular) for a single cluster', () => {
     expect(summarizeClusterStatuses(['healthy'])).toBe('1 managed cluster — 1 healthy')
@@ -353,7 +353,7 @@ describe('summarizeClusterStatuses', () => {
   })
   it('mentions every non-zero bucket when all three are present', () => {
     expect(summarizeClusterStatuses(['healthy', 'degraded', 'unknown'])).toBe(
-      '3 managed clusters — 1 healthy, 1 with issues, 1 unknown',
+      '3 managed clusters — 1 healthy, 1 with problems, 1 unknown',
     )
   })
   it('handles zero clusters', () => {
@@ -371,7 +371,7 @@ describe('clusterStatusParts', () => {
       clusterWord: 'managed clusters',
       parts: [
         { text: '1 healthy', tone: 'healthy' },
-        { text: '1 with issues', tone: 'degraded' },
+        { text: '1 with problems', tone: 'degraded' },
         { text: '1 unknown', tone: 'unknown' },
       ],
     })
@@ -505,13 +505,17 @@ describe('SystemView', () => {
       screen.getByText("Can't assess until the repo is set up — ArgoCD has nothing to sync yet."),
     ).toBeInTheDocument()
     // The pill no longer says "0 of 1 healthy" — the summary line below
-    // says the count once, with the "with issues" bucket colored red.
+    // says the count once, with the "with problems" bucket colored red.
     expect(screen.queryByText('0 of 1 healthy')).not.toBeInTheDocument()
-    const clusterLines = getClusterStatusLines('1 managed cluster — 1 with issues')
+    const clusterLines = getClusterStatusLines('1 managed cluster — 1 with problems')
     expect(clusterLines).toHaveLength(2)
     clusterLines.forEach((line) => {
-      expect(within(line).getByText('1 with issues').className).toContain('text-red-700')
+      expect(within(line).getByText('1 with problems').className).toContain('text-red-700')
     })
+    // One word for the bad state on this card, and ArgoCD is one word.
+    expect(document.body.textContent ?? '').not.toContain('with issues')
+    expect(screen.getByText('Read-only health of Git, ArgoCD, and managed clusters.')).toBeInTheDocument()
+    expect(document.body.textContent ?? '').not.toContain('Argo CD')
   })
 
   // (Story P5) Safe degradation, proved rather than hoped for. The browser
@@ -630,11 +634,11 @@ describe('SystemView', () => {
 
     await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
 
-    const clusterLines = getClusterStatusLines('3 managed clusters — 1 healthy, 1 with issues, 1 unknown')
+    const clusterLines = getClusterStatusLines('3 managed clusters — 1 healthy, 1 with problems, 1 unknown')
     expect(clusterLines).toHaveLength(2)
     clusterLines.forEach((line) => {
       expect(within(line).getByText('1 healthy').className).toContain('text-green-700')
-      expect(within(line).getByText('1 with issues').className).toContain('text-red-700')
+      expect(within(line).getByText('1 with problems').className).toContain('text-red-700')
       expect(within(line).getByText('1 unknown').className).toContain('text-gray-700')
     })
   })
