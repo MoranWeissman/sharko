@@ -2937,7 +2937,7 @@ const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> =
 // ClusterIdentityPanel's own doc link already use.
 // /en/latest/ is the readthedocs language/version prefix — the unprefixed
 // form of a published page hard-404s.
-const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/en/latest/architecture/engine-and-secret-sync/'
+const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/en/latest/user-guide/secret-sync/'
 const SECRETS_ARCHITECTURE_DOC_LINK_TEXT = 'How Sharko manages secrets'
 
 export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
