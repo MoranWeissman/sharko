@@ -326,6 +326,34 @@ describe('NotificationBell — rows, read marks and viewers (ep3 fix 6)', () => 
     await waitFor(() => expect(screen.getByText('Notifications (1)')).toBeInTheDocument());
   });
 
+  it('a failed read-all brings back unread marks without wiping newer alerts (ep3 review G5)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let fail: (e: unknown) => void = () => {};
+      markAllNotificationsRead.mockReturnValue(new Promise((_res, rej) => { fail = rej; }));
+      const newer = { ...connectionNotification, id: 'newer-1', title: 'A newer alert' };
+      getNotifications.mockResolvedValue({ notifications: [upgradeNotification] });
+      renderBell();
+      await screen.findByText('1');
+      fireEvent.click(screen.getByLabelText('Notifications'));
+      await waitFor(() => expect(markAllNotificationsRead).toHaveBeenCalled());
+
+      // While the call is still running, the 60 second refresh brings a new alert.
+      getNotifications.mockResolvedValue({ notifications: [upgradeNotification, newer] });
+      await vi.advanceTimersByTimeAsync(60_100);
+      await screen.findByText('A newer alert');
+
+      fail(new Error('nope'));
+      // Both are unread again (the old one is put back, the new one never
+      // was read), and the newer alert is still in the list.
+      await waitFor(() => expect(screen.getByText('Notifications (2)')).toBeInTheDocument());
+      expect(screen.getByText('A newer alert')).toBeInTheDocument();
+      expect(screen.getByText('New addon version available')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a viewer sees the alerts but nothing tries to clear them', async () => {
     mockRole = 'viewer';
     getNotifications.mockResolvedValue({ notifications: [connectionNotification] });

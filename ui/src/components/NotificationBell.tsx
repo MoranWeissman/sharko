@@ -73,12 +73,14 @@ export function NotificationBell() {
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
     if (nextOpen && unreadCount > 0 && canClear) {
-      const before = notifications
+      const wasUnread = new Set(notifications.filter(n => !n.read).map(n => n.id))
       setNotifications(prev => prev.map(n => ({ ...n, read: true })))
       api.markAllNotificationsRead().catch(() => {
         // The server did not take it, so put the unread marks back. The
         // counter must not say "all read" when the server still says unread.
-        setNotifications(before)
+        // Only the read flags go back: the list may have been refreshed
+        // while the call was running, and newer alerts must stay.
+        setNotifications(prev => prev.map(n => (wasUnread.has(n.id) ? { ...n, read: false } : n)))
       })
     }
   }
