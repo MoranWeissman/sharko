@@ -162,12 +162,16 @@ export function shouldShowConnectionErrorBanner(
   repoStatus: RepoStatusResponse | null,
 ): boolean {
   if (!repoStatus) return false
-  if (repoStatus.initialized) return !repoStatus.bootstrap_synced
+  // Older servers do not send bootstrap_synced at all. Missing means
+  // "unknown", not "broken", so only an explicit false shows the banner.
+  if (repoStatus.initialized) return repoStatus.bootstrap_synced === false
   return isConnectionErrorReason(repoStatus.reason)
 }
 
+export const REPO_STATUS_POLL_MS = 15_000
+
 export function ConnectedApp() {
-  const { connections, loading } = useConnections()
+  const { connections, loading, error: connectionsError, refreshConnections } = useConnections()
   const [repoStatus, setRepoStatus] = useState<RepoStatusResponse | null>(null)
   const [checkingRepo, setCheckingRepo] = useState(true)
   // User-invited repair screen: set only by clicking the banner's repair
@@ -189,6 +193,14 @@ export function ConnectedApp() {
       .catch(() => setRepoStatus({ initialized: false, bootstrap_synced: false, reason: 'error' }))
   }, [])
 
+  // Look again every so often, so the banner goes away by itself once Git or
+  // ArgoCD is back, with no page reload. Stays quiet (no spinner) on purpose.
+  useEffect(() => {
+    if (loading || connections.length === 0) return
+    const id = setInterval(() => { fetchRepoStatus() }, REPO_STATUS_POLL_MS)
+    return () => clearInterval(id)
+  }, [loading, connections.length, fetchRepoStatus])
+
   useEffect(() => {
     if (!loading) {
       if (connections.length > 0) {
@@ -204,6 +216,29 @@ export function ConnectedApp() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#bee0ff] dark:bg-gray-950">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6aade0] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
+      </div>
+    )
+  }
+
+  // The saved connection list could not be loaded. That is not the same as
+  // "no connections yet", so do not open the first-run wizard over it. Say
+  // what happened and let the user try again.
+  if (connectionsError && connections.length === 0) {
+    return (
+      <div
+        role="alert"
+        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#bee0ff] px-4 text-center dark:bg-gray-950"
+      >
+        <p className="text-lg font-medium text-[#0a2a4a] dark:text-gray-100">
+          Sharko couldn't load your saved connections.
+        </p>
+        <button
+          type="button"
+          onClick={refreshConnections}
+          className="rounded-md bg-[#1a3d5c] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e]"
+        >
+          Try again
+        </button>
       </div>
     )
   }
@@ -256,12 +291,17 @@ export function ConnectedApp() {
 
   return (
     <Suspense fallback={<PageLoader />}>
+      {/* The banner and the page share one screen-high column, so the banner
+          takes its height out of the page instead of pushing the page down
+          and adding a second scrollbar. */}
+      <div className="flex h-screen flex-col">
       {showConnError && (
         <ConnectionErrorBanner
           reason={repoStatus?.reason}
           onOpenRepair={() => setRepairWizardOpen(true)}
         />
       )}
+      <div className="min-h-0 flex-1">
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
@@ -315,6 +355,8 @@ export function ConnectedApp() {
           <Route path="user" element={<UserInfo />} />
         </Route>
       </Routes>
+      </div>
+      </div>
     </Suspense>
   )
 }

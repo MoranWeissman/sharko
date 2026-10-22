@@ -8,6 +8,11 @@ interface ArgoCDStatusBannerProps {
 export function ArgoCDStatusBanner({ visible }: ArgoCDStatusBannerProps) {
   const [dismissed, setDismissed] = useState(false);
 
+  // A closed banner must come back if the problem comes back. When the
+  // problem goes away (visible turns false) forget the close, so the next
+  // time it turns true the banner shows again.
+  if (!visible && dismissed) setDismissed(false);
+
   if (!visible || dismissed) return null;
 
   return (
