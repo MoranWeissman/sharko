@@ -189,7 +189,7 @@ The server holds the platform credentials — the ArgoCD token, the Git token, a
 | `sharko init` | Initialize the addons repo (async, streams progress) |
 | `sharko validate [path]` | Validate catalog YAML against schema |
 | `sharko add-cluster <name>` | Register a cluster |
-| `sharko add-clusters <n1,n2,...>` | Batch register multiple clusters |
+| `sharko add-clusters [n1,n2,...]` | Batch register multiple clusters (or `--from-provider` to find them) |
 | `sharko remove-cluster <name>` | Deregister a cluster |
 | `sharko update-cluster <name>` | Update addon assignments |
 | `sharko list-clusters` | List all clusters |

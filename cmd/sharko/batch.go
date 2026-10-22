@@ -69,11 +69,23 @@ type batchResult struct {
 }
 
 var addClustersCmd = &cobra.Command{
-	Use:   "add-clusters <cluster1,cluster2,...>",
+	Use:   "add-clusters [cluster1,cluster2,...]",
 	Short: "Register multiple clusters in a batch",
-	Args:  cobra.ExactArgs(1),
+	Long: `Registers several clusters at once. Give the names as one comma-separated
+list, or use --from-provider to find the clusters your cloud account has that
+Sharko does not know yet and register them.
+
+Examples:
+  sharko add-clusters prod-eu,prod-us --addons monitoring
+  sharko add-clusters --from-provider`,
+	// The list of names is only needed when --from-provider is not used.
+	// The old form (--from-provider plus a list that is ignored) still works.
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fromProvider, _ := cmd.Flags().GetBool("from-provider")
+		if !fromProvider && len(args) != 1 {
+			return fmt.Errorf("give the cluster names as a comma-separated list (for example: sharko add-clusters prod-eu,prod-us), or use --from-provider")
+		}
 		addonsFlag, _ := cmd.Flags().GetString("addons")
 		region, _ := cmd.Flags().GetString("region")
 
