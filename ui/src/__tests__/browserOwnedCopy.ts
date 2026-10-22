@@ -82,4 +82,44 @@ export const BROWSER_OWNED_COPY: BrowserOwnedCopy[] = [
       "STATE right now. Same words, different tense and different subject; the feed's table is the one " +
       'owner of its own titles.',
   },
+  {
+    file: '/src/lib/clusterStatus.ts',
+    text: 'Not checked yet',
+    collidesWith: 'headlineNotCheckedYet',
+    why:
+      "The cluster list's own pill for a cluster with no addons: ArgoCD only checks a cluster once " +
+      'something is deployed to it. The server headline of the same words is about a connection ' +
+      'credential check that has not run yet. Different fact, different surface; the pill is chosen ' +
+      'from the cluster addon count and never from server text.',
+  },
+  {
+    file: '/src/lib/__tests__/clusterStatus.test.ts',
+    text: 'Not checked yet',
+    collidesWith: 'headlineNotCheckedYet',
+    why:
+      "The cluster list's own pill for a cluster with no addons: ArgoCD only checks a cluster once " +
+      'something is deployed to it. The server headline of the same words is about a connection ' +
+      'credential check that has not run yet. Different fact, different surface; the pill is chosen ' +
+      'from the cluster addon count and never from server text.',
+  },
+  {
+    file: '/src/components/__tests__/ClusterCard.test.tsx',
+    text: 'Not checked yet',
+    collidesWith: 'headlineNotCheckedYet',
+    why:
+      "The cluster list's own pill for a cluster with no addons: ArgoCD only checks a cluster once " +
+      'something is deployed to it. The server headline of the same words is about a connection ' +
+      'credential check that has not run yet. Different fact, different surface; the pill is chosen ' +
+      'from the cluster addon count and never from server text.',
+  },
+  {
+    file: '/src/components/__tests__/ClusterStatusSummary.test.tsx',
+    text: 'Not checked yet',
+    collidesWith: 'headlineNotCheckedYet',
+    why:
+      "The cluster list's own pill for a cluster with no addons: ArgoCD only checks a cluster once " +
+      'something is deployed to it. The server headline of the same words is about a connection ' +
+      'credential check that has not run yet. Different fact, different surface; the pill is chosen ' +
+      'from the cluster addon count and never from server text.',
+  },
 ]

@@ -121,7 +121,8 @@ describe('clusterStatusParts', () => {
   it('shows "No addons yet" instead of "Connecting…" when enabledAddonCount is 0', () => {
     const parts = clusterStatusParts({ connectionStatus: '', enabledAddonCount: 0 });
     expect(parts).toHaveLength(1);
-    expect(parts[0].label).toBe('No addons yet — connection untested');
+    expect(parts[0].label).toBe('Not checked yet');
+    expect(parts[0].label).not.toContain('No addons yet');
     expect(parts[0].severity).toBe('unknown');
   });
 

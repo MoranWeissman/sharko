@@ -1149,7 +1149,7 @@ export function ClusterDetail() {
         <EmptyState
           title={`Cluster "${name}" not found`}
           description={
-            'This cluster is not in managed-clusters.yaml. ' +
+            'This cluster is not in your list of managed clusters. ' +
             'It may have been registered via a pending PR that has not yet merged. ' +
             'Open the Clusters page and look under "Pending Registrations" for an open PR.'
           }
@@ -1383,7 +1383,14 @@ export function ClusterDetail() {
             * preflight is unchanged: it stays a safe, idempotent green
             * check for anyone who reaches it another way (the API, or a
             * stale bookmark). */}
-          <RoleGuard roles={['admin']}>
+          <RoleGuard
+            roles={['admin']}
+            fallback={
+              <span data-testid="takeover-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">
+                Only an admin can take ownership of this cluster or remove its old labels.
+              </span>
+            }
+          >
             {!data?.cluster?.already_managed_by_sharko && (
               <>
                 <button
@@ -1717,7 +1724,7 @@ export function ClusterDetail() {
             <div className="flex items-start gap-1.5">
               <div>
                 <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                  Argo CD cluster connection
+                  ArgoCD cluster connection
                   {data?.cluster?.managed_secret_name && (
                     <span className="font-normal text-[#5a8aaa] dark:text-gray-500"> — {data.cluster.managed_secret_name}</span>
                   )}
@@ -1727,7 +1734,7 @@ export function ClusterDetail() {
                 </p>
               </div>
               <InfoHint
-                text="Argo CD stores this connection as a Kubernetes Secret. Its addon labels are read by the ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
+                text="ArgoCD stores this connection as a Kubernetes Secret. Its addon labels are read by the ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
                 label="How does this connection work?"
               />
             </div>

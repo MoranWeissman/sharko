@@ -3161,7 +3161,7 @@ describe('ClusterDetail', () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      expect(screen.getByText('Argo CD cluster connection')).toBeInTheDocument();
+      expect(screen.getByText('ArgoCD cluster connection')).toBeInTheDocument();
       expect(screen.getByText('— argocd/prod-eu')).toBeInTheDocument();
       expect(
         screen.getByText(
@@ -3179,7 +3179,7 @@ describe('ClusterDetail', () => {
     it('falls back to the generic title when no managed_secret_name is available', async () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByText('Argo CD cluster connection')).toBeInTheDocument();
+      expect(screen.getByText('ArgoCD cluster connection')).toBeInTheDocument();
       expect(screen.queryByText(/—\s*argocd\//)).not.toBeInTheDocument();
     });
 
@@ -3277,6 +3277,41 @@ describe('ClusterDetail', () => {
       expect(screen.queryByTestId('open-takeover')).not.toBeInTheDocument();
       expect(screen.queryByText('Take ownership')).not.toBeInTheDocument();
     });
+
+    // Fix 19: a person who is not an admin used to see nothing at all where
+    // the two buttons are, with no hint why.
+    const ADMIN_ONLY_HINT = 'Only an admin can take ownership of this cluster or remove its old labels.';
+
+    it('tells a non-admin why the ownership buttons are missing', async () => {
+      const operatorAuth = {
+        token: 't', username: 'op', role: 'operator', login: vi.fn(), logout: vi.fn(),
+        isAuthenticated: true, isAdmin: false, loading: false, error: null,
+      };
+      const { MemoryRouter, Route, Routes } = await import('react-router-dom');
+      const { ClusterDetail } = await import('@/views/ClusterDetail');
+      const { AuthContext } = await import('@/hooks/useAuth');
+      const { render: r, screen: s, waitFor: w } = await import('@testing-library/react');
+      r(
+        <AuthContext.Provider value={operatorAuth}>
+          <MemoryRouter initialEntries={['/clusters/prod-eu']}>
+            <Routes>
+              <Route path="/clusters/:name" element={<ClusterDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>,
+      );
+      await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
+      expect(s.getByText(ADMIN_ONLY_HINT)).toBeInTheDocument();
+      expect(s.queryByTestId('open-takeover')).not.toBeInTheDocument();
+      expect(s.queryByTestId('open-drop-labels')).not.toBeInTheDocument();
+    });
+
+    it('does not show the admin-only line to an admin', async () => {
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.queryByText(ADMIN_ONLY_HINT)).not.toBeInTheDocument();
+      expect(screen.getByTestId('open-drop-labels')).toBeInTheDocument();
+    });
   });
 
   // Walk day 4 locks, S4 — the status badge remembers Sharko's last test
@@ -3354,6 +3389,11 @@ describe('ClusterDetail — the not-found screen follows the status code', () =>
     renderView();
 
     expect(await screen.findByText(/Cluster "prod-eu" not found/i)).toBeInTheDocument();
+    // The text names no file, and says "managed clusters" in plain words.
+    expect(
+      screen.getByText(/This cluster is not in your list of managed clusters\. /),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/managed-clusters\.yaml/)).not.toBeInTheDocument();
   });
 
   it('does NOT show it on a non-404, however much the sentence reads like one', async () => {

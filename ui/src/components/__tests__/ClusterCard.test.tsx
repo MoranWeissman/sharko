@@ -73,9 +73,9 @@ describe('ClusterCard connection pill (LW-5 collapsed)', () => {
   // gives ArgoCD anything to probe, so it sat at "Connecting…" forever —
   // implying progress that would never come. It now gets a distinct,
   // honest pill instead.
-  it('renders "No addons yet — connection untested" — NOT "Connecting…" — for empty status with zero addons', () => {
+  it('renders "Not checked yet" — NOT "Connecting…" — for empty status with zero addons', () => {
     const { container } = renderCard({ connectionStatus: '', totalCount: 0 });
-    expect(screen.getByText('No addons yet — connection untested to ArgoCD')).toBeInTheDocument();
+    expect(screen.getByText('Not checked yet')).toBeInTheDocument();
     expect(screen.queryByText('Connecting… to ArgoCD')).not.toBeInTheDocument();
 
     const dot = container.querySelector('div.h-2.w-2.rounded-full');
@@ -83,9 +83,9 @@ describe('ClusterCard connection pill (LW-5 collapsed)', () => {
     expect(dot!.className).not.toContain('bg-amber-500');
   });
 
-  it('renders "No addons yet — connection untested" for status "Unknown" with zero addons', () => {
+  it('renders "Not checked yet" for status "Unknown" with zero addons', () => {
     renderCard({ connectionStatus: 'Unknown', totalCount: 0 });
-    expect(screen.getByText('No addons yet — connection untested to ArgoCD')).toBeInTheDocument();
+    expect(screen.getByText('Not checked yet')).toBeInTheDocument();
   });
 
   // V2-cleanup-75.1: "missing" (ArgoCD has NO connection for this cluster

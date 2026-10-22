@@ -44,7 +44,7 @@ export function ClusterIdentityPanel({ capabilities, loading }: ClusterIdentityP
       className="rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900"
     >
       <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-        Detected once per hub — applies to every cluster
+        Detected once — applies to every cluster
       </p>
 
       {loading && (
@@ -108,7 +108,7 @@ export function ClusterIdentityPanel({ capabilities, loading }: ClusterIdentityP
       </button>
       {howOpen && (
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="identity-how-it-works">
-          Sharko runs with one IAM role on the hub cluster. Every spoke cluster that opts in trusts
+          Sharko runs with one AWS role. Every EKS cluster that opts in trusts
           that one role — nothing per-cluster to set up on Sharko's side. When Sharko needs to
           reach a cluster, it generates a short-lived token on demand; nothing is stored.{' '}
           <a

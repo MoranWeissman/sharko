@@ -524,7 +524,7 @@ export function PRModelExplainer() {
       <div className="flex-1">
         <p className="font-medium">Every change opens a pull request</p>
         <p className="mt-1 text-blue-800 dark:text-blue-300">
-          Sharko never changes your cluster or Git repo directly — merge the PR to make it take effect.
+          Sharko opens a pull request for every change to your Git repo. Merge it to make the change take effect. With auto merge on, Sharko merges it for you.
         </p>
       </div>
       <button

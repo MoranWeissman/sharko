@@ -261,6 +261,18 @@ describe('PRModelExplainer', () => {
     expect(screen.getByText('Every change opens a pull request')).toBeInTheDocument()
   })
 
+  it('says what Sharko really does: pull requests for Git changes, and auto merge', () => {
+    render(<PRModelExplainer />)
+    expect(
+      screen.getByText(
+        'Sharko opens a pull request for every change to your Git repo. Merge it to make the change take effect. With auto merge on, Sharko merges it for you.',
+      ),
+    ).toBeInTheDocument()
+    // The old sentence was not true: Sharko also writes the cluster connection,
+    // and with auto merge on it merges the pull request itself.
+    expect(screen.queryByText(/never changes your cluster or Git repo directly/)).not.toBeInTheDocument()
+  })
+
   it('does not appear once dismissed', () => {
     render(<PRModelExplainer />)
     fireEvent.click(screen.getByRole('button', { name: /dismiss/i }))

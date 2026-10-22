@@ -98,7 +98,7 @@ function renderPrimary(status?: string, detail?: string) {
   if (status === 'check_pending') {
     const tooltipContent = detail
       ? detail
-      : 'Connectivity check is deploying — usually under a minute; without an ArgoCD webhook it can take ~3 minutes';
+      : 'Connectivity check is deploying — usually under a minute, but it can take about 3 minutes';
     return (
       <TooltipProvider>
         <Tooltip>

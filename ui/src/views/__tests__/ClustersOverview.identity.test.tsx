@@ -211,12 +211,12 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     // The GitOps story surfaces on success.
     await waitFor(() => {
       expect(
-        screen.getByText(/This registration opens a pull request in your GitOps repo/),
+        screen.getByText(/This registration opens a pull request in your GitOps repo that adds the cluster\./),
       ).toBeInTheDocument();
     });
   });
 
-  it('the optional-details note says the Advanced settings details are optional and why you may add them later', async () => {
+  it('the optional-details note says the connection details are optional and why you may add them later', async () => {
     mockGetSystemCapabilities.mockResolvedValue({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' });
 
     renderView();
@@ -224,9 +224,10 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
 
     expect(
       screen.getByText(
-        'The details under Advanced settings are optional. You can add them later if an addon needs secrets on this cluster.',
+        'The connection details are optional. You can add them later if an addon needs secrets on this cluster.',
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/Advanced settings/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Connection credentials below are\s*optional/)).not.toBeInTheDocument();
   });
 });

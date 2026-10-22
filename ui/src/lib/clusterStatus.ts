@@ -139,9 +139,9 @@ export function classifyClusterConnection(status: string | null | undefined): Cl
 // keyed on kind), just a different label/meaning for the SAME 'pending'
 // kind when the caller tells us the addon count is exactly 0.
 const NO_ADDONS_YET_STATE: ClusterConnectionStateDef = {
-  label: 'No addons yet — connection untested',
+  label: 'Not checked yet',
   meaning:
-    'This cluster has no addons enabled, so ArgoCD has nothing to probe yet. Enable an addon to get a real connection result.',
+    'ArgoCD only checks a cluster once something is deployed to it, and nothing is deployed here yet. Enable an addon and ArgoCD will check the connection.',
   severity: 'unknown',
   dot: 'bg-[#3a6a8a] dark:bg-gray-400',
   text: 'text-[#1a4a6a] dark:text-gray-300',
