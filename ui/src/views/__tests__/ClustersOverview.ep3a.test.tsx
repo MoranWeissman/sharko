@@ -127,4 +127,36 @@ describe('ClustersOverview — retry, close guard, stale preview', () => {
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), { target: { value: 'kind-other' } });
     await waitFor(() => expect(screen.queryByText(/register cluster kind-test/)).not.toBeInTheDocument());
   });
+  it('drops a preview answer that arrives after a field changed (ep3 review G3)', async () => {
+    let answer: (v: unknown) => void = () => {};
+    mockRegisterCluster.mockReturnValue(new Promise((res) => { answer = res; }));
+    renderView();
+    await openAddDialog();
+    await fillMinimum();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    // The user edits a field while the answer is still on its way.
+    fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), { target: { value: 'kind-other' } });
+    answer({
+      status: 'success',
+      dry_run: { pr_title: 'sharko: register cluster kind-test', files_to_write: [], effective_addons: [], secrets_to_create: [] },
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    // The old answer was for the old name, so it must not show up.
+    expect(screen.queryByText(/register cluster kind-test/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /preview/i })).toBeEnabled();
+  });
+
+  it('drops a preview error that arrives after a field changed (ep3 review G3)', async () => {
+    let fail: (e: unknown) => void = () => {};
+    mockRegisterCluster.mockReturnValue(new Promise((_res, rej) => { fail = rej; }));
+    renderView();
+    await openAddDialog();
+    await fillMinimum();
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+    fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), { target: { value: 'kind-other' } });
+    fail(new Error('old preview failed'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/old preview failed/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /preview/i })).toBeEnabled();
+  });
 });
