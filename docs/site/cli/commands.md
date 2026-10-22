@@ -158,8 +158,8 @@ sharko add-cluster <name> [flags]
 | `--region <region>` | Cloud region of the cluster. Used with the `eks-token` and `secret-kubeconfig` sources, not with `inline-kubeconfig` |
 | `--creds-source <source>` | How Sharko gets the cluster's credentials: `eks-token`, `secret-kubeconfig` or `inline-kubeconfig`. These are the same choices as the register dialog in the UI. Leave it out and Sharko works it out from the other flags |
 | `--secret-path <name>` | Name or path of the secret that holds the credentials. Used with `secret-kubeconfig` (the stored kubeconfig) and, optionally, `eks-token` |
-| `--role-arn <arn>` | AWS role Sharko takes on to reach this cluster. `eks-token` only |
-| `--kubeconfig-file <path>` | A kubeconfig file to hand to Sharko once. `inline-kubeconfig` only. An admin can turn this source off in settings |
+| `--role-arn <arn>` | AWS role Sharko takes on to reach this cluster. With `eks-token` it is the role used to make the token. With `secret-kubeconfig` it is the role used to read the stored kubeconfig. Not allowed with `inline-kubeconfig` |
+| `--kubeconfig-file <path>` | A kubeconfig file to hand to Sharko once. `inline-kubeconfig` only. This source is off by default. An admin has to turn on "Allow legacy inline credentials" in Settings first |
 | `--connection-managed-by <who>` | Who looks after the ArgoCD cluster secret: `sharko` (the default) or `user`. With `user` you make the secret yourself and Sharko never writes it |
 | `--dry-run` | Preview the registration without making changes — prints the PR title, effective addons, secrets that would be created, the connectivity check result, and per-file the exact diff the pull request would contain |
 

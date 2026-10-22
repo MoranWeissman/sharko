@@ -137,7 +137,6 @@ func TestAddCluster_WrongFlagMixIsRefusedBeforeAnythingIsSent(t *testing.T) {
 		{"inline with role", map[string]string{"creds-source": "inline-kubeconfig", "role-arn": "r"}, "--role-arn cannot be used with --creds-source inline-kubeconfig"},
 		{"file with eks", map[string]string{"creds-source": "eks-token", "kubeconfig-file": f}, "--kubeconfig-file can only be used with --creds-source inline-kubeconfig"},
 		{"file with no source", map[string]string{"kubeconfig-file": f}, "--kubeconfig-file needs --creds-source inline-kubeconfig"},
-		{"role with secret kubeconfig", map[string]string{"creds-source": "secret-kubeconfig", "role-arn": "r"}, "--role-arn can only be used with --creds-source eks-token"},
 		{"missing file", map[string]string{"creds-source": "inline-kubeconfig", "kubeconfig-file": "/nonexistent/kc"}, "could not read the kubeconfig file"},
 	}
 	for _, c := range cases {
@@ -211,10 +210,50 @@ func TestAddClusters_HelpShowsTheNameIsOptional(t *testing.T) {
 
 // Fix 20: the help names the annotation Sharko really writes, and not the old one.
 func TestUnadoptHelp_NamesTheRealAnnotation(t *testing.T) {
-	if !strings.Contains(unadoptClusterCmd.Long, "sharko.dev/adopted annotation") {
-		t.Errorf("help does not name sharko.dev/adopted:\n%s", unadoptClusterCmd.Long)
+	// The whole sentence, so the old doubled-prefix text cannot pass: it
+	// contained "sharko.dev/adopted annotation" as a substring.
+	want := "The cluster must carry the sharko.dev/adopted annotation, which\nSharko puts on a cluster when you adopt it."
+	if !strings.Contains(unadoptClusterCmd.Long, want) {
+		t.Errorf("help does not say the exact sentence %q:\n%s", want, unadoptClusterCmd.Long)
 	}
 	if strings.Contains(unadoptClusterCmd.Long, "sharko.sharko.dev") {
 		t.Error("help still names the old doubled-prefix annotation")
+	}
+}
+
+// ep3 review G8: the server accepts --role-arn with a stored kubeconfig and
+// uses it to read that kubeconfig, so the CLI must send it, not refuse it.
+func TestAddCluster_SecretKubeconfigAcceptsARoleArn(t *testing.T) {
+	got, err := runAddClusterCapturingBody(t, map[string]string{
+		"creds-source": "secret-kubeconfig",
+		"secret-path":  "clusters/prod-eu",
+		"role-arn":     "arn:aws:iam::123456789012:role/sharko-access",
+	})
+	if err != nil {
+		t.Fatalf("the CLI refused --role-arn with secret-kubeconfig: %v", err)
+	}
+	if got["role_arn"] != "arn:aws:iam::123456789012:role/sharko-access" || got["secret_path"] != "clusters/prod-eu" {
+		t.Errorf("body = %v, want role_arn and secret_path sent", got)
+	}
+}
+
+// ep3 review G7 + G8: the help says the plain truth about inline credentials
+// (off by default, an admin turns it on) and about --role-arn.
+func TestAddClusterHelp_InlineIsOffByDefaultAndRoleArnWording(t *testing.T) {
+	long := addClusterCmd.Long
+	for _, want := range []string{
+		"This source is off by default. An admin has to turn on\n                     \"Allow legacy inline credentials\" in Settings first.",
+		"backend. Give its name with --secret-path. --role-arn is\n                     optional: it is the AWS role Sharko takes on to read it.",
+	} {
+		if !strings.Contains(long, want) {
+			t.Errorf("help is missing %q", want)
+		}
+	}
+	flag := addClusterCmd.Flags().Lookup("role-arn")
+	if flag == nil || flag.Usage != "AWS role Sharko takes on to reach this cluster (not with inline-kubeconfig)" {
+		t.Errorf("role-arn flag help = %v", flag)
+	}
+	if strings.Contains(flag.Usage, "eks-token source only") {
+		t.Error("role-arn flag help still says eks-token only")
 	}
 }

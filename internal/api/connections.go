@@ -80,7 +80,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 // handleUpdateConnection godoc
 //
 // @Summary Update connection
-// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values.
+// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values. Secrets backend rules, for both `provider` (cluster credentials) and `addon_secret_provider` (addon secret values): a block that is left out keeps the saved one; a block whose `type` is empty clears the saved one (for the addon backend that means addon secret values come from the cluster backend again); a block with a `type` replaces the saved one, except that when it names the same backend as the saved one (aliases count as the same) and leaves `namespace` or `role_arn` empty, the saved `namespace` and `role_arn` are kept. A different backend starts clean.
 // @Tags connections
 // @Accept json
 // @Produce json

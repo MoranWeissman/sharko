@@ -2963,8 +2963,8 @@ definitions:
       source:
         description: |-
           Source (S1) names, per row, the real backend this secret's value
-          comes from and is compared against — "AWS Secrets Manager", "a
-          Kubernetes Secret", ..., or the honest "secrets store" fallback when
+          comes from and is compared against — "AWS Secrets Manager", "Kubernetes
+          Secrets", ..., or the honest "secrets store" fallback when
           the server cannot name a product. Per row, not per response: the row
           is what a reader filters, sorts and groups by, so the fact has to
           live on the row.
@@ -8690,11 +8690,19 @@ paths:
     put:
       consumes:
       - application/json
-      description: Updates an existing connection configuration; empty token fields
+      description: 'Updates an existing connection configuration; empty token fields
         retain their saved values. A request whose `git` or `argocd` block carries
-        none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only
+        none of that block''s identifying fields (e.g. a GitOps-settings-only or secrets-provider-only
         save) is treated as not touching that section — the stored `git`/`argocd`
-        config is kept as-is instead of being overwritten with empty values.
+        config is kept as-is instead of being overwritten with empty values. Secrets
+        backend rules, for both `provider` (cluster credentials) and `addon_secret_provider`
+        (addon secret values): a block that is left out keeps the saved one; a block
+        whose `type` is empty clears the saved one (for the addon backend that means
+        addon secret values come from the cluster backend again); a block with a `type`
+        replaces the saved one, except that when it names the same backend as the
+        saved one (aliases count as the same) and leaves `namespace` or `role_arn`
+        empty, the saved `namespace` and `role_arn` are kept. A different backend
+        starts clean.'
       parameters:
       - description: Connection name
         in: path

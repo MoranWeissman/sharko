@@ -18,7 +18,7 @@ func init() {
 	addClusterCmd.Flags().String("creds-source", "", `How Sharko gets the cluster's credentials: "eks-token", "secret-kubeconfig" or "inline-kubeconfig"`)
 	addClusterCmd.Flags().String("kubeconfig-file", "", "Path to a kubeconfig file to hand to Sharko (inline-kubeconfig source only)")
 	addClusterCmd.Flags().String("secret-path", "", "Name or path of the secret that holds the credentials (eks-token and secret-kubeconfig sources)")
-	addClusterCmd.Flags().String("role-arn", "", "AWS role Sharko takes on to reach this cluster (eks-token source only)")
+	addClusterCmd.Flags().String("role-arn", "", "AWS role Sharko takes on to reach this cluster (not with inline-kubeconfig)")
 	addClusterCmd.Flags().String("connection-managed-by", "", `Who looks after the ArgoCD cluster secret: "sharko" (default) or "user" (you make it yourself)`)
 	addClusterCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	rootCmd.AddCommand(addClusterCmd)
@@ -112,9 +112,6 @@ func buildAddClusterBody(name string, addons map[string]bool, region, credsSourc
 			if kubeconfigFile != "" {
 				return nil, fmt.Errorf("--kubeconfig-file can only be used with --creds-source %s", credsSourceInline)
 			}
-			if credsSource == credsSourceSecret && roleARN != "" {
-				return nil, fmt.Errorf("--role-arn can only be used with --creds-source %s", credsSourceEKS)
-			}
 			body["provider"] = "eks"
 			if secretPath != "" {
 				body["secret_path"] = secretPath
@@ -144,10 +141,13 @@ the same choices as the register dialog in the UI.
                      Nothing to store. EKS only. --role-arn and --secret-path
                      are optional.
   secret-kubeconfig  Sharko reads a kubeconfig that is kept in your secrets
-                     backend. Give its name with --secret-path.
+                     backend. Give its name with --secret-path. --role-arn is
+                     optional: it is the AWS role Sharko takes on to read it.
   inline-kubeconfig  You hand Sharko a kubeconfig file once and it stores it.
                      Give the file with --kubeconfig-file. The token inside can
                      run out, so you will need to hand over a new one then.
+                     This source is off by default. An admin has to turn on
+                     "Allow legacy inline credentials" in Settings first.
 
 Leave --creds-source out and Sharko works it out from the other flags, as it
 did before.

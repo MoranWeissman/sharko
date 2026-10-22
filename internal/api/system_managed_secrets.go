@@ -260,8 +260,8 @@ type addonValuesSecretRow struct {
 	// holds a pointer to where the value lives (S3(a) honesty lock).
 	State string `json:"state"`
 	// Source (S1) names, per row, the real backend this secret's value
-	// comes from and is compared against — "AWS Secrets Manager", "a
-	// Kubernetes Secret", ..., or the honest "secrets store" fallback when
+	// comes from and is compared against — "AWS Secrets Manager", "Kubernetes
+	// Secrets", ..., or the honest "secrets store" fallback when
 	// the server cannot name a product. Per row, not per response: the row
 	// is what a reader filters, sorts and groups by, so the fact has to
 	// live on the row.

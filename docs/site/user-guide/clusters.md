@@ -120,9 +120,9 @@ Flags:
 | `--addons` | Comma-separated list of addons to enable on this cluster. If omitted, Sharko applies the default addons from `configuration/default-addons.yaml` (see [Default Addons](addons.md#default-addons)) |
 | `--creds-source` | How Sharko gets the credentials: `eks-token`, `secret-kubeconfig` or `inline-kubeconfig` |
 | `--region` | AWS region — use this for the **Amazon EKS token** source |
-| `--role-arn` | AWS role Sharko takes on to reach the cluster — **Amazon EKS token** source only |
+| `--role-arn` | AWS role Sharko takes on to reach the cluster — with the **Amazon EKS token** source, or to read the kubeconfig with the **stored kubeconfig** source. Not allowed with a pasted kubeconfig |
 | `--secret-path` | The path/name of a stored kubeconfig — use this for the **stored kubeconfig** source (see [Secret Path](#secret-path)) |
-| `--kubeconfig-file` | A kubeconfig file to hand to Sharko once — **pasted kubeconfig** source only |
+| `--kubeconfig-file` | A kubeconfig file to hand to Sharko once — **pasted kubeconfig** source only. This source is off by default; an admin has to turn on "Allow legacy inline credentials" in Settings first |
 | `--connection-managed-by` | `sharko` (default) or `user`. With `user` you create the ArgoCD cluster secret yourself |
 
 See the [CLI reference](../cli/commands.md#sharko-add-cluster) for one example per source.
