@@ -207,7 +207,8 @@ describe('the two inventories are separate subpages (SN-3)', () => {
     // B5: the product owner's exact replacement subtitle. The old sentence
     // described the mechanism; the locked model is that Git defines the
     // connection and Sharko maintains the resulting Secret.
-    expect(screen.getByText('Git-defined cluster connections Sharko maintains for Argo CD.')).toBeInTheDocument()
+    expect(screen.getByText('Git-defined cluster connections Sharko maintains for ArgoCD.')).toBeInTheDocument()
+    expect(screen.queryByText('Git-defined cluster connections Sharko maintains for Argo CD.')).not.toBeInTheDocument()
     expect(screen.queryByText('Secrets Sharko uses to register clusters with Argo CD.')).not.toBeInTheDocument()
 
     await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())

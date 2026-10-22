@@ -179,7 +179,7 @@ interface UnruledClaim {
 const UNRULED_BROWSER_CLAIMS: UnruledClaim[] = [
   {
     file: '/src/views/ManagedSecrets.tsx',
-    text: 'Git-defined cluster connections Sharko maintains for Argo CD.',
+    text: 'Git-defined cluster connections Sharko maintains for ArgoCD.',
     why:
       'The page subtitle, and the product owner wrote this exact replacement himself under ruling B5 — it ' +
       'is his sentence, not one the browser invented, and it states the locked model (Git defines the ' +

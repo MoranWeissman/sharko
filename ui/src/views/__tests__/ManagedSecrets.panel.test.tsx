@@ -927,11 +927,12 @@ describe('SSF-12 — the one health conclusion', () => {
     )
   })
 
-  it('a broken addon-values row says "Needs attention", names the real store, and promises what Sync repairs', async () => {
+  it('a broken addon-values row says "Out of sync", names the real store, and promises what Sync repairs', async () => {
     renderPage()
     const panel = await openRow('values-staging-us-datadog') // out_of_sync -> differ
     const conclusion = within(panel).getByTestId('detail-health-conclusion')
-    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent('Needs attention')
+    expect(within(conclusion).getByTestId('detail-conclusion-label')).toHaveTextContent(CONNECTION_SENTENCES.headlineOutOfSync)
+    expect(conclusion.textContent ?? '').not.toContain('Needs attention')
     expect(within(conclusion).getByTestId('diff-verdict')).toHaveTextContent('The cluster copy does not match AWS Secrets Manager.')
     expect(within(conclusion).getByTestId('detail-repair-note')).toHaveTextContent(
       'Sync will update the cluster copy to match AWS Secrets Manager.',

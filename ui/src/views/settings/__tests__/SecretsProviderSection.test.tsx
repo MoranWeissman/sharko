@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -190,8 +190,12 @@ describe('SecretsProviderSection', () => {
     // Prefix (aws-sm + k8s-secrets only) must NOT be rendered for argocd in cluster-creds section.
     // The argocd-specific helper line should be visible.
     expect(
-      screen.getByText(/reads credentials from the ArgoCD cluster Secret/i),
+      screen.getByText(
+        "Sharko reads each cluster's login from the secret ArgoCD already keeps for it. Nothing else to set up when Sharko runs inside the cluster.",
+      ),
     ).toBeInTheDocument()
+    // Old wording is gone: no internal command names on screen.
+    expect(screen.queryByText(/register-cluster/i)).toBeNull()
   })
 
   it('Save with ArgoCD selected sends {provider: {type: "argocd"}} to the API', async () => {
@@ -332,7 +336,7 @@ describe('SecretsProviderSection', () => {
     // Stored alias "kubernetes" lands on the canonical k8s-secrets row.
     await waitFor(() => expect(clusterCredsSelect.value).toBe('k8s-secrets'))
     // Kubernetes Secrets ignores a prefix, so there is no field for it.
-    expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+    expect(screen.queryByPlaceholderText(/added before the cluster name/i)).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /Save Provider/i }))
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -373,7 +377,7 @@ describe('SecretsProviderSection', () => {
     for (const idx of [0, 1]) {
       await user.selectOptions(selects[idx], 'aws-sm')
       await user.click(screen.getAllByRole('button', { name: /Advanced \(optional\)/i })[0])
-      await user.type(screen.getByPlaceholderText(idx === 0 ? /prepended to cluster name/i : /prepended to secret name/i), 'old-')
+      await user.type(screen.getByPlaceholderText(idx === 0 ? /added before the cluster name/i : /added before the secret name/i), 'old-')
       await user.selectOptions(selects[idx], 'k8s-secrets')
     }
 
@@ -440,7 +444,7 @@ describe('SecretsProviderSection', () => {
       expect(body.provider?.prefix).toBe('x-')
     })
 
-    it('actively picking None after an unknown type clears the sentinel and saves provider undefined', async () => {
+    it('actively picking None after an unknown type clears the sentinel and saves an explicit clear', async () => {
       setupHook([{
         ...sampleConnection,
         provider: { type: 'some-future-backend' },
@@ -459,7 +463,8 @@ describe('SecretsProviderSection', () => {
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
       const body = updateConnectionMock.mock.calls[0][1] as { provider?: unknown }
-      expect(body.provider).toBeUndefined()
+      // A saved backend is on the connection, so None must say "remove it".
+      expect(body.provider).toEqual({ type: '' })
     })
 
     it('actively picking a real backend after an unknown type saves the new canonical value', async () => {
@@ -513,7 +518,7 @@ describe('SecretsProviderSection', () => {
       const regionInputs = screen.getAllByPlaceholderText(/eu-west-1/i)
       expect(regionInputs[0]).toHaveValue('eu-west-1')
       // The pin: prefix displays although /providers never sent it.
-      expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('clusters/')
+      expect(screen.getByPlaceholderText(/added before the cluster name/i)).toHaveValue('clusters/')
     })
 
     it('save with prefix → reload → field shows it (full round-trip)', async () => {
@@ -529,7 +534,7 @@ describe('SecretsProviderSection', () => {
       // Expand Advanced to reveal Prefix field (V2-cleanup-92.3 F5)
       const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
       await user.click(advancedButtons[0]) // cluster-creds Advanced
-      await user.type(screen.getByPlaceholderText(/prepended to cluster name/i), 'k8s-')
+      await user.type(screen.getByPlaceholderText(/added before the cluster name/i), 'k8s-')
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
 
       await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -552,7 +557,7 @@ describe('SecretsProviderSection', () => {
       const selects2 = await screen.findAllByRole('combobox')
       const clusterCredsSelect2 = selects2[0] as HTMLSelectElement
       await waitFor(() => expect(clusterCredsSelect2.value).toBe('aws-sm'))
-      expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('k8s-')
+      expect(screen.getByPlaceholderText(/added before the cluster name/i)).toHaveValue('k8s-')
       const regionInputs2 = screen.getAllByPlaceholderText(/eu-west-1/i)
       expect(regionInputs2[0]).toHaveValue('us-east-1')
     })
@@ -669,7 +674,9 @@ describe('SecretsProviderSection', () => {
 
       const link = screen.getByRole('link', { name: /Learn how this works/i })
       expect(link).toBeInTheDocument()
-      expect(link).toHaveAttribute('href', '/user-guide/secrets-provider/')
+      // A real page on the docs site. The old in-app path did not exist.
+      expect(link).toHaveAttribute('href', 'https://sharko.readthedocs.io/en/latest/user-guide/secrets-provider/')
+      expect(link.getAttribute('href')).not.toBe('/user-guide/secrets-provider/')
     })
   })
 
@@ -690,7 +697,7 @@ describe('SecretsProviderSection', () => {
       // Prefix is behind the toggle — button visible, field NOT visible
       const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
       expect(advancedButtons.length).toBeGreaterThan(0)
-      expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+      expect(screen.queryByPlaceholderText(/added before the cluster name/i)).toBeNull()
     })
 
     it('clicking Advanced toggle reveals the Prefix field', async () => {
@@ -705,7 +712,7 @@ describe('SecretsProviderSection', () => {
       await user.click(advancedButtons[0]) // cluster-creds Advanced
 
       // Prefix field now visible
-      expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(/added before the cluster name/i)).toBeInTheDocument()
     })
 
     it('if stored provider has a non-empty prefix, Advanced is auto-expanded', async () => {
@@ -720,7 +727,7 @@ describe('SecretsProviderSection', () => {
       await waitFor(() => expect(clusterCredsSelect.value).toBe('aws-sm'))
 
       // Prefix field visible without clicking Advanced — auto-expanded
-      const prefixInput = screen.getByPlaceholderText(/prepended to cluster name/i)
+      const prefixInput = screen.getByPlaceholderText(/added before the cluster name/i)
       expect(prefixInput).toBeInTheDocument()
       expect(prefixInput).toHaveValue('k8s-')
     })
@@ -737,7 +744,7 @@ describe('SecretsProviderSection', () => {
       await waitFor(() => expect(clusterCredsSelect.value).toBe('aws-sm'))
 
       // Prefix field hidden by default
-      expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+      expect(screen.queryByPlaceholderText(/added before the cluster name/i)).toBeNull()
       // But Advanced button is present
       const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
       expect(advancedButtons.length).toBeGreaterThan(0)
@@ -753,7 +760,7 @@ describe('SecretsProviderSection', () => {
 
       // No Advanced button for argocd in cluster-creds section
       // (but there might be one for addon-secret if it's aws-sm/k8s-secrets)
-      expect(screen.queryByPlaceholderText(/prepended to cluster name/i)).toBeNull()
+      expect(screen.queryByPlaceholderText(/added before the cluster name/i)).toBeNull()
     })
 
     it('Prefix field remains functional when expanded — value persists and saves', async () => {
@@ -768,7 +775,7 @@ describe('SecretsProviderSection', () => {
       const advancedButtons = screen.getAllByRole('button', { name: /Advanced \(optional\)/i })
       await user.click(advancedButtons[0])
 
-      const prefixInput = screen.getByPlaceholderText(/prepended to cluster name/i)
+      const prefixInput = screen.getByPlaceholderText(/added before the cluster name/i)
       await user.type(prefixInput, 'team-')
 
       await user.click(screen.getByRole('button', { name: /Save Provider/i }))
@@ -1019,5 +1026,101 @@ describe('SecretsProviderSection', () => {
         await screen.findByText(CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsTimeout),
       ).toBeInTheDocument()
     })
+  })
+})
+
+describe('SecretsProviderSection — ep3 fix 10 (clear, region, card, words)', () => {
+  beforeEach(() => {
+    getProvidersMock.mockReset()
+    updateConnectionMock.mockReset()
+    refreshConnectionsMock.mockReset()
+    useConnectionsMock.mockReset()
+    getProvidersMock.mockResolvedValue({ configured_provider: null, available_types: [] })
+    updateConnectionMock.mockResolvedValue({})
+  })
+
+  it('None over a saved backend sends an explicit clear for both blocks', async () => {
+    setupHook([{
+      ...sampleConnection,
+      provider: { type: 'aws-sm', region: 'eu-west-1' },
+      addon_secret_provider: { type: 'k8s-secrets' },
+    }])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+    const selects = await screen.findAllByRole('combobox')
+    await waitFor(() => expect((selects[0] as HTMLSelectElement).value).toBe('aws-sm'))
+    await user.selectOptions(selects[0], '')
+    await user.selectOptions(selects[1], '')
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const body = updateConnectionMock.mock.calls[0][1] as { provider: unknown; addon_secret_provider: unknown }
+    expect(body.provider).toEqual({ type: '' })
+    expect(body.addon_secret_provider).toEqual({ type: '' })
+  })
+
+  it('drops the saved AWS region when switching to Kubernetes Secrets', async () => {
+    setupHook([{
+      ...sampleConnection,
+      provider: { type: 'aws-sm', region: 'eu-west-1' },
+      addon_secret_provider: { type: 'aws-sm', region: 'us-east-1' },
+    }])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+    const selects = await screen.findAllByRole('combobox')
+    await waitFor(() => expect((selects[0] as HTMLSelectElement).value).toBe('aws-sm'))
+    await user.selectOptions(selects[0], 'k8s-secrets')
+    await user.selectOptions(selects[1], 'k8s-secrets')
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const body = updateConnectionMock.mock.calls[0][1] as {
+      provider: { type: string; region?: string }
+      addon_secret_provider: { type: string; region?: string }
+    }
+    expect(body.provider).toEqual({ type: 'k8s-secrets' })
+    expect(body.addon_secret_provider).toEqual({ type: 'k8s-secrets' })
+    // Switching back to AWS must not bring the old region back.
+    await user.selectOptions(selects[0], 'aws-sm')
+    expect(screen.getAllByPlaceholderText(/eu-west-1/i)[0]).toHaveValue('')
+  })
+
+  it('shows the Current Configuration card with a plain "Not set" when nothing is set', async () => {
+    setupHook()
+    render(<SecretsProviderSection />)
+    const card = await screen.findByTestId('current-configuration')
+    expect(within(card).getByText('Current Configuration')).toBeInTheDocument()
+    expect(within(card).getAllByText('Not set').length).toBeGreaterThanOrEqual(2)
+    expect(within(card).queryByRole('button', { name: /Test Secrets Store/i })).toBeNull()
+  })
+
+  it('shows the backend by its plain name in the card, not the raw id', async () => {
+    getProvidersMock.mockResolvedValue({
+      configured_provider: { type: 'k8s-secrets', region: '', status: 'connected' },
+      available_types: [],
+    })
+    setupHook()
+    render(<SecretsProviderSection />)
+    const card = await screen.findByTestId('current-configuration')
+    await waitFor(() => expect(within(card).getByText('Kubernetes Secrets')).toBeInTheDocument())
+    expect(within(card).queryByText('k8s-secrets')).toBeNull()
+  })
+
+  it('has no internal words in the section text', async () => {
+    setupHook([{
+      ...sampleConnection,
+      provider: { type: 'argocd' },
+      addon_secret_provider: { type: 'aws-sm', region: 'eu-west-1' },
+    }])
+    render(<SecretsProviderSection />)
+    await screen.findAllByRole('combobox')
+    expect(document.body.innerHTML).not.toMatch(/SM lookup|register-cluster|prepended/i)
+  })
+
+  it('lists Google Secret Manager under the same plain name as the wizard', async () => {
+    setupHook()
+    render(<SecretsProviderSection />)
+    const selects = await screen.findAllByRole('combobox')
+    const names = Array.from(selects[0].querySelectorAll('option')).map((o) => o.textContent)
+    expect(names).toContain('Google Secret Manager — not yet supported')
+    expect(names).not.toContain('GCP Secret Manager — not yet supported')
   })
 })

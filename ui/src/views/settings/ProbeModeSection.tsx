@@ -15,7 +15,8 @@ import type { ProbeMode } from '@/services/models'
  *   - "api-test": Sharko never deploys anything — it reads reachability
  *     straight from ArgoCD's own connection to the cluster.
  *
- * GET /api/v1/settings/probe-mode returns { probe_mode }; PUT with the same
+ * Like the other Settings tabs, picking an option only changes the form; the
+ * Save button writes it. GET /api/v1/settings/probe-mode returns { probe_mode }; PUT with the same
  * shape saves it (admin-only on the backend — 403 for non-admins, so the
  * caller must gate this section with isAdmin before rendering).
  */
@@ -36,17 +37,23 @@ const OPTIONS: { value: ProbeMode; title: string; helper: string }[] = [
 ]
 
 export function ProbeModeSection() {
+  // mode is what is saved on the server; picked is what the radios show.
   const [mode, setMode] = useState<ProbeMode | null>(null)
+  const [picked, setPicked] = useState<ProbeMode | null>(null)
+  const [justSaved, setJustSaved] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [saving, setSaving] = useState<ProbeMode | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
     setLoadError(null)
     api
       .getProbeMode()
-      .then((res) => setMode(res.probe_mode))
+      .then((res) => {
+        setMode(res.probe_mode)
+        setPicked(res.probe_mode)
+      })
       .catch((err) => setLoadError(err instanceof Error ? err.message : 'Failed to load'))
       .finally(() => setLoading(false))
   }, [])
@@ -55,23 +62,23 @@ export function ProbeModeSection() {
     load()
   }, [load])
 
-  async function handleSelect(next: ProbeMode) {
-    if (next === mode || saving) return
-    const previous = mode
-    setSaving(next)
-    setMode(next) // optimistic — reverted on failure
+  async function handleSave() {
+    if (!picked || picked === mode || saving) return
+    setSaving(true)
+    setJustSaved(false)
     try {
-      const res = await api.setProbeMode(next)
+      const res = await api.setProbeMode(picked)
       setMode(res.probe_mode)
+      setPicked(res.probe_mode)
+      setJustSaved(true)
       showToast('Connectivity probe setting saved', 'success')
     } catch (err) {
-      setMode(previous)
       showToast(
         `Failed to save connectivity probe setting — ${err instanceof Error ? err.message : 'unknown error'}`,
         'error',
       )
     } finally {
-      setSaving(null)
+      setSaving(false)
     }
   }
 
@@ -120,8 +127,7 @@ export function ProbeModeSection() {
       ) : (
         <div role="radiogroup" aria-label="Connectivity probe mode" className="space-y-2">
           {OPTIONS.map((opt) => {
-            const selected = mode === opt.value
-            const isSaving = saving === opt.value
+            const selected = picked === opt.value
             return (
               <label
                 key={opt.value}
@@ -136,14 +142,16 @@ export function ProbeModeSection() {
                   name="probe-mode"
                   value={opt.value}
                   checked={selected}
-                  onChange={() => handleSelect(opt.value)}
+                  onChange={() => {
+                    setPicked(opt.value)
+                    setJustSaved(false)
+                  }}
                   className="mt-0.5 h-4 w-4 shrink-0 border-[#5a9dd0] text-teal-600 focus:ring-teal-500"
                 />
                 <div className="flex-1">
                   <span className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                     {opt.title}
-                    {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-                    {selected && !isSaving && (
+                    {selected && (
                       <CheckCircle2 className="h-3.5 w-3.5 text-teal-600 dark:text-teal-400" aria-hidden />
                     )}
                   </span>
@@ -152,6 +160,22 @@ export function ProbeModeSection() {
               </label>
             )
           })}
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || picked === mode}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+              Save
+            </button>
+            {justSaved && picked === mode && (
+              <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Saved
+              </span>
+            )}
+          </div>
         </div>
       )}
     </section>
