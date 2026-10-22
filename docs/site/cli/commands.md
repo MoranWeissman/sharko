@@ -155,10 +155,38 @@ sharko add-cluster <name> [flags]
 | Flag | Description |
 |------|-------------|
 | `--addons <list>` | Comma-separated list of addons to enable |
-| `--region <region>` | Cluster region |
+| `--region <region>` | Cloud region of the cluster. Used with the `eks-token` and `secret-kubeconfig` sources, not with `inline-kubeconfig` |
+| `--creds-source <source>` | How Sharko gets the cluster's credentials: `eks-token`, `secret-kubeconfig` or `inline-kubeconfig`. These are the same choices as the register dialog in the UI. Leave it out and Sharko works it out from the other flags |
+| `--secret-path <name>` | Name or path of the secret that holds the credentials. Used with `secret-kubeconfig` (the stored kubeconfig) and, optionally, `eks-token` |
+| `--role-arn <arn>` | AWS role Sharko takes on to reach this cluster. With `eks-token` it is the role used to make the token. With `secret-kubeconfig` it is the role used to read the stored kubeconfig. Not allowed with `inline-kubeconfig` |
+| `--kubeconfig-file <path>` | A kubeconfig file to hand to Sharko once. `inline-kubeconfig` only. This source is off by default. An admin has to turn on "Allow legacy inline credentials" in Settings first |
+| `--connection-managed-by <who>` | Who looks after the ArgoCD cluster secret: `sharko` (the default) or `user`. With `user` you make the secret yourself and Sharko never writes it |
 | `--dry-run` | Preview the registration without making changes — prints the PR title, effective addons, secrets that would be created, the connectivity check result, and per-file the exact diff the pull request would contain |
 
-Example:
+Sharko checks the mix of flags before it sends anything. For example,
+`--kubeconfig-file` with `--creds-source eks-token` is refused, and so is
+`--region` with `--creds-source inline-kubeconfig`.
+
+One example for each source:
+
+```bash
+# Sharko makes a short-lived AWS token each time it connects (EKS only)
+sharko add-cluster prod-eu --creds-source eks-token \
+  --region eu-west-1 --role-arn arn:aws:iam::123456789012:role/sharko-access
+
+# Sharko reads a kubeconfig kept in your secrets backend
+sharko add-cluster prod-eu --creds-source secret-kubeconfig \
+  --secret-path clusters/prod-eu
+
+# You hand Sharko a kubeconfig file once
+sharko add-cluster prod-eu --creds-source inline-kubeconfig \
+  --kubeconfig-file ./prod-eu.kubeconfig
+
+# You create the ArgoCD cluster secret yourself
+sharko add-cluster prod-eu --creds-source eks-token --connection-managed-by user
+```
+
+With addons:
 
 ```bash
 sharko add-cluster prod-eu \
@@ -173,6 +201,14 @@ Batch register multiple clusters in a single API call (up to 10).
 ```bash
 sharko add-clusters cluster-a,cluster-b,cluster-c \
   --addons cert-manager,metrics-server
+```
+
+To register every cluster your cloud account has that Sharko does not know
+yet, use `--from-provider`. It needs no list of names. Sharko shows what it
+found and asks before it registers them.
+
+```bash
+sharko add-clusters --from-provider
 ```
 
 ### `sharko remove-cluster`
@@ -239,7 +275,7 @@ sharko adopt <cluster1> [cluster2] ... [flags]
 
 ### `sharko unadopt-cluster`
 
-Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact.
+Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact. The cluster must carry the `sharko.dev/adopted` annotation, which Sharko puts on a cluster when you adopt it.
 
 ```bash
 sharko unadopt-cluster <name>

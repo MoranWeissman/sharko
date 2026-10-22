@@ -143,7 +143,7 @@ const response: ManagedSecretsResponse = {
       secret_name: 'vault-unseal-keys',
       secret_namespace: 'vault',
       state: 'unknown',
-      source: 'a Kubernetes Secret',
+      source: 'Kubernetes Secrets',
       self_heals: true,
     },
     // G4: a fully in-sync addon — the one group in this fixture with NO
@@ -202,7 +202,7 @@ describe('ManagedSecrets — the backend type is a per-row fact (G1)', () => {
     ).toHaveTextContent('AWS Secrets Manager')
     expect(
       within(screen.getByTestId('secret-row-values-prod-eu-vault')).getByTestId('cell-source'),
-    ).toHaveTextContent('a Kubernetes Secret')
+    ).toHaveTextContent('Kubernetes Secrets')
     expect(
       within(screen.getByTestId('secret-row-connection-prod-eu')).getByTestId('cell-source'),
     ).toHaveTextContent('git')

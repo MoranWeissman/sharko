@@ -88,7 +88,7 @@ const clusterStatusMap: Record<string, ClusterStatusDef> = {
     bg: 'bg-red-50 dark:bg-red-900/30',
     text: 'text-red-700 dark:text-red-400',
     label: 'Unreachable',
-    tooltip: 'The last connection test failed. Check IAM and network access.',
+    tooltip: 'The last connection test failed. Check the cluster address, its sign-in details and the network.',
   },
 };
 

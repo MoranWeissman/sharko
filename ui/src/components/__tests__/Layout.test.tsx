@@ -90,6 +90,13 @@ describe('Layout', () => {
     authState.isAdmin = true
   })
 
+  it('fills the space it is given instead of the whole screen, so a banner above it adds no second scrollbar', () => {
+    const { container } = renderLayout()
+    const root = container.firstElementChild as HTMLElement
+    expect(root.className).toContain('h-full')
+    expect(root.className).not.toContain('h-screen')
+  })
+
   it('renders without crashing', () => {
     renderLayout()
     expect(screen.getByText('Sharko')).toBeInTheDocument()

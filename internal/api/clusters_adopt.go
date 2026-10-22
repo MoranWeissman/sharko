@@ -208,7 +208,7 @@ func adoptHTTPStatus(result *orchestrator.AdoptClustersResult) int {
 //
 // @Summary Un-adopt a cluster
 // @Description Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.
-// @Description The cluster must have been adopted (has sharko.sharko.dev/adopted annotation).
+// @Description The cluster must have been adopted (has sharko.dev/adopted annotation).
 // @Description On a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.
 // @Tags clusters
 // @Accept json

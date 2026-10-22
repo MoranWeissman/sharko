@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
 
 describe('ConnectivityBadge', () => {
@@ -50,6 +51,18 @@ describe('ConnectivityBadge', () => {
     expect(trigger?.getAttribute('data-detail')).toBe(
       'connectivity check is deploying — usually under a minute',
     );
+  });
+
+  it('check_pending: the hover text does not mention a webhook', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    const user = userEvent.setup();
+    render(<ConnectivityBadge connectivityStatus="check_pending" />);
+    await user.hover(screen.getByText(/Connectivity check running/));
+    const tips = await screen.findAllByText(
+      'Connectivity check is deploying — usually under a minute, but it can take about 3 minutes',
+    );
+    expect(tips.length).toBeGreaterThan(0);
+    expect(screen.queryByText(/webhook/i)).not.toBeInTheDocument();
   });
 
   it('check_pending: renders without detail (no data-detail attribute)', () => {

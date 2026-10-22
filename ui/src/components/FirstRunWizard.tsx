@@ -35,7 +35,14 @@ import { useConnections } from '@/hooks/useConnections'
 import { clearSession } from '@/lib/authStorage'
 import { MigrationBanner } from '@/components/MigrationBanner'
 import { extractPR, PRLink } from '@/components/PRFeedback'
-import { canonicalizeProviderType } from '@/views/settings/SecretsProviderSection'
+import {
+  type ProviderType,
+  PROVIDER_OPTIONS,
+  REGION_PROVIDERS,
+  PREFIX_PROVIDERS,
+  backendLabel,
+  canonicalizeProviderType,
+} from '@/lib/secretsBackends'
 import { ARGOCD_TOKEN_HELP, ARGOCD_TOKEN_HELP_URL } from '@/components/argocdTokenHelp'
 
 // Story G2 (episode 2, take 2): "Set Up & Auto-Merge" merges only the setup
@@ -62,9 +69,8 @@ const inputCls =
 // it such as "aws-secrets-manager", onto the types the wizard offers. A type
 // the wizard does not offer maps to '' and the wizard then leaves the saved
 // provider block alone.
-function wizardProviderType(raw: string | undefined | null): '' | 'aws-sm' | 'k8s-secrets' {
-  const canonical = canonicalizeProviderType(raw)
-  return canonical === 'aws-sm' || canonical === 'k8s-secrets' ? canonical : ''
+function wizardProviderType(raw: string | undefined | null): ProviderType {
+  return canonicalizeProviderType(raw)
 }
 
 interface WizardForm {
@@ -74,7 +80,7 @@ interface WizardForm {
   argocd_token: string
   argocd_namespace: string
   argocd_insecure: boolean
-  provider_type: '' | 'aws-sm' | 'k8s-secrets'
+  provider_type: ProviderType
   provider_region: string
   provider_prefix: string
 }
@@ -475,7 +481,7 @@ function StepArgoCD({
           Secrets Provider (optional)
           {form.provider_type && (
             <span className="ml-1 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-              {form.provider_type}
+              {backendLabel(form.provider_type)}
             </span>
           )}
         </button>
@@ -490,14 +496,30 @@ function StepArgoCD({
               <select
                 className={inputCls}
                 value={form.provider_type}
-                onChange={(e) => onChange({ provider_type: e.target.value as '' | 'aws-sm' | 'k8s-secrets' })}
+                onChange={(e) => {
+                  const next = e.target.value as ProviderType
+                  // A region belongs to AWS Secrets Manager only. Clear it
+                  // when switching to anything else.
+                  onChange({
+                    provider_type: next,
+                    ...(REGION_PROVIDERS.has(next) ? {} : { provider_region: '' }),
+                  })
+                }}
               >
                 <option value="">None</option>
-                <option value="aws-sm">AWS Secrets Manager (aws-sm)</option>
-                <option value="k8s-secrets">Kubernetes Secrets (k8s-secrets)</option>
+                {PROVIDER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value} disabled={!opt.supported}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
+              {form.provider_type === 'argocd' && (
+                <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
+                  You will also need to choose where addon secret values come from. You can do that in Settings.
+                </p>
+              )}
             </div>
-            {form.provider_type === 'aws-sm' && (
+            {REGION_PROVIDERS.has(form.provider_type) && (
               <div>
                 <label className={labelCls}>Region</label>
                 <input
@@ -508,14 +530,14 @@ function StepArgoCD({
                 />
               </div>
             )}
-            {form.provider_type === 'aws-sm' && (
+            {PREFIX_PROVIDERS.has(form.provider_type) && (
               <div>
                 <label className={labelCls}>Prefix (optional)</label>
                 <input
                   className={inputCls}
                   value={form.provider_prefix}
                   onChange={(e) => onChange({ provider_prefix: e.target.value })}
-                  placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
+                  placeholder="e.g. k8s- (added before the cluster name)"
                 />
               </div>
             )}
@@ -1854,12 +1876,16 @@ export function FirstRunWizard({
             ? savedSettings.provider
             : {}),
           type: form.provider_type,
-          region: form.provider_region || undefined,
-          // Only AWS Secrets Manager uses a prefix. A value left over from
-          // switching away from it must not be sent for Kubernetes Secrets.
-          prefix: form.provider_type === 'aws-sm' ? form.provider_prefix || undefined : undefined,
+          // Only AWS Secrets Manager uses a region and a prefix. Values left
+          // over from switching away from it must not be sent.
+          region: REGION_PROVIDERS.has(form.provider_type) ? form.provider_region || undefined : undefined,
+          prefix: PREFIX_PROVIDERS.has(form.provider_type) ? form.provider_prefix || undefined : undefined,
         }
-      : undefined,
+      : wizardProviderType(savedSettings.provider?.type) !== ''
+        ? // "None" over a saved backend means remove it. Leaving the block out
+          // would keep the saved one.
+          { type: '' }
+        : undefined,
     gitops: {
       base_branch: 'main',
       branch_prefix: 'sharko/',

@@ -83,7 +83,7 @@ type managedSecretsResponse struct {
 	OrphanedSecrets []orphanedSecretRow `json:"orphaned_secrets"`
 	// AddonValuesSecretSource is the real, human-readable name of the
 	// backend addon-values secrets are compared against — "AWS Secrets
-	// Manager", "a Kubernetes Secret", etc, or the generic "secrets store"
+	// Manager", "Kubernetes Secrets", etc, or the generic "secrets store"
 	// fallback when the configured backend has no recognizable product name
 	// (unconfigured, a demo/stub backend, or an unimplemented type). Never
 	// "the vault" — that reads as HashiCorp Vault to every DevOps reader,
@@ -260,8 +260,8 @@ type addonValuesSecretRow struct {
 	// holds a pointer to where the value lives (S3(a) honesty lock).
 	State string `json:"state"`
 	// Source (S1) names, per row, the real backend this secret's value
-	// comes from and is compared against — "AWS Secrets Manager", "a
-	// Kubernetes Secret", ..., or the honest "secrets store" fallback when
+	// comes from and is compared against — "AWS Secrets Manager", "Kubernetes
+	// Secrets", ..., or the honest "secrets store" fallback when
 	// the server cannot name a product. Per row, not per response: the row
 	// is what a reader filters, sorts and groups by, so the fact has to
 	// live on the row.
@@ -1457,7 +1457,7 @@ func (s *Server) addonValuesSecretSourceLabel() string {
 	case "aws-sm", "aws-secrets-manager":
 		return "AWS Secrets Manager"
 	case "k8s-secrets", "kubernetes":
-		return "a Kubernetes Secret"
+		return "Kubernetes Secrets"
 	case "gcp", "gcp-sm", "google-secret-manager":
 		return "Google Secret Manager"
 	case "azure", "azure-kv", "azure-key-vault":

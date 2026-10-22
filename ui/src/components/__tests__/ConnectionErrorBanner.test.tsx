@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { ConnectionErrorBanner } from '@/components/ConnectionErrorBanner'
 import type { RepoStatusReason } from '@/services/api'
@@ -62,6 +62,32 @@ describe('ConnectionErrorBanner', () => {
     expect(screen.getByText("Sharko's ArgoCD credential is no longer valid.")).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /review and repair/i })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/settings?section=connections')
+  })
+
+  it('argocd_auth_failed — body has no raw status code (ep3 fix 12)', () => {
+    renderBanner('argocd_auth_failed')
+    expect(
+      screen.getByText(
+        'ArgoCD rejected the token Sharko uses to check on the cluster — the token is likely expired or was revoked.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/\(401\)/)).not.toBeInTheDocument()
+  })
+
+  it('a closed banner comes back when the problem changes (ep3 fix 18)', () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <ConnectionErrorBanner reason="argocd_unreachable" />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByLabelText('Dismiss'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    rerender(
+      <MemoryRouter>
+        <ConnectionErrorBanner reason="connection_error" />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('alert')).toBeInTheDocument()
   })
 
   it('argocd_unreachable — heading says Sharko could not reach ArgoCD, no repair button', () => {

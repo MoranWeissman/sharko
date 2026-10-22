@@ -465,10 +465,6 @@ export function ClustersOverview() {
   // when true, it expands.
   const [showOptionalCreds, setShowOptionalCreds] = useState(false);
 
-  // V3-RW3.1: progressive disclosure for the register dialog. Advanced settings
-  // (region, role ARN, secret path, kubeconfig textarea) are collapsed by default.
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
-
   // Legacy `provider` value, kept in sync with `credsSource` so anything
   // that still reads `provider` (audit trails, persisted state) sees a
   // sensible value. The backend keys on `creds_source` (it wins), so this
@@ -520,12 +516,11 @@ export function ClustersOverview() {
       const orphanRegistrationsValue = response.orphan_registrations ?? [];
       setPendingRegistrations(pendingRegistrationsValue);
       setOrphanRegistrations(orphanRegistrationsValue);
-      // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
-      const hasArgoError = response.clusters.length === 0 ||
-        (response.clusters.length > 0 && response.clusters.every(
-          (c) => !c.connection_status || c.connection_status === 'Failed' || c.connection_status === 'unknown'
-        ));
-      const argoCDUnreachableValue = hasArgoError && response.clusters.length > 0;
+      // ArgoCD unreachable: the same rule as the Dashboard and the menu badge.
+      // The only honest sign is the clusters request itself failing (see the
+      // catch below). A request that answered means ArgoCD answered, whatever
+      // the cluster statuses say.
+      const argoCDUnreachableValue = false;
       setArgoCDUnreachable(argoCDUnreachableValue);
 
       // perf S2 write-through — every mutation flow (register/adopt/unadopt/
@@ -540,6 +535,7 @@ export function ClustersOverview() {
       });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Failed to load clusters';
+      setArgoCDUnreachable(true);
       if (!background) {
         setError(message);
         setAllClusters([]);
@@ -707,8 +703,6 @@ export function ClustersOverview() {
     setDiscoveredFilter('');
     // V2-cleanup-91.2 (F2): reset optional-creds toggle when dialog reopens.
     setShowOptionalCreds(false);
-    // V3-RW3.1: reset advanced-settings toggle when dialog reopens.
-    setShowAdvancedSettings(false);
     setDryRunResult(null);
     setDryRunLoading(false);
     // Fetch Layer 1 identity info once per dialog session (V2-cleanup-88.5).
@@ -779,16 +773,37 @@ export function ClustersOverview() {
     [credsSource, provider, connManagedBy, addClusterKubeconfig, addClusterSecretPath, addClusterRegion, addClusterRoleArn],
   );
 
+  // A preview describes the values it was made from. When the user changes a
+  // field, the old preview no longer matches what Register would do, so it is
+  // removed, and an answer still on its way for the old values is dropped.
+  const dryRunSeq = useRef(0);
+  useEffect(() => {
+    dryRunSeq.current += 1;
+    setDryRunResult(null);
+    setDryRunLoading(false);
+  }, [
+    addClusterName,
+    addClusterKubeconfig,
+    addClusterSecretPath,
+    addClusterRegion,
+    addClusterRoleArn,
+    credsSource,
+    connManagedBy,
+    pickedDiscovered,
+  ]);
+
   const handleDryRun = useCallback(async () => {
     const clusterName = addClusterName.trim();
     if (!clusterName) return;
     setDryRunLoading(true);
     setDryRunResult(null);
     setAddClusterError(null);
+    const seq = ++dryRunSeq.current;
     try {
       const result = await registerCluster(
         buildRegisterPayload(clusterName, { dry_run: true }),
       );
+      if (seq !== dryRunSeq.current) return;
       if (result?.dry_run) {
         setDryRunResult(result.dry_run);
       } else if (result?.status === 'partial') {
@@ -797,9 +812,10 @@ export function ClustersOverview() {
         setAddClusterError(new Error(result.message || 'Sharko could not build the preview.'));
       }
     } catch (e: unknown) {
+      if (seq !== dryRunSeq.current) return;
       setAddClusterError(e);
     } finally {
-      setDryRunLoading(false);
+      if (seq === dryRunSeq.current) setDryRunLoading(false);
     }
   }, [addClusterName, buildRegisterPayload]);
 
@@ -1290,7 +1306,7 @@ export function ClustersOverview() {
   }
 
   if (error) {
-    return <ErrorState message={error} onRetry={fetchData} />;
+    return <ErrorState message={error} onRetry={() => void fetchData(false)} />;
   }
 
   // LW-10: the backend now excludes pending/orphan registrations from
@@ -1447,7 +1463,7 @@ export function ClustersOverview() {
       />
 
       {/* Add Cluster Dialog */}
-      <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
+      <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v && !addClusterSubmitting) setAddClusterOpen(false) }}>
         {/* A flex column, not the base grid: with only a max height, a grid
           * row grows to fit its content, so a long preview pushed the footer
           * below the dialog's cut-off edge. In a flex column the body
@@ -1477,7 +1493,7 @@ export function ClustersOverview() {
                 Cluster location
               </p>
               <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
-                The details under Advanced settings are optional. You can add them later if an addon needs secrets on this cluster.
+                The connection details are optional. You can add them later if an addon needs secrets on this cluster.
               </p>
             </div>
 
@@ -1714,143 +1730,121 @@ export function ClustersOverview() {
             </div>
             )}
 
-            {/* V3-RW3.1: Progressive disclosure — advanced/optional credential
-              * fields are collapsed by default. The essential decision (creds
-              * source) is always visible above; the actual values go here. */}
-            {credsSource !== '' && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowAdvancedSettings((prev) => !prev)}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#0a3a5a] hover:text-[#2a5a7a] dark:text-gray-300 dark:hover:text-gray-100"
-                >
-                  {showAdvancedSettings ? (
-                    <ChevronUp className="h-4 w-4" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4" />
-                  )}
-                  Advanced settings
-                </button>
-                <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-500">
-                  These details are optional. You can add them later if an addon needs secrets on this cluster.
-                </p>
-
-                {showAdvancedSettings && (
-                  <div className="mt-3 space-y-4 rounded-md border border-[#6aade0] bg-[#f8fbff] p-3 dark:border-gray-700 dark:bg-gray-800/50">
-                {credsSource === 'inline-kubeconfig' && (
-                  <>
-                    {/* Paste a kubeconfig — inline YAML. Optional for every
-                      * connection-ownership mode (V2-cleanup-88.3/88.5 —
-                      * connection credentials are lazy): you can register
-                      * with connection-only info and add this later. */}
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Kubeconfig{' '}
-                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
-                      </label>
-                      <textarea
-                        value={addClusterKubeconfig}
-                        onChange={(e) => setAddClusterKubeconfig(e.target.value)}
-                        rows={12}
-                        placeholder={'apiVersion: v1\nkind: Config\nclusters:\n- name: my-cluster\n  cluster:\n    server: https://...\n    certificate-authority-data: ...\nusers:\n- name: my-user\n  user:\n    token: ...'}
-                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                      />
-                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                        Sharko reads the server address, the CA certificate, and how to sign in: a bearer token or an inline client certificate both work. For kind, make a token with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
-                      </p>
-                    </div>
-                  </>
-                )}
-
-                {credsSource === 'secret-kubeconfig' && (
-                  <>
-                    {/* Use a stored kubeconfig — the secret name/path is the
-                      * key input (promoted from the old buried "Secret Path"
-                      * field to a first-class field). Optional for every
-                      * connection-ownership mode (V2-cleanup-88.3/88.5). */}
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Secret name / path{' '}
-                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={addClusterSecretPath}
-                        onChange={(e) => setAddClusterSecretPath(e.target.value)}
-                        placeholder="e.g. k8s-my-cluster or secret/data/clusters/my-cluster"
-                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                      />
-                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                        The secret in your configured backend holds this cluster's kubeconfig.
-                      </p>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Region (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={addClusterRegion}
-                        onChange={(e) => setAddClusterRegion(e.target.value)}
-                        placeholder="e.g. us-east-1"
-                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                      />
-                    </div>
-                  </>
-                )}
-
-                {credsSource === 'eks-token' && (
-                  <>
-                    {/* Amazon EKS — generate a token from cloud identity
-                      * (IRSA / role assumption). The AWS-shaped fields. */}
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Region (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={addClusterRegion}
-                        onChange={(e) => setAddClusterRegion(e.target.value)}
-                        placeholder="e.g. us-east-1"
-                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Role ARN (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={addClusterRoleArn}
-                        onChange={(e) => setAddClusterRoleArn(e.target.value)}
-                        placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
-                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                      />
-                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                        Cross-account override — leave empty to use the identity shown above.
-                      </p>
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Secret Path (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={addClusterSecretPath}
-                        onChange={(e) => setAddClusterSecretPath(e.target.value)}
-                        placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
-                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                      />
-                      <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                        Leave empty to use cluster name as the secret key
-                      </p>
-                    </div>
-                  </>
-                )}
-                  </div>
-                )}
-              </div>
+            {/* The fields for the chosen connection source sit right under the
+              * choice, so the one the user has to fill is always in view. The
+              * secret name is called "Secret name" for both sources. */}
+            {credsSource === 'inline-kubeconfig' && (
+              <>
+                {/* Paste a kubeconfig — inline YAML. Optional for every
+                  * connection-ownership mode (V2-cleanup-88.3/88.5 —
+                  * connection credentials are lazy): you can register
+                  * with connection-only info and add this later. */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Kubeconfig{' '}
+                    <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
+                  </label>
+                  <textarea
+                    value={addClusterKubeconfig}
+                    onChange={(e) => setAddClusterKubeconfig(e.target.value)}
+                    rows={12}
+                    placeholder={'apiVersion: v1\nkind: Config\nclusters:\n- name: my-cluster\n  cluster:\n    server: https://...\n    certificate-authority-data: ...\nusers:\n- name: my-user\n  user:\n    token: ...'}
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
+                    Sharko reads the server address, the CA certificate, and how to sign in: a bearer token or an inline client certificate both work. For kind, make a token with <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code>.
+                  </p>
+                </div>
+              </>
             )}
+
+            {credsSource === 'secret-kubeconfig' && (
+              <>
+                {/* Use a stored kubeconfig — the secret name/path is the
+                  * key input (promoted from the old buried "Secret Path"
+                  * field to a first-class field). Optional for every
+                  * connection-ownership mode (V2-cleanup-88.3/88.5). */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Secret name{' '}
+                    <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterSecretPath}
+                    onChange={(e) => setAddClusterSecretPath(e.target.value)}
+                    placeholder="e.g. k8s-my-cluster or secret/data/clusters/my-cluster"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
+                    The secret in your configured backend holds this cluster's kubeconfig.
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Region (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterRegion}
+                    onChange={(e) => setAddClusterRegion(e.target.value)}
+                    placeholder="e.g. us-east-1"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                </div>
+              </>
+            )}
+
+            {credsSource === 'eks-token' && (
+              <>
+                {/* Amazon EKS — generate a token from cloud identity
+                  * (IRSA / role assumption). The AWS-shaped fields. */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Region (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterRegion}
+                    onChange={(e) => setAddClusterRegion(e.target.value)}
+                    placeholder="e.g. us-east-1"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Role ARN (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterRoleArn}
+                    onChange={(e) => setAddClusterRoleArn(e.target.value)}
+                    placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
+                    Cross-account override — leave empty to use the identity shown above.
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Secret name{' '}
+                        <span className="font-normal text-[#2a5a7a] dark:text-gray-500">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterSecretPath}
+                    onChange={(e) => setAddClusterSecretPath(e.target.value)}
+                    placeholder="e.g. k8s-my-cluster"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
+                    Leave empty to use cluster name as the secret key
+                  </p>
+                </div>
+              </>
+            )}
+
 
             {/* Auto-merge is a global setting — no per-flow checkbox. The note says what it is set to (story G2). */}
             <AutoMergeNote className="text-sm" />
@@ -1882,7 +1876,7 @@ export function ClustersOverview() {
                 !addClusterName.trim() ||
                 directRequiredMissing
               }
-              title="Preview: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
+              title="Show the pull request and the changes it would make, without changing anything."
               className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {dryRunLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
@@ -1896,7 +1890,7 @@ export function ClustersOverview() {
                 !addClusterName.trim() ||
                 directRequiredMissing
               }
-              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR. Whether it merges by itself is set in Settings → GitOps."
+              title="Open a pull request that adds this cluster. Whether it merges by itself is set in Settings → GitOps."
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -1990,7 +1984,7 @@ export function ClustersOverview() {
           </span>
           {showGitOpsLine && (
             <span className="text-xs opacity-80">
-              This registration opens a pull request in your GitOps repo, against managed-clusters.yaml.
+              This registration opens a pull request in your GitOps repo that adds the cluster.
             </span>
           )}
           </div>

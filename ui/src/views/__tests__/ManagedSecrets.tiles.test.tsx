@@ -156,7 +156,7 @@ const response: ManagedSecretsResponse = {
       secret_name: 'vault-unseal-keys',
       secret_namespace: 'vault',
       state: 'unknown',
-      source: 'a Kubernetes Secret',
+      source: 'Kubernetes Secrets',
       self_heals: true,
     },
     {

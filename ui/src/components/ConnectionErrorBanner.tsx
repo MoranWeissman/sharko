@@ -54,7 +54,7 @@ function bannerContent(reason?: RepoStatusReason): BannerContent {
     case 'argocd_auth_failed':
       return {
         heading: "Sharko's ArgoCD credential is no longer valid.",
-        body: "ArgoCD rejected the token Sharko uses to check on the cluster (401) — the token is likely expired or was revoked.",
+        body: "ArgoCD rejected the token Sharko uses to check on the cluster — the token is likely expired or was revoked.",
         action: 'settings',
       }
     case 'argocd_forbidden':
@@ -107,6 +107,12 @@ export function ConnectionErrorBanner({
   onOpenRepair?: () => void
 }) {
   const [dismissed, setDismissed] = useState(false)
+  // A closed banner comes back when the problem is a different one.
+  const [dismissedReason, setDismissedReason] = useState(reason)
+  if (dismissedReason !== reason) {
+    setDismissedReason(reason)
+    setDismissed(false)
+  }
   if (dismissed) return null
 
   const { heading, body, action } = bannerContent(reason)

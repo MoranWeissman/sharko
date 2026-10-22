@@ -80,7 +80,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 // handleUpdateConnection godoc
 //
 // @Summary Update connection
-// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values.
+// @Description Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values. Secrets backend rules, for both `provider` (cluster credentials) and `addon_secret_provider` (addon secret values): a block that is left out keeps the saved one; a block whose `type` is empty clears the saved one (for the addon backend that means addon secret values come from the cluster backend again); a block with a `type` replaces the saved one, except that when it names the same backend as the saved one (aliases count as the same) and leaves `namespace` or `role_arn` empty, the saved `namespace` and `role_arn` are kept. A different backend starts clean.
 // @Tags connections
 // @Accept json
 // @Produce json
@@ -148,12 +148,13 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		if req.Argocd.Token == "" {
 			req.Argocd.Token = saved.Argocd.Token
 		}
-		if req.Provider == nil {
-			req.Provider = saved.Provider
-		}
-		if req.AddonSecretProvider == nil {
-			req.AddonSecretProvider = saved.AddonSecretProvider
-		}
+		// A provider block that is missing means "not touching this
+		// section", so the saved one stays. A provider block with an EMPTY
+		// type is the explicit way to say "none": it clears the saved
+		// backend. Without this, choosing "None" in Settings could never
+		// remove a backend that was already saved.
+		req.Provider = mergeProviderConfig(req.Provider, saved.Provider)
+		req.AddonSecretProvider = mergeProviderConfig(req.AddonSecretProvider, saved.AddonSecretProvider)
 		// Preserve existing GitOps settings when not provided
 		if req.GitOps == nil {
 			req.GitOps = saved.GitOps
@@ -580,4 +581,51 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		Event: "connection_tested",
 	})
 	writeJSON(w, http.StatusOK, result)
+}
+
+// mergeProviderConfig decides what a connection update does with a provider
+// block. Missing keeps the saved block. An empty type clears it. Anything
+// else replaces it, except that Namespace and RoleARN, which the Settings
+// screen has no fields for, are kept from the saved block when the request
+// leaves them out and still names the same backend. Switching to a different
+// backend starts clean, so a role or namespace never follows the user onto a
+// backend it does not belong to.
+func mergeProviderConfig(req, saved *models.ProviderConfig) *models.ProviderConfig {
+	if req == nil {
+		return saved
+	}
+	if req.Type == "" {
+		return nil
+	}
+	if saved != nil && sameBackend(req.Type, saved.Type) {
+		merged := *req
+		if merged.Namespace == "" {
+			merged.Namespace = saved.Namespace
+		}
+		if merged.RoleARN == "" {
+			merged.RoleARN = saved.RoleARN
+		}
+		return &merged
+	}
+	return req
+}
+
+// sameBackend reports whether two provider type strings name the same
+// backend, treating the accepted aliases as one.
+func sameBackend(a, b string) bool {
+	return canonicalBackend(a) == canonicalBackend(b)
+}
+
+func canonicalBackend(t string) string {
+	switch t {
+	case "aws-sm", "aws-secrets-manager":
+		return "aws-sm"
+	case "k8s-secrets", "kubernetes":
+		return "k8s-secrets"
+	case "gcp", "gcp-sm", "google-secret-manager":
+		return "gcp"
+	case "azure", "azure-kv", "azure-key-vault":
+		return "azure"
+	}
+	return t
 }

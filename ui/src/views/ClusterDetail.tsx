@@ -233,12 +233,17 @@ function getSyncStatusStyle(state: 'synced' | 'out_of_sync' | 'failed' | 'reconc
 /** Shown when saving addon changes found nothing to change on the cluster. */
 export const TOGGLE_NOTHING_CHANGED =
   'Nothing to change — this cluster already has these addons.';
+/** Shown to a non-admin in place of the ownership buttons. */
+export const ADMIN_ONLY_OWNERSHIP_HINT =
+  'Only an admin can take ownership of this cluster or remove its old labels.';
+/** Same, once Sharko already owns the cluster: only the labels button is left for an admin. */
+export const ADMIN_ONLY_LABELS_HINT = 'Only an admin can remove this cluster\'s old labels.';
 /** Shown when removing the cluster failed and the server sent no sentence. */
 export const REMOVE_CLUSTER_FAILED_FALLBACK =
   'Sharko could not write the cluster removal to Git. The cluster was not removed.';
-/** Shown when saving the secret path failed and the server sent no sentence. */
+/** Shown when saving the secret name failed and the server sent no sentence. */
 export const SECRET_PATH_FAILED_FALLBACK =
-  'Sharko could not write the secret path change to Git. Nothing was changed.';
+  'Sharko could not write the secret name change to Git. Nothing was changed.';
 /** Shown when Sharko could not open the pull request for addon changes. */
 export const TOGGLE_NO_PR_ERROR =
   'Sharko could not open a pull request for these addon changes. Nothing was changed.';
@@ -973,13 +978,13 @@ export function ClusterDetail() {
     if (!name) return;
     try {
       await updateClusterSettings(name, { secret_path: suggestion });
-      showToast(`Secret path updated to: ${suggestion}`, 'success');
-      // Auto-retry the test with the new secret path
+      showToast(`Secret name updated to: ${suggestion}`, 'success');
+      // Auto-retry the test with the new secret name
       setTestResult('testing');
       const result = await testClusterConnection(name);
       setTestResult(result);
     } catch (err) {
-      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed to update secret path' });
+      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed to update secret name' });
     }
   }, [name]);
 
@@ -1149,7 +1154,7 @@ export function ClusterDetail() {
         <EmptyState
           title={`Cluster "${name}" not found`}
           description={
-            'This cluster is not in managed-clusters.yaml. ' +
+            'This cluster is not in your list of managed clusters. ' +
             'It may have been registered via a pending PR that has not yet merged. ' +
             'Open the Clusters page and look under "Pending Registrations" for an open PR.'
           }
@@ -1383,7 +1388,14 @@ export function ClusterDetail() {
             * preflight is unchanged: it stays a safe, idempotent green
             * check for anyone who reaches it another way (the API, or a
             * stale bookmark). */}
-          <RoleGuard roles={['admin']}>
+          <RoleGuard
+            roles={['admin']}
+            fallback={
+              <span data-testid="takeover-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">
+                {data?.cluster?.already_managed_by_sharko ? ADMIN_ONLY_LABELS_HINT : ADMIN_ONLY_OWNERSHIP_HINT}
+              </span>
+            }
+          >
             {!data?.cluster?.already_managed_by_sharko && (
               <>
                 <button
@@ -1717,7 +1729,7 @@ export function ClusterDetail() {
             <div className="flex items-start gap-1.5">
               <div>
                 <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                  Argo CD cluster connection
+                  ArgoCD cluster connection
                   {data?.cluster?.managed_secret_name && (
                     <span className="font-normal text-[#5a8aaa] dark:text-gray-500"> — {data.cluster.managed_secret_name}</span>
                   )}
@@ -1727,7 +1739,7 @@ export function ClusterDetail() {
                 </p>
               </div>
               <InfoHint
-                text="Argo CD stores this connection as a Kubernetes Secret. Its addon labels are read by the ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
+                text="ArgoCD stores this connection as a Kubernetes Secret. Its addon labels are read by the ApplicationSet cluster generator — that's what installs and removes addons on this cluster."
                 label="How does this connection work?"
               />
             </div>
@@ -2496,7 +2508,7 @@ export function ClusterDetail() {
 
           {/* Settings section — houses admin troubleshooting controls that
             * used to sit among the Overview stat cards (V2-cleanup-78.1).
-            * Secret Path is viewable by everyone (it's not sensitive — it's
+            * Secret name is viewable by everyone (it's not sensitive — it's
             * the lookup key into the secrets backend) but only admins can
             * edit it, same as before the move. */}
           {activeSection === 'settings' && (
@@ -2505,7 +2517,7 @@ export function ClusterDetail() {
               <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                 <KeyRound className="h-4 w-4 text-teal-500" />
                 <div className="min-w-0 flex-1">
-                  <HelperText className="text-xs">Secret Path</HelperText>
+                  <HelperText className="text-xs">Secret name</HelperText>
                   {editingSecretPath ? (
                     <div className="flex items-center gap-2 mt-0.5">
                       <input
@@ -2540,7 +2552,7 @@ export function ClusterDetail() {
                                 ? { message: failure, isError: true }
                                 : prUrl
                                   ? { pr: result }
-                                  : { message: result?.message || 'Secret path updated' },
+                                  : { message: result?.message || 'Secret name updated' },
                             );
                             if (failure) return;
                             setEditingSecretPath(false);
@@ -2582,7 +2594,7 @@ export function ClusterDetail() {
                             setSecretPathResult(null);
                           }}
                           className="text-[#5a8aaa] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
-                          aria-label="Edit secret path"
+                          aria-label="Edit secret name"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -2593,8 +2605,8 @@ export function ClusterDetail() {
                     <div className="mt-1">
                       <PRResultBanner
                         result={secretPathResult.pr}
-                        mergedMessage="PR merged — secret path updated"
-                        openMessage="PR opened — secret path updates once it merges"
+                        mergedMessage="PR merged — secret name updated"
+                        openMessage="PR opened — secret name updates once it merges"
                       />
                     </div>
                   )}

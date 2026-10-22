@@ -17,11 +17,13 @@
 // so "did the wizard render?" is a single, unambiguous assertion.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const mockState = vi.hoisted(() => ({
   connections: [{ name: 'default' }] as Array<Record<string, unknown>>,
+  connectionsError: null as string | null,
+  refreshConnections: vi.fn(),
   repoStatus: { initialized: false, bootstrap_synced: false, reason: 'connection_error' } as {
     initialized: boolean
     bootstrap_synced?: boolean
@@ -35,8 +37,8 @@ vi.mock('@/hooks/useConnections', () => ({
     activeConnection: mockState.connections[0]?.name ?? null,
     setActiveConnection: vi.fn(),
     loading: false,
-    error: null,
-    refreshConnections: vi.fn(),
+    error: mockState.connectionsError,
+    refreshConnections: mockState.refreshConnections,
   }),
 }))
 
@@ -48,7 +50,12 @@ vi.mock('@/services/api', () => ({
 
 // Sentinel wizard — a single testid so "did the wizard render?" is unambiguous.
 vi.mock('@/components/FirstRunWizard', () => ({
-  FirstRunWizard: () => <div data-testid="first-run-wizard">WIZARD</div>,
+  FirstRunWizard: ({ isRepair, onExit }: { isRepair?: boolean; onExit?: () => void }) => (
+    <div data-testid="first-run-wizard" data-repair={isRepair ? 'yes' : 'no'}>
+      WIZARD
+      <button type="button" onClick={() => onExit?.()}>wizard-close</button>
+    </div>
+  ),
 }))
 
 // AddonStatesProvider depends on the active connection / poll loop; stub it to a
@@ -64,7 +71,8 @@ vi.mock('@/components/Layout', () => ({
   Layout: () => <div data-testid="app-layout">APP</div>,
 }))
 
-import { ConnectedApp } from '@/App'
+import { ConnectedApp, REPO_STATUS_POLL_MS } from '@/App'
+import { api } from '@/services/api'
 
 function renderConnectedApp() {
   return render(
@@ -77,6 +85,8 @@ function renderConnectedApp() {
 describe('ConnectedApp connection-error gate (V2-cleanup-50)', () => {
   beforeEach(() => {
     mockState.connections = [{ name: 'default' }]
+    mockState.connectionsError = null
+    mockState.refreshConnections = vi.fn()
     sessionStorage.clear()
   })
 
@@ -113,5 +123,153 @@ describe('ConnectedApp connection-error gate (V2-cleanup-50)', () => {
       expect(screen.getByTestId('first-run-wizard')).toBeInTheDocument(),
     )
     expect(screen.queryByText(/can't reach your Git connection/i)).not.toBeInTheDocument()
+  })
+
+  it('the banner goes away by itself when the problem is fixed, no reload (ep3 fix 5)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      mockState.repoStatus = { initialized: true, bootstrap_synced: false, reason: 'argocd_unreachable' }
+      renderConnectedApp()
+      await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+
+      mockState.repoStatus = { initialized: true, bootstrap_synced: true }
+      await vi.advanceTimersByTimeAsync(REPO_STATUS_POLL_MS + 100)
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+
+      // And it comes back if the problem comes back.
+      mockState.repoStatus = { initialized: true, bootstrap_synced: false, reason: 'argocd_unreachable' }
+      await vi.advanceTimersByTimeAsync(REPO_STATUS_POLL_MS + 100)
+      await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // ep3 review G1: the 15 s look-again must stay out of an open wizard.
+  describe('the repo-status poll and open wizards (ep3 review G1)', () => {
+    const getRepoStatus = api.getRepoStatus as unknown as ReturnType<typeof vi.fn>
+
+    it('does not ask again while the resumed setup wizard is open, so no answer can close it', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        mockState.repoStatus = { initialized: false, bootstrap_synced: false, reason: 'not_bootstrapped' }
+        renderConnectedApp()
+        await waitFor(() => expect(screen.getByTestId('first-run-wizard')).toBeInTheDocument())
+        const callsBefore = getRepoStatus.mock.calls.length
+
+        // The server now says "all good" (success answer). It must not even be asked.
+        mockState.repoStatus = { initialized: true, bootstrap_synced: true }
+        await vi.advanceTimersByTimeAsync(REPO_STATUS_POLL_MS * 3)
+        expect(getRepoStatus.mock.calls.length).toBe(callsBefore)
+        expect(screen.getByTestId('first-run-wizard')).toBeInTheDocument()
+        expect(screen.queryByTestId('app-layout')).not.toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a failing answer cannot drop the user out of the resumed setup wizard', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        mockState.repoStatus = { initialized: false, bootstrap_synced: false, reason: 'not_bootstrapped' }
+        renderConnectedApp()
+        await waitFor(() => expect(screen.getByTestId('first-run-wizard')).toBeInTheDocument())
+        const wizardNode = screen.getByTestId('first-run-wizard')
+
+        getRepoStatus.mockImplementation(() => Promise.reject(new Error('network down')))
+        await vi.advanceTimersByTimeAsync(REPO_STATUS_POLL_MS * 3)
+        // Same wizard element, still mounted: nothing was thrown away.
+        expect(screen.getByTestId('first-run-wizard')).toBe(wizardNode)
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      } finally {
+        getRepoStatus.mockImplementation(() => Promise.resolve(mockState.repoStatus))
+        vi.useRealTimers()
+      }
+    })
+
+    it('repair wizard stays open and stays in repair mode while time passes, even if the answer says not_bootstrapped', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        mockState.repoStatus = { initialized: true, bootstrap_synced: false, reason: 'bootstrap_degraded' }
+        renderConnectedApp()
+        fireEvent.click(await screen.findByRole('button', { name: 'Review and repair' }))
+        expect(screen.getByTestId('first-run-wizard')).toHaveAttribute('data-repair', 'yes')
+        const callsBefore = getRepoStatus.mock.calls.length
+
+        mockState.repoStatus = { initialized: false, bootstrap_synced: false, reason: 'not_bootstrapped' }
+        await vi.advanceTimersByTimeAsync(REPO_STATUS_POLL_MS * 3)
+        expect(getRepoStatus.mock.calls.length).toBe(callsBefore)
+        expect(screen.getByTestId('first-run-wizard')).toHaveAttribute('data-repair', 'yes')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('closing the repair wizard reads the status once and the poll starts again', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        mockState.repoStatus = { initialized: true, bootstrap_synced: false, reason: 'bootstrap_degraded' }
+        renderConnectedApp()
+        fireEvent.click(await screen.findByRole('button', { name: 'Review and repair' }))
+
+        mockState.repoStatus = { initialized: true, bootstrap_synced: true }
+        fireEvent.click(screen.getByRole('button', { name: 'wizard-close' }))
+        await waitFor(() => expect(screen.getByTestId('app-layout')).toBeInTheDocument())
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+        // Polling is back in the normal app.
+        const callsAfterClose = getRepoStatus.mock.calls.length
+        mockState.repoStatus = { initialized: true, bootstrap_synced: false, reason: 'argocd_unreachable' }
+        await vi.advanceTimersByTimeAsync(REPO_STATUS_POLL_MS + 100)
+        expect(getRepoStatus.mock.calls.length).toBeGreaterThan(callsAfterClose)
+        await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('finishing the resumed setup wizard reads the status, so the wizard actually closes', async () => {
+      mockState.repoStatus = { initialized: false, bootstrap_synced: false, reason: 'not_bootstrapped' }
+      renderConnectedApp()
+      await waitFor(() => expect(screen.getByTestId('first-run-wizard')).toBeInTheDocument())
+
+      mockState.repoStatus = { initialized: true, bootstrap_synced: true }
+      fireEvent.click(screen.getByRole('button', { name: 'wizard-close' }))
+      await waitFor(() => expect(screen.getByTestId('app-layout')).toBeInTheDocument())
+      expect(screen.queryByTestId('first-run-wizard')).not.toBeInTheDocument()
+    })
+  })
+
+  it('no banner when an older server sends no bootstrap_synced (ep3 fix 23)', async () => {
+    mockState.repoStatus = { initialized: true }
+    renderConnectedApp()
+    await waitFor(() => expect(screen.getByTestId('app-layout')).toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('the banner and the page share one screen-high column (ep3 fix 23)', async () => {
+    mockState.repoStatus = { initialized: true, bootstrap_synced: false, reason: 'argocd_unreachable' }
+    renderConnectedApp()
+    const alert = await screen.findByRole('alert')
+    const column = alert.parentElement as HTMLElement
+    expect(column.className).toContain('h-screen')
+    expect(column).toContainElement(screen.getByTestId('app-layout'))
+  })
+
+  it('a failed connection list shows a message and Try again, never the wizard (ep3 fix 22)', async () => {
+    mockState.connections = []
+    mockState.connectionsError = 'network down'
+    renderConnectedApp()
+    expect(await screen.findByText("Sharko couldn't load your saved connections.")).toBeInTheDocument()
+    expect(screen.queryByTestId('first-run-wizard')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(mockState.refreshConnections).toHaveBeenCalledTimes(1)
+  })
+
+  it('a list that loaded fine and is empty still opens the wizard (ep3 fix 22)', async () => {
+    mockState.connections = []
+    renderConnectedApp()
+    expect(await screen.findByTestId('first-run-wizard')).toBeInTheDocument()
+    expect(screen.queryByText("Sharko couldn't load your saved connections.")).not.toBeInTheDocument()
   })
 })

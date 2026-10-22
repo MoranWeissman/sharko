@@ -401,6 +401,7 @@ import {
 import { SecretsSubnav } from '@/components/SecretsSubnav'
 import { SecretTiles } from './SecretTiles'
 import { ConnectionReconciliationView } from './ConnectionReconciliationView'
+import { CONNECTION_SENTENCES } from '@/generated/connection-sentences'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unified row model — one shape for both secret kinds, hoisted at module
@@ -461,7 +462,25 @@ export const FOREIGN_OWNER_FACT = 'This secret was created by something other th
 const REFRESH_ALL_HINT =
   "Asks Sharko to check every secret against its source — connection secrets against Git, addon values against your secrets store. Checking only: nothing is written. The engines' own loops do the repairs."
 
-/** The toast a connection row's Refresh raises. The check is estate-wide by nature, so the sentence says so instead of implying one cluster was singled out. */
+/** The toast "Check all now" raises. It says exactly what was started, so it never claims more than it did. */
+export function checkAllToast(hasConnections: boolean): string {
+  return hasConnections
+    ? 'Checking every cluster connection and every addon value now. Nothing is written.'
+    : 'Checking every addon value now. There are no cluster connections to check. Nothing is written.'
+}
+
+/**
+ * The toast "Check all now" raises when at least one half could not start.
+ * The two halves run on their own, so when only one failed the sentence also
+ * says the other one did start.
+ */
+export function checkAllFailureToast(connectionsOk: boolean, valuesOk: boolean): string {
+  if (!connectionsOk && !valuesOk) return 'Could not start the check for cluster connections and addon values.'
+  if (!connectionsOk) return 'Could not start the check for cluster connections. The check for addon values did start.'
+  return 'Could not start the check for addon values. The check for cluster connections did start.'
+}
+
+/** The toast a connection row's Check now raises. The check is estate-wide by nature, so the sentence says so instead of implying one cluster was singled out. */
 function connectionRefreshToast(cluster: string): string {
   return `Checking every cluster's connection secret now, ${cluster} included.`
 }
@@ -1372,7 +1391,7 @@ function EngineStat({
       <div className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{label}</div>
       {switchedOff ? (
         <div className="mt-0.5 text-sm text-[#5a8aaa] dark:text-gray-500" data-testid={`engine-off-${kind}`}>
-          Addon values engine is switched off. Refresh and Sync still work row by row.
+          Addon values engine is switched off. Check now and Sync still work row by row.
         </div>
       ) : info?.wired ? (
         <div className="mt-0.5 flex items-center gap-1 text-sm text-[#0a3a5a] dark:text-gray-200">
@@ -1712,7 +1731,7 @@ function conclusionStatus(verdict: DiffVerdict): ResourceStatus {
 /**
  * SSF-12: the plain word the ONE health conclusion leads with. Only "match"
  * and "differ" get the urgent/calm words the epic spells out verbatim ("In
- * sync" / "Needs attention") — every other state reuses the exact word
+ * sync" / the server's out-of-sync word) — every other state reuses the exact word
  * StatusMark already uses for the SAME status on the row list (walk finding
  * #140: the row chip and this conclusion must never disagree about what a
  * state is called — one vocabulary, not two). The sentence right underneath
@@ -1721,7 +1740,7 @@ function conclusionStatus(verdict: DiffVerdict): ResourceStatus {
  */
 function conclusionLabel(verdict: DiffVerdict): string {
   if (verdict === 'match') return 'In sync'
-  if (verdict === 'differ') return 'Needs attention'
+  if (verdict === 'differ') return CONNECTION_SENTENCES.headlineOutOfSync
   return statusLabel(conclusionStatus(verdict))
 }
 
@@ -2023,7 +2042,7 @@ function RelatedEventsLink({ row }: { row: UnifiedRow }) {
 // chip ("Synced"), a one-line verdict ("Matches Git."), and a separate
 // "Compared with git." sentence right under it. A reader had to read all
 // three to be sure they were the same fact. This is that fact, once: one
-// word ("In sync" / "Needs attention" / …), one full sentence naming the
+// word ("In sync" / the out-of-sync word / …), one full sentence naming the
 // real source, and — only when something needs fixing — the one-line
 // promise of what Sync actually does about it. "Checked …" sits right next
 // to it, because "when was it checked" is one of the five questions this
@@ -2536,7 +2555,7 @@ function RowStatusCell({ row }: { row: UnifiedRow }) {
 //     failed" in that state, and a badge repeating it is noise.
 //
 // "Credential drift" stays: it names WHICH domain drifted, which the headline
-// ("Out of sync — approval required") deliberately does not.
+// (the "approval required" headline) deliberately does not.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CREDENTIAL_DRIFT_BADGE_LABEL = 'Credential drift'
@@ -2923,7 +2942,7 @@ const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> =
     // ("Secrets Sharko uses to register clusters with Argo CD.") described
     // the mechanism; the locked model is that Git defines the connection and
     // Sharko maintains the resulting Secret, and the subtitle now says that.
-    description: 'Git-defined cluster connections Sharko maintains for Argo CD.',
+    description: 'Git-defined cluster connections Sharko maintains for ArgoCD.',
   },
   addons: {
     title: 'Addon secrets',
@@ -3396,12 +3415,19 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   const handleRefreshAll = async () => {
     setRefreshingAll(true)
     try {
-      const tasks: Promise<unknown>[] = [checkAllAddonValuesSecrets()]
+      const hasConnections = Boolean(data?.cluster_connection_secrets?.[0])
       const firstConnectionRow = data?.cluster_connection_secrets?.[0]
-      if (firstConnectionRow) {
-        tasks.push(reconcileCluster(firstConnectionRow.cluster))
+      const [valuesResult, connectionResult] = await Promise.allSettled([
+        checkAllAddonValuesSecrets(),
+        firstConnectionRow ? reconcileCluster(firstConnectionRow.cluster) : Promise.resolve(null),
+      ])
+      const valuesOk = valuesResult.status === 'fulfilled'
+      const connectionsOk = connectionResult.status === 'fulfilled'
+      if (valuesOk && connectionsOk) {
+        showToast(checkAllToast(hasConnections), 'success')
+      } else {
+        showToast(checkAllFailureToast(connectionsOk, valuesOk), 'error')
       }
-      await Promise.allSettled(tasks)
     } finally {
       setRefreshingAll(false)
       load()

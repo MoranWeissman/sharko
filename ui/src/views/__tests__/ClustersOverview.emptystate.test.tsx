@@ -109,7 +109,7 @@ describe('Register New Cluster dialog text (F4)', () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        'The details under Advanced settings are optional. You can add them later if an addon needs secrets on this cluster.',
+        'The connection details are optional. You can add them later if an addon needs secrets on this cluster.',
       ),
     ).toBeInTheDocument();
     // The old wording is gone.
@@ -119,13 +119,11 @@ describe('Register New Cluster dialog text (F4)', () => {
     const select = screen.getByDisplayValue(/Choose where this cluster's credentials come from/i);
     expect(select.querySelectorAll('option:not([disabled])')).toHaveLength(2);
 
-    // After a choice, the line above Advanced settings is also true.
+    // After a choice, the sentence is said once, not twice, and nothing
+    // mentions a section that is not on screen.
     fireEvent.change(select, { target: { value: 'secret-kubeconfig' } });
-    expect(
-      screen.getByText(
-        'These details are optional. You can add them later if an addon needs secrets on this cluster.',
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/These details are optional/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Advanced settings/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Connection credentials are optional/)).not.toBeInTheDocument();
   });
 });

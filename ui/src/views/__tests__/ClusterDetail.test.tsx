@@ -942,7 +942,8 @@ describe('ClusterDetail', () => {
       expect(banner).not.toHaveTextContent(/kind|minikube/i);
 
       const link = screen.getByRole('link', { name: /Open IAM setup guide/i });
-      expect(link).toHaveAttribute('href', '/docs/operator/aws-iam-cluster-auth');
+      expect(link).toHaveAttribute('href', 'https://sharko.readthedocs.io/en/latest/operator/aws-iam-cluster-auth/');
+      expect(link.getAttribute('href')).not.toMatch(/^\/docs\//);
     });
 
     it('renders argocd_provider_exec_unsupported banner with NO action link', async () => {
@@ -963,7 +964,11 @@ describe('ClusterDetail', () => {
       // The cloud-managed examples (gcloud / azure-cli / aws-iam-authenticator)
       // anchor the production concern.
       expect(banner).toHaveTextContent(/gcloud|azure-cli|aws-iam-authenticator/i);
-      expect(banner).toHaveTextContent(/v1\.x/);
+      expect(banner).toHaveTextContent(
+        'This cluster signs in with a helper program (for example gcloud, azure-cli or aws-iam-authenticator). Sharko cannot run helper programs yet, so it cannot test this cluster. Your other clusters are not affected.',
+      );
+      expect(banner).not.toHaveTextContent(/v1\.x/);
+      expect(banner).not.toHaveTextContent(/tracked for v2/);
       expect(banner).not.toHaveTextContent(/kind|minikube/i);
 
       // No action link inside the banner.
@@ -1280,20 +1285,26 @@ describe('ClusterDetail', () => {
       mockUpdateClusterSettings.mockImplementation((_name: string, settings: { dry_run?: boolean }) => {
         if (settings?.dry_run) {
           return Promise.resolve({
-            pr_title: 'Update secret path for prod-eu',
+            pr_title: 'Update secret name for prod-eu',
             files_to_write: [
               { path: 'configuration/managed-clusters.yaml', action: 'update' },
             ],
           });
         }
-        return Promise.resolve({ message: 'Secret path updated' });
+        return Promise.resolve({ message: 'Secret name updated' });
       });
 
       renderView('settings');
       await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
 
-      // Enter edit mode on the Secret Path (admin-gated pencil).
-      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      // The row is called "Secret name" (the same word Add cluster uses),
+      // never "Secret Path" (ep3 review G2).
+      expect(screen.getByText('Secret name')).toBeInTheDocument();
+      expect(screen.queryByText(/secret path/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/secret path/i)).not.toBeInTheDocument();
+
+      // Enter edit mode on the Secret name (admin-gated pencil).
+      fireEvent.click(screen.getByLabelText(/Edit secret name/i));
       const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
       fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
 
@@ -1306,7 +1317,7 @@ describe('ClusterDetail', () => {
         }),
       );
       await waitFor(() =>
-        expect(screen.getByText('Update secret path for prod-eu')).toBeInTheDocument(),
+        expect(screen.getByText('Update secret name for prod-eu')).toBeInTheDocument(),
       );
       // Preview must NOT have saved (no non-dry-run call).
       expect(mockUpdateClusterSettings).not.toHaveBeenCalledWith('prod-eu', {
@@ -1324,7 +1335,7 @@ describe('ClusterDetail', () => {
       renderView('settings');
       await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
 
-      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      fireEvent.click(screen.getByLabelText(/Edit secret name/i));
       const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
       fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
 
@@ -1345,7 +1356,7 @@ describe('ClusterDetail', () => {
       renderView('settings');
       await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
 
-      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      fireEvent.click(screen.getByLabelText(/Edit secret name/i));
       const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
       fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
 
@@ -3161,7 +3172,7 @@ describe('ClusterDetail', () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
-      expect(screen.getByText('Argo CD cluster connection')).toBeInTheDocument();
+      expect(screen.getByText('ArgoCD cluster connection')).toBeInTheDocument();
       expect(screen.getByText('— argocd/prod-eu')).toBeInTheDocument();
       expect(
         screen.getByText(
@@ -3179,7 +3190,7 @@ describe('ClusterDetail', () => {
     it('falls back to the generic title when no managed_secret_name is available', async () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
-      expect(screen.getByText('Argo CD cluster connection')).toBeInTheDocument();
+      expect(screen.getByText('ArgoCD cluster connection')).toBeInTheDocument();
       expect(screen.queryByText(/—\s*argocd\//)).not.toBeInTheDocument();
     });
 
@@ -3277,6 +3288,69 @@ describe('ClusterDetail', () => {
       expect(screen.queryByTestId('open-takeover')).not.toBeInTheDocument();
       expect(screen.queryByText('Take ownership')).not.toBeInTheDocument();
     });
+
+    // Fix 19: a person who is not an admin used to see nothing at all where
+    // the two buttons are, with no hint why.
+    const ADMIN_ONLY_HINT = 'Only an admin can take ownership of this cluster or remove its old labels.';
+
+    it('tells a non-admin why the ownership buttons are missing', async () => {
+      const operatorAuth = {
+        token: 't', username: 'op', role: 'operator', login: vi.fn(), logout: vi.fn(),
+        isAuthenticated: true, isAdmin: false, loading: false, error: null,
+      };
+      const { MemoryRouter, Route, Routes } = await import('react-router-dom');
+      const { ClusterDetail } = await import('@/views/ClusterDetail');
+      const { AuthContext } = await import('@/hooks/useAuth');
+      const { render: r, screen: s, waitFor: w } = await import('@testing-library/react');
+      r(
+        <AuthContext.Provider value={operatorAuth}>
+          <MemoryRouter initialEntries={['/clusters/prod-eu']}>
+            <Routes>
+              <Route path="/clusters/:name" element={<ClusterDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>,
+      );
+      await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
+      expect(s.getByText(ADMIN_ONLY_HINT)).toBeInTheDocument();
+      expect(s.queryByTestId('open-takeover')).not.toBeInTheDocument();
+      expect(s.queryByTestId('open-drop-labels')).not.toBeInTheDocument();
+    });
+
+    it('once Sharko already owns the cluster, the non-admin line only talks about the labels (ep3 review G4)', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, already_managed_by_sharko: true },
+      });
+      const operatorAuth = {
+        token: 't', username: 'op', role: 'operator', login: vi.fn(), logout: vi.fn(),
+        isAuthenticated: true, isAdmin: false, loading: false, error: null,
+      };
+      const { MemoryRouter, Route, Routes } = await import('react-router-dom');
+      const { ClusterDetail } = await import('@/views/ClusterDetail');
+      const { AuthContext } = await import('@/hooks/useAuth');
+      const { render: r, screen: s, waitFor: w } = await import('@testing-library/react');
+      r(
+        <AuthContext.Provider value={operatorAuth}>
+          <MemoryRouter initialEntries={['/clusters/prod-eu']}>
+            <Routes>
+              <Route path="/clusters/:name" element={<ClusterDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>,
+      );
+      await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
+      expect(s.getByText("Only an admin can remove this cluster's old labels.")).toBeInTheDocument();
+      expect(s.queryByText(ADMIN_ONLY_HINT)).not.toBeInTheDocument();
+      expect(s.queryByText(/take ownership/i)).not.toBeInTheDocument();
+    });
+
+    it('does not show the admin-only line to an admin', async () => {
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.queryByText(ADMIN_ONLY_HINT)).not.toBeInTheDocument();
+      expect(screen.getByTestId('open-drop-labels')).toBeInTheDocument();
+    });
   });
 
   // Walk day 4 locks, S4 — the status badge remembers Sharko's last test
@@ -3354,6 +3428,11 @@ describe('ClusterDetail — the not-found screen follows the status code', () =>
     renderView();
 
     expect(await screen.findByText(/Cluster "prod-eu" not found/i)).toBeInTheDocument();
+    // The text names no file, and says "managed clusters" in plain words.
+    expect(
+      screen.getByText(/This cluster is not in your list of managed clusters\. /),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/managed-clusters\.yaml/)).not.toBeInTheDocument();
   });
 
   it('does NOT show it on a non-404, however much the sentence reads like one', async () => {

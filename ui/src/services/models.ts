@@ -263,7 +263,7 @@ export interface AddonValuesSecretRow {
   // pointer to where the value actually lives (S3(a) honesty lock).
   state: string
   // source (S1) is the real backend this row's value comes from and is
-  // compared against — 'AWS Secrets Manager', 'a Kubernetes Secret', ...,
+  // compared against — 'AWS Secrets Manager', 'Kubernetes Secrets', ...,
   // or the honest 'secrets store' fallback. Per row, because the row is
   // what a reader groups, filters and sorts by.
   source: string
@@ -1010,6 +1010,8 @@ export interface ConnectionResponse {
     type: _ProviderType
     region?: string
     prefix?: string
+    namespace?: string
+    role_arn?: string
   }
   gitops?: {
     base_branch?: string

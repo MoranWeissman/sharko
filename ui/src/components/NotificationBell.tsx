@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell } from 'lucide-react'
 import { api } from '@/services/api'
+import { useAuth } from '@/hooks/useAuth'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 interface Notification {
@@ -34,6 +35,12 @@ export function NotificationBell() {
   // frequent enough for "Xm/Xh/Xd ago" text.
   const [now, setNow] = useState(() => Date.now())
   const navigate = useNavigate()
+  // Marking alerts as read changes shared state, and the server only allows
+  // it for operators and admins (it checks the same rule as "run a sync").
+  // A viewer can read the alerts but not clear them, so for a viewer we do
+  // not try, instead of showing a clear that fails.
+  const { role } = useAuth()
+  const canClear = role === 'admin' || role === 'operator'
 
   // Fetch notifications from API
   const fetchNotifications = useCallback(() => {
@@ -65,13 +72,15 @@ export function NotificationBell() {
   // when there's something unread to clear.
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen)
-    if (nextOpen && unreadCount > 0) {
+    if (nextOpen && unreadCount > 0 && canClear) {
+      const wasUnread = new Set(notifications.filter(n => !n.read).map(n => n.id))
       setNotifications(prev => prev.map(n => ({ ...n, read: true })))
       api.markAllNotificationsRead().catch(() => {
-        // Silent — if the backend call fails, the badge stays cleared for
-        // this view (no revert, no toast). If the next 60s poll still shows
-        // unread items because the write never landed, opening the bell
-        // again just retries the same mark-all-read call.
+        // The server did not take it, so put the unread marks back. The
+        // counter must not say "all read" when the server still says unread.
+        // Only the read flags go back: the list may have been refreshed
+        // while the call was running, and newer alerts must stay.
+        setNotifications(prev => prev.map(n => (wasUnread.has(n.id) ? { ...n, read: false } : n)))
       })
     }
   }
@@ -93,16 +102,20 @@ export function NotificationBell() {
     }
   }
 
-  // S4: opening the bell already marks every notification read (see
-  // handleOpenChange above), so a row click no longer needs its own
-  // mark-read call — it only handles the connection-alert navigation, to
-  // Settings → Connection so the user can inspect/fix the Git or ArgoCD
-  // link. Other row types have nothing left to do on click.
+  // Only connection alerts do anything when clicked: they open Settings →
+  // Connections so the user can fix the Git or ArgoCD link. Opening the bell
+  // already marks everything read; if that did not reach the server the row
+  // is still unread here, so the click marks this one row read.
   const handleItemClick = (n: Notification) => {
-    if (n.type === 'connection') {
-      setOpen(false)
-      navigate(CONNECTION_SETTINGS_ROUTE)
+    if (n.type !== 'connection') return
+    if (!n.read && canClear) {
+      setNotifications(prev => prev.map(x => (x.id === n.id ? { ...x, read: true } : x)))
+      api.markNotificationRead(n.id).catch(() => {
+        setNotifications(prev => prev.map(x => (x.id === n.id ? { ...x, read: false } : x)))
+      })
     }
+    setOpen(false)
+    navigate(CONNECTION_SETTINGS_ROUTE)
   }
 
   return (
@@ -147,16 +160,22 @@ export function NotificationBell() {
               return (
               <div
                 key={n.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleItemClick(n)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    handleItemClick(n)
-                  }
-                }}
-                className={`cursor-pointer border-b border-[#d6eeff] px-4 py-3 last:border-0 hover:bg-[#d6eeff] dark:border-gray-800 dark:hover:bg-gray-700 ${
+                {...(actionable
+                  ? {
+                      role: 'button',
+                      tabIndex: 0,
+                      onClick: () => handleItemClick(n),
+                      onKeyDown: (e: React.KeyboardEvent) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          handleItemClick(n)
+                        }
+                      },
+                    }
+                  : {})}
+                className={`border-b border-[#d6eeff] px-4 py-3 last:border-0 dark:border-gray-800 ${
+                  actionable ? 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700' : ''
+                } ${
                   !n.read ? 'bg-[#e0f0ff] dark:bg-gray-900/50' : ''
                 }`}
               >

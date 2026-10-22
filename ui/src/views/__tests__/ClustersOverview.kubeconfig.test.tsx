@@ -12,7 +12,7 @@ import { AuthProvider } from '@/hooks/useAuth';
 //   2. Form re-shaping: choosing "Paste a kubeconfig" SHOWS the kubeconfig
 //      textarea with the bearer-token helper text and HIDES the AWS fields.
 //   3. Form re-shaping: choosing "Use a stored kubeconfig" SHOWS a
-//      first-class "Secret name / path" input.
+//      first-class "Secret name" input.
 //   4. Submit payload (inline): sends creds_source='inline-kubeconfig' +
 //      provider='kubeconfig' + kubeconfig, and NO AWS-only fields.
 //   5. Submit payload (stored): sends creds_source='secret-kubeconfig' +
@@ -140,21 +140,23 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     renderView();
     await openAddDialog();
 
-    // Choose the EKS token path: the AWS-shaped fields appear (V3-RW3.1: inside Advanced settings).
+    // Choose the EKS token path: the AWS-shaped fields appear (shown right under the choice).
     const select = credsSourceSelect();
     fireEvent.change(select, { target: { value: 'eks-token' } });
-    // Expand Advanced settings to see the fields.
-    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
     expect(screen.getByPlaceholderText(/arn:aws:iam/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Override AWS SM secret name/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/^e\.g\. k8s-my-cluster$/i)).toBeInTheDocument();
+    // The EKS source names the field "Secret name" too, not "Secret Path".
+    expect(screen.getByText(/Secret name/)).toBeInTheDocument();
+    expect(screen.queryByText(/Secret Path/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /advanced settings/i })).not.toBeInTheDocument();
 
     fireEvent.change(select, { target: { value: 'inline-kubeconfig' } });
 
     // AWS fields gone.
     expect(screen.queryByPlaceholderText(/arn:aws:iam/i)).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText(/Override AWS SM secret name/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/^e\.g\. k8s-my-cluster$/i)).not.toBeInTheDocument();
 
-    // Kubeconfig textarea + sign-in helper text present (inside Advanced settings).
+    // Kubeconfig textarea + sign-in helper text present (shown right under the choice).
     const textarea = screen.getByPlaceholderText(/apiVersion: v1/i) as HTMLTextAreaElement;
     expect(textarea).toBeInTheDocument();
     expect(textarea.tagName).toBe('TEXTAREA');
@@ -164,15 +166,17 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     expect(screen.getByText(/kubectl create token/i)).toBeInTheDocument();
   });
 
-  it('choosing "Use a stored kubeconfig" shows a first-class Secret name / path input', async () => {
+  it('choosing "Use a stored kubeconfig" shows a first-class Secret name input', async () => {
     renderView();
     await openAddDialog();
 
     fireEvent.change(credsSourceSelect(), { target: { value: 'secret-kubeconfig' } });
-    // V3-RW3.1: credential fields are inside Advanced settings — expand it first.
-    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
 
-    expect(screen.getByText(/Secret name \/ path/i)).toBeInTheDocument();
+    expect(screen.getByText(/Secret name/i)).toBeInTheDocument();
+    // Nothing is hidden behind "Advanced settings" and the old names are gone.
+    expect(screen.queryByRole('button', { name: /advanced settings/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Secret name \/ path/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Secret Path/)).not.toBeInTheDocument();
     expect(
       screen.getByPlaceholderText(/k8s-my-cluster or secret\/data\/clusters/i),
     ).toBeInTheDocument();
@@ -187,8 +191,6 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     await openAddDialog();
 
     fireEvent.change(credsSourceSelect(), { target: { value: 'inline-kubeconfig' } });
-    // V3-RW3.1: expand Advanced settings to access the kubeconfig textarea.
-    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
@@ -224,8 +226,6 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     await openAddDialog();
 
     fireEvent.change(credsSourceSelect(), { target: { value: 'secret-kubeconfig' } });
-    // V3-RW3.1: expand Advanced settings to access credential fields.
-    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'stored-cluster' },

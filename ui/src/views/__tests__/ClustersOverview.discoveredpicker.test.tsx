@@ -212,16 +212,19 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
   // user ArgoCD is unreachable; this line must stay silent instead of
   // adding a second, misleading message.
   it('does not show the "nothing to adopt" line when ArgoCD itself is unreachable', async () => {
-    mockGetClusters.mockResolvedValue({
-      // Every cluster failed/unknown + non-empty list is the view's
-      // hasArgoError detection (ClustersOverview.tsx fetchData).
-      clusters: [{ ...managedCluster, connection_status: 'Failed' }],
-      health_stats: { total_in_git: 1, connected: 0, failed: 1, missing_from_argocd: 0, not_in_git: 0 },
-      pending_registrations: [],
-      orphan_registrations: [],
-    });
+    // The clusters request answers once, then fails on the refresh: that is
+    // the one sign the view treats as "ArgoCD unreachable" (the same rule as
+    // the Dashboard and the menu badge).
+    mockGetClusters.mockResolvedValueOnce(clustersResponse([]));
     renderView();
-    await openAddDialog();
+    await waitForClusters();
+    mockGetClusters.mockRejectedValue(new Error('network down'));
+    fireEvent.click(screen.getByRole('button', { name: /^refresh$/i }));
+    await screen.findByText('ArgoCD temporarily unreachable — showing last known state');
+    fireEvent.click(screen.getByRole('button', { name: /add cluster/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
+    });
 
     fireEvent.change(ownershipSelect(), { target: { value: 'user' } });
 
@@ -232,6 +235,20 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     });
     expect(screen.queryByTestId('discovered-empty')).not.toBeInTheDocument();
     expect(screen.queryByTestId('discovered-picker')).not.toBeInTheDocument();
+  });
+
+  it('does NOT call ArgoCD unreachable when the request worked but every cluster reads Failed', async () => {
+    mockGetClusters.mockResolvedValue({
+      clusters: [{ ...managedCluster, connection_status: 'Failed' }],
+      health_stats: { total_in_git: 1, connected: 0, failed: 1, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [],
+    });
+    renderView();
+    await waitForClusters();
+    expect(
+      screen.queryByText('ArgoCD temporarily unreachable — showing last known state'),
+    ).not.toBeInTheDocument();
   });
 
   it('does not show the "nothing to adopt" line when the picker has items to show instead', async () => {

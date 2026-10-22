@@ -7,7 +7,7 @@ import { ProbeModeSection } from '@/views/settings/ProbeModeSection'
  * V2-cleanup-85.4-frontend — Settings → Connectivity Probe.
  *
  *   1. loading -> renders both options with the current value selected
- *   2. selecting the other option PUTs the new value and shows it selected
+ *   2. picking the other option and pressing Save PUTs it and shows "Saved"
  *   3. save failure reverts the optimistic selection and shows an error toast
  *   4. load failure shows an error + retry
  */
@@ -63,9 +63,13 @@ describe('ProbeModeSection', () => {
     await waitFor(() => expect(screen.getByRole('radio', { name: /Run an API test/i })).toBeInTheDocument())
 
     await user.click(screen.getByRole('radio', { name: /Run an API test/i }))
+    // Picking an option does not save by itself.
+    expect(setMock).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(setMock).toHaveBeenCalledWith('api-test'))
     await waitFor(() => expect(screen.getByRole('radio', { name: /Run an API test/i })).toBeChecked())
+    expect(await screen.findByText('Saved')).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Deploy a temporary check app/i })).not.toBeChecked()
     expect(showToastMock).toHaveBeenCalledWith('Connectivity probe setting saved', 'success')
   })
@@ -79,16 +83,27 @@ describe('ProbeModeSection', () => {
     await waitFor(() => expect(screen.getByRole('radio', { name: /Run an API test/i })).toBeInTheDocument())
 
     await user.click(screen.getByRole('radio', { name: /Run an API test/i }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(setMock).toHaveBeenCalledWith('api-test'))
-    await waitFor(() =>
-      expect(screen.getByRole('radio', { name: /Deploy a temporary check app/i })).toBeChecked(),
-    )
-    expect(screen.getByRole('radio', { name: /Run an API test/i })).not.toBeChecked()
+    await waitFor(() => expect(showToastMock).toHaveBeenCalled())
+    // The choice stays on screen so the user can try Save again; no "Saved" shown.
+    expect(screen.getByRole('radio', { name: /Run an API test/i })).toBeChecked()
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument()
     expect(showToastMock).toHaveBeenCalledWith(
       expect.stringContaining('Failed to save connectivity probe setting'),
       'error',
     )
+  })
+
+  it('Save is off until the choice changes', async () => {
+    getMock.mockResolvedValue({ probe_mode: 'check-app' })
+    const user = userEvent.setup()
+    render(<ProbeModeSection />)
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Run an API test/i })).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    await user.click(screen.getByRole('radio', { name: /Run an API test/i }))
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
   })
 
   it('shows an error with retry when the initial load fails', async () => {

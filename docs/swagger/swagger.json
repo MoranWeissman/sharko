@@ -5120,7 +5120,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.dev/adopted annotation).\nOn a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.",
+                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.dev/adopted annotation).\nOn a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.",
                 "consumes": [
                     "application/json"
                 ],
@@ -5618,7 +5618,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values.",
+                "description": "Updates an existing connection configuration; empty token fields retain their saved values. A request whose `git` or `argocd` block carries none of that block's identifying fields (e.g. a GitOps-settings-only or secrets-provider-only save) is treated as not touching that section — the stored `git`/`argocd` config is kept as-is instead of being overwritten with empty values. Secrets backend rules, for both `provider` (cluster credentials) and `addon_secret_provider` (addon secret values): a block that is left out keeps the saved one; a block whose `type` is empty clears the saved one (for the addon backend that means addon secret values come from the cluster backend again); a block with a `type` replaces the saved one, except that when it names the same backend as the saved one (aliases count as the same) and leaves `namespace` or `role_arn` empty, the saved `namespace` and `role_arn` are kept. A different backend starts clean.",
                 "consumes": [
                     "application/json"
                 ],
@@ -13142,7 +13142,7 @@
                     "type": "boolean"
                 },
                 "source": {
-                    "description": "Source (S1) names, per row, the real backend this secret's value\ncomes from and is compared against — \"AWS Secrets Manager\", \"a\nKubernetes Secret\", ..., or the honest \"secrets store\" fallback when\nthe server cannot name a product. Per row, not per response: the row\nis what a reader filters, sorts and groups by, so the fact has to\nlive on the row.",
+                    "description": "Source (S1) names, per row, the real backend this secret's value\ncomes from and is compared against — \"AWS Secrets Manager\", \"Kubernetes\nSecrets\", ..., or the honest \"secrets store\" fallback when\nthe server cannot name a product. Per row, not per response: the row\nis what a reader filters, sorts and groups by, so the fact has to\nlive on the row.",
                     "type": "string"
                 },
                 "state": {
@@ -14315,7 +14315,7 @@
             "type": "object",
             "properties": {
                 "addon_values_secret_source": {
-                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"a Kubernetes Secret\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault.\n\nKEPT for the whole-page copy that genuinely is about the page and not\nabout one row (the \"Refresh all\" hint). It is NOT what a row reads\nanymore: every row now carries its own Source field (S1), so a reader\nfiltering, sorting or grouping by backend is reading a per-row fact,\nand a future server that resolves a different backend per addon does\nnot need a response-shape change to say so.",
+                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"Kubernetes Secrets\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault.\n\nKEPT for the whole-page copy that genuinely is about the page and not\nabout one row (the \"Refresh all\" hint). It is NOT what a row reads\nanymore: every row now carries its own Source field (S1), so a reader\nfiltering, sorting or grouping by backend is reading a per-row fact,\nand a future server that resolves a different backend per addon does\nnot need a response-shape change to say so.",
                     "type": "string"
                 },
                 "addon_values_secrets": {

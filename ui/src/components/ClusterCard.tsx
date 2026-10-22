@@ -34,7 +34,7 @@ export function ClusterCard({
 }: ClusterCardProps) {
   const navigate = useNavigate()
   // totalCount is this cluster's addon count — pass it through so a
-  // zero-addon cluster gets the honest "No addons yet" pill instead of a
+  // zero-addon cluster gets the honest "Not checked yet" pill instead of a
   // "Connecting…" that will never resolve (v4 walk-findings W2, item 2).
   const pill = getClusterConnectionState(connectionStatus, { enabledAddonCount: totalCount })
   const kind = classifyClusterConnection(connectionStatus)
@@ -65,7 +65,7 @@ export function ClusterCard({
       <TooltipProvider delayDuration={200}>
         <div className="mb-2 flex items-center gap-1.5">
           <div className={`h-2 w-2 rounded-full ${pill.dot}`} />
-          <span className={`text-xs ${pill.text}`}>{pill.label} to ArgoCD</span>
+          <span className={`text-xs ${pill.text}`}>{pill.label}{kind === 'pending' && totalCount === 0 ? '' : ' to ArgoCD'}</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <Info className="h-3 w-3 text-muted-foreground" />

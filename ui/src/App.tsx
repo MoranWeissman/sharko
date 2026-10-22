@@ -162,12 +162,16 @@ export function shouldShowConnectionErrorBanner(
   repoStatus: RepoStatusResponse | null,
 ): boolean {
   if (!repoStatus) return false
-  if (repoStatus.initialized) return !repoStatus.bootstrap_synced
+  // Older servers do not send bootstrap_synced at all. Missing means
+  // "unknown", not "broken", so only an explicit false shows the banner.
+  if (repoStatus.initialized) return repoStatus.bootstrap_synced === false
   return isConnectionErrorReason(repoStatus.reason)
 }
 
+export const REPO_STATUS_POLL_MS = 15_000
+
 export function ConnectedApp() {
-  const { connections, loading } = useConnections()
+  const { connections, loading, error: connectionsError, refreshConnections } = useConnections()
   const [repoStatus, setRepoStatus] = useState<RepoStatusResponse | null>(null)
   const [checkingRepo, setCheckingRepo] = useState(true)
   // User-invited repair screen: set only by clicking the banner's repair
@@ -189,6 +193,22 @@ export function ConnectedApp() {
       .catch(() => setRepoStatus({ initialized: false, bootstrap_synced: false, reason: 'error' }))
   }, [])
 
+  // Whether a setup or repair wizard is taking over the screen right now.
+  // Read here (above the early returns) so the poll below can look at it.
+  const dismissed = sessionStorage.getItem('sharko:dismiss-wizard') === '1'
+  const wizardOnScreen = shouldShowSetupWizard(repoStatus, dismissed) || repairWizardOpen
+
+  // Look again every so often, so the banner goes away by itself once Git or
+  // ArgoCD is back, with no page reload. Stays quiet (no spinner) on purpose.
+  // Only while the normal app is on screen: an answer that arrives while a
+  // wizard is open must never close it, drop what the user typed, or switch
+  // repair mode off. The wizards re-read the status themselves when they close.
+  useEffect(() => {
+    if (loading || connections.length === 0 || wizardOnScreen) return
+    const id = setInterval(() => { fetchRepoStatus() }, REPO_STATUS_POLL_MS)
+    return () => clearInterval(id)
+  }, [loading, connections.length, wizardOnScreen, fetchRepoStatus])
+
   useEffect(() => {
     if (!loading) {
       if (connections.length > 0) {
@@ -208,6 +228,29 @@ export function ConnectedApp() {
     )
   }
 
+  // The saved connection list could not be loaded. That is not the same as
+  // "no connections yet", so do not open the first-run wizard over it. Say
+  // what happened and let the user try again.
+  if (connectionsError && connections.length === 0) {
+    return (
+      <div
+        role="alert"
+        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#bee0ff] px-4 text-center dark:bg-gray-950"
+      >
+        <p className="text-lg font-medium text-[#0a2a4a] dark:text-gray-100">
+          Sharko couldn't load your saved connections.
+        </p>
+        <button
+          type="button"
+          onClick={refreshConnections}
+          className="rounded-md bg-[#1a3d5c] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e]"
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+
   // No connections yet — show full first-run wizard
   if (connections.length === 0) {
     return <FirstRunWizard />
@@ -219,10 +262,10 @@ export function ConnectedApp() {
   // purpose: a fresh tab / hard refresh brings the wizard back, so the user
   // can't permanently skip setup, but they can dismiss it for the current
   // session to look around the app, run a CLI command, etc.
-  const dismissed = sessionStorage.getItem('sharko:dismiss-wizard') === '1'
-
   if (shouldShowSetupWizard(repoStatus, dismissed)) {
-    return <FirstRunWizard initialStep={4} />
+    // The poll is paused while this is open, so when the wizard closes it
+    // re-reads the status itself. Without this the wizard would stay up.
+    return <FirstRunWizard initialStep={4} onExit={() => { fetchRepoStatus() }} />
   }
 
   // The user clicked "repair" on the banner below — open the SAME Step 4
@@ -256,12 +299,17 @@ export function ConnectedApp() {
 
   return (
     <Suspense fallback={<PageLoader />}>
+      {/* The banner and the page share one screen-high column, so the banner
+          takes its height out of the page instead of pushing the page down
+          and adding a second scrollbar. */}
+      <div className="flex h-screen flex-col">
       {showConnError && (
         <ConnectionErrorBanner
           reason={repoStatus?.reason}
           onOpenRepair={() => setRepairWizardOpen(true)}
         />
       )}
+      <div className="min-h-0 flex-1">
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
@@ -315,6 +363,8 @@ export function ConnectedApp() {
           <Route path="user" element={<UserInfo />} />
         </Route>
       </Routes>
+      </div>
+      </div>
     </Suspense>
   )
 }

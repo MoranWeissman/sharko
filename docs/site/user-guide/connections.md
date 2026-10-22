@@ -73,7 +73,7 @@ Configure how Sharko fetches cluster kubeconfigs.
 
 **For `aws-sm`:** Set the AWS region. Sharko uses IRSA for authentication — configure the IRSA role annotation at Helm install time (see [Installation](../getting-started/installation.md#aws-secrets-manager-optional)).
 
-**For `k8s-secrets`:** Set the Kubernetes namespace where cluster secrets are stored.
+**For `k8s-secrets`:** The Kubernetes namespace where the secrets are stored is not set in Settings, because Settings has no field for it. Set it in the Helm values (`connection.provider.namespace`, and `connection.addonSecretProvider.namespace` for addon secret values). Saving your secrets backend in Settings keeps the namespace you set there.
 
 ## Server Settings
 

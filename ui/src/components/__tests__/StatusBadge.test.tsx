@@ -140,6 +140,13 @@ describe('StatusBadge', () => {
     }
   });
 
+  it('the unreachable tooltip does not say IAM (most clusters here are not on AWS)', () => {
+    expect(clusterStatusMap.unreachable.tooltip).toBe(
+      'The last connection test failed. Check the cluster address, its sign-in details and the network.',
+    );
+    expect(clusterStatusMap.unreachable.tooltip).not.toContain('IAM');
+  });
+
   it('renders test_failing warning icon when testFailing prop is true', () => {
     const { container } = render(<StatusBadge status="connected" testFailing />);
     // The AlertTriangle icon should be present

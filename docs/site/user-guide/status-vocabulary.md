@@ -25,6 +25,7 @@ cluster.
 |------|-------|---------|
 | **Connected** | Green | ArgoCD is connected to this cluster. |
 | **Connecting…** | Neutral | Waiting for ArgoCD's first connection result — normal for about a minute after registering. |
+| **Not checked yet** | Neutral | ArgoCD only checks a cluster once something is deployed to it, and nothing is deployed here yet. Enable an addon and ArgoCD will check the connection. |
 | **Not connected** | Amber | ArgoCD has no connection for this cluster at all. It may be unreachable from the hub (common for local or kind clusters), or its registration didn't finish. Check the cluster is reachable, then re-run Test connection. |
 | **Not managed** | Amber | In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons. |
 | **Disconnected** | Red | ArgoCD tried to reach this cluster and failed. |
@@ -53,7 +54,7 @@ test results — they can differ from ArgoCD's connection above.
 | **Connected** | Green | Sharko reached the cluster directly and confirmed it can create and manage secrets there. |
 | **Verified** | Teal | A test deployment went through ArgoCD successfully — the full deploy path works. |
 | **Operational** | Emerald | At least one addon is deployed and healthy on this cluster. |
-| **Unreachable** | Red | The last connection test failed. Check IAM and network access. |
+| **Unreachable** | Red | The last connection test failed. Check the cluster address, its sign-in details and the network. |
 
 ## Deploy check (test workload through ArgoCD)
 

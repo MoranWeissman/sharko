@@ -5,29 +5,21 @@ import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { showToast } from '@/components/ToastNotification'
-import { type ProviderType as GeneratedProviderType } from '@/generated/provider-types'
+import {
+  type ProviderType,
+  PROVIDER_OPTIONS,
+  ADDON_SECRET_PROVIDER_OPTIONS,
+  REGION_PROVIDERS,
+  PREFIX_PROVIDERS,
+  SECRETS_PROVIDER_DOC_URL,
+  backendLabel,
+  canonicalizeProviderType,
+} from '@/lib/secretsBackends'
 import { buildConnectionUpdatePayload } from './connectionUpdate'
 
-// The set of accepted type STRINGS is generated from the backend factory in
-// internal/providers/provider.go via cmd/gen-provider-types — see
-// ui/src/generated/provider-types.ts and the "Provider Types Up To Date"
-// CI check. The generated union includes every alias each switch arm
-// accepts (aws-sm / aws-secrets-manager, kubernetes / k8s-secrets, ...).
-// Rendering one dropdown row per accepted STRING showed ~12 rows for 5
-// real backends (V2-cleanup-55.2 Bug A), so the dropdown renders one row
-// per canonical backend and CANONICAL_TYPE below collapses every alias
-// onto its row. The generated file stays untouched — it remains the
-// contract for "strings the backend will accept", not for UI copy.
-
-// One canonical value per real backend. This is the value the form saves;
-// every canonical value is a member of the generated union, so anything
-// the form submits is guaranteed backend-acceptable.
-type CanonicalProviderType = 'argocd' | 'aws-sm' | 'k8s-secrets' | 'azure' | 'gcp'
-
-// `'' | CanonicalProviderType` because the form's empty value represents
-// "no provider configured", which corresponds to the factory's
-// auto-default arm — that arm isn't a user-selectable type.
-type ProviderType = '' | CanonicalProviderType
+// The list of backends, their names and the alias mapping live in
+// '@/lib/secretsBackends', so the first-run wizard shows the same list.
+export { canonicalizeProviderType }
 
 // Sentinel for "the connection's stored provider type doesn't canonicalize
 // onto any known row." Before this guard, canonicalizeProviderType's ''
@@ -37,6 +29,13 @@ type ProviderType = '' | CanonicalProviderType
 // tweak) persisted `provider: undefined`, wiping the backend's config
 // (L7). Selecting this sentinel keeps the form from claiming "None" and
 // makes Save pass the raw stored type through unchanged instead.
+/**
+ * The empty choice for the addon secrets backend. Leaving it empty does not
+ * mean "no backend": the server uses the cluster backend for addon secret
+ * values too (internal/providers AddonSecretConfigFromConnection).
+ */
+export const ADDON_BACKEND_SAME_AS_CLUSTER_LABEL = 'Same as the cluster backend'
+
 const UNKNOWN_PROVIDER = '__unknown__' as const
 type FormProviderType = ProviderType | typeof UNKNOWN_PROVIDER
 
@@ -49,83 +48,17 @@ interface ProviderFormData {
   addon_secret_provider_prefix: string
 }
 
-// Maps every backend-accepted type string (including aliases) onto its
-// canonical dropdown row. Typed as a TOTAL Record over the generated
-// union so a new arm in the backend factory (after `make
-// generate-provider-types`) is a TypeScript compile error here until the
-// implementer maps it — the same drift guard the old per-string label
-// record provided, now at the canonicalisation layer.
-const CANONICAL_TYPE: Record<GeneratedProviderType, CanonicalProviderType> = {
-  argocd: 'argocd',
-  'aws-sm': 'aws-sm',
-  'aws-secrets-manager': 'aws-sm',
-  azure: 'azure',
-  'azure-kv': 'azure',
-  'azure-key-vault': 'azure',
-  gcp: 'gcp',
-  'gcp-sm': 'gcp',
-  'google-secret-manager': 'gcp',
-  'k8s-secrets': 'k8s-secrets',
-  kubernetes: 'k8s-secrets',
-}
-
-// Collapses any stored provider type (canonical or alias) onto the
-// canonical row so a connection saved under e.g. "kubernetes" still
-// selects the "Kubernetes Secrets" row. Unknown / empty input maps to ''
-// ("None"). Exported for the dropdown drift-guard test.
-export function canonicalizeProviderType(raw: string | undefined | null): ProviderType {
-  if (!raw) return ''
-  return (CANONICAL_TYPE as Record<string, CanonicalProviderType>)[raw] ?? ''
-}
-
-interface ProviderOption {
-  value: CanonicalProviderType
-  label: string
-  // Azure Key Vault and GCP Secret Manager exist as factory arms but
-  // their constructors unconditionally return "not yet implemented"
-  // (internal/providers/azure.go / gcp.go), and the cluster-creds
-  // factory (NewClusterTestProvider) doesn't accept them at all. They
-  // render disabled with a "not yet supported" note instead of
-  // masquerading as working backends.
-  supported: boolean
-}
-
-// One row per real backend, human labels. UI copy lives here, not in the
-// generator, because labels are presentation — the backend contract is
-// only the accepted strings.
-const PROVIDER_OPTIONS: readonly ProviderOption[] = [
-  { value: 'argocd', label: 'ArgoCD (auto — reads cluster credentials from the ArgoCD Secret)', supported: true },
-  { value: 'aws-sm', label: 'AWS Secrets Manager', supported: true },
-  { value: 'k8s-secrets', label: 'Kubernetes Secrets', supported: true },
-  { value: 'azure', label: 'Azure Key Vault — not yet supported', supported: false },
-  { value: 'gcp', label: 'GCP Secret Manager — not yet supported', supported: false },
-]
-
-// Addon-secret provider options (argocd is NOT valid here — the backend
-// rejects it for addon secrets). The UI never offers "argocd" in the
-// addon-secret dropdown.
-const ADDON_SECRET_PROVIDER_OPTIONS: readonly ProviderOption[] = [
-  { value: 'aws-sm', label: 'AWS Secrets Manager', supported: true },
-  { value: 'k8s-secrets', label: 'Kubernetes Secrets', supported: true },
-  { value: 'azure', label: 'Azure Key Vault — not yet supported', supported: false },
-  { value: 'gcp', label: 'GCP Secret Manager — not yet supported', supported: false },
-]
-
 function isSupported(t: ProviderType): boolean {
   return PROVIDER_OPTIONS.find((o) => o.value === t)?.supported ?? true
 }
 
-// Provider types that surface the AWS-style Region input. AWS Secrets
-// Manager is the only provider that requires a region today; this set
-// stays a hand-curated UI affordance because the backend has no
-// per-provider input-shape metadata to derive from. Canonical values
-// only — the form value is always canonicalized on hydration.
-const REGION_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>(['aws-sm'])
-
-// Provider types that surface the Prefix input. Only AWS Secrets Manager
-// uses a name prefix; the Kubernetes-Secrets backend ignores it, so the
-// field is hidden there and any leftover value is not sent.
-const PREFIX_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>(['aws-sm'])
+// A region is only sent when the provider uses one. A region left over from
+// switching away from AWS Secrets Manager is dropped. An unknown provider is
+// kept as-is, so Save never wipes a config this screen does not know about.
+function regionToSend(type: ProviderType | typeof UNKNOWN_PROVIDER, region: string): string | undefined {
+  if (type === UNKNOWN_PROVIDER) return region || undefined
+  return REGION_PROVIDERS.has(type) ? region || undefined : undefined
+}
 
 // A prefix is only sent when the provider uses one. A value left over from
 // switching to Kubernetes Secrets is dropped. An unknown provider is kept
@@ -316,7 +249,14 @@ export function SecretsProviderSection() {
     setSaveError(null)
     try {
       // Build minimal payload preserving existing connection data
-      const connPayload = buildSecretsProviderPayload(existingConn, form, unknownRawType, unknownAddonSecretRawType)
+      const connPayload = buildSecretsProviderPayload(
+        existingConn,
+        form,
+        unknownRawType,
+        unknownAddonSecretRawType,
+        existingConn.provider ?? null,
+        existingConn.addon_secret_provider ?? null,
+      )
       await api.updateConnection(existingConn.name, connPayload)
       // Toast first: refreshConnections() flips the shared loading flag,
       // and feedback rendered inside this section would be swallowed by
@@ -353,7 +293,9 @@ export function SecretsProviderSection() {
           Choose where Sharko reads cluster credentials and addon secret values.
         </p>
         <a
-          href="/user-guide/secrets-provider/"
+          href={SECRETS_PROVIDER_DOC_URL}
+          target="_blank"
+          rel="noopener noreferrer"
           className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[#0a3a5a] hover:text-teal-600 dark:text-gray-100 dark:hover:text-teal-400"
         >
           Learn how this works
@@ -362,8 +304,8 @@ export function SecretsProviderSection() {
       </div>
 
       {/* Current status card */}
-      {providerInfo && (
-        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:bg-gray-800">
+      {(
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:bg-gray-800" data-testid="current-configuration">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-500">Current Configuration</p>
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div>
@@ -372,7 +314,7 @@ export function SecretsProviderSection() {
                 Type
               </dt>
               <dd className="mt-1 font-mono text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                {providerInfo.type}
+                {providerInfo?.type ? backendLabel(providerInfo.type) : 'Not set'}
               </dd>
             </div>
             <div>
@@ -381,7 +323,7 @@ export function SecretsProviderSection() {
                 Region
               </dt>
               <dd className="mt-1 font-mono text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                {providerInfo.region || '—'}
+                {providerInfo?.type ? providerInfo.region || '—' : '—'}
               </dd>
             </div>
             <div>
@@ -390,7 +332,9 @@ export function SecretsProviderSection() {
                 Status
               </dt>
               <dd className="mt-1 flex items-center gap-1.5 text-sm font-medium">
-                {providerInfo.status === 'connected' ? (
+                {!providerInfo?.type ? (
+                  <span className="text-[#3a6a8a] dark:text-gray-400">Not set</span>
+                ) : providerInfo.status === 'connected' ? (
                   <><span className="inline-block h-2 w-2 rounded-full bg-green-500" /><span className="text-green-600 dark:text-green-400">Connected</span></>
                 ) : providerInfo.status === 'configured' ? (
                   <><span className="inline-block h-2 w-2 rounded-full bg-yellow-500" /><span className="text-yellow-600 dark:text-yellow-400">Configured</span></>
@@ -405,6 +349,7 @@ export function SecretsProviderSection() {
               </dd>
             </div>
           </dl>
+          {providerInfo?.type && (
           <div className="mt-4 flex items-center gap-3 border-t border-[#6aade0]/40 pt-4 dark:border-gray-700">
             <button
               type="button"
@@ -428,6 +373,7 @@ export function SecretsProviderSection() {
               </span>
             )}
           </div>
+          )}
         </div>
       )}
 
@@ -448,7 +394,14 @@ export function SecretsProviderSection() {
                   value={form.provider_type}
                   onChange={(e) => {
                     setUnknownRawType(null)
-                    setForm(prev => ({ ...prev, provider_type: e.target.value as ProviderType }))
+                    const next = e.target.value as ProviderType
+                    setForm(prev => ({
+                      ...prev,
+                      provider_type: next,
+                      // A region only belongs to AWS Secrets Manager. Clear it
+                      // when switching to anything else.
+                      provider_region: REGION_PROVIDERS.has(next) ? prev.provider_region : '',
+                    }))
                   }}
                 >
                   <option value="">None</option>
@@ -465,7 +418,7 @@ export function SecretsProviderSection() {
                 </select>
                 {form.provider_type === 'argocd' ? (
                   <p className="mt-1 text-sm text-[#3a6a8a]">
-                    Sharko reads credentials from the ArgoCD cluster Secret it creates during register-cluster. No additional setup required when Sharko runs in-cluster.
+                    Sharko reads each cluster's login from the secret ArgoCD already keeps for it. Nothing else to set up when Sharko runs inside the cluster.
                   </p>
                 ) : form.provider_type === UNKNOWN_PROVIDER ? (
                   <p className="mt-1 text-sm text-amber-600 dark:text-amber-400">
@@ -507,9 +460,9 @@ export function SecretsProviderSection() {
                         className={inputCls}
                         value={form.provider_prefix}
                         onChange={(e) => setForm(prev => ({ ...prev, provider_prefix: e.target.value }))}
-                        placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
+                        placeholder="e.g. k8s- (added before the cluster name)"
                       />
-                      <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">Prepended to cluster name when looking up the secret.</p>
+                      <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">Added before the cluster name when Sharko looks for its secret.</p>
                     </div>
                   )}
                 </div>
@@ -531,10 +484,15 @@ export function SecretsProviderSection() {
                   value={form.addon_secret_provider_type}
                   onChange={(e) => {
                     setUnknownAddonSecretRawType(null)
-                    setForm(prev => ({ ...prev, addon_secret_provider_type: e.target.value as ProviderType }))
+                    const next = e.target.value as ProviderType
+                    setForm(prev => ({
+                      ...prev,
+                      addon_secret_provider_type: next,
+                      addon_secret_provider_region: REGION_PROVIDERS.has(next) ? prev.addon_secret_provider_region : '',
+                    }))
                   }}
                 >
-                  <option value="">None</option>
+                  <option value="">{ADDON_BACKEND_SAME_AS_CLUSTER_LABEL}</option>
                   {unknownAddonSecretRawType && (
                     <option value={UNKNOWN_PROVIDER} disabled>
                       Unknown provider &quot;{unknownAddonSecretRawType}&quot; (keep as-is)
@@ -595,9 +553,9 @@ export function SecretsProviderSection() {
                         className={inputCls}
                         value={form.addon_secret_provider_prefix}
                         onChange={(e) => setForm(prev => ({ ...prev, addon_secret_provider_prefix: e.target.value }))}
-                        placeholder="e.g. addon- (prepended to secret name for SM lookup)"
+                        placeholder="e.g. addon- (added before the secret name)"
                       />
-                      <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">Prepended to secret name when looking up addon secrets.</p>
+                      <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">Added before the secret name when Sharko looks for addon secrets.</p>
                     </div>
                   )}
                 </div>
@@ -639,6 +597,33 @@ export function SecretsProviderSection() {
   )
 }
 
+// An empty type is how the server is told to REMOVE a saved backend. Leaving
+// the block out means "do not touch it", so "None" has to say it out loud.
+const NO_BACKEND = { type: '' }
+
+// The saved block as the server returns it. This screen has no fields for
+// the namespace or the role, so it sends the saved ones back unchanged as
+// long as the backend is still the same one. A different backend starts clean.
+interface StoredProviderBlock {
+  type: string
+  namespace?: string
+  role_arn?: string
+}
+
+function keptHiddenFields(
+  newType: string,
+  stored: StoredProviderBlock | null
+): { namespace?: string; role_arn?: string } {
+  if (!stored || !newType) return {}
+  const newCanon = canonicalizeProviderType(newType)
+  const same = newCanon ? newCanon === canonicalizeProviderType(stored.type) : newType === stored.type
+  if (!same) return {}
+  return {
+    ...(stored.namespace ? { namespace: stored.namespace } : {}),
+    ...(stored.role_arn ? { role_arn: stored.role_arn } : {}),
+  }
+}
+
 // Build the connection update payload for this section, on top of the
 // shared minimal-payload helper (see connectionUpdate.ts). This page never
 // touches git or argocd identity — only the provider / addon_secret_provider
@@ -654,8 +639,12 @@ function buildSecretsProviderPayload(
   conn: { name: string; git_provider: string },
   providerForm: ProviderFormData,
   unknownRawType: string | null,
-  unknownAddonSecretRawType: string | null
+  unknownAddonSecretRawType: string | null,
+  storedProvider: StoredProviderBlock | null,
+  storedAddonSecretProvider: StoredProviderBlock | null
 ) {
+  const hadProvider = storedProvider != null
+  const hadAddonSecretProvider = storedAddonSecretProvider != null
   const resolvedProviderType =
     providerForm.provider_type === UNKNOWN_PROVIDER ? unknownRawType : providerForm.provider_type
   const resolvedAddonSecretProviderType =
@@ -664,16 +653,22 @@ function buildSecretsProviderPayload(
     provider: resolvedProviderType
       ? {
           type: resolvedProviderType,
-          region: providerForm.provider_region || undefined,
+          region: regionToSend(providerForm.provider_type, providerForm.provider_region),
           prefix: prefixToSend(providerForm.provider_type, providerForm.provider_prefix),
+          ...keptHiddenFields(resolvedProviderType, storedProvider),
         }
-      : undefined,
+      : hadProvider
+        ? NO_BACKEND
+        : undefined,
     addon_secret_provider: resolvedAddonSecretProviderType
       ? {
           type: resolvedAddonSecretProviderType,
-          region: providerForm.addon_secret_provider_region || undefined,
+          region: regionToSend(providerForm.addon_secret_provider_type, providerForm.addon_secret_provider_region),
           prefix: prefixToSend(providerForm.addon_secret_provider_type, providerForm.addon_secret_provider_prefix),
+          ...keptHiddenFields(resolvedAddonSecretProviderType, storedAddonSecretProvider),
         }
-      : undefined,
+      : hadAddonSecretProvider
+        ? NO_BACKEND
+        : undefined,
   })
 }
