@@ -1285,20 +1285,26 @@ describe('ClusterDetail', () => {
       mockUpdateClusterSettings.mockImplementation((_name: string, settings: { dry_run?: boolean }) => {
         if (settings?.dry_run) {
           return Promise.resolve({
-            pr_title: 'Update secret path for prod-eu',
+            pr_title: 'Update secret name for prod-eu',
             files_to_write: [
               { path: 'configuration/managed-clusters.yaml', action: 'update' },
             ],
           });
         }
-        return Promise.resolve({ message: 'Secret path updated' });
+        return Promise.resolve({ message: 'Secret name updated' });
       });
 
       renderView('settings');
       await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
 
-      // Enter edit mode on the Secret Path (admin-gated pencil).
-      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      // The row is called "Secret name" (the same word Add cluster uses),
+      // never "Secret Path" (ep3 review G2).
+      expect(screen.getByText('Secret name')).toBeInTheDocument();
+      expect(screen.queryByText(/secret path/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/secret path/i)).not.toBeInTheDocument();
+
+      // Enter edit mode on the Secret name (admin-gated pencil).
+      fireEvent.click(screen.getByLabelText(/Edit secret name/i));
       const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
       fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
 
@@ -1311,7 +1317,7 @@ describe('ClusterDetail', () => {
         }),
       );
       await waitFor(() =>
-        expect(screen.getByText('Update secret path for prod-eu')).toBeInTheDocument(),
+        expect(screen.getByText('Update secret name for prod-eu')).toBeInTheDocument(),
       );
       // Preview must NOT have saved (no non-dry-run call).
       expect(mockUpdateClusterSettings).not.toHaveBeenCalledWith('prod-eu', {
@@ -1329,7 +1335,7 @@ describe('ClusterDetail', () => {
       renderView('settings');
       await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
 
-      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      fireEvent.click(screen.getByLabelText(/Edit secret name/i));
       const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
       fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
 
@@ -1350,7 +1356,7 @@ describe('ClusterDetail', () => {
       renderView('settings');
       await waitFor(() => expect(screen.getByText('Cluster Settings')).toBeInTheDocument());
 
-      fireEvent.click(screen.getByLabelText(/Edit secret path/i));
+      fireEvent.click(screen.getByLabelText(/Edit secret name/i));
       const input = await screen.findByPlaceholderText('e.g. k8s-my-cluster');
       fireEvent.change(input, { target: { value: 'k8s-prod-eu' } });
 

@@ -236,9 +236,9 @@ export const TOGGLE_NOTHING_CHANGED =
 /** Shown when removing the cluster failed and the server sent no sentence. */
 export const REMOVE_CLUSTER_FAILED_FALLBACK =
   'Sharko could not write the cluster removal to Git. The cluster was not removed.';
-/** Shown when saving the secret path failed and the server sent no sentence. */
+/** Shown when saving the secret name failed and the server sent no sentence. */
 export const SECRET_PATH_FAILED_FALLBACK =
-  'Sharko could not write the secret path change to Git. Nothing was changed.';
+  'Sharko could not write the secret name change to Git. Nothing was changed.';
 /** Shown when Sharko could not open the pull request for addon changes. */
 export const TOGGLE_NO_PR_ERROR =
   'Sharko could not open a pull request for these addon changes. Nothing was changed.';
@@ -973,13 +973,13 @@ export function ClusterDetail() {
     if (!name) return;
     try {
       await updateClusterSettings(name, { secret_path: suggestion });
-      showToast(`Secret path updated to: ${suggestion}`, 'success');
-      // Auto-retry the test with the new secret path
+      showToast(`Secret name updated to: ${suggestion}`, 'success');
+      // Auto-retry the test with the new secret name
       setTestResult('testing');
       const result = await testClusterConnection(name);
       setTestResult(result);
     } catch (err) {
-      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed to update secret path' });
+      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed to update secret name' });
     }
   }, [name]);
 
@@ -2503,7 +2503,7 @@ export function ClusterDetail() {
 
           {/* Settings section — houses admin troubleshooting controls that
             * used to sit among the Overview stat cards (V2-cleanup-78.1).
-            * Secret Path is viewable by everyone (it's not sensitive — it's
+            * Secret name is viewable by everyone (it's not sensitive — it's
             * the lookup key into the secrets backend) but only admins can
             * edit it, same as before the move. */}
           {activeSection === 'settings' && (
@@ -2512,7 +2512,7 @@ export function ClusterDetail() {
               <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                 <KeyRound className="h-4 w-4 text-teal-500" />
                 <div className="min-w-0 flex-1">
-                  <HelperText className="text-xs">Secret Path</HelperText>
+                  <HelperText className="text-xs">Secret name</HelperText>
                   {editingSecretPath ? (
                     <div className="flex items-center gap-2 mt-0.5">
                       <input
@@ -2547,7 +2547,7 @@ export function ClusterDetail() {
                                 ? { message: failure, isError: true }
                                 : prUrl
                                   ? { pr: result }
-                                  : { message: result?.message || 'Secret path updated' },
+                                  : { message: result?.message || 'Secret name updated' },
                             );
                             if (failure) return;
                             setEditingSecretPath(false);
@@ -2589,7 +2589,7 @@ export function ClusterDetail() {
                             setSecretPathResult(null);
                           }}
                           className="text-[#5a8aaa] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
-                          aria-label="Edit secret path"
+                          aria-label="Edit secret name"
                         >
                           <Pencil className="h-3 w-3" />
                         </button>
@@ -2600,8 +2600,8 @@ export function ClusterDetail() {
                     <div className="mt-1">
                       <PRResultBanner
                         result={secretPathResult.pr}
-                        mergedMessage="PR merged — secret path updated"
-                        openMessage="PR opened — secret path updates once it merges"
+                        mergedMessage="PR merged — secret name updated"
+                        openMessage="PR opened — secret name updates once it merges"
                       />
                     </div>
                   )}
