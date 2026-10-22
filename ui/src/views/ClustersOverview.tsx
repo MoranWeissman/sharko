@@ -209,12 +209,12 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
     <>
       You manage the cluster connection yourself — Sharko only updates its addon labels.{' '}
       <a
-        href="https://github.com/moran/sharko/blob/main/docs/operator-guide.md#managing-cluster-connections-yourself"
+        href="https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/"
         target="_blank"
         rel="noopener noreferrer"
         className="text-teal-600 hover:underline dark:text-teal-400"
       >
-        Operator guide: Managing cluster connections yourself
+        Operator Manual: Managing cluster connections yourself
       </a>
     </>
   ),

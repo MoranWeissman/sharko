@@ -2931,14 +2931,15 @@ const AREA_HEADER: Record<SecretsArea, { title: string; description: string }> =
   },
 }
 
-// W3-5 discoverability: the published engine + Secret Sync architecture
-// page, linked once from the Secrets area's own header — the same
+// W3-5 discoverability: the published Secrets page (user-guide/secret-sync),
+// which explains how Sharko manages secrets, linked once from the Secrets
+// area's own header — the same
 // readthedocs pattern AuditViewer's retention banner and
 // ClusterIdentityPanel's own doc link already use.
 // /en/latest/ is the readthedocs language/version prefix — the unprefixed
 // form of a published page hard-404s.
-const SECRETS_ARCHITECTURE_DOC_URL = 'https://sharko.readthedocs.io/en/latest/architecture/engine-and-secret-sync/'
-const SECRETS_ARCHITECTURE_DOC_LINK_TEXT = 'How Sharko manages secrets'
+const SECRET_SYNC_DOC_URL = 'https://sharko.readthedocs.io/en/latest/user-guide/secret-sync/'
+const SECRET_SYNC_DOC_LINK_TEXT = 'How Sharko manages secrets'
 
 export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   const navigate = useNavigate()
@@ -3540,13 +3541,13 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
             (UI Voice rule 3). */}
         <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
           <a
-            href={SECRETS_ARCHITECTURE_DOC_URL}
+            href={SECRET_SYNC_DOC_URL}
             target="_blank"
             rel="noopener noreferrer"
             data-testid="secrets-architecture-doc-link"
             className="underline decoration-dotted underline-offset-2 hover:text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 dark:hover:text-teal-300"
           >
-            {SECRETS_ARCHITECTURE_DOC_LINK_TEXT}
+            {SECRET_SYNC_DOC_LINK_TEXT}
           </a>
         </p>
       </div>

@@ -394,7 +394,7 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: /Operator guide: Managing cluster connections yourself/ }),
+      screen.getByRole('link', { name: /Operator Manual: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();
   });
 
