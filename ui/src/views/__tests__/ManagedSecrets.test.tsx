@@ -1629,9 +1629,45 @@ describe('ManagedSecrets', () => {
     await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('refresh-all'))
     await waitFor(() =>
-      expect(mockShowToast).toHaveBeenCalledWith('Could not start the check for cluster connections.', 'error'),
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Could not start the check for cluster connections. The check for addon values did start.',
+        'error',
+      ),
     )
     expect(mockShowToast).not.toHaveBeenCalledWith(expect.stringContaining('every cluster connection'), 'success')
+    expect(mockShowToast).not.toHaveBeenCalledWith('Could not start the check for cluster connections.', 'error')
+  })
+
+  it('Check all now says the other half started when only the addon values half failed (ep3 review G6)', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockCheckAllAddonValuesSecrets.mockRejectedValue(new Error('boom'))
+    mockReconcileCluster.mockResolvedValue({})
+    mockShowToast.mockClear()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('refresh-all'))
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Could not start the check for addon values. The check for cluster connections did start.',
+        'error',
+      ),
+    )
+  })
+
+  it('Check all now keeps the plain sentence when both halves failed (ep3 review G6)', async () => {
+    mockGetManagedSecrets.mockResolvedValue(baseResponse)
+    mockCheckAllAddonValuesSecrets.mockRejectedValue(new Error('boom'))
+    mockReconcileCluster.mockRejectedValue(new Error('boom'))
+    mockShowToast.mockClear()
+    renderPage()
+    await waitFor(() => expect(screen.getByTestId('refresh-all')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('refresh-all'))
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith(
+        'Could not start the check for cluster connections and addon values.',
+        'error',
+      ),
+    )
   })
 
   // P1-A A3 — the help text has to describe what the button actually does.

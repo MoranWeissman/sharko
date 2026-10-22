@@ -469,6 +469,17 @@ export function checkAllToast(hasConnections: boolean): string {
     : 'Checking every addon value now. There are no cluster connections to check. Nothing is written.'
 }
 
+/**
+ * The toast "Check all now" raises when at least one half could not start.
+ * The two halves run on their own, so when only one failed the sentence also
+ * says the other one did start.
+ */
+export function checkAllFailureToast(connectionsOk: boolean, valuesOk: boolean): string {
+  if (!connectionsOk && !valuesOk) return 'Could not start the check for cluster connections and addon values.'
+  if (!connectionsOk) return 'Could not start the check for cluster connections. The check for addon values did start.'
+  return 'Could not start the check for addon values. The check for cluster connections did start.'
+}
+
 /** The toast a connection row's Check now raises. The check is estate-wide by nature, so the sentence says so instead of implying one cluster was singled out. */
 function connectionRefreshToast(cluster: string): string {
   return `Checking every cluster's connection secret now, ${cluster} included.`
@@ -3415,11 +3426,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
       if (valuesOk && connectionsOk) {
         showToast(checkAllToast(hasConnections), 'success')
       } else {
-        const failed = [
-          !connectionsOk ? 'cluster connections' : '',
-          !valuesOk ? 'addon values' : '',
-        ].filter(Boolean)
-        showToast(`Could not start the check for ${failed.join(' and ')}.`, 'error')
+        showToast(checkAllFailureToast(connectionsOk, valuesOk), 'error')
       }
     } finally {
       setRefreshingAll(false)
