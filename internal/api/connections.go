@@ -585,7 +585,11 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 
 // mergeProviderConfig decides what a connection update does with a provider
 // block. Missing keeps the saved block. An empty type clears it. Anything
-// else replaces it.
+// else replaces it, except that Namespace and RoleARN, which the Settings
+// screen has no fields for, are kept from the saved block when the request
+// leaves them out and still names the same backend. Switching to a different
+// backend starts clean, so a role or namespace never follows the user onto a
+// backend it does not belong to.
 func mergeProviderConfig(req, saved *models.ProviderConfig) *models.ProviderConfig {
 	if req == nil {
 		return saved
@@ -593,5 +597,35 @@ func mergeProviderConfig(req, saved *models.ProviderConfig) *models.ProviderConf
 	if req.Type == "" {
 		return nil
 	}
+	if saved != nil && sameBackend(req.Type, saved.Type) {
+		merged := *req
+		if merged.Namespace == "" {
+			merged.Namespace = saved.Namespace
+		}
+		if merged.RoleARN == "" {
+			merged.RoleARN = saved.RoleARN
+		}
+		return &merged
+	}
 	return req
+}
+
+// sameBackend reports whether two provider type strings name the same
+// backend, treating the accepted aliases as one.
+func sameBackend(a, b string) bool {
+	return canonicalBackend(a) == canonicalBackend(b)
+}
+
+func canonicalBackend(t string) string {
+	switch t {
+	case "aws-sm", "aws-secrets-manager":
+		return "aws-sm"
+	case "k8s-secrets", "kubernetes":
+		return "k8s-secrets"
+	case "gcp", "gcp-sm", "google-secret-manager":
+		return "gcp"
+	case "azure", "azure-kv", "azure-key-vault":
+		return "azure"
+	}
+	return t
 }

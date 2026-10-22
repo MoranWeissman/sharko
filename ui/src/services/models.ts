@@ -1010,6 +1010,8 @@ export interface ConnectionResponse {
     type: _ProviderType
     region?: string
     prefix?: string
+    namespace?: string
+    role_arn?: string
   }
   gitops?: {
     base_branch?: string

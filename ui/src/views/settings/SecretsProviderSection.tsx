@@ -247,8 +247,8 @@ export function SecretsProviderSection() {
         form,
         unknownRawType,
         unknownAddonSecretRawType,
-        existingConn.provider != null,
-        existingConn.addon_secret_provider != null,
+        existingConn.provider ?? null,
+        existingConn.addon_secret_provider ?? null,
       )
       await api.updateConnection(existingConn.name, connPayload)
       // Toast first: refreshConnections() flips the shared loading flag,
@@ -594,6 +594,29 @@ export function SecretsProviderSection() {
 // the block out means "do not touch it", so "None" has to say it out loud.
 const NO_BACKEND = { type: '' }
 
+// The saved block as the server returns it. This screen has no fields for
+// the namespace or the role, so it sends the saved ones back unchanged as
+// long as the backend is still the same one. A different backend starts clean.
+interface StoredProviderBlock {
+  type: string
+  namespace?: string
+  role_arn?: string
+}
+
+function keptHiddenFields(
+  newType: string,
+  stored: StoredProviderBlock | null
+): { namespace?: string; role_arn?: string } {
+  if (!stored || !newType) return {}
+  const newCanon = canonicalizeProviderType(newType)
+  const same = newCanon ? newCanon === canonicalizeProviderType(stored.type) : newType === stored.type
+  if (!same) return {}
+  return {
+    ...(stored.namespace ? { namespace: stored.namespace } : {}),
+    ...(stored.role_arn ? { role_arn: stored.role_arn } : {}),
+  }
+}
+
 // Build the connection update payload for this section, on top of the
 // shared minimal-payload helper (see connectionUpdate.ts). This page never
 // touches git or argocd identity — only the provider / addon_secret_provider
@@ -610,9 +633,11 @@ function buildSecretsProviderPayload(
   providerForm: ProviderFormData,
   unknownRawType: string | null,
   unknownAddonSecretRawType: string | null,
-  hadProvider: boolean,
-  hadAddonSecretProvider: boolean
+  storedProvider: StoredProviderBlock | null,
+  storedAddonSecretProvider: StoredProviderBlock | null
 ) {
+  const hadProvider = storedProvider != null
+  const hadAddonSecretProvider = storedAddonSecretProvider != null
   const resolvedProviderType =
     providerForm.provider_type === UNKNOWN_PROVIDER ? unknownRawType : providerForm.provider_type
   const resolvedAddonSecretProviderType =
@@ -623,6 +648,7 @@ function buildSecretsProviderPayload(
           type: resolvedProviderType,
           region: regionToSend(providerForm.provider_type, providerForm.provider_region),
           prefix: prefixToSend(providerForm.provider_type, providerForm.provider_prefix),
+          ...keptHiddenFields(resolvedProviderType, storedProvider),
         }
       : hadProvider
         ? NO_BACKEND
@@ -632,6 +658,7 @@ function buildSecretsProviderPayload(
           type: resolvedAddonSecretProviderType,
           region: regionToSend(providerForm.addon_secret_provider_type, providerForm.addon_secret_provider_region),
           prefix: prefixToSend(providerForm.addon_secret_provider_type, providerForm.addon_secret_provider_prefix),
+          ...keptHiddenFields(resolvedAddonSecretProviderType, storedAddonSecretProvider),
         }
       : hadAddonSecretProvider
         ? NO_BACKEND

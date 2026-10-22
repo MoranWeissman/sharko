@@ -70,8 +70,8 @@ const sampleConnection = {
 }
 
 type TestConnection = typeof sampleConnection & {
-  provider?: { type: string; region?: string; prefix?: string }
-  addon_secret_provider?: { type: string; region?: string; prefix?: string }
+  provider?: { type: string; region?: string; prefix?: string; namespace?: string; role_arn?: string }
+  addon_secret_provider?: { type: string; region?: string; prefix?: string; namespace?: string; role_arn?: string }
 }
 
 function setupHook(connections: TestConnection[] = [sampleConnection]) {
@@ -345,6 +345,56 @@ describe('SecretsProviderSection', () => {
     expect(body.provider.type).toBe('k8s-secrets')
     // The old stored prefix is not sent along.
     expect(body.provider.prefix).toBeUndefined()
+  })
+
+  // Settings has no fields for the namespace or the role. Saving must send the
+  // saved ones back, so the server never sees a block that looks like they were
+  // removed. A different backend starts clean.
+  it('saving keeps the saved role and namespace for the same backend, in both sections', async () => {
+    const ROLE = 'arn:aws:iam::111122223333:role/sharko-test'
+    setupHook([{
+      ...sampleConnection,
+      provider: { type: 'aws-sm', region: 'eu-west-1', role_arn: ROLE },
+      addon_secret_provider: { type: 'kubernetes', namespace: 'my-secrets' },
+    }])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+
+    const selects = await screen.findAllByRole('combobox')
+    await waitFor(() => expect((selects[0] as HTMLSelectElement).value).toBe('aws-sm'))
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const body = updateConnectionMock.mock.calls[0][1] as {
+      provider: { type: string; role_arn?: string; namespace?: string }
+      addon_secret_provider: { type: string; role_arn?: string; namespace?: string }
+    }
+    expect(body.provider.role_arn).toBe(ROLE)
+    // The addon block was stored under the alias; it still counts as the same backend.
+    expect(body.addon_secret_provider.type).toBe('k8s-secrets')
+    expect(body.addon_secret_provider.namespace).toBe('my-secrets')
+  })
+
+  it('saving does not carry the saved role or namespace onto a different backend', async () => {
+    setupHook([{
+      ...sampleConnection,
+      provider: { type: 'aws-sm', region: 'eu-west-1', role_arn: 'arn:aws:iam::111122223333:role/x' },
+      addon_secret_provider: { type: 'k8s-secrets', namespace: 'my-secrets' },
+    }])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+
+    const selects = await screen.findAllByRole('combobox')
+    await waitFor(() => expect((selects[0] as HTMLSelectElement).value).toBe('aws-sm'))
+    await user.selectOptions(selects[0], 'k8s-secrets')
+    await user.selectOptions(selects[1], 'aws-sm')
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const body = updateConnectionMock.mock.calls[0][1] as {
+      provider: { role_arn?: string; namespace?: string }
+      addon_secret_provider: { role_arn?: string; namespace?: string }
+    }
+    expect(body.provider.role_arn).toBeUndefined()
+    expect(body.addon_secret_provider.namespace).toBeUndefined()
   })
 
   // L4 — Prefix is an AWS Secrets Manager setting only.
