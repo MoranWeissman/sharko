@@ -214,7 +214,7 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
         rel="noopener noreferrer"
         className="text-teal-600 hover:underline dark:text-teal-400"
       >
-        Operator guide: Managing cluster connections yourself
+        Operator Manual: Managing cluster connections yourself
       </a>
     </>
   ),

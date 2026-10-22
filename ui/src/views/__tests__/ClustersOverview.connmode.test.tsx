@@ -181,7 +181,7 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: /Operator guide: Managing cluster connections yourself/ }),
+      screen.getByRole('link', { name: /Operator Manual: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();
   });
 
