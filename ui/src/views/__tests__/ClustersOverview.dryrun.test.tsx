@@ -107,8 +107,6 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     // the creds-source <select> replaced the old Provider dropdown.
     const select = screen.getByDisplayValue(/Choose where this cluster's credentials come from/i) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'inline-kubeconfig' } });
-    // V3-RW3.1: expand Advanced settings to access the kubeconfig textarea.
-    fireEvent.click(screen.getByRole('button', { name: /advanced settings/i }));
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
     });
@@ -207,11 +205,11 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     const previewBtn = screen.getByRole('button', { name: /preview/i });
     expect(previewBtn).toHaveAttribute(
       'title',
-      expect.stringContaining('Preview'),
+      'Show the pull request and the changes it would make, without changing anything.',
     );
-    // Sanity-check the substance of the tooltip — operator should know it
-    // does not apply changes.
-    expect(previewBtn.getAttribute('title')!.toLowerCase()).toContain('without actually applying');
+    // The old text said Sharko "creates an ArgoCD secret", which is not true
+    // when the user manages the connection.
+    expect(previewBtn.getAttribute('title')!.toLowerCase()).not.toContain('secret');
   });
 
   it('Register submit button carries a tooltip explaining what registration does', async () => {
@@ -223,9 +221,13 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     // unique button matching /^register/i in the footer.
     const registerBtn = screen.getByRole('button', { name: /^register$/i });
     const title = registerBtn.getAttribute('title');
-    expect(title).toBeTruthy();
-    expect(title!.toLowerCase()).toContain('argocd cluster secret');
-    expect(title!.toLowerCase()).toContain('managed-clusters');
+    expect(title).toBe(
+      'Open a pull request that adds this cluster. Whether it merges by itself is set in Settings → GitOps.',
+    );
+    // The old text promised an ArgoCD secret (not true when the user manages
+    // the connection) and named a file.
+    expect(title!.toLowerCase()).not.toContain('secret');
+    expect(title!.toLowerCase()).not.toContain('managed-clusters');
   });
 
   // V2-cleanup-40: per-flow auto-merge checkbox is gone. Story G2: the

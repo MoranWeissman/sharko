@@ -753,7 +753,8 @@ describe('SystemView — Sharko identity section (V2-cleanup-89.2)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('identity-how-it-works')).toBeInTheDocument()
     })
-    expect(screen.getByText(/one IAM role on the hub cluster/)).toBeInTheDocument()
+    expect(screen.getByText(/one AWS role\. Every EKS cluster that opts in/)).toBeInTheDocument()
+    expect(screen.queryByText(/hub cluster|spoke cluster|IAM role/)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /read the full guide/i })).toHaveAttribute(
       'href',
       'https://sharko.readthedocs.io/en/latest/operator/eks-hub-and-spoke-identity/',

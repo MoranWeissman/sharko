@@ -154,11 +154,18 @@ describe('getClusterConnectionState (v4 walk-findings W2, item 2)', () => {
 
   it('returns the honest "No addons yet" state when addon count is exactly 0', () => {
     const state = getClusterConnectionState('', { enabledAddonCount: 0 });
-    expect(state.label).toBe('No addons yet — connection untested');
+    expect(state.label).toBe('Not checked yet');
+    expect(state.meaning).toBe(
+      'ArgoCD only checks a cluster once something is deployed to it, and nothing is deployed here yet. Enable an addon and ArgoCD will check the connection.',
+    );
+    // The old wording is gone.
+    expect(state.label).not.toContain('No addons yet');
+    expect(state.label).not.toContain('untested');
+    expect(state.meaning).not.toContain('nothing to probe');
     expect(state.severity).toBe('unknown');
 
     const stateUnknownStatus = getClusterConnectionState('Unknown', { enabledAddonCount: 0 });
-    expect(stateUnknownStatus.label).toBe('No addons yet — connection untested');
+    expect(stateUnknownStatus.label).toBe('Not checked yet');
   });
 
   it('does NOT override connected/failed/missing states — only the pending window', () => {
