@@ -150,6 +150,12 @@ describe('shouldShowSetupWizard', () => {
 })
 
 describe('shouldShowConnectionErrorBanner', () => {
+  it('does not show for an older server that sends no bootstrap_synced (ep3 fix 23)', () => {
+    expect(
+      shouldShowConnectionErrorBanner({ initialized: true } as { initialized: boolean }),
+    ).toBe(false)
+  })
+
   it('returns false while repo status is still loading (null)', () => {
     expect(shouldShowConnectionErrorBanner(null)).toBe(false)
   })

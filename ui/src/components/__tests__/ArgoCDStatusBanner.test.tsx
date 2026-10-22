@@ -29,4 +29,18 @@ describe('ArgoCDStatusBanner', () => {
       screen.queryByText('ArgoCD temporarily unreachable — showing last known state'),
     ).not.toBeInTheDocument();
   });
+
+  it('shows again when the problem comes back after it was fixed', () => {
+    const text = 'ArgoCD temporarily unreachable — showing last known state';
+    const { rerender } = render(<ArgoCDStatusBanner visible={true} />);
+    fireEvent.click(screen.getByLabelText('Dismiss'));
+    expect(screen.queryByText(text)).not.toBeInTheDocument();
+    // Still broken: stays closed.
+    rerender(<ArgoCDStatusBanner visible={true} />);
+    expect(screen.queryByText(text)).not.toBeInTheDocument();
+    // Fixed, then broken again: shows again.
+    rerender(<ArgoCDStatusBanner visible={false} />);
+    rerender(<ArgoCDStatusBanner visible={true} />);
+    expect(screen.getByText(text)).toBeInTheDocument();
+  });
 });

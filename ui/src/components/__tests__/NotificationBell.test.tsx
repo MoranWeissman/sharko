@@ -35,6 +35,11 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
+let mockRole: string | null = 'admin';
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ role: mockRole }),
+}));
+
 function renderBell() {
   return render(
     <MemoryRouter>
@@ -55,6 +60,7 @@ const connectionNotification = {
 describe('NotificationBell — connection-health alerts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRole = 'admin';
     markAllNotificationsRead.mockResolvedValue({});
     markNotificationRead.mockResolvedValue({});
   });
@@ -120,6 +126,7 @@ describe('NotificationBell — connection-health alerts', () => {
 describe('NotificationBell — opening the bell marks everything read (S4)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRole = 'admin';
     markAllNotificationsRead.mockResolvedValue({});
     markNotificationRead.mockResolvedValue({});
   });
@@ -254,5 +261,90 @@ describe('NotificationBell — dropdown keyboard behavior (V2-cleanup-61.4, G2)'
     await waitFor(() => {
       expect(screen.queryByText('No notifications')).not.toBeInTheDocument();
     });
+  });
+});
+
+const upgradeNotification = {
+  id: 'up-1',
+  type: 'upgrade',
+  title: 'New addon version available',
+  description: 'argo-cd 2.10.0 is available.',
+  timestamp: new Date().toISOString(),
+  read: false,
+};
+
+describe('NotificationBell — rows, read marks and viewers (ep3 fix 6)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRole = 'admin';
+    markAllNotificationsRead.mockResolvedValue({});
+    markNotificationRead.mockResolvedValue({});
+  });
+
+  it('a row that does nothing does not look or act clickable', async () => {
+    getNotifications.mockResolvedValue({ notifications: [upgradeNotification] });
+    renderBell();
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    const title = await screen.findByText('New addon version available');
+    const row = title.closest('div[class*="border-b"]') as HTMLElement;
+    expect(row).not.toHaveAttribute('role');
+    expect(row).not.toHaveAttribute('tabindex');
+    expect(row.className).not.toContain('cursor-pointer');
+    expect(row.className).not.toContain('hover:');
+  });
+
+  it('a connection row does look and act clickable', async () => {
+    getNotifications.mockResolvedValue({ notifications: [connectionNotification] });
+    renderBell();
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    const row = await screen.findByRole('button', { name: /reach your Git connection/ });
+    expect(row.className).toContain('cursor-pointer');
+  });
+
+  it('clicking a connection row that is still unread marks that one row read', async () => {
+    markAllNotificationsRead.mockRejectedValue(new Error('nope'));
+    getNotifications.mockResolvedValue({ notifications: [connectionNotification] });
+    renderBell();
+    await screen.findByText('1');
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    // The read-all failed, so the row is unread again.
+    await waitFor(() => expect(markAllNotificationsRead).toHaveBeenCalled());
+    const row = await screen.findByRole('button', { name: /reach your Git connection/ });
+    await waitFor(() => expect(screen.getByText('1')).toBeInTheDocument());
+    fireEvent.click(row);
+    expect(markNotificationRead).toHaveBeenCalledWith('conn-1');
+    expect(mockNavigate).toHaveBeenCalledWith('/settings?section=connections');
+  });
+
+  it('when the read-all call fails, the unread count comes back', async () => {
+    markAllNotificationsRead.mockRejectedValue(new Error('nope'));
+    getNotifications.mockResolvedValue({ notifications: [upgradeNotification] });
+    renderBell();
+    await screen.findByText('1');
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    await waitFor(() => expect(markAllNotificationsRead).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('Notifications (1)')).toBeInTheDocument());
+  });
+
+  it('a viewer sees the alerts but nothing tries to clear them', async () => {
+    mockRole = 'viewer';
+    getNotifications.mockResolvedValue({ notifications: [connectionNotification] });
+    renderBell();
+    await screen.findByText('1');
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    const row = await screen.findByRole('button', { name: /reach your Git connection/ });
+    fireEvent.click(row);
+    expect(markAllNotificationsRead).not.toHaveBeenCalled();
+    expect(markNotificationRead).not.toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/settings?section=connections');
+  });
+
+  it('an operator can clear', async () => {
+    mockRole = 'operator';
+    getNotifications.mockResolvedValue({ notifications: [upgradeNotification] });
+    renderBell();
+    await screen.findByText('1');
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    await waitFor(() => expect(markAllNotificationsRead).toHaveBeenCalledTimes(1));
   });
 });
