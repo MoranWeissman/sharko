@@ -5120,7 +5120,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.dev/adopted annotation).\nOn a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.",
+                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.dev/adopted annotation).\nOn a v4 repo, the pull request removes the cluster from managed-clusters.yaml and deletes cluster-addons/{name}.yaml plus every Helm values file under values/clusters/{name}/ — everything this cluster owns in the repo.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14315,7 +14315,7 @@
             "type": "object",
             "properties": {
                 "addon_values_secret_source": {
-                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"a Kubernetes Secret\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault.\n\nKEPT for the whole-page copy that genuinely is about the page and not\nabout one row (the \"Refresh all\" hint). It is NOT what a row reads\nanymore: every row now carries its own Source field (S1), so a reader\nfiltering, sorting or grouping by backend is reading a per-row fact,\nand a future server that resolves a different backend per addon does\nnot need a response-shape change to say so.",
+                    "description": "AddonValuesSecretSource is the real, human-readable name of the\nbackend addon-values secrets are compared against — \"AWS Secrets\nManager\", \"Kubernetes Secrets\", etc, or the generic \"secrets store\"\nfallback when the configured backend has no recognizable product name\n(unconfigured, a demo/stub backend, or an unimplemented type). Never\n\"the vault\" — that reads as HashiCorp Vault to every DevOps reader,\nwhich is misleading unless the backend genuinely IS Vault.\n\nKEPT for the whole-page copy that genuinely is about the page and not\nabout one row (the \"Refresh all\" hint). It is NOT what a row reads\nanymore: every row now carries its own Source field (S1), so a reader\nfiltering, sorting or grouping by backend is reading a per-row fact,\nand a future server that resolves a different backend per addon does\nnot need a response-shape change to say so.",
                     "type": "string"
                 },
                 "addon_values_secrets": {

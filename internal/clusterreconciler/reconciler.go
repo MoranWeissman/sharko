@@ -23,7 +23,7 @@
 // managed-clusters.yaml. The legacy argosecrets.Reconciler loop (dual-writer
 // until V2-cleanup-28) was retired. Adoption-safety semantics remain:
 //
-//   - Orphan sweeps skip secrets that carry the sharko.sharko.dev/adopted
+//   - Orphan sweeps skip secrets that carry the sharko.dev/adopted
 //     annotation — those secrets are owned by the Adopt flow and can only be
 //     removed via an explicit Unadopt call.
 //   - internal/argosecrets.Manager.Ensure (still used for the kubeconfig
