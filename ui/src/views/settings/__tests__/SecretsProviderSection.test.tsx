@@ -124,6 +124,13 @@ describe('SecretsProviderSection', () => {
     ])
     expect(options[0].textContent).toBe('None')
 
+    // The addon backend's empty choice does not mean "no backend": the server
+    // uses the cluster backend for addon secrets then. It says so (ep3 review G12).
+    const addonOptions = Array.from(selects[1].querySelectorAll('option'))
+    expect(addonOptions[0].value).toBe('')
+    expect(addonOptions[0].textContent).toBe('Same as the cluster backend')
+    expect(addonOptions.map(o => o.textContent)).not.toContain('None')
+
     // Clean human labels, no alias noise.
     const byValue = Object.fromEntries(options.map(o => [o.value, o]))
     expect(byValue['aws-sm'].textContent).toBe('AWS Secrets Manager')

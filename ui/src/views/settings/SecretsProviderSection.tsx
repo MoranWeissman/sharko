@@ -29,6 +29,13 @@ export { canonicalizeProviderType }
 // tweak) persisted `provider: undefined`, wiping the backend's config
 // (L7). Selecting this sentinel keeps the form from claiming "None" and
 // makes Save pass the raw stored type through unchanged instead.
+/**
+ * The empty choice for the addon secrets backend. Leaving it empty does not
+ * mean "no backend": the server uses the cluster backend for addon secret
+ * values too (internal/providers AddonSecretConfigFromConnection).
+ */
+export const ADDON_BACKEND_SAME_AS_CLUSTER_LABEL = 'Same as the cluster backend'
+
 const UNKNOWN_PROVIDER = '__unknown__' as const
 type FormProviderType = ProviderType | typeof UNKNOWN_PROVIDER
 
@@ -485,7 +492,7 @@ export function SecretsProviderSection() {
                     }))
                   }}
                 >
-                  <option value="">None</option>
+                  <option value="">{ADDON_BACKEND_SAME_AS_CLUSTER_LABEL}</option>
                   {unknownAddonSecretRawType && (
                     <option value={UNKNOWN_PROVIDER} disabled>
                       Unknown provider &quot;{unknownAddonSecretRawType}&quot; (keep as-is)
