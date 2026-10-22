@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,7 +14,12 @@ import (
 
 func init() {
 	addClusterCmd.Flags().String("addons", "", "Comma-separated list of addons to enable")
-	addClusterCmd.Flags().String("region", "", "Cluster region")
+	addClusterCmd.Flags().String("region", "", "Cloud region of the cluster (EKS and stored-kubeconfig sources only)")
+	addClusterCmd.Flags().String("creds-source", "", `How Sharko gets the cluster's credentials: "eks-token", "secret-kubeconfig" or "inline-kubeconfig"`)
+	addClusterCmd.Flags().String("kubeconfig-file", "", "Path to a kubeconfig file to hand to Sharko (inline-kubeconfig source only)")
+	addClusterCmd.Flags().String("secret-path", "", "Name or path of the secret that holds the credentials (eks-token and secret-kubeconfig sources)")
+	addClusterCmd.Flags().String("role-arn", "", "AWS role Sharko takes on to reach this cluster (eks-token source only)")
+	addClusterCmd.Flags().String("connection-managed-by", "", `Who looks after the ArgoCD cluster secret: "sharko" (default) or "user" (you make it yourself)`)
 	addClusterCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	rootCmd.AddCommand(addClusterCmd)
 
@@ -33,15 +39,138 @@ var knownNonAddonLabels = map[string]bool{
 	"region": true,
 }
 
+// Values the register API accepts for the credentials source and for who
+// manages the ArgoCD connection. They match internal/orchestrator
+// (CredsSource*) and internal/models (ConnectionManagedBy*), which is also
+// what the register dialog in the UI sends.
+const (
+	credsSourceInline = "inline-kubeconfig"
+	credsSourceSecret = "secret-kubeconfig"
+	credsSourceEKS    = "eks-token"
+)
+
+// buildAddClusterBody turns the add-cluster flags into the request body for
+// POST /api/v1/clusters. It does the cheap checks the server also does, so a
+// wrong mix of flags is explained before anything is sent. readFile is passed
+// in so tests do not need real files.
+func buildAddClusterBody(name string, addons map[string]bool, region, credsSource, kubeconfigFile, secretPath, roleARN, managedBy string, readFile func(string) ([]byte, error)) (map[string]interface{}, error) {
+	body := map[string]interface{}{
+		"name":   name,
+		"addons": addons,
+		"region": region,
+	}
+
+	switch credsSource {
+	case "", credsSourceInline, credsSourceSecret, credsSourceEKS:
+	default:
+		return nil, fmt.Errorf("unknown --creds-source %q (use %s, %s or %s)", credsSource, credsSourceEKS, credsSourceSecret, credsSourceInline)
+	}
+	switch managedBy {
+	case "", "sharko", "user":
+	default:
+		return nil, fmt.Errorf("unknown --connection-managed-by %q (use \"sharko\" or \"user\")", managedBy)
+	}
+
+	if credsSource == "" {
+		// No source chosen: the server works it out from the other fields,
+		// as it always did. Flags that only make sense with a source still
+		// go through, and the server answers.
+		if kubeconfigFile != "" {
+			return nil, fmt.Errorf("--kubeconfig-file needs --creds-source %s", credsSourceInline)
+		}
+		if secretPath != "" {
+			body["secret_path"] = secretPath
+		}
+		if roleARN != "" {
+			body["role_arn"] = roleARN
+		}
+	} else {
+		body["creds_source"] = credsSource
+		if credsSource == credsSourceInline {
+			// Same rules as the server: a pasted kubeconfig stands alone.
+			if secretPath != "" {
+				return nil, fmt.Errorf("--secret-path cannot be used with --creds-source %s", credsSourceInline)
+			}
+			if region != "" {
+				return nil, fmt.Errorf("--region cannot be used with --creds-source %s", credsSourceInline)
+			}
+			if roleARN != "" {
+				return nil, fmt.Errorf("--role-arn cannot be used with --creds-source %s", credsSourceInline)
+			}
+			body["provider"] = "kubeconfig"
+			if kubeconfigFile != "" {
+				data, err := readFile(kubeconfigFile)
+				if err != nil {
+					return nil, fmt.Errorf("could not read the kubeconfig file: %w", err)
+				}
+				if strings.TrimSpace(string(data)) == "" {
+					return nil, fmt.Errorf("the kubeconfig file %s is empty", kubeconfigFile)
+				}
+				body["kubeconfig"] = string(data)
+			}
+		} else {
+			if kubeconfigFile != "" {
+				return nil, fmt.Errorf("--kubeconfig-file can only be used with --creds-source %s", credsSourceInline)
+			}
+			if credsSource == credsSourceSecret && roleARN != "" {
+				return nil, fmt.Errorf("--role-arn can only be used with --creds-source %s", credsSourceEKS)
+			}
+			body["provider"] = "eks"
+			if secretPath != "" {
+				body["secret_path"] = secretPath
+			}
+			if roleARN != "" {
+				body["role_arn"] = roleARN
+			}
+		}
+	}
+
+	if managedBy == "user" {
+		// Only sent for the non-default choice, like the register dialog.
+		body["connection_managed_by"] = "user"
+	}
+	return body, nil
+}
+
 var addClusterCmd = &cobra.Command{
 	Use:   "add-cluster <name>",
 	Short: "Register a new cluster",
-	Args:  cobra.ExactArgs(1),
+	Long: `Registers a cluster with Sharko through a pull request.
+
+Use --creds-source to say how Sharko gets the cluster's credentials. These are
+the same choices as the register dialog in the UI.
+
+  eks-token          Sharko makes a short-lived AWS token each time it connects.
+                     Nothing to store. EKS only. --role-arn and --secret-path
+                     are optional.
+  secret-kubeconfig  Sharko reads a kubeconfig that is kept in your secrets
+                     backend. Give its name with --secret-path.
+  inline-kubeconfig  You hand Sharko a kubeconfig file once and it stores it.
+                     Give the file with --kubeconfig-file. The token inside can
+                     run out, so you will need to hand over a new one then.
+
+Leave --creds-source out and Sharko works it out from the other flags, as it
+did before.
+
+--connection-managed-by user means you create the ArgoCD cluster secret
+yourself and Sharko never writes it. The default is sharko.
+
+Examples:
+  sharko add-cluster prod-eu --creds-source eks-token --region eu-west-1 --role-arn arn:aws:iam::123456789012:role/sharko-access
+  sharko add-cluster prod-eu --creds-source secret-kubeconfig --secret-path clusters/prod-eu
+  sharko add-cluster prod-eu --creds-source inline-kubeconfig --kubeconfig-file ./prod-eu.kubeconfig
+  sharko add-cluster prod-eu --creds-source eks-token --connection-managed-by user`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		addonsFlag, _ := cmd.Flags().GetString("addons")
 		region, _ := cmd.Flags().GetString("region")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		credsSource, _ := cmd.Flags().GetString("creds-source")
+		kubeconfigFile, _ := cmd.Flags().GetString("kubeconfig-file")
+		secretPath, _ := cmd.Flags().GetString("secret-path")
+		roleARN, _ := cmd.Flags().GetString("role-arn")
+		managedBy, _ := cmd.Flags().GetString("connection-managed-by")
 
 		addons := make(map[string]bool)
 		if addonsFlag != "" {
@@ -53,10 +182,9 @@ var addClusterCmd = &cobra.Command{
 			}
 		}
 
-		body := map[string]interface{}{
-			"name":   name,
-			"addons": addons,
-			"region": region,
+		body, err := buildAddClusterBody(name, addons, region, credsSource, kubeconfigFile, secretPath, roleARN, managedBy, os.ReadFile)
+		if err != nil {
+			return err
 		}
 		if dryRun {
 			body["dry_run"] = true
