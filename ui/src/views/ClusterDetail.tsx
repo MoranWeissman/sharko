@@ -233,6 +233,11 @@ function getSyncStatusStyle(state: 'synced' | 'out_of_sync' | 'failed' | 'reconc
 /** Shown when saving addon changes found nothing to change on the cluster. */
 export const TOGGLE_NOTHING_CHANGED =
   'Nothing to change — this cluster already has these addons.';
+/** Shown to a non-admin in place of the ownership buttons. */
+export const ADMIN_ONLY_OWNERSHIP_HINT =
+  'Only an admin can take ownership of this cluster or remove its old labels.';
+/** Same, once Sharko already owns the cluster: only the labels button is left for an admin. */
+export const ADMIN_ONLY_LABELS_HINT = 'Only an admin can remove this cluster\'s old labels.';
 /** Shown when removing the cluster failed and the server sent no sentence. */
 export const REMOVE_CLUSTER_FAILED_FALLBACK =
   'Sharko could not write the cluster removal to Git. The cluster was not removed.';
@@ -1387,7 +1392,7 @@ export function ClusterDetail() {
             roles={['admin']}
             fallback={
               <span data-testid="takeover-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">
-                Only an admin can take ownership of this cluster or remove its old labels.
+                {data?.cluster?.already_managed_by_sharko ? ADMIN_ONLY_LABELS_HINT : ADMIN_ONLY_OWNERSHIP_HINT}
               </span>
             }
           >

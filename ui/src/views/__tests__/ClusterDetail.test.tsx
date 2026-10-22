@@ -3317,6 +3317,34 @@ describe('ClusterDetail', () => {
       expect(s.queryByTestId('open-drop-labels')).not.toBeInTheDocument();
     });
 
+    it('once Sharko already owns the cluster, the non-admin line only talks about the labels (ep3 review G4)', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, already_managed_by_sharko: true },
+      });
+      const operatorAuth = {
+        token: 't', username: 'op', role: 'operator', login: vi.fn(), logout: vi.fn(),
+        isAuthenticated: true, isAdmin: false, loading: false, error: null,
+      };
+      const { MemoryRouter, Route, Routes } = await import('react-router-dom');
+      const { ClusterDetail } = await import('@/views/ClusterDetail');
+      const { AuthContext } = await import('@/hooks/useAuth');
+      const { render: r, screen: s, waitFor: w } = await import('@testing-library/react');
+      r(
+        <AuthContext.Provider value={operatorAuth}>
+          <MemoryRouter initialEntries={['/clusters/prod-eu']}>
+            <Routes>
+              <Route path="/clusters/:name" element={<ClusterDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>,
+      );
+      await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
+      expect(s.getByText("Only an admin can remove this cluster's old labels.")).toBeInTheDocument();
+      expect(s.queryByText(ADMIN_ONLY_HINT)).not.toBeInTheDocument();
+      expect(s.queryByText(/take ownership/i)).not.toBeInTheDocument();
+    });
+
     it('does not show the admin-only line to an admin', async () => {
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
