@@ -64,7 +64,9 @@ for (const f of repoFiles) {
 function slug(text: string): string {
   const plain = text
     .normalize('NFKD')
-    .replace(/[^\x00-\x7f]/g, '')
+    .split('')
+    .filter((c) => c.charCodeAt(0) < 128)
+    .join('')
     .replace(/[^\w\s-]/g, '')
     .trim()
     .toLowerCase()
