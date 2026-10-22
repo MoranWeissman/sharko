@@ -193,13 +193,21 @@ export function ConnectedApp() {
       .catch(() => setRepoStatus({ initialized: false, bootstrap_synced: false, reason: 'error' }))
   }, [])
 
+  // Whether a setup or repair wizard is taking over the screen right now.
+  // Read here (above the early returns) so the poll below can look at it.
+  const dismissed = sessionStorage.getItem('sharko:dismiss-wizard') === '1'
+  const wizardOnScreen = shouldShowSetupWizard(repoStatus, dismissed) || repairWizardOpen
+
   // Look again every so often, so the banner goes away by itself once Git or
   // ArgoCD is back, with no page reload. Stays quiet (no spinner) on purpose.
+  // Only while the normal app is on screen: an answer that arrives while a
+  // wizard is open must never close it, drop what the user typed, or switch
+  // repair mode off. The wizards re-read the status themselves when they close.
   useEffect(() => {
-    if (loading || connections.length === 0) return
+    if (loading || connections.length === 0 || wizardOnScreen) return
     const id = setInterval(() => { fetchRepoStatus() }, REPO_STATUS_POLL_MS)
     return () => clearInterval(id)
-  }, [loading, connections.length, fetchRepoStatus])
+  }, [loading, connections.length, wizardOnScreen, fetchRepoStatus])
 
   useEffect(() => {
     if (!loading) {
@@ -254,10 +262,10 @@ export function ConnectedApp() {
   // purpose: a fresh tab / hard refresh brings the wizard back, so the user
   // can't permanently skip setup, but they can dismiss it for the current
   // session to look around the app, run a CLI command, etc.
-  const dismissed = sessionStorage.getItem('sharko:dismiss-wizard') === '1'
-
   if (shouldShowSetupWizard(repoStatus, dismissed)) {
-    return <FirstRunWizard initialStep={4} />
+    // The poll is paused while this is open, so when the wizard closes it
+    // re-reads the status itself. Without this the wizard would stay up.
+    return <FirstRunWizard initialStep={4} onExit={() => { fetchRepoStatus() }} />
   }
 
   // The user clicked "repair" on the banner below — open the SAME Step 4
