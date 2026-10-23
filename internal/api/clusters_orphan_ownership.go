@@ -10,7 +10,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // Ownership-label gate helpers shared between the orphan resolver
@@ -70,7 +72,11 @@ func (s *Server) k8sClientAndNamespace() (kubernetes.Interface, string, bool) {
 
 // listSharkoOwnedSecretNames returns the set of cluster names whose
 // backing Secret in the argocd namespace carries the
-// app.kubernetes.io/managed-by=sharko label.
+// app.kubernetes.io/managed-by=sharko label AND is a leftover from a
+// registration that never finished (leftoverRegistrationRefusal — the
+// registration-pending mark, never adopted or taken over;
+// EP3-DRYRUN-FIXES call 4). A labelled Secret that fails that rule is not
+// in the set, so the leftovers list never offers it for discard.
 //
 // Returns nil (NOT empty map) when the k8s client is not wired so the
 // caller can distinguish "no k8s available" from "k8s available, zero
@@ -98,10 +104,70 @@ func listSharkoOwnedSecretNames(ctx context.Context, k8sClient kubernetes.Interf
 		return nil
 	}
 	out := make(map[string]struct{}, len(list.Items))
-	for _, s := range list.Items {
-		out[s.Name] = struct{}{}
+	for i := range list.Items {
+		sec := &list.Items[i]
+		if leftoverRegistrationRefusal(sec) != leftoverOK {
+			continue
+		}
+		out[sec.Name] = struct{}{}
+		// The cluster name ArgoCD shows can differ from the Secret's
+		// Kubernetes name (a Secret made by `argocd cluster add`); the
+		// orphan resolver matches on the name ArgoCD shows.
+		if shown := string(sec.Data["name"]); shown != "" {
+			out[shown] = struct{}{}
+		}
 	}
 	return out
+}
+
+// leftoverReason is why a Sharko-labelled ArgoCD cluster Secret that is not
+// in Git is, or is not, a leftover from a registration that never finished.
+type leftoverReason int
+
+const (
+	// leftoverOK: a real cancelled registration — Sharko's label, and the
+	// registration-pending mark from a register that never merged, and
+	// never adopted or taken over.
+	leftoverOK leftoverReason = iota
+	// leftoverAdopted: the Secret is or was adopted or taken over.
+	leftoverAdopted
+	// leftoverNotARegistration: no registration-pending mark, so it is not
+	// a register that never merged (for example a connection a removal
+	// chose to keep).
+	leftoverNotARegistration
+)
+
+// leftoverRegistrationRefusal applies the leftovers rule (EP3-DRYRUN-FIXES
+// call 4) to one Secret: the leftovers list shows it, and Discard may delete
+// it, only when it is a registration that never finished. The caller has
+// already checked Sharko's label, that the cluster is not in Git and that
+// no open pull request registers it.
+func leftoverRegistrationRefusal(sec *corev1.Secret) leftoverReason {
+	if sec == nil {
+		return leftoverNotARegistration
+	}
+	annotations := sec.Annotations
+	if argosecrets.IsAdopted(annotations) {
+		return leftoverAdopted
+	}
+	if _, takenOver := annotations[argosecrets.AnnotationTakenOverAt]; takenOver {
+		return leftoverAdopted
+	}
+	if _, marked := models.RegistrationPendingValue(annotations); !marked {
+		return leftoverNotARegistration
+	}
+	return leftoverOK
+}
+
+// orphanDiscardAdoptedMessage and orphanDiscardNotARegistrationMessage are
+// the 409 answers Discard gives when the Secret is not a leftover from a
+// registration that never finished. Pinned by exact text in tests.
+func orphanDiscardAdoptedMessage(name string) string {
+	return fmt.Sprintf("Sharko will not delete the ArgoCD connection for cluster %q: Sharko adopted it or took it over, so it is not a leftover from a registration that never finished. It stays as it is.", name)
+}
+
+func orphanDiscardNotARegistrationMessage(name string) string {
+	return fmt.Sprintf("Sharko will not delete the ArgoCD connection for cluster %q: it is not a leftover from a registration that never finished, so Sharko cannot be sure nobody needs it. It stays as it is. If you no longer want ArgoCD connected to this cluster, delete it in ArgoCD yourself.", name)
 }
 
 // getSecretIfPresent fetches a single Secret by name from the argocd

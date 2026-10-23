@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -88,8 +89,20 @@ func (f *takeoverFakeGP) GetFileContent(_ context.Context, path, _ string) ([]by
 	return nil, fmt.Errorf("takeoverFakeGP: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 
-func (f *takeoverFakeGP) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
-	return nil, nil
+func (f *takeoverFakeGP) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for p := range f.files {
+		if rest, ok := strings.CutPrefix(p, dir+"/"); ok && !strings.Contains(rest, "/") {
+			out = append(out, rest)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("takeoverFakeGP: %s: %w", dir, gitprovider.ErrFileNotFound)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 func (f *takeoverFakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
 	return nil, nil
@@ -770,8 +783,8 @@ func TestUnregisterConsequences_GivesRealInstructionsOnAV4Repo(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(resp.ConfirmationRequired, "DELETE /api/v1/clusters/prod-eu") {
-		t.Errorf("a v4 repo was not given the real removal instructions: %q", resp.ConfirmationRequired)
+	if !strings.Contains(resp.ConfirmationAPI, "DELETE /api/v1/clusters/prod-eu") {
+		t.Errorf("a v4 repo was not given the real removal instructions: %q", resp.ConfirmationAPI)
 	}
 	for _, c := range resp.Consequences {
 		if c.ID == "removal-not-available" {
@@ -785,8 +798,10 @@ func TestUnregisterConsequences_GivesRealInstructionsOnAV4Repo(t *testing.T) {
 			continue
 		}
 		found = true
-		if !strings.Contains(c.Detail, "Helm values file") {
-			t.Errorf("the git-record consequence does not say a v4 removal deletes more than the addon-assignment file: %q", c.Detail)
+		// The fixture has no files of prod-eu's own (finding 28: never
+		// name an addon-assignment file that is not there).
+		if want := "A pull request removes this cluster from the fleet record. It has no other files of its own in the repo."; c.Detail != want {
+			t.Errorf("git-record detail:\n got %q\nwant %q", c.Detail, want)
 		}
 	}
 	if !found {
@@ -808,8 +823,8 @@ func TestUnregisterConsequences_KeepsTheInstructionsOnAV3Repo(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(resp.ConfirmationRequired, "DELETE /api/v1/clusters/prod-eu") {
-		t.Errorf("the v3 instructions went missing: %q", resp.ConfirmationRequired)
+	if !strings.Contains(resp.ConfirmationAPI, "DELETE /api/v1/clusters/prod-eu") {
+		t.Errorf("the v3 instructions went missing: %q", resp.ConfirmationAPI)
 	}
 	for _, c := range resp.Consequences {
 		if c.ID == "removal-not-available" {

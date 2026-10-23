@@ -167,6 +167,7 @@ var connectionGateSites = []connectionGateSite{
 	{file: "internal/api/engine_pin.go", fn: "CheckEnginePinLive", lookups: "git", routed: "git"},
 	{file: "internal/api/engine_pin.go", fn: "handleUpgradeEnginePin", lookups: "git", routed: "git"},
 	{file: "internal/api/fleet.go", fn: "computeFleetStatus", lookups: "argocd,git", notRouted: "swallowed"},
+	{file: "internal/api/cluster_followup_on_merge.go", fn: "FinishClusterFollowUpOnMerge", lookups: "argocd,git", notRouted: "swallowed"},
 	{file: "internal/api/init.go", fn: "handleInit", lookups: "argocd,git", routed: "argocd,git"},
 	{file: "internal/api/init_status.go", fn: "handleInitStatus", lookups: "argocd,git", routed: "git"},
 	{file: "internal/api/migration.go", fn: "CompleteMigrationHandoffOnMerge", lookups: "git", notRouted: "swallowed"},

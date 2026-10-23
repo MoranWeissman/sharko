@@ -17,12 +17,15 @@ package api
 // the caller may have run an hour ago.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/appsets"
@@ -155,8 +158,11 @@ type UnregisterConsequencesResponse struct {
 	Summary string `json:"summary"`
 	// ConfirmationRequired restates how to actually do it, so the caller
 	// never has to guess the shape of the confirmation.
-	ConfirmationRequired string                  `json:"confirmation_required"`
-	Consequences         []UnregisterConsequence `json:"consequences"`
+	// The CLI prints it as the last line.
+	ConfirmationRequired string `json:"confirmation_required"`
+	// ConfirmationAPI is the same for a caller that uses the API directly.
+	ConfirmationAPI string                  `json:"confirmation_api"`
+	Consequences    []UnregisterConsequence `json:"consequences"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -764,24 +770,22 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 	// direction every other format probe takes — so a hiccup shows the v3
 	// wording rather than guessing.
 	v4Repo := false
+	files := clusterRepoFiles{}
 	if s.connSvc != nil {
 		if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
 			v4Repo = s.isV4Repo(ctx, gp)
+			files = s.readClusterRepoFiles(ctx, gp, v4Repo, name)
 		}
 	}
 
 	resp := UnregisterConsequencesResponse{Cluster: name}
-	resp.ConfirmationRequired = "Nothing here has happened yet. To go ahead, send DELETE /api/v1/clusters/" + name +
-		" with \"yes\": true in the body. Add \"cleanup\": \"git\" to take the cluster out of Sharko's records but leave its ArgoCD connection alone."
+	resp.ConfirmationRequired = unregisterConfirmationCLI(name)
+	resp.ConfirmationAPI = unregisterConfirmationAPI(name)
 
-	gitRecordDetail := "A pull request removes this cluster from the fleet record and deletes its addon file."
-	if v4Repo {
-		gitRecordDetail = "A pull request removes this cluster from the fleet record and deletes its addon-assignment file, plus every per-cluster Helm values file it has."
-	}
 	resp.Consequences = append(resp.Consequences, UnregisterConsequence{
 		ID:          "git-record",
 		Title:       "Its files leave the repo",
-		Detail:      gitRecordDetail,
+		Detail:      unregisterGitRecordDetail(v4Repo, files),
 		WhatItMeans: "Sharko stops treating it as one of your clusters. The change goes through a pull request, so you can read it before it lands and undo it afterwards by reverting.",
 		Severity:    "info",
 	})
@@ -804,18 +808,17 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 		})
 	case detail.ManagedBy == argosecrets.ManagedByValue:
 		resp.Consequences = append(resp.Consequences, UnregisterConsequence{
-			ID:     "argocd-connection",
-			Title:  "Its ArgoCD connection gets deleted",
-			Detail: "Sharko owns this cluster's connection, so a full removal deletes it from ArgoCD.",
-			WhatItMeans: "ArgoCD stops being able to reach the cluster. Anything ArgoCD is deploying there goes to an unknown state, and other tools that rely on that same connection lose it too. " +
-				"If you only want the cluster out of Sharko, ask for \"cleanup\": \"git\" and the connection stays exactly as it is.",
-			Severity: "warning",
+			ID:          "argocd-connection",
+			Title:       "Its ArgoCD connection gets deleted",
+			Detail:      unregisterSharkoConnectionDetail,
+			WhatItMeans: unregisterSharkoConnectionMeans,
+			Severity:    "warning",
 		})
 	default:
 		resp.Consequences = append(resp.Consequences, UnregisterConsequence{
 			ID:          "argocd-connection",
 			Title:       "Its ArgoCD connection stays",
-			Detail:      fmt.Sprintf("This cluster's connection is marked as owned by %q, not by Sharko.", detail.ManagedBy),
+			Detail:      unregisterForeignConnectionDetail(detail.ManagedBy),
 			WhatItMeans: "Sharko will not delete a connection it does not own. ArgoCD keeps reaching the cluster; only Sharko's records change.",
 			Severity:    "info",
 		})
@@ -834,7 +837,7 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 	if len(appNames) > 0 {
 		resp.Consequences = append(resp.Consequences, UnregisterConsequence{
 			ID:          "running-applications",
-			Title:       fmt.Sprintf("%d ArgoCD Application(s) are deployed there right now", len(appNames)),
+			Title:       unregisterRunningAppsTitle(len(appNames)),
 			Detail:      joinList(appNames) + ".",
 			WhatItMeans: "These are what you would be affecting. Read the list and make sure you recognise everything on it before you go ahead.",
 			Severity:    "warning",
@@ -883,13 +886,137 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 			warnCount++
 		}
 	}
-	switch {
-	case warnCount == 0:
-		resp.Summary = fmt.Sprintf("Unregistering %s looks straightforward — read the list below, then confirm.", name)
-	default:
-		resp.Summary = fmt.Sprintf("Unregistering %s has %d thing(s) worth reading carefully first. Nothing has been changed yet.", name, warnCount)
-	}
+	resp.Summary = unregisterSummary(name, warnCount)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// The unregister-consequences words (EP3-DRYRUN-FIXES call 11, findings 10
+// and 28). Each is pinned by exact text in clusters_takeover_test.go.
+
+// unregisterConfirmationCLI is what to run to go ahead. The CLI prints it
+// under the list, so it names the CLI command, not an HTTP call.
+func unregisterConfirmationCLI(name string) string {
+	return fmt.Sprintf("Nothing here has happened yet. To go ahead, run: sharko remove-cluster %s --yes. "+
+		"To take the cluster out of Sharko but keep its ArgoCD connection, add --cleanup=git.", name)
+}
+
+// unregisterConfirmationAPI is the same thing for a caller that uses the
+// API directly.
+func unregisterConfirmationAPI(name string) string {
+	return fmt.Sprintf("DELETE /api/v1/clusters/%s with \"yes\": true in the body. "+
+		"Add \"cleanup\": \"git\" to keep its ArgoCD connection.", name)
+}
+
+const (
+	unregisterSharkoConnectionDetail = "Sharko owns this cluster's connection, so a full removal deletes it from ArgoCD once the pull request is merged. Nothing changes on the connection before that."
+	unregisterSharkoConnectionMeans  = "ArgoCD stops being able to reach the cluster. Anything ArgoCD is deploying there goes to an unknown state, and other tools that rely on that same connection lose it too. " +
+		"If you only want the cluster out of Sharko, keep the connection (in the CLI: --cleanup=git). ArgoCD keeps it, and Sharko only takes its own label off it."
+)
+
+// unregisterForeignConnectionDetail explains why a connection Sharko does
+// not own stays. It never prints an empty owner as owned by "".
+func unregisterForeignConnectionDetail(managedBy string) string {
+	if managedBy == "" {
+		return "This cluster's connection has no owner label, so it does not belong to Sharko."
+	}
+	return fmt.Sprintf("This cluster's connection is marked as owned by %q, not by Sharko.", managedBy)
+}
+
+func unregisterRunningAppsTitle(n int) string {
+	if n == 1 {
+		return "1 ArgoCD Application is deployed there right now"
+	}
+	return fmt.Sprintf("%d ArgoCD Applications are deployed there right now", n)
+}
+
+func unregisterSummary(name string, warnCount int) string {
+	if warnCount == 0 {
+		return fmt.Sprintf("Unregistering %s looks straightforward — read the list below, then confirm.", name)
+	}
+	return fmt.Sprintf("Unregistering %s has %s worth reading carefully first. Nothing has been changed yet.",
+		name, plural(warnCount, "thing", "things"))
+}
+
+// clusterRepoFiles is what a full removal would delete from the repo for
+// one cluster, read from Git. known is false when Sharko could not read it.
+type clusterRepoFiles struct {
+	known bool
+	// addonsFile: v4's cluster-addons/<name>.yaml, or v3's per-cluster
+	// values file, is in the repo.
+	addonsFile bool
+	// valuesFiles: how many per-cluster Helm values files a v4 repo has
+	// under values/clusters/<name>/.
+	valuesFiles int
+}
+
+// readClusterRepoFiles looks up which of the cluster's own files are really
+// in the repo, so the consequences list only names files that exist
+// (finding 28: a register that made no addon-assignment file). Read-only.
+// Any read it cannot make leaves known false and the wording general.
+func (s *Server) readClusterRepoFiles(ctx context.Context, gp gitprovider.GitProvider, v4Repo bool, name string) clusterRepoFiles {
+	out := clusterRepoFiles{}
+	if gp == nil || name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+		return out
+	}
+	branch := s.gitopsConfig().BaseBranch
+	if branch == "" {
+		branch = "main"
+	}
+	// exists answers (is it there, could Sharko tell).
+	exists := func(p string) (bool, bool) {
+		_, err := gp.GetFileContent(ctx, p, branch)
+		if err == nil {
+			return true, true
+		}
+		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			return false, true
+		}
+		return false, false
+	}
+	if v4Repo {
+		has, ok := exists(path.Join(orchestrator.V4ClustersDir, name+".yaml"))
+		if !ok {
+			return out
+		}
+		names, listErr := gp.ListDirectory(ctx, path.Join(orchestrator.V4ClusterValuesDir, name), branch)
+		if listErr != nil && !errors.Is(listErr, gitprovider.ErrFileNotFound) {
+			return out
+		}
+		return clusterRepoFiles{known: true, addonsFile: has, valuesFiles: len(names)}
+	}
+	dir := strings.TrimSuffix(s.repoPaths.ClusterValues, "/")
+	if dir == "" {
+		dir = "configuration/addons-clusters-values"
+	}
+	has, ok := exists(path.Join(dir, name+".yaml"))
+	if !ok {
+		return out
+	}
+	return clusterRepoFiles{known: true, addonsFile: has}
+}
+
+// unregisterGitRecordDetail says which files the removal pull request
+// deletes, naming only the ones that are there.
+func unregisterGitRecordDetail(v4Repo bool, f clusterRepoFiles) string {
+	const lead = "A pull request removes this cluster from the fleet record"
+	if !f.known {
+		return lead + " and deletes any files of its own it has in the repo."
+	}
+	var parts []string
+	if v4Repo {
+		if f.addonsFile {
+			parts = append(parts, "its addon-assignment file")
+		}
+		if f.valuesFiles > 0 {
+			parts = append(parts, "its "+plural(f.valuesFiles, "per-cluster Helm values file", "per-cluster Helm values files"))
+		}
+	} else if f.addonsFile {
+		parts = append(parts, "its values file")
+	}
+	if len(parts) == 0 {
+		return lead + ". It has no other files of its own in the repo."
+	}
+	return lead + " and deletes " + joinList(parts) + "."
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -63,4 +63,34 @@ type PRInfo struct {
 	CreatedAt  time.Time `json:"created_at"`
 	LastStatus string    `json:"last_status"` // open, merged, closed
 	LastPolled time.Time `json:"last_polled_at"`
+
+	// FollowUp is what Sharko still has to do to the cluster's ArgoCD
+	// connection once this pull request merges (remove-cluster and
+	// unadopt-cluster only; nil for every other operation). Nothing that
+	// cuts a cluster off happens before its pull request is merged, so the
+	// choices made at request time travel with the tracked pull request
+	// and the merge hook reads them back. Stored in the same ConfigMap as
+	// the rest of PRInfo; older entries without it decode to nil.
+	FollowUp *ClusterFollowUp `json:"follow_up,omitempty"`
+}
+
+// ClusterFollowUp is the after-merge work a remove or un-adopt pull request
+// carries. It holds no secret material: only the cleanup choice and where
+// to look up the cluster's credentials (a lookup key, a source name and an
+// optional role ARN), all read from the registry before the pull request
+// removed the cluster's entry.
+type ClusterFollowUp struct {
+	// Cleanup is the remove cleanup choice: "all", "git" or "none".
+	// Empty for un-adopt.
+	Cleanup string `json:"cleanup,omitempty"`
+	// KeepConnection says the ArgoCD connection stays. After the merge
+	// Sharko takes its ownership label off the Secret instead of deleting
+	// it, and the orphan sweep must never delete it in between.
+	KeepConnection bool `json:"keep_connection,omitempty"`
+	// CredentialKey, CredentialsSource and CredentialRoleARN say where the
+	// cluster's credentials live, so the addon secrets Sharko put on the
+	// cluster can be removed after the merge.
+	CredentialKey     string `json:"credential_key,omitempty"`
+	CredentialsSource string `json:"credentials_source,omitempty"`
+	CredentialRoleARN string `json:"credential_role_arn,omitempty"`
 }

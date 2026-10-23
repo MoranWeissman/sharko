@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -66,7 +68,7 @@ func TestResolveOrphanRegistrations_SingleOrphanDetected(t *testing.T) {
 		},
 	}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, ownedNames("kind-local"))
 	if len(got) != 1 {
 		t.Fatalf("expected 1 orphan, got %d: %+v", len(got), got)
 	}
@@ -119,7 +121,7 @@ func TestResolveOrphanRegistrations_InClusterExcluded(t *testing.T) {
 		},
 	}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, ownedNames("in-cluster", "host", "real-orphan"))
 	if len(got) != 1 {
 		t.Fatalf("expected exactly 1 orphan (in-cluster + host filtered out), got %d: %+v", len(got), got)
 	}
@@ -186,13 +188,12 @@ func TestOrphanResolver_OnlySurfacesLabeledSecrets(t *testing.T) {
 		t.Errorf("expected orphan = kind-owned (sharko-labeled), got %q", got[0].ClusterName)
 	}
 
-	// Sanity: when the gate is disabled (nil sharkoOwnedNames — legacy /
-	// no-k8s-client safety valve documented on the resolver), both
-	// candidates surface. Confirms the gate is what changes the count, not
-	// some other refactor in the algorithm.
+	// EP3-DRYRUN-FIXES call 4: a nil set means Sharko could not read the
+	// Secrets, so it cannot tell which are real leftovers. It fails
+	// closed and lists none (before, it listed every candidate).
 	gotNoGate := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
-	if len(gotNoGate) != 2 {
-		t.Errorf("expected 2 orphans with gate disabled (nil set), got %d: %+v", len(gotNoGate), gotNoGate)
+	if len(gotNoGate) != 0 {
+		t.Errorf("expected 0 orphans when the Secrets could not be read (nil set), got %d: %+v", len(gotNoGate), gotNoGate)
 	}
 
 	// Empty set (k8s available, zero sharko-labeled Secrets) → ALL
@@ -219,11 +220,57 @@ func TestResolveOrphanRegistrations_MixedScenario(t *testing.T) {
 	gitClusters := []models.Cluster{{Name: "prod-eu"}}
 	pending := map[string]struct{}{"kind-pending": {}}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, gitClusters, pending, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, gitClusters, pending, ownedNames("in-cluster", "prod-eu", "kind-pending", "kind-orphan"))
 	if len(got) != 1 {
 		t.Fatalf("expected exactly 1 orphan, got %d: %+v", len(got), got)
 	}
 	if got[0].ClusterName != "kind-orphan" {
 		t.Errorf("expected orphan kind-orphan, got %q", got[0].ClusterName)
+	}
+}
+
+// ownedNames builds the set listSharkoOwnedSecretNames returns: cluster
+// names whose Secret is a real leftover of a registration that never
+// finished.
+func ownedNames(names ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		out[n] = struct{}{}
+	}
+	return out
+}
+
+// EP3-DRYRUN-FIXES call 4: the leftovers list holds only real cancelled
+// registrations. listSharkoOwnedSecretNames leaves out a Sharko-labelled
+// Secret that is or was adopted or taken over, and one with no
+// registration-pending mark (a connection a removal kept). It matches the
+// cluster name ArgoCD shows as well as the Kubernetes name.
+func TestListSharkoOwnedSecretNames_OnlyRealLeftovers(t *testing.T) {
+	pending := models.RegistrationPendingTimestamp(time.Now().Add(-time.Hour))
+	mk := func(name string, ann map[string]string, shown string) *corev1.Secret {
+		s := orphanK8sSecret(name, true)
+		s.Annotations = ann
+		if shown != "" {
+			s.Data = map[string][]byte{"name": []byte(shown)}
+		}
+		return s
+	}
+	client := orphanK8sClient(
+		mk("real-leftover", map[string]string{models.AnnotationRegistrationPending: pending}, ""),
+		mk("cluster-host-1a2b", map[string]string{models.AnnotationRegistrationPending: pending}, "shown-leftover"),
+		mk("was-adopted", map[string]string{models.AnnotationRegistrationPending: pending, "sharko.dev/adopted": "true"}, ""),
+		mk("was-taken-over", map[string]string{"sharko.dev/taken-over-at": "2026-10-23T10:00:00Z"}, ""),
+		mk("kept-by-remove", nil, ""),
+		orphanK8sSecret("not-labelled", false),
+	)
+	got := listSharkoOwnedSecretNames(context.Background(), client, "argocd")
+	want := ownedNames("real-leftover", "cluster-host-1a2b", "shown-leftover")
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for n := range want {
+		if _, ok := got[n]; !ok {
+			t.Fatalf("got %v, want %v (missing %q)", got, want, n)
+		}
 	}
 }

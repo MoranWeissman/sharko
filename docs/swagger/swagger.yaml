@@ -870,6 +870,160 @@ definitions:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AvailableVersion'
         type: array
     type: object
+  github_com_MoranWeissman_sharko_internal_models.Cluster:
+    properties:
+      addon_secrets_ready:
+        description: |-
+          AddonSecretsReady reports whether Sharko currently has resolvable
+          credentials for this cluster (V2-cleanup-88.3 — lazy credentials).
+          Computed on every read via CredentialsResolvable — a cheap
+          presence-of-config check (creds_source / connection mode / whether a
+          secrets backend is configured), NOT a live probe, mirroring the
+          DerivedHealthStatus precedent above. true means a secret-bearing
+          addon can likely be enabled on this cluster without hitting the
+          EnableAddon pre-flight rejection; false means the UI should surface
+          "add connection credentials before enabling an addon with secrets"
+          instead of letting the request round-trip into a 422. Registration
+          itself never requires credentials — this field only matters once the
+          operator tries to enable a secret-bearing addon.
+        type: boolean
+      already_managed_by_sharko:
+        description: |-
+          AlreadyManagedBySharko is true when the live ArgoCD cluster Secret
+          already carries the app.kubernetes.io/managed-by=sharko label (walk
+          day 4 locks, S2). Mirrors the same check the takeover preflight uses
+          for its "secret-owner" finding — see applyManagedSecretFields. False
+          (the zero value / omitted) either means the Secret is foreign (a real
+          takeover candidate) or that Sharko could not check — see
+          applyManagedSecretFields for why "could not check" degrades to false
+          rather than hiding the takeover action on a guess.
+        type: boolean
+      connection_managed_by:
+        description: |-
+          ConnectionManagedBy mirrors the managed-clusters.yaml entry's
+          connectionManagedBy field onto the API surface (V2-cleanup-57.2).
+          Empty means Sharko-managed (the default); "user" means the user
+          created and maintains the ArgoCD cluster Secret and Sharko only
+          syncs addon labels onto it. The UI renders a read-only
+          "connection: managed by you" caption off this field.
+        type: string
+      connection_status:
+        type: string
+      connectivity_detail:
+        description: detail for check_pending or check_failed
+        type: string
+      connectivity_status:
+        description: |-
+          Connectivity check fields (V2-cleanup-29). Flat primitives only —
+          computed at the API layer from ArgoCD application state. The models
+          package must not import internal/observations (no import cycle).
+
+          connectivity_status values:
+            "verified_argocd" — ArgoCD ConnectionStatus == "Successful"
+            "verified_check"  — connectivity-check Application is Synced+Healthy
+            "check_pending"   — check Application exists but not yet Synced+Healthy (deploying)
+            "check_failed"    — check Application has honest failure signals (Degraded,
+                                OperationPhase Failed/Error, or Error-type conditions)
+            ""               — nothing known (ArgoCD "Unknown" stands untouched)
+        type: string
+      creds_source:
+        description: |-
+          CredsSource mirrors the managed-clusters.yaml entry's credsSource
+          field (V2-cleanup-60.4): "inline-kubeconfig" (credentials live only in
+          the ArgoCD cluster Secret), "secret-kubeconfig" / "eks-token" (the
+          secrets backend holds them), or "" (record predates the field). The
+          credential-fetch routing (Test / Diagnose / secrets / addon ops) keys
+          off this so inline-registered clusters work under any backend.
+        type: string
+      derived_health_status:
+        description: |-
+          DerivedHealthStatus is the auto-derived Sharko reachability verdict
+          (V2-cleanup-85.4). Unlike SharkoStatus below — which stays empty
+          forever until someone clicks "Test connection" — this field is
+          computed fresh on every read from live ArgoCD state, with NO manual
+          step required. Priority order (first match wins):
+            1. any addon on this cluster is Synced+Healthy in ArgoCD -> "healthy"
+            2. the connectivity-check application is Synced+Healthy  -> "reachable"
+            3. ArgoCD's own connection to the cluster is "Successful" -> "reachable"
+            4. none of the above                                      -> "unknown"
+          The frontend should read this field (not SharkoStatus) to answer
+          "is this cluster healthy" without requiring a manual test click.
+        type: string
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      last_reconcile:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcile'
+        description: |-
+          LastReconcile is the most recent cluster-secret reconciler outcome for
+          this cluster (V2-cleanup-89.4 — reconcile results used to be
+          server-log-only; ArgoCD shows a failed apply, Sharko showed nothing).
+          Computed at read time from clusterreconciler.Reconciler's in-memory
+          per-cluster record — never stored in git. nil when the reconciler
+          hasn't processed this cluster on this server instance yet (fresh
+          startup, a registration PR that hasn't merged, or no reconciler wired
+          in this deployment mode).
+      last_test_at:
+        description: RFC3339
+        type: string
+      managed:
+        description: true if in cluster-addons.yaml
+        type: boolean
+      managed_secret_name:
+        description: |-
+          ManagedSecretName is the "namespace/name" of the real ArgoCD cluster
+          Secret this cluster's page is about (walk day 4 locks, S1). Computed
+          at read time from the reconciler's configured namespace + this
+          cluster's name — see applyManagedSecretFields. Empty when no
+          cluster-secret reconciler is wired in this deployment mode.
+        type: string
+      name:
+        type: string
+      region:
+        type: string
+      role_arn:
+        description: |-
+          RoleARN mirrors the managed-clusters.yaml entry's roleArn field
+          (V2-cleanup-62.2): the per-cluster IAM role to assume when minting
+          EKS tokens (eks-token creds source only). Empty for records that
+          predate the field or clusters that use the connection-level default.
+        type: string
+      secret_path:
+        type: string
+      server_url:
+        description: |-
+          ServerURL is the cluster's ArgoCD-registered API-server URL (V2-cleanup-74.1).
+          Sourced from the matching models.ArgocdCluster.Server — never stored in Git,
+          always populated at read time. The UI's ClusterTypeBadge parses this hostname
+          to classify EKS/AKS/GKE/kind/minikube/self-hosted. Left empty for the
+          hub-local "in-cluster" entry (see ListClusters/GetClusterDetail skip logic).
+        type: string
+      server_version:
+        type: string
+      sharko_status:
+        description: |-
+          Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).
+          Populated when obsStore is available; absent otherwise (omitempty).
+        type: string
+      target_platform:
+        description: |-
+          TargetPlatform is Sharko's auto-detected guess at whether this
+          specific cluster looks like EKS (V2-cleanup-88.1, design L11) —
+          distinct from the server's OWN AWS identity (see
+          GET /api/v1/system/capabilities). Computed at read time from
+          ServerURL and CredsSource, the same way DerivedHealthStatus is
+          computed from live state below — never stored in Git. One of "eks"
+          or "unknown". The register-cluster screen uses this (via the list
+          of already-registered clusters) plus system/capabilities to decide
+          what to ask the user versus what it can already tell them.
+        type: string
+      test_error_code:
+        type: string
+      test_failing:
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_models.ClusterAddonsAddonSettings:
     properties:
       createNamespace:
@@ -917,6 +1071,83 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterHealthStats:
+    properties:
+      connected:
+        type: integer
+      failed:
+        type: integer
+      missing_from_argocd:
+        type: integer
+      not_in_git:
+        type: integer
+      total_in_git:
+        type: integer
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcile:
+    properties:
+      applied_revision:
+        description: |-
+          AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL
+          WRITE to this cluster's ArgoCD secret was built from — the
+          generation/observedGeneration pair's "applied" half. Empty until
+          this server instance has ever successfully written this cluster's
+          secret; a check pass never moves it.
+        type: string
+      compared_path:
+        description: |-
+          ComparedPath (P2-C1) is the exact managed-clusters file path this
+          pass read from git.
+        type: string
+      compared_revision:
+        description: |-
+          ComparedRevision (P2-C1) is the full branch head commit SHA the pass
+          that produced this record read git at. Empty when the active git
+          provider cannot say (see clusterreconciler.BranchRevisioner) — never
+          a guessed or stale value.
+        type: string
+      fight_count:
+        description: |-
+          FightCount (P2-D D3) is the number of CONSECUTIVE ticks the connection
+          reconciler's label-fight detector has observed something else revert
+          Sharko's own write on this cluster's self-managed ArgoCD secret — the
+          same counter clusterreconciler.Reconciler.FightCount reads. 0 (the
+          zero value / omitted) means no fight currently in progress, including
+          for every Sharko-managed (non-self-managed) cluster, which has no
+          fight concept at all.
+        type: integer
+      label_drift:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcileLabelDrift'
+        description: V3 G1 — drift detection
+      message:
+        description: plain-English detail; set on failed/skipped
+        type: string
+      outcome:
+        description: '"succeeded" | "failed" | "skipped"'
+        type: string
+      time:
+        description: RFC3339
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcileLabelDrift:
+    properties:
+      added:
+        description: keys in git but not on cluster
+        items:
+          type: string
+        type: array
+      changed:
+        description: keys in both but values differ
+        items:
+          type: string
+        type: array
+      removed:
+        description: keys on cluster but not in git
+        items:
+          type: string
+        type: array
+    type: object
   github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff:
     properties:
       added:
@@ -948,6 +1179,28 @@ definitions:
         type: string
       status:
         type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClustersResponse:
+    properties:
+      clusters:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.Cluster'
+        type: array
+      health_stats:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterHealthStats'
+      orphan_registrations:
+        description: |-
+          OrphanRegistrations: ArgoCD cluster Secrets that have no
+          managed-clusters.yaml entry AND no open registration PR. The FE
+          renders these in a dedicated "Cancelled / Orphan Registrations"
+          section with a per-row Delete cluster Secret button.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.OrphanRegistration'
+        type: array
+      pending_registrations:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.PendingRegistration'
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest:
     properties:
@@ -1029,6 +1282,35 @@ definitions:
       repository:
         type: string
       token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.OrphanRegistration:
+    properties:
+      cluster_name:
+        type: string
+      last_seen_at:
+        type: string
+      server_url:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.PendingRegistration:
+    properties:
+      branch:
+        type: string
+      cluster_name:
+        type: string
+      opened_at:
+        type: string
+      operation:
+        enum:
+        - register
+        - adopt
+        - takeover
+        - remove
+        type: string
+      pr_number:
+        type: integer
+      pr_url:
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_models.ProviderConfig:
@@ -2865,10 +3147,14 @@ definitions:
     properties:
       cluster:
         type: string
+      confirmation_api:
+        description: ConfirmationAPI is the same for a caller that uses the API directly.
+        type: string
       confirmation_required:
         description: |-
           ConfirmationRequired restates how to actually do it, so the caller
           never has to guess the shape of the confirmation.
+          The CLI prints it as the last line.
         type: string
       consequences:
         items:
@@ -6456,15 +6742,16 @@ paths:
       - system
   /clusters:
     get:
-      description: Returns all registered clusters with health stats
+      description: |-
+        Returns all registered clusters with health stats.
+        pending_registrations lists open Sharko pull requests for a cluster; each row's operation says what the pull request does (register, adopt, takeover or remove) and pr_number is its number on the Git host. orphan_registrations lists only leftovers of a registration that never finished.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClustersResponse'
       security:
       - BearerAuth: []
       summary: List clusters
@@ -7651,11 +7938,13 @@ paths:
       - clusters
   /clusters/{name}/orphan:
     delete:
-      description: Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml
+      description: 'Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml
         entry and no open registration PR. Refuses to delete a cluster that is genuinely
         managed (in Git), pending (has an open register PR), or NOT owned by Sharko
         (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned
-        Secrets are Adopt territory.
+        Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover
+        from a registration that never finished: one that is or was adopted or taken
+        over, or one without the sharko.dev/registration-pending mark.'
       parameters:
       - description: Cluster name
         in: path
@@ -7684,6 +7973,13 @@ paths:
             type: object
         "404":
           description: Cluster Secret not found in ArgoCD
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: 'The Secret is not a leftover from a registration that never
+            finished: it is or was adopted or taken over, or it has no registration-pending
+            mark (for example a connection a removal kept)'
           schema:
             additionalProperties: true
             type: object

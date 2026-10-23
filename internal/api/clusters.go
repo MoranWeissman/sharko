@@ -14,11 +14,12 @@ import (
 // handleListClusters handles GET /api/v1/clusters
 //
 // @Summary List clusters
-// @Description Returns all registered clusters with health stats
+// @Description Returns all registered clusters with health stats.
+// @Description pending_registrations lists open Sharko pull requests for a cluster; each row's operation says what the pull request does (register, adopt, takeover or remove) and pr_number is its number on the Git host. orphan_registrations lists only leftovers of a registration that never finished.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} models.ClustersResponse
 // @Router /clusters [get]
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
@@ -62,12 +63,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			managedNames[c.Name] = struct{}{}
 		}
 	}
-	filteredPending := pending[:0]
-	for _, p := range pending {
-		if _, alreadyManaged := managedNames[p.ClusterName]; !alreadyManaged {
-			filteredPending = append(filteredPending, p)
-		}
-	}
+	filteredPending := dropPendingForManagedClusters(pending, managedNames)
 	resp.PendingRegistrations = filteredPending
 	pendingNames := make(map[string]struct{}, len(filteredPending))
 	for _, p := range filteredPending {

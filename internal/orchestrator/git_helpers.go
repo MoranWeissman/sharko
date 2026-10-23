@@ -285,6 +285,7 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 			Source:     source,
 			CreatedAt:  time.Now(),
 			LastStatus: "open",
+			FollowUp:   meta.FollowUp,
 		})
 	}
 

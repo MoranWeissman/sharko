@@ -322,6 +322,18 @@ type Deps struct {
 	// including every v3 repo, exactly as it did before.
 	SelfHealFn func(ctx context.Context) bool
 
+	// KeptConnectionsFn, when non-nil, names the clusters whose tracked
+	// remove or un-adopt pull request keeps the ArgoCD connection
+	// (prtracker.Tracker.KeptConnections). The orphan sweep reads it at
+	// most once per tick, only when a Sharko-labelled Secret has left Git.
+	// Such a Secret is not deleted: its ownership label is taken off
+	// instead, which is what the merge hook does too (EP3-DRYRUN-FIXES
+	// call 1 — between the merge and the hook, a kept connection looks
+	// exactly like an orphan). A read error keeps every orphan candidate
+	// this tick: never delete on an unknown. nil (no PR tracker wired)
+	// means no pull request keeps anything.
+	KeptConnectionsFn func(ctx context.Context) (map[string]bool, error)
+
 	// EventRecorder (V3 E1) emits Kubernetes events for reconciler-detected
 	// conditions an operator should see via `kubectl get events` — currently
 	// just the label-fight warning (see recordFightCheck). nil means "no
@@ -586,6 +598,7 @@ type reconcileStats struct {
 	SkippedPending   int // orphan candidate skipped — registration-pending within grace (V2-cleanup-11.1)
 	SkippedAdopted   int // orphan candidate skipped — adopted annotation present (V2-cleanup-28)
 	SkippedOpenPR    int // orphan candidate skipped — registration-pending past grace, but an open PR registers it or the PR list could not be read (LO-10 R13)
+	SkippedKept      int // orphan candidate kept — a tracked remove/un-adopt PR keeps its connection, or the tracked PR list could not be read (EP3-DRYRUN-FIXES call 1)
 	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
 	UserLabelSynced  int // self-managed connection — addon labels merged onto the user's Secret (V2-cleanup-57.2)
 	UserPending      int // self-managed connection — user's Secret not created yet; visible wait, no write (V2-cleanup-57.2)
@@ -1117,6 +1130,9 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 	// The cluster list is read once more, at most once per tick, right
 	// before a registration-pending connection would be deleted (LO-11 B1).
 	var registryNow registryRecheck
+	// The tracked remove/un-adopt pull requests that keep a connection,
+	// read at most once per tick (EP3-DRYRUN-FIXES call 1).
+	var keptNow keptConnections
 	for name := range existing {
 		if _, present := desired[name]; present {
 			continue // in both sets — handled by the clear-pending pass below.
@@ -1149,6 +1165,29 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 				Detail:    "adopted secret not in git — left in place; remove via Unadopt",
 				RequestID: logging.RequestID(ctx),
 			})
+			continue
+		}
+
+		// A removal that keeps the connection (cleanup git or none, or a
+		// connection the user manages) whose pull request just merged:
+		// the Secret left Git but still carries Sharko's label until the
+		// merge hook takes it off. Deleting it here would cut off a
+		// connection the person asked to keep. Take the label off instead
+		// — the same end state the merge hook reaches.
+		if !keptNow.loaded {
+			keptNow.load(ctx, r.deps.KeptConnectionsFn)
+		}
+		if keptNow.err != nil {
+			stats.SkippedKept++
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] keeping a Sharko-labelled connection that left Git — Sharko could not read its tracked pull requests, so it does not know whether a removal asked to keep it",
+				"cluster", name, "namespace", r.namespace, "error", keptNow.err,
+			)
+			continue
+		}
+		if keptNow.keeps(name, secret) {
+			stats.SkippedKept++
+			r.releaseKeptConnection(ctx, name, stats)
 			continue
 		}
 
@@ -2552,7 +2591,7 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 			"created", stats.Created, "deleted", stats.Deleted,
 			"skipped_unlabeled", stats.SkippedUnlabeled, "skipped_pending", stats.SkippedPending,
 			"skipped_open_pr", stats.SkippedOpenPR,
-			"skipped_adopted", stats.SkippedAdopted, "cleared_pending", stats.ClearedPending,
+			"skipped_adopted", stats.SkippedAdopted, "skipped_kept", stats.SkippedKept, "cleared_pending", stats.ClearedPending,
 			"user_label_synced", stats.UserLabelSynced, "user_pending", stats.UserPending,
 			"connectivity_check_synced", stats.ConnCheckSynced,
 		)
@@ -2663,6 +2702,62 @@ func (o *openRegisterPRs) load(ctx context.Context, gp gitprovider.GitProvider) 
 		return
 	}
 	o.prs, o.err = gp.ListPullRequests(ctx, "open")
+}
+
+// keptConnections is the set of clusters whose tracked remove or un-adopt
+// pull request keeps the ArgoCD connection, read once per tick through
+// Deps.KeptConnectionsFn (EP3-DRYRUN-FIXES call 1).
+type keptConnections struct {
+	loaded bool
+	err    error
+	names  map[string]bool
+}
+
+func (k *keptConnections) load(ctx context.Context, fn func(context.Context) (map[string]bool, error)) {
+	k.loaded = true
+	if fn == nil {
+		return
+	}
+	k.names, k.err = fn(ctx)
+}
+
+// keeps matches the cluster name the pull request recorded against both
+// the Secret's Kubernetes name and the cluster name ArgoCD shows (the
+// Secret's data.name), so a Secret whose Kubernetes name differs from the
+// cluster name is still kept.
+func (k *keptConnections) keeps(secretName string, secret *corev1.Secret) bool {
+	if len(k.names) == 0 {
+		return false
+	}
+	if k.names[secretName] {
+		return true
+	}
+	if secret != nil {
+		if shown := string(secret.Data["name"]); shown != "" && k.names[shown] {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseKeptConnection takes Sharko's ownership label off a kept
+// connection that left Git, without deleting the Secret or touching
+// anything else. A failure is logged and counted; the Secret stays.
+func (r *Reconciler) releaseKeptConnection(ctx context.Context, name string, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+	stripped, err := argosecrets.NewManager(r.deps.ArgoClient, r.namespace).StripOwnershipLabel(ctx, name)
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] could not take Sharko's ownership label off a connection a removal keeps — left in place, will retry next tick",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		return
+	}
+	if stripped {
+		log.Info("[clusterreconciler] a removal keeps this connection — took Sharko's ownership label off instead of deleting it",
+			"cluster", name, "namespace", r.namespace,
+		)
+	}
 }
 
 // registryRecheck is the cluster list the orphan sweep reads a second time,

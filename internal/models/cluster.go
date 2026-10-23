@@ -543,12 +543,26 @@ type ClusterHealthStats struct {
 // open-PRs list, filtered by the registration-PR title pattern emitted
 // by the orchestrator (see findOpenPRForCluster — same matching
 // contract). OpenedAt is the upstream PR's createdAt timestamp.
+//
+// Operation says what the open pull request does to the cluster:
+// "register", "adopt", "takeover" or "remove" (EP3-DRYRUN-FIXES API
+// contract). PRNumber is the pull request's number on the Git host.
 type PendingRegistration struct {
 	ClusterName string `json:"cluster_name"`
 	PRURL       string `json:"pr_url"`
 	Branch      string `json:"branch"`
 	OpenedAt    string `json:"opened_at"`
+	Operation   string `json:"operation" enums:"register,adopt,takeover,remove"`
+	PRNumber    int    `json:"pr_number"`
 }
+
+// Values of PendingRegistration.Operation.
+const (
+	PendingOperationRegister = "register"
+	PendingOperationAdopt    = "adopt"
+	PendingOperationTakeover = "takeover"
+	PendingOperationRemove   = "remove"
+)
 
 // OrphanRegistration represents an ArgoCD cluster Secret that has NO
 // corresponding entry in managed-clusters.yaml AND no open registration PR

@@ -54,7 +54,12 @@ const sharkoManagedByValue = "sharko"
 //     helper UnadoptCluster's v4 branch uses (unadopt_v4.go, lane D) — a
 //     full removal and a full unadopt delete the exact same set of files,
 //     they just differ in what happens to the ArgoCD connection afterward.
-//  3. If cleanup=all: delete addon secrets from remote cluster + delete ArgoCD cluster secret.
+//  3. ONLY ONCE THE PR IS MERGED (EP3-DRYRUN-FIXES call 1): if the PR
+//     merged at once (auto-merge) this runs now; if it waits for a person,
+//     nothing on the ArgoCD connection changes and the PR tracker's merge
+//     hook runs FinishRemoveAfterMerge later with the same choices.
+//     If cleanup=all: delete addon secrets from remote cluster + delete ArgoCD cluster secret.
+//     Otherwise the connection is kept and loses Sharko's ownership label.
 //     The ArgoCD secret delete is gated on Sharko's ownership label
 //     (V2-cleanup-60.1): a Secret that does not carry
 //     app.kubernetes.io/managed-by: sharko is NEVER deleted — the git entry
@@ -242,7 +247,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	// the PR below removes this cluster's entry (and may auto-merge), so a
 	// post-PR resolution would no longer find the stored secretPath
 	// override (V2-cleanup-55.1) or per-cluster roleArn (V2-cleanup-62.2).
-	credLookupKey, _, credRoleARN := config.ResolveCredentialRoutingFromData(registryData, req.Name)
+	credLookupKey, credsSource, credRoleARN := config.ResolveCredentialRoutingFromData(registryData, req.Name)
 
 	// Resolve the connection-ownership mode from the SAME pre-mutation bytes
 	// (V2-cleanup-57.2). A self-managed connection (connectionManagedBy:
@@ -254,6 +259,17 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 		if parsed, parseErr := config.NewParser().ParseClusterAddons(registryData); parseErr == nil {
 			selfManagedConnection = models.IsUserManagedConnection(models.ConnectionManagedByFor(parsed, req.Name))
 		}
+	}
+
+	// What has to happen to the ArgoCD connection once the PR merges
+	// (EP3-DRYRUN-FIXES call 1). It travels with the tracked PR so the
+	// merge hook can do it when a person merges the PR later.
+	followUp := ClusterFollowUp{
+		Cleanup:           cleanup,
+		KeepConnection:    removeKeepsConnection(cleanup, selfManagedConnection),
+		CredentialKey:     credLookupKey,
+		CredentialsSource: credsSource,
+		CredentialRoleARN: credRoleARN,
 	}
 
 	var files map[string][]byte
@@ -281,15 +297,17 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 
 	// Only create a PR if there are changes to commit.
 	if len(files) > 0 || len(deletePaths) > 0 {
-		gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("remove cluster %s", req.Name),
-			o.prMeta(req.AutoMerge, "remove-cluster", fmt.Sprintf("Remove cluster %s", req.Name), req.Name, ""))
+		meta := o.prMeta(req.AutoMerge, "remove-cluster", fmt.Sprintf("Remove cluster %s", req.Name), req.Name, "")
+		fu := followUp
+		meta.FollowUp = &fu
+		gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("remove cluster %s", req.Name), meta)
 		if gitErr != nil {
 			if gitResult != nil {
 				result.Status = "partial"
 				result.CompletedSteps = steps
 				result.FailedStep = "pr_merge"
 				result.Error = gitErr.Error()
-				result.Message = fmt.Sprintf("PR created but merge failed: %s", gitResult.PRUrl)
+				result.Message = fmt.Sprintf("PR created but merge failed: %s. Nothing on the cluster's ArgoCD connection was changed — Sharko finishes the removal after the PR is merged.", gitResult.PRUrl)
 				result.Git = gitResult
 				return result, nil
 			}
@@ -311,40 +329,111 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 				steps = append(steps, "delete_values_file")
 			}
 		}
+
+		// NOTHING THAT CUTS A CLUSTER OFF HAPPENS BEFORE ITS PR IS MERGED
+		// (EP3-DRYRUN-FIXES call 1). When the PR waits for a person to
+		// merge it, the ArgoCD connection and the addon secrets on the
+		// cluster stay exactly as they are; the PR tracker's merge hook
+		// runs FinishRemoveAfterMerge with the same choices once it merges.
+		// If the PR is closed without merging, nothing was changed at all.
+		if !gitResult.Merged {
+			steps = append(steps, "waiting_for_merge")
+			result.Status = "success"
+			result.CompletedSteps = steps
+			result.Message = RemoveWaitingForMergeMessage(req.Name, gitResult.PRUrl)
+			return result, nil
+		}
+	}
+
+	// The PR merged at once (or there was nothing left in Git to remove):
+	// finish now, exactly as the merge hook would.
+	o.finishRemove(ctx, req.Name, followUp, result, &steps)
+	if result.Status == "" {
+		result.Status = "success"
+	}
+	result.CompletedSteps = steps
+	return result, nil
+}
+
+// RemoveWaitingForMergeMessage is the message a removal answers with while
+// its pull request waits to be merged. Exported so tests pin it by exact
+// text.
+func RemoveWaitingForMergeMessage(name, prURL string) string {
+	return fmt.Sprintf("Pull request opened, waiting for merge: %s. Nothing has changed on cluster %s yet — its ArgoCD connection stays as it is until the pull request is merged. Sharko finishes the removal after the merge.", prURL, name)
+}
+
+// removeKeepsConnection says whether a removal keeps the cluster's ArgoCD
+// connection. Only cleanup=all on a connection Sharko manages deletes it;
+// every other removal keeps it, and a kept connection must lose Sharko's
+// ownership label so neither the orphan sweep nor the leftovers list can
+// pick it up later (EP3-DRYRUN-FIXES call 4).
+func removeKeepsConnection(cleanup string, selfManaged bool) bool {
+	return cleanup != "all" || selfManaged
+}
+
+// FinishRemoveAfterMerge does the ArgoCD side of a removal whose pull
+// request was merged after RemoveCluster returned. The PR tracker's merge
+// hook calls it (internal/api). The caller must have checked that the
+// cluster is not back in Git. It is safe to run twice: every step is a
+// no-op once done.
+func (o *Orchestrator) FinishRemoveAfterMerge(ctx context.Context, name string, followUp ClusterFollowUp) *RemoveClusterResult {
+	result := &RemoveClusterResult{Name: name, Cleanup: followUp.Cleanup}
+	var steps []string
+	o.finishRemove(ctx, name, followUp, result, &steps)
+	if result.Status == "" {
+		result.Status = "success"
+	}
+	result.CompletedSteps = steps
+	return result
+}
+
+// finishRemove is the after-merge half of a removal: the addon secrets on
+// the cluster (cleanup=all), then either Sharko's ownership label comes off
+// the kept connection, or the Sharko-owned ArgoCD cluster Secret is
+// deleted. It sets result.Status only on a failure.
+func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp ClusterFollowUp, result *RemoveClusterResult, steps *[]string) {
+	log := logging.LoggerFromContext(ctx)
+	cleanup := followUp.Cleanup
+	if cleanup == "" {
+		cleanup = "all"
 	}
 
 	// Step 2: If cleanup=all, delete addon secrets from remote cluster (best-effort).
 	if cleanup == "all" && o.credProvider != nil {
-		creds, credErr := providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupKey, credRoleARN)
+		lookupKey := followUp.CredentialKey
+		if lookupKey == "" {
+			lookupKey = name
+		}
+		creds, credErr := providers.GetCredentialsWithOptionalRole(o.credProvider, lookupKey, followUp.CredentialRoleARN)
 		if credErr == nil {
-			deleted, _ := o.deleteAllAddonSecrets(ctx, req.Name, creds.Raw)
+			deleted, _ := o.deleteAllAddonSecrets(ctx, name, creds.Raw)
 			if len(deleted) > 0 {
-				steps = append(steps, "delete_remote_secrets")
+				*steps = append(*steps, "delete_remote_secrets")
 			}
 		} else {
 			log.Warn("could not fetch credentials for remote secret cleanup",
-				"cluster", req.Name, "error", credErr)
+				"cluster", name, "error", credErr)
 		}
 	}
 
-	// HANDOVER AT REMOVAL TIME (V2-cleanup-60.1): when the pre-mutation
-	// bytes say the connection is the user's, strip Sharko's ownership
-	// label from the Secret NOW — the reconcile tick that normally does
-	// this on a mode switch reads the git entry, and the PR above just
-	// removed it, so no later tick can ever perform the handover. Without
-	// the strip, the orphan sweep would see a sharko-labeled Secret with no
-	// git entry and delete the user's connection. Applies to every cleanup
-	// scope (the entry is removed in all of them). Best-effort: a failure
-	// is logged loudly but never blocks the removal.
-	if selfManagedConnection && o.argoSecretManager != nil {
+	// KEEP THE CONNECTION: strip Sharko's ownership label so the Secret is
+	// no longer Sharko's. Without the strip, the orphan sweep would see a
+	// sharko-labeled Secret with no git entry and delete a connection the
+	// person asked to keep, and the leftovers list could offer it for
+	// discard. This covers every kept connection — the user's own
+	// (V2-cleanup-60.1 handover), adopted and taken-over ones, and a
+	// Sharko-registered one removed with cleanup git or none
+	// (EP3-DRYRUN-FIXES call 4). Best-effort: a failure is logged loudly
+	// but never fails the removal.
+	if followUp.KeepConnection && o.argoSecretManager != nil {
 		if stripper, ok := o.argoSecretManager.(ownershipLabelStripper); ok {
-			stripped, stripErr := stripper.StripOwnershipLabel(ctx, req.Name)
+			stripped, stripErr := stripper.StripOwnershipLabel(ctx, name)
 			switch {
 			case stripErr != nil:
-				log.Error("could not strip Sharko's ownership label from the user's ArgoCD cluster Secret during removal — no reconcile tick can do it now that the git entry is gone; remove the app.kubernetes.io/managed-by label by hand or the orphan sweep may delete the Secret",
-					"cluster", req.Name, "error", stripErr)
+				log.Error("could not strip Sharko's ownership label from a kept ArgoCD cluster Secret during removal — no reconcile tick can do it now that the git entry is gone; remove the app.kubernetes.io/managed-by label by hand or the orphan sweep may delete the Secret",
+					"cluster", name, "error", stripErr)
 			case stripped:
-				steps = append(steps, "strip_sharko_ownership_label")
+				*steps = append(*steps, "strip_sharko_ownership_label")
 			}
 		}
 	}
@@ -354,65 +443,97 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	// SELF-MANAGED GUARD (V2-cleanup-57.2): the user created and maintains
 	// this cluster's ArgoCD Secret; deleting it would kill THEIR connection.
 	// Leave it in place and say so.
-	if cleanup == "all" && selfManagedConnection {
+	if cleanup == "all" && followUp.KeepConnection {
 		log.Info("cluster connection is managed by the user — leaving the ArgoCD cluster Secret in place",
-			"cluster", req.Name)
-		steps = append(steps, "skip_argocd_secret_user_managed")
+			"cluster", name)
+		*steps = append(*steps, "skip_argocd_secret_user_managed")
 		result.Message = fmt.Sprintf(
 			"Cluster %s removed from Sharko. Its ArgoCD cluster Secret was left in place because the connection is managed by you — delete it yourself if you no longer want ArgoCD connected to this cluster.",
-			req.Name)
+			name)
 	}
-	if cleanup == "all" && !selfManagedConnection && o.argoSecretManager != nil {
+	if cleanup == "all" && !followUp.KeepConnection && o.argoSecretManager != nil && o.argocd != nil {
 		// Find the server URL so we can delete from ArgoCD.
 		clusters, listErr := o.argocd.ListClusters(ctx)
 		if listErr == nil {
 			for _, c := range clusters {
-				if c.Name != req.Name {
+				if c.Name != name {
 					continue
 				}
 
 				// OWNERSHIP GATE (V2-cleanup-60.1): never delete a Secret
 				// that does not carry Sharko's ownership label. The mode
-				// check above reads the cluster's git entry — but on a
-				// retry of a removal whose PR already merged, the entry is
-				// gone and selfManagedConnection silently defaults to
-				// false. The label on the Secret itself is the ownership
-				// record that survives the entry's removal, so it has the
-				// final say. Any doubt (read error, missing secret, absent
-				// or foreign label) means refuse.
-				managedBy, labelErr := o.argoSecretManager.GetManagedByLabel(ctx, req.Name)
+				// check reads the cluster's git entry — but on a retry of
+				// a removal whose PR already merged, the entry is gone and
+				// the self-managed answer silently defaults to false. The
+				// label on the Secret itself is the ownership record that
+				// survives the entry's removal, so it has the final say.
+				// Any doubt (read error, missing secret, absent or foreign
+				// label) means refuse.
+				managedBy, labelErr := o.argoSecretManager.GetManagedByLabel(ctx, name)
 				if labelErr != nil || managedBy != sharkoManagedByValue {
 					if labelErr != nil {
 						log.Warn("could not confirm Sharko's ownership label on the ArgoCD cluster Secret — refusing to delete it",
-							"cluster", req.Name, "error", labelErr)
+							"cluster", name, "error", labelErr)
 					} else {
 						log.Info("ArgoCD cluster Secret does not carry Sharko's ownership label — refusing to delete it",
-							"cluster", req.Name, "managed_by", managedBy)
+							"cluster", name, "managed_by", managedBy)
 					}
-					steps = append(steps, "skip_argocd_secret_not_sharko_labeled")
+					*steps = append(*steps, "skip_argocd_secret_not_sharko_labeled")
 					result.Message = fmt.Sprintf(
 						"Cluster %s was removed from Sharko, but its ArgoCD cluster Secret was left in place: the Secret does not carry Sharko's ownership label (app.kubernetes.io/managed-by: sharko), so Sharko cannot confirm it created it and will not delete it. If you manage that connection yourself this is exactly right — delete the Secret yourself if you no longer want ArgoCD connected to this cluster.",
-						req.Name)
+						name)
 					break
 				}
 
 				if delErr := o.argocd.DeleteCluster(ctx, c.Server); delErr != nil {
 					log.Error("failed to delete ArgoCD cluster during removal",
-						"cluster", req.Name, "error", delErr)
+						"cluster", name, "error", delErr)
 					result.Status = "partial"
 					result.FailedStep = "delete_argocd_cluster"
 					result.Error = delErr.Error()
-					result.CompletedSteps = steps
 					result.Message = "Git changes committed but ArgoCD cluster deletion failed"
-					return result, nil
+					return
 				}
-				steps = append(steps, "delete_argocd_cluster")
+				*steps = append(*steps, "delete_argocd_cluster")
 				break
 			}
 		}
 	}
+}
 
-	result.Status = "success"
-	result.CompletedSteps = steps
-	return result, nil
+// ClusterInRegistry reports whether name is in the fleet registry on the
+// base branch right now (v4 root managed-clusters.yaml, or the v3
+// configuration/managed-clusters.yaml). The after-merge hooks call it so
+// they never touch a connection whose cluster was registered again under
+// the same name. A read or parse failure is an error, never a "no": the
+// caller must not act when Sharko cannot tell.
+func (o *Orchestrator) ClusterInRegistry(ctx context.Context, name string) (bool, error) {
+	v4Repo, err := o.isV4Repo(ctx)
+	if err != nil {
+		return false, err
+	}
+	registryPath := V4ManagedClustersPath
+	if !v4Repo {
+		registryPath = o.paths.ManagedClusters
+		if registryPath == "" {
+			registryPath = "configuration/managed-clusters.yaml"
+		}
+	}
+	data, exists, err := o.readFileForRewrite(ctx, registryPath)
+	if err != nil {
+		return false, err
+	}
+	if !exists || len(data) == 0 {
+		return false, nil
+	}
+	clusters, err := config.NewParser().ParseClusterAddons(data)
+	if err != nil {
+		return false, fmt.Errorf("could not read the cluster list in %s: %w", registryPath, err)
+	}
+	for _, c := range clusters {
+		if c.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }

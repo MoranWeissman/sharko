@@ -14,7 +14,7 @@ import (
 // handleDeleteOrphanCluster godoc
 //
 // @Summary Delete an orphan cluster
-// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory.
+// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -24,6 +24,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 404 {object} map[string]interface{} "Cluster Secret not found in ArgoCD"
+// @Failure 409 {object} map[string]interface{} "The Secret is not a leftover from a registration that never finished: it is or was adopted or taken over, or it has no registration-pending mark (for example a connection a removal kept)"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Failure 503 {object} map[string]interface{} "K8s client not wired — ownership label cannot be verified"
@@ -197,6 +198,29 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 		})
 		writeError(w, http.StatusBadRequest,
 			"this Secret was not created by Sharko (no managed-by label); refusing to delete. If you want to bring it under management, use the Adopt action.")
+		return
+	}
+
+	// Leftovers rule (EP3-DRYRUN-FIXES call 4): the same rule the
+	// leftovers list uses. Only a registration that never finished may be
+	// discarded — never a Secret that is or was adopted or taken over, and
+	// never one without the registration-pending mark (for example a
+	// connection a removal chose to keep). 409: the request is fine, the
+	// Secret's state forbids it.
+	switch leftoverRegistrationRefusal(secret) {
+	case leftoverAdopted:
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_orphan_delete_rejected",
+			Resource: fmt.Sprintf("cluster:%s", name),
+		})
+		writeError(w, http.StatusConflict, orphanDiscardAdoptedMessage(name))
+		return
+	case leftoverNotARegistration:
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_orphan_delete_rejected",
+			Resource: fmt.Sprintf("cluster:%s", name),
+		})
+		writeError(w, http.StatusConflict, orphanDiscardNotARegistrationMessage(name))
 		return
 	}
 

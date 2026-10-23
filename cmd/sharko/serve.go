@@ -1375,6 +1375,13 @@ var serveCmd = &cobra.Command{
 					ProbeModeFn:              probeModeFn,
 					SelfHealFn:               selfHealFn,
 					EventRecorder:            eventRecorder,
+					// The PR tracker writes the same ConfigMap store. A
+					// read-only view of it (no Git provider) answers which
+					// clusters a tracked remove or un-adopt pull request
+					// keeps the connection for, so the orphan sweep never
+					// deletes one between the merge and the merge hook
+					// taking its label off (EP3-DRYRUN-FIXES call 1).
+					KeptConnectionsFn: prtracker.NewTracker(prCMStore, nil, nil).KeptConnections,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
@@ -1552,6 +1559,14 @@ var serveCmd = &cobra.Command{
 					// an HTTP request, so auditMiddleware's invalidation net
 					// can't see it — invalidate explicitly.
 					srv.InvalidateReadCache()
+					// A removal or un-adopt whose pull request a person
+					// merged later: do its ArgoCD side now (EP3-DRYRUN-FIXES
+					// calls 1 and 9). Synchronous ON PURPOSE — the cluster
+					// reconciler keeps a "keep the connection" Secret safe
+					// only while the pull request is still tracked, and the
+					// tracker drops it right after this callback returns.
+					// Ignored for every other operation; safe to call twice.
+					srv.FinishClusterFollowUpOnMerge(context.Background(), pr)
 					triggerMergeReconcilers(clusterRecon, secretRecon)
 					// The second half of a v3 → v4 migration: retire the old
 					// ApplicationSets and start the engine in their place.
