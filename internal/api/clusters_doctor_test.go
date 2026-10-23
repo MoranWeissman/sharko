@@ -227,6 +227,36 @@ func TestDoctorCheckAddonSecretPaths_NotApplicable_ClusterNotFound(t *testing.T)
 	}
 }
 
+// A new repo has no catalog file yet. Diagnose must say that is normal,
+// not fail, and must not use the old "could not read" wording.
+func TestDoctorCheckAddonSecretPaths_NotApplicable_NewRepoNoCatalog(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	srv.connSvc.SetGitProviderOverride(&handlerFakeGitProvider{files: map[string][]byte{}})
+
+	check := srv.doctorCheckAddonSecretPaths(context.Background(), "prod-eu")
+	if check.Status != doctorStatusNotApplicable {
+		t.Fatalf("Status = %q, want not-applicable (detail=%s)", check.Status, check.Detail)
+	}
+	want := "There is no add-on catalog file in the repo yet. That is normal for a new repo, so there is nothing to check here. It appears when you add the first add-on."
+	if check.Detail != want {
+		t.Errorf("Detail = %q, want %q", check.Detail, want)
+	}
+	if strings.Contains(check.Detail, "could not read") || check.Fix != "" {
+		t.Errorf("old failure wording or a fix is still there: %+v", check)
+	}
+}
+
+// Any other read error is still a real failure.
+func TestDoctorCheckAddonSecretPaths_Fail_CatalogReadError(t *testing.T) {
+	srv := newDoctorTestServer(t)
+	srv.connSvc.SetGitProviderOverride(&handlerFakeGitProvider{getErr: errors.New("boom")})
+
+	check := srv.doctorCheckAddonSecretPaths(context.Background(), "prod-eu")
+	if check.Status != doctorStatusFail {
+		t.Fatalf("Status = %q, want fail", check.Status)
+	}
+}
+
 func TestDoctorCheckAddonSecretPaths_NotApplicable_NoSecretBearingAddons(t *testing.T) {
 	srv := newDoctorTestServer(t)
 	withDoctorGitFiles(srv)

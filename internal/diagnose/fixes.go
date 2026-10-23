@@ -5,74 +5,86 @@ import (
 	"strings"
 )
 
-// generateFix returns a copy-paste-ready K8s RBAC fix for a failed permission check.
-func generateFix(permission, namespace, callerARN string) Fix {
-	switch {
-	case strings.HasPrefix(permission, "list namespaces"):
-		return Fix{
-			Description: fmt.Sprintf("Grant cluster-wide namespace list permission for %s", callerARN),
-			YAML: fmt.Sprintf(`# K8s RBAC - apply to target cluster
+// unknownSubjectName is shown when the cluster would not say which account
+// Sharko signs in as. The fix then carries a clear placeholder the user fills
+// in, instead of a group name that was made up.
+const unknownSubjectName = "REPLACE-WITH-THE-ACCOUNT-SHARKO-SIGNS-IN-AS"
+
+// subjectYAML returns the "subjects" list item of a binding.
+func subjectYAML(subject string) string {
+	if subject == "" {
+		return "- kind: User   # use kind: Group if Sharko signs in through a group\n  name: " + unknownSubjectName + "\n  apiGroup: rbac.authorization.k8s.io"
+	}
+	return "- kind: User\n  name: " + subject + "\n  apiGroup: rbac.authorization.k8s.io"
+}
+
+// who names the account in a fix description, in plain words.
+func who(subject string) string {
+	if subject == "" {
+		return "the account Sharko signs in as"
+	}
+	return subject
+}
+
+// clusterRoleFix builds a ClusterRole plus its binding.
+func clusterRoleFix(name, verbs, subject string) string {
+	return fmt.Sprintf(`# K8s RBAC - apply to target cluster
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: sharko-namespace-list
+  name: %[1]s
 rules:
 - apiGroups: [""]
   resources: ["namespaces"]
-  verbs: ["list"]
+  verbs: [%[2]s]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: sharko-namespace-list
+  name: %[1]s
 subjects:
-- kind: Group
-  name: sharko-access
-  apiGroup: rbac.authorization.k8s.io
+%[3]s
 roleRef:
   kind: ClusterRole
-  name: sharko-namespace-list
-  apiGroup: rbac.authorization.k8s.io`),
+  name: %[1]s
+  apiGroup: rbac.authorization.k8s.io`, name, verbs, subjectYAML(subject))
+}
+
+// generateFix returns a copy-paste-ready K8s RBAC fix for a failed permission
+// check. subject is the account Sharko signs in as on the cluster ("" when the
+// cluster would not say).
+func generateFix(permission, namespace, subject string) Fix {
+	switch {
+	case strings.HasPrefix(permission, "list namespaces"):
+		return Fix{
+			Description: fmt.Sprintf("Let %s list namespaces on this cluster.", who(subject)),
+			YAML:        clusterRoleFix("sharko-namespace-list", `"list"`, subject),
 		}
 
 	case strings.HasPrefix(permission, "get namespace"):
 		return Fix{
-			Description: fmt.Sprintf("Grant namespace get permission for %s in %s", callerARN, namespace),
-			YAML: fmt.Sprintf(`# K8s RBAC - apply to target cluster
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: sharko-namespace-get
-rules:
-- apiGroups: [""]
-  resources: ["namespaces"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: sharko-namespace-get
-subjects:
-- kind: Group
-  name: sharko-access
-  apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: ClusterRole
-  name: sharko-namespace-get
-  apiGroup: rbac.authorization.k8s.io`),
+			Description: fmt.Sprintf("Let %s read the namespace %s.", who(subject), namespace),
+			YAML:        clusterRoleFix("sharko-namespace-get", `"get"`, subject),
+		}
+
+	case strings.HasPrefix(permission, "create namespace"),
+		strings.HasPrefix(permission, "remove namespace"):
+		return Fix{
+			Description: fmt.Sprintf("Let %s create and remove the test namespace %s.", who(subject), namespace),
+			YAML:        clusterRoleFix("sharko-namespace-manage", `"get", "create", "delete"`, subject),
 		}
 
 	case strings.HasPrefix(permission, "create secret"),
 		strings.HasPrefix(permission, "get secret"),
 		strings.HasPrefix(permission, "delete secret"):
 		return Fix{
-			Description: fmt.Sprintf("Grant secret CRUD permissions for %s in namespace %s", callerARN, namespace),
+			Description: fmt.Sprintf("Let %s create, read and delete secrets in the namespace %s.", who(subject), namespace),
 			YAML: fmt.Sprintf(`# K8s RBAC - apply to target cluster
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: sharko-addon-delivery
-  namespace: %s
+  namespace: %[1]s
 rules:
 - apiGroups: [""]
   resources: ["secrets"]
@@ -82,20 +94,18 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: sharko-addon-delivery
-  namespace: %s
+  namespace: %[1]s
 subjects:
-- kind: Group
-  name: sharko-access
-  apiGroup: rbac.authorization.k8s.io
+%[2]s
 roleRef:
   kind: Role
   name: sharko-addon-delivery
-  apiGroup: rbac.authorization.k8s.io`, namespace, namespace),
+  apiGroup: rbac.authorization.k8s.io`, namespace, subjectYAML(subject)),
 		}
 
 	default:
 		return Fix{
-			Description: fmt.Sprintf("Permission check failed: %s — review RBAC for %s", permission, callerARN),
+			Description: fmt.Sprintf("The check %q failed. Look at the rights of %s on this cluster.", permission, who(subject)),
 			YAML:        "# No auto-generated fix available for this permission",
 		}
 	}
