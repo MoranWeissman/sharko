@@ -224,9 +224,10 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
 
     expect(
       screen.getByText(
-        'The connection details are optional. You can add them later if an addon needs secrets on this cluster.',
+        'You can add the connection details later, when an addon needs secrets on this cluster.',
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/The connection details are optional/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Advanced settings/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Connection credentials below are\s*optional/)).not.toBeInTheDocument();
   });

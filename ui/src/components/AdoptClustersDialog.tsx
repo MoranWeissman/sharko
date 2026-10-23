@@ -15,8 +15,10 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { testClusterConnection, adoptClusters, isTestClusterUnavailable, isCredentialLookupFailure } from '@/services/api'
-import type { Cluster, AdoptResult, VerifyResult, DryRunResult } from '@/services/models'
+import { testClusterConnection, adoptClusters, isTestClusterUnavailable, isCredentialLookupFailure, ApiError } from '@/services/api'
+import type { Cluster, AdoptResult, AdoptWarning, AdoptBlocker, VerifyResult, DryRunResult } from '@/services/models'
+import { adoptWarningsOf, adoptBlockersOf } from '@/lib/adoptFindings'
+import { withV } from '@/lib/versionLabel'
 import { CHECK_PERMISSIONS_LABEL } from '@/components/ClusterActionHints'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import { AutoMergeNote } from '@/components/AutoMergeNote'
@@ -30,6 +32,14 @@ interface AdoptClustersDialogProps {
 }
 
 type VerificationState = 'pending' | 'verifying' | 'passed' | 'failed' | 'not-verified'
+
+// A warning or blocker, with the cluster it belongs to. The ids can repeat
+// from one cluster to the next, so the key is always cluster + id.
+interface FindingFor<T> {
+  cluster: string
+  item: T
+}
+const findingKey = (cluster: string, id: string) => `${cluster}\u0000${id}`
 
 interface ClusterVerification {
   cluster: Cluster
@@ -51,6 +61,11 @@ export function AdoptClustersDialog({
   const [adoptError, setAdoptError] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<DryRunResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  // Every reason an adopt cannot go ahead, and every warning the user must
+  // tick first. Both come from the server, per cluster.
+  const [blockers, setBlockers] = useState<FindingFor<AdoptBlocker>[]>([])
+  const [warnings, setWarnings] = useState<FindingFor<AdoptWarning>[]>([])
+  const [ticked, setTicked] = useState<Set<string>>(new Set())
   // Bumped every time the dialog opens a fresh verification run. The
   // verification effect below keys off THIS instead of `phase` directly:
   // `phase` starts at 'verifying' (its default), so on the very first
@@ -75,6 +90,9 @@ export function AdoptClustersDialog({
     setAdoptError(null)
     setPreviewResult(null)
     setPreviewError(null)
+    setBlockers([])
+    setWarnings([])
+    setTicked(new Set())
   }, [open, clusters])
 
   // Run verifications sequentially for each fresh run triggered above.
@@ -209,6 +227,31 @@ export function AdoptClustersDialog({
   const passedCount = verifications.filter((v) => v.state === 'passed').length
   const failedCount = verifications.filter((v) => v.state === 'failed').length
 
+  // Read the warnings and blockers out of an answer and keep them on screen.
+  // A warning the user already ticked stays ticked.
+  const takeFindings = useCallback((results: AdoptResult[]) => {
+    const nextBlockers: FindingFor<AdoptBlocker>[] = []
+    const nextWarnings: FindingFor<AdoptWarning>[] = []
+    for (const r of results) {
+      for (const b of adoptBlockersOf(r)) nextBlockers.push({ cluster: r.name, item: b })
+      for (const w of adoptWarningsOf(r)) nextWarnings.push({ cluster: r.name, item: w })
+    }
+    setBlockers(nextBlockers)
+    setWarnings(nextWarnings)
+    return { nextBlockers, nextWarnings }
+  }, [])
+
+  const toggleTick = useCallback((key: string) => {
+    setTicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const allTicked = warnings.every((w) => ticked.has(findingKey(w.cluster, w.item.id)))
+
   const handlePreview = useCallback(async () => {
     const names = selectedClusters.map((v) => v.cluster.name)
     if (names.length === 0) return
@@ -219,19 +262,35 @@ export function AdoptClustersDialog({
         clusters: names,
         dry_run: true,
       })
+      const { nextBlockers } = takeFindings(response.results)
       // The server puts the preview on the first result's `dry_run` field.
       const first = response.results[0]
       const preview = first?.dry_run ?? first?.preview
       if (!preview) {
-        throw new Error('No preview data returned')
+        // Say why. Every reason the server gave is on screen in the review
+        // step; this line is for when it gave none.
+        const failed = response.results.find((r) => r.status === 'failed' && r.error)
+        throw new Error(
+          nextBlockers.length > 0
+            ? 'This cluster cannot be adopted yet. See the reasons below.'
+            : failed?.error ?? 'No preview data returned',
+        )
       }
       setPreviewResult(preview)
       setPhase('preview-ready')
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Preview failed')
+      // A refusal carries every reason in its body.
+      if (err instanceof ApiError) {
+        const body = err.body as { blockers?: AdoptBlocker[] }
+        const fromBody = adoptBlockersOf({ blockers: body.blockers })
+        if (fromBody.length > 0) {
+          setBlockers(fromBody.map((item) => ({ cluster: names.length === 1 ? names[0] : '', item })))
+        }
+      }
       setPhase('review')
     }
-  }, [selectedClusters])
+  }, [selectedClusters, takeFindings])
 
   const handleConfirmAdoption = useCallback(async () => {
     const names = selectedClusters.map((v) => v.cluster.name)
@@ -245,14 +304,18 @@ export function AdoptClustersDialog({
       // and proceeds with adoption anyway.
       const response = await adoptClusters({
         clusters: names,
+        acknowledged_findings: warnings
+          .filter((w) => ticked.has(findingKey(w.cluster, w.item.id)))
+          .map((w) => w.item.id),
       })
       setAdoptResults(response.results)
+      const { nextBlockers } = takeFindings(response.results)
 
       // F2: Check if ANY result has status === 'failed'. If so, surface the
       // errors and do NOT proceed to done/refetch. The server returns HTTP 200
       // even for all-failed (207 only for mixed), so we must inspect status.
       const anyFailed = response.results.some((r) => r.status === 'failed')
-      if (anyFailed) {
+      if (anyFailed || nextBlockers.length > 0) {
         // Show the results (errors included) but stay in 'review' so the user
         // sees what failed. Do NOT call onSuccess() — that refetches and
         // would give false success feedback.
@@ -263,10 +326,28 @@ export function AdoptClustersDialog({
         onSuccess()
       }
     } catch (err) {
+      // 409: the server found a warning the user has not ticked yet. Show it
+      // and let them tick it, instead of a bare error.
+      if (err instanceof ApiError && err.status === 409) {
+        const body = err.body as { warnings?: unknown; results?: AdoptResult[] }
+        const fromResults = Array.isArray(body.results) ? body.results : []
+        const fromBody = adoptWarningsOf({ warnings: body.warnings as AdoptResult['warnings'] })
+        const merged: FindingFor<AdoptWarning>[] = []
+        for (const r of fromResults) for (const w of adoptWarningsOf(r)) merged.push({ cluster: r.name, item: w })
+        if (merged.length === 0) {
+          for (const w of fromBody) merged.push({ cluster: names.length === 1 ? names[0] : '', item: w })
+        }
+        if (merged.length > 0) {
+          setWarnings(merged)
+          setAdoptError('There is something new to read. Tick each warning below, then confirm again.')
+          setPhase('review')
+          return
+        }
+      }
       setAdoptError(err instanceof Error ? err.message : 'Adoption failed')
       setPhase('review')
     }
-  }, [selectedClusters, onSuccess])
+  }, [selectedClusters, onSuccess, warnings, ticked, takeFindings])
 
   const handleBackToReview = useCallback(() => {
     setPhase('review')
@@ -295,6 +376,71 @@ export function AdoptClustersDialog({
         </DialogHeader>
 
         <div className="min-h-0 space-y-4 overflow-y-auto py-2">
+          {/* What stops an adopt, and what to read first. In the review step
+              too, so a failed preview is never silent. */}
+          {previewError && phase === 'review' && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+            >
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <p>{previewError}</p>
+            </div>
+          )}
+          {(phase === 'review' || phase === 'preview-ready') && blockers.length > 0 && (
+            <div
+              role="alert"
+              data-testid="adopt-blockers"
+              className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+            >
+              <p className="font-medium">Fix these first:</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {blockers.map((b) => (
+                  <li key={findingKey(b.cluster, b.item.id)}>
+                    {clusters.length > 1 && b.cluster ? `${b.cluster}: ` : ''}
+                    {b.item.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {(phase === 'review' || phase === 'preview-ready') && warnings.length > 0 && (
+            <div
+              data-testid="adopt-warnings"
+              className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+              <p className="font-medium">Read each of these and tick it to go ahead:</p>
+              {warnings.map((w) => {
+                const key = findingKey(w.cluster, w.item.id)
+                return (
+                  <label key={key} className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      data-testid={`adopt-warning-${w.item.id}`}
+                      checked={ticked.has(key)}
+                      onChange={() => toggleTick(key)}
+                      className="mt-1 rounded border-amber-500"
+                    />
+                    <span>
+                      {clusters.length > 1 && w.cluster ? <strong>{w.cluster}: </strong> : null}
+                      {w.item.message}
+                      {w.item.application_sets && w.item.application_sets.length > 0 && (
+                        <span className="block text-xs">
+                          ApplicationSets: {w.item.application_sets.join(', ')}
+                        </span>
+                      )}
+                      {w.item.applications && w.item.applications.length > 0 && (
+                        <span className="block text-xs">
+                          Applications: {w.item.applications.join(', ')}
+                        </span>
+                      )}
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+
           {/* Preview section */}
           {(phase === 'previewing' || phase === 'preview-ready') && (
             <div className="space-y-3">
@@ -376,7 +522,7 @@ export function AdoptClustersDialog({
                             Reachable
                             {v.result?.server_version && (
                               <span className="ml-1 font-mono text-[#3a6a8a] dark:text-gray-500">
-                                v{v.result.server_version}
+                                {withV(v.result.server_version)}
                               </span>
                             )}
                           </span>
@@ -524,7 +670,7 @@ export function AdoptClustersDialog({
               <button
                 type="button"
                 onClick={handleConfirmAdoption}
-                disabled={selectedClusters.length === 0}
+                disabled={selectedClusters.length === 0 || !allTicked || blockers.length > 0}
                 className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 <GitMerge className="h-4 w-4" />
@@ -555,7 +701,8 @@ export function AdoptClustersDialog({
               <button
                 type="button"
                 onClick={handleConfirmAdoption}
-                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                disabled={!allTicked || blockers.length > 0}
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 <GitMerge className="h-4 w-4" />
                 {clusters.length === 1 ? 'Confirm Adoption' : `Confirm Adoption (${selectedClusters.length})`}

@@ -19,6 +19,7 @@ vi.mock('@/services/api', async () => {
     adoptClusters: vi.fn(),
     isTestClusterUnavailable: vi.fn(),
     isCredentialLookupFailure: actual.isCredentialLookupFailure,
+    ApiError: actual.ApiError,
     VERIFY_STAGE_CREDENTIALS: actual.VERIFY_STAGE_CREDENTIALS,
   }
 })
@@ -266,6 +267,7 @@ describe('AdoptClustersDialog', () => {
       await waitFor(() => {
         expect(api.adoptClusters).toHaveBeenCalledWith({
           clusters: ['prod-cluster'],
+          acknowledged_findings: [],
         })
       })
     })
@@ -444,6 +446,7 @@ describe('AdoptClustersDialog', () => {
       await waitFor(() => {
         expect(api.adoptClusters).toHaveBeenCalledWith({
           clusters: ['prod-cluster'],
+          acknowledged_findings: [],
         })
       })
 
@@ -583,7 +586,158 @@ describe('AdoptClustersDialog', () => {
       // Preview must NOT have opened the PR — onSuccess is not called and the
       // real (non-dry-run) adopt was never invoked.
       expect(mockOnSuccess).not.toHaveBeenCalled()
-      expect(api.adoptClusters).not.toHaveBeenCalledWith({ clusters: ['prod-cluster'] })
+      expect(api.adoptClusters).not.toHaveBeenCalledWith({ clusters: ['prod-cluster'], acknowledged_findings: [] })
+    })
+  })
+  describe('episode 3 dry run: what adopt shows and asks', () => {
+    const reachable = () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: true,
+        reachable: true,
+        server_version: 'v1.31.0',
+      } as never)
+    }
+    const open1 = () =>
+      render(
+        <AdoptClustersDialog
+          open={true}
+          onClose={mockOnClose}
+          clusters={[mockCluster1]}
+          onSuccess={mockOnSuccess}
+          onDiagnose={mockOnDiagnose}
+        />
+      )
+
+    it('finding 11: shows the version with one v, never two', async () => {
+      reachable()
+      open1()
+      await waitFor(() => expect(screen.getByText('v1.31.0')).toBeInTheDocument())
+      expect(screen.queryByText('vv1.31.0')).not.toBeInTheDocument()
+    })
+
+    it('finding 11: adds the v when the server version has none', async () => {
+      reachable()
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: true,
+        reachable: true,
+        server_version: '1.31.0',
+      } as never)
+      open1()
+      await waitFor(() => expect(screen.getByText('v1.31.0')).toBeInTheDocument())
+    })
+
+    it('finding 4: a preview that fails shows every reason, in the review step', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [
+          {
+            name: 'prod-cluster',
+            status: 'failed',
+            error: '2 things to fix first',
+            blockers: [
+              { id: 'no-connection', message: 'ArgoCD has no connection saved for prod-cluster.' },
+              { id: 'name-clash', message: 'Another cluster already uses this name.' },
+            ],
+          },
+        ],
+      })
+      const user = userEvent.setup()
+      open1()
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      expect(await screen.findByText('ArgoCD has no connection saved for prod-cluster.')).toBeInTheDocument()
+      expect(screen.getByText('Another cluster already uses this name.')).toBeInTheDocument()
+      // The step is review again, so the error is not hidden.
+      expect(screen.getByText(/This cluster cannot be adopted yet/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeDisabled()
+    })
+
+    it('finding 4: a preview that fails with a plain error still says so', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockRejectedValue(new Error('Git is not reachable'))
+      const user = userEvent.setup()
+      open1()
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      expect(await screen.findByText('Git is not reachable')).toBeInTheDocument()
+    })
+
+    it('finding 13: each warning has its own box and confirm waits for every one', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [
+          {
+            name: 'prod-cluster',
+            status: 'success',
+            warnings: [
+              { id: 'owner', message: 'Another tool owns this connection today.' },
+              { id: 'appsets', message: 'Two ApplicationSets will start to pick this cluster.' },
+            ],
+            dry_run: { effective_addons: [], files_to_write: [], pr_title: 't', secrets_to_create: [] },
+          },
+        ],
+      } as never)
+      const user = userEvent.setup()
+      open1()
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      expect(await screen.findByText('Another tool owns this connection today.')).toBeInTheDocument()
+      const confirm = screen.getByRole('button', { name: /confirm adoption/i })
+      expect(confirm).toBeDisabled()
+      await user.click(screen.getByTestId('adopt-warning-owner'))
+      expect(confirm).toBeDisabled()
+      await user.click(screen.getByTestId('adopt-warning-appsets'))
+      expect(confirm).toBeEnabled()
+
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success', git: { pr_url: 'https://git/pr/3' } }],
+      } as never)
+      await user.click(confirm)
+      await waitFor(() =>
+        expect(api.adoptClusters).toHaveBeenLastCalledWith({
+          clusters: ['prod-cluster'],
+          acknowledged_findings: ['owner', 'appsets'],
+        }),
+      )
+    })
+
+    it('finding 13: a 409 for a new warning shows it to tick, then goes ahead', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockRejectedValueOnce(
+        new api.ApiError(
+          409,
+          { error: 'needs acknowledgement', results: [{ name: 'prod-cluster', warnings: [{ id: 'owner', message: 'Another tool owns this connection today.' }] }] },
+          'Conflict',
+        ),
+      )
+      const user = userEvent.setup()
+      open1()
+      await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+      expect(await screen.findByText('Another tool owns this connection today.')).toBeInTheDocument()
+      const confirm = screen.getByRole('button', { name: /confirm adoption/i })
+      expect(confirm).toBeDisabled()
+      await user.click(screen.getByTestId('adopt-warning-owner'))
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success', git: { pr_url: 'https://git/pr/3' } }],
+      } as never)
+      await user.click(confirm)
+      await waitFor(() =>
+        expect(api.adoptClusters).toHaveBeenLastCalledWith({
+          clusters: ['prod-cluster'],
+          acknowledged_findings: ['owner'],
+        }),
+      )
+    })
+
+    it('finding 3: the success screen with the PR link stays after the refresh asks for new clusters', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success', git: { pr_url: 'https://git/pr/3' } }],
+      } as never)
+      const user = userEvent.setup()
+      open1()
+      await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+      const link = await screen.findByRole('link', { name: /PR/ })
+      expect(link).toHaveAttribute('href', 'https://git/pr/3')
+      expect(screen.getByText('Adoption complete.')).toBeInTheDocument()
     })
   })
 })

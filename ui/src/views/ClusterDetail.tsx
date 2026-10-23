@@ -74,6 +74,7 @@ import {
   DROP_LABELS_LABEL,
   DROP_LABELS_HINT,
 } from '@/components/TakeoverDialog';
+import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
 import { UnregisterConsequencesPanel } from '@/components/UnregisterConsequencesPanel';
 import { TestConnectionModal } from '@/components/TestConnectionModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
@@ -277,6 +278,12 @@ export function ClusterDetail() {
    * typed fact, it is already on ApiError, and it was there the whole time.
    */
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
+  // True when the 404 carries the typed fact "ArgoCD knows this cluster,
+  // Sharko does not manage it" (code `not_managed`, argocd_known true). The
+  // page then offers Adopt and Take ownership instead of "not found". Decided
+  // by the code in the body, never by the sentence.
+  const [notManaged, setNotManaged] = useState(false);
+  const [notManagedAdoptOpen, setNotManagedAdoptOpen] = useState(false);
   // S2 (walk day 5 ride-along): manual refresh in the page header, on top
   // of the 30s auto-poll below. A separate flag from `loading` — fetchData
   // runs in background mode here (no full-page loading state), so the
@@ -564,6 +571,7 @@ export function ClusterDetail() {
       }
       setError(null);
       setErrorStatus(null);
+      setNotManaged(false);
       // Fetch cluster-scoped open PRs alongside the comparison so the
       // addons table can render per-row pending-PR badges. The .catch
       // keeps the page rendering when the PR-tracker is disabled.
@@ -638,6 +646,12 @@ export function ClusterDetail() {
             : `Failed to load comparison for cluster: ${name}`,
         );
         setErrorStatus(e instanceof ApiError ? e.status : null);
+        setNotManaged(
+          e instanceof ApiError &&
+            e.status === 404 &&
+            e.body?.code === 'not_managed' &&
+            e.body?.argocd_known === true,
+        );
       }
       return undefined;
     } finally {
@@ -1149,6 +1163,59 @@ export function ClusterDetail() {
   // the server's sentence and looking for "not found" / "404" in it — see
   // errorStatus for why that had to go.
   if (error) {
+    if (errorStatus === 404 && notManaged && name) {
+      return (
+        <>
+          <EmptyState
+            title="Sharko doesn't manage this cluster yet"
+            description={`ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`}
+            action={
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <RoleGuard adminOnly>
+                  <button
+                    type="button"
+                    data-testid="not-managed-adopt"
+                    onClick={() => setNotManagedAdoptOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    Adopt
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="not-managed-takeover"
+                    onClick={() => setTakeoverOpen(true)}
+                    className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-semibold text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  >
+                    {TAKEOVER_LABEL}
+                  </button>
+                </RoleGuard>
+                <button
+                  type="button"
+                  onClick={() => navigate('/clusters')}
+                  className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back to Clusters
+                </button>
+              </div>
+            }
+          />
+          <AdoptClustersDialog
+            open={notManagedAdoptOpen}
+            onClose={() => setNotManagedAdoptOpen(false)}
+            clusters={[{ name, labels: {}, managed: false }]}
+            onSuccess={() => {}}
+            onDiagnose={() => navigate('/clusters')}
+          />
+          <TakeoverDialog
+            clusterName={name}
+            open={takeoverOpen}
+            onClose={() => setTakeoverOpen(false)}
+            onDone={() => void fetchData(true)}
+          />
+        </>
+      );
+    }
     if (errorStatus === 404) {
       return (
         <EmptyState
@@ -1411,17 +1478,25 @@ export function ClusterDetail() {
                 <InfoHint text={TAKEOVER_HINT} label="What does taking ownership of a cluster do?" />
               </>
             )}
-            <button
-              type="button"
-              onClick={() => setDropLabelsOpen(true)}
-              title={DROP_LABELS_HINT}
-              data-testid="open-drop-labels"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-            >
-              <Tag className="h-3.5 w-3.5" />
-              {DROP_LABELS_LABEL}
-            </button>
-            <InfoHint text={DROP_LABELS_HINT} label="What does removing the old labels do?" />
+            {/* Only for a cluster that came in through adopt or take over:
+              * those carry the previous owner's labels. A cluster Sharko
+              * registered itself has none, so the button would only open a
+              * dialog that says there is nothing to remove. */}
+            {(data?.cluster?.adopted === true || data?.cluster?.taken_over === true) && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setDropLabelsOpen(true)}
+                  title={DROP_LABELS_HINT}
+                  data-testid="open-drop-labels"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                >
+                  <Tag className="h-3.5 w-3.5" />
+                  {DROP_LABELS_LABEL}
+                </button>
+                <InfoHint text={DROP_LABELS_HINT} label="What does removing the old labels do?" />
+              </>
+            )}
           </RoleGuard>
         </div>
       </div>
@@ -1452,7 +1527,7 @@ export function ClusterDetail() {
         }}
         onConfirm={handleRemoveCluster}
         title={`Remove cluster "${name}"?`}
-        description="This will remove the cluster from the Git catalog. This action creates a pull request and cannot be undone."
+        description="This opens a pull request that removes the cluster from your GitOps repo. Nothing changes until you merge it."
         confirmText="Remove"
         destructive
         loading={removing}

@@ -3,6 +3,8 @@ import type {
   AddonDetailResponse,
   AddonValuesSecretActionResult,
   AdoptClustersResponse,
+  AvailableCluster,
+  AvailableClustersResponse,
   AIConfigResponse,
   APIToken,
   AuditEntry,
@@ -1024,7 +1026,14 @@ export async function deregisterCluster(name: string, autoMerge?: boolean, dryRu
   return res.json() as Promise<RemoveClusterResult>
 }
 
-export async function adoptClusters(data: { clusters: string[]; auto_merge?: boolean; dry_run?: boolean }) {
+export async function adoptClusters(data: {
+  clusters: string[]
+  auto_merge?: boolean
+  dry_run?: boolean
+  // The ids of every warning the user ticked. The server answers 409 when a
+  // warning appears that is not in this list.
+  acknowledged_findings?: string[]
+}) {
   // AdoptClustersRequest on the backend does NOT have a `Yes` field —
   // `cluster.adopt` is gated on RBAC + per-cluster Stage1 verification,
   // not on a confirmation flag. Do NOT send `yes: true` here even though
@@ -1296,6 +1305,21 @@ export async function batchRegisterClusters(clusters: Array<{ name: string; addo
 
 export async function discoverClusters() {
   return fetchJSON<unknown>('/clusters/available')
+}
+
+/**
+ * Clusters ArgoCD already knows that Sharko does not manage yet
+ * (GET /clusters/available). Always resolves to a list: a server that cannot
+ * answer, or answers in an older shape, gives an empty one, because the
+ * Clusters page only uses this for a hint line and must never break on it.
+ */
+export async function getAvailableClusters(): Promise<AvailableCluster[]> {
+  try {
+    const res = await fetchJSON<AvailableClustersResponse | null>('/clusters/available')
+    return Array.isArray(res?.clusters) ? res.clusters : []
+  } catch {
+    return []
+  }
 }
 
 export interface OperationStep {
@@ -1654,6 +1678,7 @@ export const api = {
   health: () => fetchJSON<HealthResponse>('/health'),
 
   // Clusters
+  getAvailableClusters: () => getAvailableClusters(),
   getClusters: () => fetchJSON<ClustersResponse>(`/clusters?per_page=${CLUSTERS_PAGE_SIZE}`),
   // getClustersPage — page-aware variant that also surfaces the total
   // count (X-Total-Count), for continuing past the first page when an

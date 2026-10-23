@@ -311,7 +311,7 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     fireEvent.click(screen.getByRole('button', { name: /Confirm Adoption/i }));
 
     await waitFor(() => {
-      expect(mockAdoptClusters).toHaveBeenCalledWith({ clusters: ['argo-known-cluster'] });
+      expect(mockAdoptClusters).toHaveBeenCalledWith({ clusters: ['argo-known-cluster'], acknowledged_findings: [] });
     });
 
     // Same Git-PR banner adopt shows today.
@@ -387,11 +387,16 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
       // nothing happened.
       expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
 
-      // The selection resets — the button reverts to its unpicked label
-      // (V2-cleanup-92.1 F1: "Adopt cluster", not "Adopt selected cluster").
+      // The selection resets. Only one cluster is left in the list, so it is
+      // picked for the user (finding 25) - the stale name is gone.
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Adopt cluster' })).toBeInTheDocument();
+        expect(
+          screen.getByRole('button', { name: /Adopt other-discovered-cluster/i }),
+        ).toBeInTheDocument();
       });
+      expect(
+        screen.queryByRole('button', { name: /Adopt argo-known-cluster/i }),
+      ).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
