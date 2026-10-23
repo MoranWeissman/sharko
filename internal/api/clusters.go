@@ -69,8 +69,18 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	filteredPending := dropPendingForManagedClusters(pending, managedNames)
 	resp.PendingRegistrations = filteredPending
 	pendingNames := make(map[string]struct{}, len(filteredPending))
+	// Only an open REGISTER pull request takes a cluster out of the
+	// not_in_git lane: that cluster is not Sharko's until the merge, and
+	// its pending row is where it shows. A cluster with an open adopt or
+	// take over pull request stays in the list too (the UI uses the same
+	// rule), so its page and its ArgoCD labels are still there while the
+	// pull request waits.
+	pendingRegisterNames := make(map[string]struct{}, len(filteredPending))
 	for _, p := range filteredPending {
 		pendingNames[p.ClusterName] = struct{}{}
+		if p.Operation == models.PendingOperationRegister {
+			pendingRegisterNames[p.ClusterName] = struct{}{}
+		}
 	}
 
 	// Resolve orphan ArgoCD cluster Secrets (in ArgoCD, not in git, no
@@ -104,7 +114,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// Filter the `not_in_git` lane to remove BOTH pending and orphan
 	// cluster names, and correct HealthStats.NotInGit by the same amount
 	// (see prunePendingAndOrphanFromNotInGit for the full contract).
-	prunePendingAndOrphanFromNotInGit(resp, pendingNames, orphanNames)
+	prunePendingAndOrphanFromNotInGit(resp, pendingRegisterNames, orphanNames)
 
 	// Enrich clusters with connectivity status + Sharko obs fields.
 	// Fetch the full application list once (no N+1 per cluster).

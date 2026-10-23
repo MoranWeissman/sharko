@@ -54,10 +54,12 @@ func resolvePendingRegistrations(
 	//
 	// "<commit-prefix> register cluster <name>"
 	// "<commit-prefix> remove cluster <name>"
+	// "<commit-prefix> adopt cluster <name>"
+	// "<commit-prefix> take over cluster <name>"
 	//   |-------- common header -------|
 	//
-	// The header includes the commit prefix, so "unadopt cluster" never
-	// matches "adopt cluster". Anything after the header is suffix
+	// The header includes the commit prefix and the space after it, so
+	// "unadopt cluster" never matches "adopt cluster". Anything after the header is suffix
 	// decoration (e.g. " (kubeconfig provider)") — the cluster name is
 	// the first whitespace-bounded token after the header.
 	prefix := strings.TrimSpace(commitPrefix)
@@ -67,6 +69,8 @@ func resolvePendingRegistrations(
 	}{
 		{prefix + " register cluster ", models.PendingOperationRegister},
 		{prefix + " remove cluster ", models.PendingOperationRemove},
+		{prefix + " adopt cluster ", models.PendingOperationAdopt},
+		{prefix + " take over cluster ", models.PendingOperationTakeover},
 	}
 
 	for i := range prs {
