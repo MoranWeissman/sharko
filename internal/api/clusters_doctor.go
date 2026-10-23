@@ -19,6 +19,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -83,6 +84,10 @@ const (
 	// yields to real addons).
 	doctorCheckConnectivityApp = "connectivity-app-drift"
 )
+
+// doctorNoCatalogYetDetail is what the add-on secret check says when the repo
+// has no add-on catalog file yet. Pinned by exact text in the tests.
+const doctorNoCatalogYetDetail = "There is no add-on catalog file in the repo yet. That is normal for a new repo, so there is nothing to check here. It appears when you add the first add-on."
 
 // Check statuses (doctorCheck.Status). "warn" (V2-cleanup-90.1) is
 // additive — a check can be worse than pass but not bad enough to fail the
@@ -360,6 +365,15 @@ func (s *Server) doctorCheckAddonSecretPaths(ctx context.Context, clusterName st
 	}
 
 	catalogData, err := gp.GetFileContent(cctx, s.repoPaths.Catalog, s.gitopsConfig().BaseBranch)
+	if err != nil && errors.Is(err, gitprovider.ErrFileNotFound) {
+		// A new repo has no catalog file until the first add-on is added.
+		// That is a normal state, not a fault.
+		return doctorCheck{
+			ID:     doctorCheckAddonSecretPaths,
+			Status: doctorStatusNotApplicable,
+			Detail: doctorNoCatalogYetDetail,
+		}
+	}
 	if err != nil {
 		// The Git provider's own text stays here. It used to be appended to
 		// Detail, which is a `json:"detail"` field a browser renders.

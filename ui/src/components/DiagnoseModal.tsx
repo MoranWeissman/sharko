@@ -37,6 +37,11 @@ export function DiagnoseResultView({ report }: { report: DiagnosticReport }) {
     }
   };
 
+  // Show each suggested fix once, even if the server sends the same one twice.
+  const uniqueFixes = (report.suggested_fixes ?? []).filter(
+    (fix, i, all) => all.findIndex((f) => f.yaml === fix.yaml) === i,
+  );
+
   const totalChecks = report?.namespace_access?.length ?? 0;
   const passedChecks = report?.namespace_access?.filter((c) => c.passed).length ?? 0;
   const failedChecks = totalChecks - passedChecks;
@@ -97,7 +102,7 @@ export function DiagnoseResultView({ report }: { report: DiagnosticReport }) {
       )}
 
       {/* All-pass helpful note */}
-      {allPassed && (!report.suggested_fixes || report.suggested_fixes.length === 0) && (
+      {allPassed && uniqueFixes.length === 0 && (
         <div className="rounded-md bg-[#f0f7ff] px-4 py-3 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
           Sharko can create, read, and delete secrets on this cluster. If the connectivity test still fails,
           the issue may be with credential fetch (AWS Secrets Manager), not cluster permissions.
@@ -105,11 +110,11 @@ export function DiagnoseResultView({ report }: { report: DiagnosticReport }) {
       )}
 
       {/* Suggested Fixes */}
-      {report.suggested_fixes && report.suggested_fixes.length > 0 && (
+      {uniqueFixes.length > 0 && (
         <div>
           <h4 className="mb-2 text-sm font-semibold text-red-700 dark:text-red-400">Suggested Fixes</h4>
           <div className="space-y-4">
-            {report.suggested_fixes.map((fix, i) => (
+            {uniqueFixes.map((fix, i) => (
               <div key={i} className="rounded-md ring-2 ring-red-200 bg-[#fff5f5] p-4 dark:ring-red-800 dark:bg-gray-800">
                 <p className="mb-2 text-sm text-[#0a2a4a] dark:text-gray-200">{fix.description}</p>
                 <div className="relative">
