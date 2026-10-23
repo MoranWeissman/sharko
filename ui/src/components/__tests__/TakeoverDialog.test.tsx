@@ -226,7 +226,8 @@ describe('TakeoverDialog', () => {
     mockPreflight.mockResolvedValue({ ...warningReport, needs_acknowledgement: false });
     mockTakeover.mockResolvedValue({
       cluster: 'prod-eu', status: 'partial', secret_swapped: false,
-      message: 'The pull request adding prod-eu to the fleet was opened, but Sharko could not take ownership of its ArgoCD connection.',
+      // The server's real sentence (internal/api/clusters_takeover.go).
+      message: 'The Git side of taking over prod-eu is done, but Sharko could not take ownership of its ArgoCD connection: the connection could not be updated. Nothing was deleted. Fix the problem and run the takeover again — it is safe to repeat.',
     });
     render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
