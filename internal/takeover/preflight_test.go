@@ -408,3 +408,38 @@ func TestSortedKeys(t *testing.T) {
 		t.Errorf("SortedKeys = %v, want [a b c]", got)
 	}
 }
+
+// Sharko's own connectivity-check ApplicationSet only picks clusters with
+// its label. For a cluster without it, it is not a danger (episode 3 dry
+// run, finding 24).
+func TestPreflight_AppSetThatDoesNotPickTheClusterIsNotADanger(t *testing.T) {
+	in := cleanInputs()
+	in.SecretLabels = map[string]string{"argocd.argoproj.io/secret-type": "cluster", "env": "dev"}
+	in.ApplicationSets = []appsets.ApplicationSetInfo{appsets.Parse(map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "sharko-connectivity-check"},
+		"spec": map[string]interface{}{"generators": []interface{}{
+			map[string]interface{}{"clusters": map[string]interface{}{
+				"selector": map[string]interface{}{"matchLabels": map[string]interface{}{
+					"sharko.dev/connectivity-check": "enabled",
+				}},
+			}},
+		}},
+	})}
+	f := findingByID(t, Preflight(in), FindingAppSetSafety)
+	if f.Status != StatusOK {
+		t.Fatalf("status = %s, want ok; detail %q", f.Status, f.Detail)
+	}
+	if want := "The only ApplicationSet in the argocd namespace does not pick this cluster today."; f.Detail != want {
+		t.Fatalf("detail = %q, want %q", f.Detail, want)
+	}
+	if len(f.ApplicationSets) != 0 {
+		t.Fatalf("listed %v as a danger", f.ApplicationSets)
+	}
+
+	// Give the cluster the label and the same ApplicationSet becomes a warning.
+	in.SecretLabels["sharko.dev/connectivity-check"] = "enabled"
+	f = findingByID(t, Preflight(in), FindingAppSetSafety)
+	if f.Status != StatusWarning || len(f.ApplicationSets) != 1 {
+		t.Fatalf("with the label: status %s, sets %v", f.Status, f.ApplicationSets)
+	}
+}
