@@ -43,6 +43,28 @@ func (a *argoManagerAdapter) StripOwnershipLabel(ctx context.Context, name strin
 	return a.mgr.StripOwnershipLabel(ctx, name)
 }
 
+// ReleaseKeptConnection delegates to the real Manager. It satisfies the
+// OPTIONAL keptConnectionReleaser capability finishRemove type-asserts: it
+// takes Sharko's label and the remove-keep mark off in one write (EP3 dry
+// run round R, R1).
+func (a *argoManagerAdapter) ReleaseKeptConnection(ctx context.Context, name string) (bool, error) {
+	return a.mgr.ReleaseKeptConnection(ctx, name)
+}
+
+// RemoveAnnotationIfValue delegates to the real Manager (optional
+// annotationValueRemover capability).
+func (a *argoManagerAdapter) RemoveAnnotationIfValue(ctx context.Context, name, key, value string) (bool, error) {
+	return a.mgr.RemoveAnnotationIfValue(ctx, name, key, value)
+}
+
+// DeleteClusterSecret deletes the Secret the shared lookup finds for name,
+// by its own Kubernetes name, and only when it carries Sharko's label
+// (optional clusterSecretDeleter capability, R8). It never deletes through
+// ArgoCD by server address.
+func (a *argoManagerAdapter) DeleteClusterSecret(ctx context.Context, name string) error {
+	return a.mgr.Delete(ctx, name)
+}
+
 // Ensure converts the orchestrator-local spec to argosecrets.ClusterSecretSpec
 // and delegates to the real Manager. Labels and config JSON are built inside
 // Manager.Ensure (via buildLabels / buildSecretConfig), so the write is

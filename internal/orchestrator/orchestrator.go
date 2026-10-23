@@ -198,7 +198,19 @@ type ClusterFollowUp struct {
 	CredentialKey     string
 	CredentialsSource string
 	CredentialRoleARN string
+	// Finish is FinishAdopt or FinishTakeover for an adopt or take over
+	// pull request, empty otherwise. PreserveLegacyLabels is the take over
+	// choice to keep the old owner's labels.
+	Finish               string
+	PreserveLegacyLabels bool
 }
+
+// Finish kinds for ClusterFollowUp.Finish. Kept in lockstep with
+// prtracker.FinishAdopt and prtracker.FinishTakeover.
+const (
+	FinishAdopt    = "adopt"
+	FinishTakeover = "takeover"
+)
 
 // PRMetadata describes the PR-level metadata needed to track a PR
 // once commitChanges creates it. Filled in by the orchestrator

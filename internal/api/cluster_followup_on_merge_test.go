@@ -34,7 +34,9 @@ func TestFinishClusterFollowUpOnMerge_KeptConnectionLosesTheLabel(t *testing.T) 
 	gp := newTakeoverFakeGP() // fleet record holds only other-cluster
 	srv, _, k8s := takeoverTestServer(t, gp, []*corev1.Secret{ownedSecret("prod-eu")}, fakeAppSetReader{})
 
-	srv.FinishClusterFollowUpOnMerge(context.Background(), keptRemovePR("prod-eu"))
+	if err := srv.FinishClusterFollowUpOnMerge(context.Background(), keptRemovePR("prod-eu")); err != nil {
+		t.Fatal(err)
+	}
 
 	sec, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "prod-eu", metav1.GetOptions{})
 	if err != nil {
@@ -63,7 +65,9 @@ func TestFinishClusterFollowUpOnMerge_DoesNothingWhenItShouldNot(t *testing.T) {
 			}
 			srv, _, k8s := takeoverTestServer(t, gp, []*corev1.Secret{ownedSecret("prod-eu")}, fakeAppSetReader{})
 
-			srv.FinishClusterFollowUpOnMerge(context.Background(), tc.pr)
+			if err := srv.FinishClusterFollowUpOnMerge(context.Background(), tc.pr); err != nil {
+				t.Fatal(err)
+			}
 
 			sec, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "prod-eu", metav1.GetOptions{})
 			if err != nil {

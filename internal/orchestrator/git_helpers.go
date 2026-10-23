@@ -181,6 +181,21 @@ func capitalizeFirst(s string) string {
 	return string(r)
 }
 
+// ErrPRNotRecorded means Sharko opened a pull request that carries
+// after-merge work but could not record it in the PR tracker, and the pull
+// request did not merge at once. Nothing would ever finish that work, so
+// the caller must say so (EP3 dry run round R, R1). The GitResult that
+// comes with it names the pull request.
+var ErrPRNotRecorded = errors.New("the pull request could not be recorded in the PR tracker")
+
+// PRNotRecordedMessage is the answer when ErrPRNotRecorded comes back.
+// action is what the pull request was for, in plain words ("removal",
+// "un-adopt", "adopt", "take over"). Exported so tests pin it by exact
+// text.
+func PRNotRecordedMessage(action, prURL string) string {
+	return fmt.Sprintf("Sharko opened pull request %s but could not record it, so it could not finish the %s after the merge. Nothing has changed on the cluster's ArgoCD connection. Close that pull request without merging it, then try again.", prURL, action)
+}
+
 // commitChanges creates a PR for the given file changes WITHOUT tracking it
 // in the prtracker. Use commitChangesWithMeta when the call site has the
 // canonical operation code, cluster, and addon (the default). Kept as a
@@ -255,10 +270,14 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		Branch: branchName,
 	}
 
-	// Track the PR centrally. Best-effort — a tracker write failure must
-	// not fail the operation; the user-visible PR has already been
-	// created at this point. nil tracker (test seam) and empty
-	// OperationCode (legacy commitChanges path) are silent skips.
+	// Track the PR centrally. A tracker write failure does not fail an
+	// ordinary operation; the user-visible PR has already been created at
+	// this point. It does matter for a PR that carries after-merge work
+	// (meta.FollowUp): nothing would ever do that work, so unless the PR
+	// merges right here the caller gets ErrPRNotRecorded (EP3 dry run round
+	// R, R1). nil tracker (test seam) and empty OperationCode (legacy
+	// commitChanges path) are silent skips.
+	var trackErr error
 	if o.prTracker != nil && meta.OperationCode != "" {
 		title := meta.Title
 		if title == "" {
@@ -272,7 +291,7 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		if source == "" {
 			source = "api"
 		}
-		_ = o.prTracker.TrackPR(ctx, TrackedPR{
+		trackErr = o.prTracker.TrackPR(ctx, TrackedPR{
 			PRID:       pr.ID,
 			PRUrl:      pr.URL,
 			PRBranch:   branchName,
@@ -293,8 +312,19 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 	// the connection-level default — resolveAutoMerge centralises the
 	// precedence rule so every call site uses the same semantics.
 	autoMerge := resolveAutoMerge(meta.AutoMergeOverride, o.gitops.PRAutoMerge)
+	notRecorded := trackErr != nil && meta.FollowUp != nil
+	if trackErr != nil {
+		logging.LoggerFromContext(ctx).Warn("could not record a pull request in the PR tracker",
+			"pr_id", pr.ID, "operation", meta.OperationCode, "cluster", meta.Cluster, "error", trackErr)
+	}
+	if !autoMerge && notRecorded {
+		return result, fmt.Errorf("%w: %v", ErrPRNotRecorded, trackErr)
+	}
 	if autoMerge {
 		if mergeErr := o.git.MergePullRequest(ctx, pr.ID); mergeErr != nil {
+			if notRecorded {
+				return result, fmt.Errorf("%w: %v (and the merge failed: %v)", ErrPRNotRecorded, trackErr, mergeErr)
+			}
 			// PR created but merge failed — partial success.
 			// Caller decides how to handle this (e.g. return 207).
 			return result, fmt.Errorf("PR created but merge failed: %w", mergeErr)

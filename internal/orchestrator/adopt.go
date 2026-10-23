@@ -43,6 +43,25 @@ const AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 // else. Kept in lockstep with internal/argosecrets.AnnotationAdoptPendingPR.
 const AnnotationAdoptPendingPR = "sharko.dev/adopt-pending-pr"
 
+// AnnotationRemoveKeepPendingPR is put on a connection that a removal keeps,
+// before the removal's pull request opens. It holds the pull request's
+// number, or "pending" for the moment before the number is known. While it
+// is on the Secret, the orphan sweep and the leftovers list never touch it.
+// The finish step takes it off together with Sharko's label (EP3 dry run
+// round R, R1). Kept in lockstep with
+// internal/argosecrets.AnnotationRemoveKeepPendingPR.
+const AnnotationRemoveKeepPendingPR = "sharko.dev/remove-keep-pending-pr"
+
+// AnnotationTakeoverPendingPR holds the number of the take over pull
+// request that is still waiting to be merged. It is the only thing a take
+// over puts on the Secret before the merge (R5). Kept in lockstep with
+// internal/argosecrets.AnnotationTakeoverPendingPR.
+const AnnotationTakeoverPendingPR = "sharko.dev/takeover-pending-pr"
+
+// pendingMarkValue is what a waiting mark holds before Sharko knows the
+// pull request's number.
+const pendingMarkValue = "pending"
+
 // AdoptClusters orchestrates the two-phase adoption of existing ArgoCD clusters.
 //
 // Phase 1: Per-cluster verification — Stage1 connectivity test.
