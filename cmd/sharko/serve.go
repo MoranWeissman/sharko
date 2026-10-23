@@ -1574,6 +1574,10 @@ var serveCmd = &cobra.Command{
 				// states, unlike SetOnMergeFn above which only fires on
 				// merge — a rejected/abandoned change belongs in the log too.
 				prTracker.SetOnCompleteFn(func(pr prtracker.PRInfo, status string) {
+					// Finish an adopt whose pull request merged, or take
+					// its waiting mark off when it was closed (EP3 dry run,
+					// design call 2). Ignored for every other pull request.
+					srv.FinishAdoptOnPRComplete(context.Background(), pr, status)
 					srv.ChangeLogStore().Record(changelog.Entry{
 						Operation:   changelog.PrettyOperation(pr.Operation),
 						Addon:       pr.Addon,

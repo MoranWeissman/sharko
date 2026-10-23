@@ -870,6 +870,172 @@ definitions:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AvailableVersion'
         type: array
     type: object
+  github_com_MoranWeissman_sharko_internal_models.Cluster:
+    properties:
+      addon_secrets_ready:
+        description: |-
+          AddonSecretsReady reports whether Sharko currently has resolvable
+          credentials for this cluster (V2-cleanup-88.3 — lazy credentials).
+          Computed on every read via CredentialsResolvable — a cheap
+          presence-of-config check (creds_source / connection mode / whether a
+          secrets backend is configured), NOT a live probe, mirroring the
+          DerivedHealthStatus precedent above. true means a secret-bearing
+          addon can likely be enabled on this cluster without hitting the
+          EnableAddon pre-flight rejection; false means the UI should surface
+          "add connection credentials before enabling an addon with secrets"
+          instead of letting the request round-trip into a 422. Registration
+          itself never requires credentials — this field only matters once the
+          operator tries to enable a secret-bearing addon.
+        type: boolean
+      adopted:
+        description: |-
+          Adopted is true when the cluster's ArgoCD connection carries
+          Sharko's adopted mark (sharko.dev/adopted, or one of its two older
+          spellings). Read from ArgoCD on every list; never stored in Git.
+        type: boolean
+      already_managed_by_sharko:
+        description: |-
+          AlreadyManagedBySharko is true when the live ArgoCD cluster Secret
+          already carries the app.kubernetes.io/managed-by=sharko label (walk
+          day 4 locks, S2). Mirrors the same check the takeover preflight uses
+          for its "secret-owner" finding — see applyManagedSecretFields. False
+          (the zero value / omitted) either means the Secret is foreign (a real
+          takeover candidate) or that Sharko could not check — see
+          applyManagedSecretFields for why "could not check" degrades to false
+          rather than hiding the takeover action on a guess.
+        type: boolean
+      connection_managed_by:
+        description: |-
+          ConnectionManagedBy mirrors the managed-clusters.yaml entry's
+          connectionManagedBy field onto the API surface (V2-cleanup-57.2).
+          Empty means Sharko-managed (the default); "user" means the user
+          created and maintains the ArgoCD cluster Secret and Sharko only
+          syncs addon labels onto it. The UI renders a read-only
+          "connection: managed by you" caption off this field.
+        type: string
+      connection_status:
+        type: string
+      connectivity_detail:
+        description: detail for check_pending or check_failed
+        type: string
+      connectivity_status:
+        description: |-
+          Connectivity check fields (V2-cleanup-29). Flat primitives only —
+          computed at the API layer from ArgoCD application state. The models
+          package must not import internal/observations (no import cycle).
+
+          connectivity_status values:
+            "verified_argocd" — ArgoCD ConnectionStatus == "Successful"
+            "verified_check"  — connectivity-check Application is Synced+Healthy
+            "check_pending"   — check Application exists but not yet Synced+Healthy (deploying)
+            "check_failed"    — check Application has honest failure signals (Degraded,
+                                OperationPhase Failed/Error, or Error-type conditions)
+            ""               — nothing known (ArgoCD "Unknown" stands untouched)
+        type: string
+      creds_source:
+        description: |-
+          CredsSource mirrors the managed-clusters.yaml entry's credsSource
+          field (V2-cleanup-60.4): "inline-kubeconfig" (credentials live only in
+          the ArgoCD cluster Secret), "secret-kubeconfig" / "eks-token" (the
+          secrets backend holds them), or "" (record predates the field). The
+          credential-fetch routing (Test / Diagnose / secrets / addon ops) keys
+          off this so inline-registered clusters work under any backend.
+        type: string
+      derived_health_status:
+        description: |-
+          DerivedHealthStatus is the auto-derived Sharko reachability verdict
+          (V2-cleanup-85.4). Unlike SharkoStatus below — which stays empty
+          forever until someone clicks "Test connection" — this field is
+          computed fresh on every read from live ArgoCD state, with NO manual
+          step required. Priority order (first match wins):
+            1. any addon on this cluster is Synced+Healthy in ArgoCD -> "healthy"
+            2. the connectivity-check application is Synced+Healthy  -> "reachable"
+            3. ArgoCD's own connection to the cluster is "Successful" -> "reachable"
+            4. none of the above                                      -> "unknown"
+          The frontend should read this field (not SharkoStatus) to answer
+          "is this cluster healthy" without requiring a manual test click.
+        type: string
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      last_reconcile:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcile'
+        description: |-
+          LastReconcile is the most recent cluster-secret reconciler outcome for
+          this cluster (V2-cleanup-89.4 — reconcile results used to be
+          server-log-only; ArgoCD shows a failed apply, Sharko showed nothing).
+          Computed at read time from clusterreconciler.Reconciler's in-memory
+          per-cluster record — never stored in git. nil when the reconciler
+          hasn't processed this cluster on this server instance yet (fresh
+          startup, a registration PR that hasn't merged, or no reconciler wired
+          in this deployment mode).
+      last_test_at:
+        description: RFC3339
+        type: string
+      managed:
+        description: true if in cluster-addons.yaml
+        type: boolean
+      managed_secret_name:
+        description: |-
+          ManagedSecretName is the "namespace/name" of the real ArgoCD cluster
+          Secret this cluster's page is about (walk day 4 locks, S1). Computed
+          at read time from the reconciler's configured namespace + this
+          cluster's name — see applyManagedSecretFields. Empty when no
+          cluster-secret reconciler is wired in this deployment mode.
+        type: string
+      name:
+        type: string
+      region:
+        type: string
+      role_arn:
+        description: |-
+          RoleARN mirrors the managed-clusters.yaml entry's roleArn field
+          (V2-cleanup-62.2): the per-cluster IAM role to assume when minting
+          EKS tokens (eks-token creds source only). Empty for records that
+          predate the field or clusters that use the connection-level default.
+        type: string
+      secret_path:
+        type: string
+      server_url:
+        description: |-
+          ServerURL is the cluster's ArgoCD-registered API-server URL (V2-cleanup-74.1).
+          Sourced from the matching models.ArgocdCluster.Server — never stored in Git,
+          always populated at read time. The UI's ClusterTypeBadge parses this hostname
+          to classify EKS/AKS/GKE/kind/minikube/self-hosted. Left empty for the
+          hub-local "in-cluster" entry (see ListClusters/GetClusterDetail skip logic).
+        type: string
+      server_version:
+        type: string
+      sharko_status:
+        description: |-
+          Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).
+          Populated when obsStore is available; absent otherwise (omitempty).
+        type: string
+      taken_over:
+        description: |-
+          TakenOver is true when the cluster's ArgoCD connection carries
+          sharko.dev/taken-over-at, i.e. Sharko took it over from another
+          owner. The UI shows "Remove the old labels" only then.
+        type: boolean
+      target_platform:
+        description: |-
+          TargetPlatform is Sharko's auto-detected guess at whether this
+          specific cluster looks like EKS (V2-cleanup-88.1, design L11) —
+          distinct from the server's OWN AWS identity (see
+          GET /api/v1/system/capabilities). Computed at read time from
+          ServerURL and CredsSource, the same way DerivedHealthStatus is
+          computed from live state below — never stored in Git. One of "eks"
+          or "unknown". The register-cluster screen uses this (via the list
+          of already-registered clusters) plus system/capabilities to decide
+          what to ask the user versus what it can already tell them.
+        type: string
+      test_error_code:
+        type: string
+      test_failing:
+        type: boolean
+    type: object
   github_com_MoranWeissman_sharko_internal_models.ClusterAddonsAddonSettings:
     properties:
       createNamespace:
@@ -917,6 +1083,83 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterHealthStats:
+    properties:
+      connected:
+        type: integer
+      failed:
+        type: integer
+      missing_from_argocd:
+        type: integer
+      not_in_git:
+        type: integer
+      total_in_git:
+        type: integer
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcile:
+    properties:
+      applied_revision:
+        description: |-
+          AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL
+          WRITE to this cluster's ArgoCD secret was built from — the
+          generation/observedGeneration pair's "applied" half. Empty until
+          this server instance has ever successfully written this cluster's
+          secret; a check pass never moves it.
+        type: string
+      compared_path:
+        description: |-
+          ComparedPath (P2-C1) is the exact managed-clusters file path this
+          pass read from git.
+        type: string
+      compared_revision:
+        description: |-
+          ComparedRevision (P2-C1) is the full branch head commit SHA the pass
+          that produced this record read git at. Empty when the active git
+          provider cannot say (see clusterreconciler.BranchRevisioner) — never
+          a guessed or stale value.
+        type: string
+      fight_count:
+        description: |-
+          FightCount (P2-D D3) is the number of CONSECUTIVE ticks the connection
+          reconciler's label-fight detector has observed something else revert
+          Sharko's own write on this cluster's self-managed ArgoCD secret — the
+          same counter clusterreconciler.Reconciler.FightCount reads. 0 (the
+          zero value / omitted) means no fight currently in progress, including
+          for every Sharko-managed (non-self-managed) cluster, which has no
+          fight concept at all.
+        type: integer
+      label_drift:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcileLabelDrift'
+        description: V3 G1 — drift detection
+      message:
+        description: plain-English detail; set on failed/skipped
+        type: string
+      outcome:
+        description: '"succeeded" | "failed" | "skipped"'
+        type: string
+      time:
+        description: RFC3339
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcileLabelDrift:
+    properties:
+      added:
+        description: keys in git but not on cluster
+        items:
+          type: string
+        type: array
+      changed:
+        description: keys in both but values differ
+        items:
+          type: string
+        type: array
+      removed:
+        description: keys on cluster but not in git
+        items:
+          type: string
+        type: array
+    type: object
   github_com_MoranWeissman_sharko_internal_models.ClusterResyncLabelDiff:
     properties:
       added:
@@ -948,6 +1191,28 @@ definitions:
         type: string
       status:
         type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ClustersResponse:
+    properties:
+      clusters:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.Cluster'
+        type: array
+      health_stats:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterHealthStats'
+      orphan_registrations:
+        description: |-
+          OrphanRegistrations: ArgoCD cluster Secrets that have no
+          managed-clusters.yaml entry AND no open registration PR. The FE
+          renders these in a dedicated "Cancelled / Orphan Registrations"
+          section with a per-row Delete cluster Secret button.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.OrphanRegistration'
+        type: array
+      pending_registrations:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.PendingRegistration'
+        type: array
     type: object
   github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest:
     properties:
@@ -1029,6 +1294,26 @@ definitions:
       repository:
         type: string
       token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.OrphanRegistration:
+    properties:
+      cluster_name:
+        type: string
+      last_seen_at:
+        type: string
+      server_url:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.PendingRegistration:
+    properties:
+      branch:
+        type: string
+      cluster_name:
+        type: string
+      opened_at:
+        type: string
+      pr_url:
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_models.ProviderConfig:
@@ -1354,8 +1639,22 @@ definitions:
           type: string
         type: array
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AdoptBlocker:
+    properties:
+      id:
+        type: string
+      message:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult:
     properties:
+      blockers:
+        description: |-
+          Blockers lists every reason this cluster cannot be adopted yet.
+          Empty/omitted when nothing blocks it.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptBlocker'
+        type: array
       dry_run:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
       error:
@@ -1369,6 +1668,14 @@ definitions:
       status:
         description: '"success", "partial", "failed", "skipped"'
         type: string
+      unacknowledged_findings:
+        description: |-
+          UnacknowledgedFindings lists the warning ids on this cluster that were
+          not in the request's acknowledged_findings, when that is why this
+          cluster was not adopted.
+        items:
+          type: string
+        type: array
       verification:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
       warnings:
@@ -1376,13 +1683,24 @@ definitions:
           Warnings holds plain-English advisories that do NOT fail the
           adoption — e.g. this cluster's ArgoCD cluster Secret turning out to
           be rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/
-          omitted when there is nothing to warn about.
+          omitted when there is nothing to warn about. Each one has an id to
+          send back in acknowledged_findings.
         items:
-          type: string
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptWarning'
         type: array
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest:
     properties:
+      acknowledged_findings:
+        description: |-
+          AcknowledgedFindings lists the id of every warning the person has
+          read (the ids come back in results[].warnings[].id from a preview).
+          A real adopt (not a dry run) refuses, with nothing written, while any
+          cluster in the request has a warning whose id is not in this list.
+          One id covers that warning on every cluster in the request.
+        items:
+          type: string
+        type: array
       auto_merge:
         type: boolean
       clusters:
@@ -1412,6 +1730,27 @@ definitions:
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult'
         type: array
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AdoptWarning:
+    properties:
+      application_sets:
+        items:
+          type: string
+        type: array
+      applications:
+        items:
+          type: string
+        type: array
+      id:
+        type: string
+      message:
+        type: string
+      title:
+        type: string
+      what_it_means:
+        type: string
+      what_to_do:
+        type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.BatchResult:
     properties:
@@ -2796,6 +3135,12 @@ definitions:
     properties:
       already_owned:
         type: boolean
+      already_waiting:
+        description: |-
+          AlreadyWaiting is true when a take over (or adopt) pull request for
+          this cluster was already open. Git points at it; no second one was
+          opened.
+        type: boolean
       cluster:
         type: string
       dropped_labels:
@@ -2981,6 +3326,30 @@ definitions:
           holds a pointer to where the value lives (S3(a) honesty lock).
         type: string
     type: object
+  internal_api.adoptNeedsAcknowledgementResponse:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+      results:
+        description: Results lists, for each cluster with a warning, its warnings.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult'
+        type: array
+      unacknowledged_findings:
+        description: |-
+          UnacknowledgedFindings is every warning id that still needs to be
+          acknowledged, sorted.
+        items:
+          type: string
+        type: array
+      warnings:
+        description: Warnings is every warning across the clusters, each id once.
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptWarning'
+        type: array
+    type: object
   internal_api.aiAnnotateBlockedResponse:
     properties:
       code:
@@ -3078,6 +3447,33 @@ definitions:
         description: Entries are the matching audit entries, newest first.
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.Entry'
+        type: array
+    type: object
+  internal_api.availableCluster:
+    properties:
+      name:
+        description: Name is the cluster name ArgoCD shows.
+        type: string
+      reachable:
+        description: |-
+          Reachable is ArgoCD's own last word on the connection: true when
+          ArgoCD says Successful, false when it says Failed. Left out when
+          ArgoCD has not said yet.
+        type: boolean
+      secret_name:
+        description: |-
+          SecretName is the Kubernetes name of ArgoCD's connection Secret for
+          this cluster. Left out when Sharko could not read it.
+        type: string
+      server_url:
+        description: ServerURL is the cluster's API server address in ArgoCD.
+        type: string
+    type: object
+  internal_api.availableClustersResponse:
+    properties:
+      clusters:
+        items:
+          $ref: '#/definitions/internal_api.availableCluster'
         type: array
     type: object
   internal_api.catalogFreshnessResponse:
@@ -3263,6 +3659,15 @@ definitions:
         items:
           $ref: '#/definitions/internal_api.catalogVersionEntry'
         type: array
+    type: object
+  internal_api.clusterNotManagedResponse:
+    properties:
+      argocd_known:
+        type: boolean
+      code:
+        type: string
+      error:
+        type: string
     type: object
   internal_api.connectionCheckStatusView:
     properties:
@@ -6456,15 +6861,16 @@ paths:
       - system
   /clusters:
     get:
-      description: Returns all registered clusters with health stats
+      description: |-
+        Returns all registered clusters with health stats, plus the clusters only ArgoCD knows (connection_status "not_in_git", with their ArgoCD labels).
+        Every item carries "adopted" (the ArgoCD connection has Sharko's adopted mark) and "taken_over" (the connection has sharko.dev/taken-over-at), both always sent as true or false.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ClustersResponse'
       security:
       - BearerAuth: []
       summary: List clusters
@@ -6785,10 +7191,10 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: Cluster not found
+          description: Cluster not found. code is not_managed and argocd_known is
+            true when ArgoCD connects to it but Sharko does not manage it
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.clusterNotManagedResponse'
         "500":
           description: Internal error
           schema:
@@ -8444,6 +8850,7 @@ paths:
         Adopts one or more existing ArgoCD clusters under Sharko management.
         Phase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.
         On a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.
+        Every cluster result lists `blockers` (each reason it cannot be adopted yet, as {id, message}) and `warnings` (each thing to read first, as {id, message, title, what_it_means, what_to_do, application_sets, applications}). A real adopt (not dry_run) goes ahead only when the id of every warning on every cluster in the request is in `acknowledged_findings`; otherwise it answers 409 with code `unacknowledged_findings`, the missing ids, and the warnings per cluster, and writes nothing. One id covers that warning on every cluster in the request.
         CLIENTS MUST INSPECT THE RESPONSE BODY. HTTP 200 does NOT mean every cluster was adopted: an adoption in which every single cluster failed also answers 200, and so does one in which every cluster stopped part-way. Read `outcome` — `completed`, `partly_completed` and `failed` — and treat anything other than `completed == total` as work that did not finish. A `partly_completed` cluster was NOT rolled back, so real changes may already be in Git and on the cluster.
       parameters:
       - description: Adoption request
@@ -8480,10 +8887,11 @@ paths:
             additionalProperties: true
             type: object
         "409":
-          description: The repo carries both the old and the new layout (code repo_layout)
+          description: A warning was not acknowledged (code unacknowledged_findings,
+            nothing was written), or the repo carries both the old and the new layout
+            (code repo_layout)
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.adoptNeedsAcknowledgementResponse'
         "502":
           description: Gateway error
           schema:
@@ -8496,34 +8904,29 @@ paths:
       - clusters
   /clusters/available:
     get:
-      description: Lists clusters from the credentials provider and marks which are
-        registered in ArgoCD
+      description: |-
+        Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git and ArgoCD's own in-cluster entry.
+        Each one can be adopted or taken over. reachable is ArgoCD's own connection state and is left out when ArgoCD has not checked yet.
       produces:
       - application/json
       responses:
         "200":
-          description: Available clusters
+          description: Clusters ArgoCD knows that Sharko does not manage
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.availableClustersResponse'
         "401":
           description: Unauthorized
           schema:
             additionalProperties: true
             type: object
         "502":
-          description: Gateway error
-          schema:
-            additionalProperties: true
-            type: object
-        "503":
-          description: Credentials provider not configured
+          description: Sharko could not read ArgoCD or Git
           schema:
             additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Discover available clusters
+      summary: List clusters ArgoCD knows that Sharko does not manage
       tags:
       - clusters
   /clusters/batch:
@@ -10108,6 +10511,39 @@ paths:
       summary: Get providers
       tags:
       - system
+  /providers/clusters:
+    get:
+      description: |-
+        Lists the clusters the credentials backend has sign-in details for, and marks which ones ArgoCD already has.
+        This is what GET /clusters/available used to send. The CLI's batch register --from-provider uses it.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Clusters in the credentials backend
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Credentials provider not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List clusters in the credentials backend
+      tags:
+      - clusters
   /providers/test:
     post:
       consumes:

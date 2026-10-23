@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
 
@@ -99,7 +100,7 @@ func listSharkoOwnedSecretNames(ctx context.Context, k8sClient kubernetes.Interf
 	}
 	out := make(map[string]struct{}, len(list.Items))
 	for _, s := range list.Items {
-		out[s.Name] = struct{}{}
+		out[argosecrets.ClusterNameOf(&s)] = struct{}{}
 	}
 	return out
 }
@@ -117,7 +118,7 @@ func (s *Server) getSecretIfPresent(ctx context.Context, name string) (*corev1.S
 	if !ok {
 		return nil, errNoK8sClient
 	}
-	secret, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	secret, err := argosecrets.GetClusterSecret(ctx, k8sClient, namespace, name)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}

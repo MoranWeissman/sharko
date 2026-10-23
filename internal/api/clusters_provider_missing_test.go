@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -86,7 +87,20 @@ func TestBatchRegisterClusters_NoProvider_DoesNotReturn503(t *testing.T) {
 	}
 }
 
-func TestDiscoverClusters_NoProvider_Returns503(t *testing.T) {
+func TestProviderClusters_NoProvider_Returns503(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/providers/clusters", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assertProviderMissingResponse(t, w, "GET /providers/clusters")
+}
+
+// GET /clusters/available reads ArgoCD now, so it must not need a
+// credentials backend (episode 3 dry run, finding 29).
+func TestDiscoverClusters_NoProvider_IsNot503(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
@@ -94,7 +108,9 @@ func TestDiscoverClusters_NoProvider_Returns503(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	assertProviderMissingResponse(t, w, "GET /clusters/available")
+	if w.Code == http.StatusServiceUnavailable && strings.Contains(w.Body.String(), "provider_not_configured") {
+		t.Fatalf("GET /clusters/available still asks for a credentials backend: %d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestRefreshClusterCredentials_NoProvider_Returns503(t *testing.T) {

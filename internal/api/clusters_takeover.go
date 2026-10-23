@@ -95,6 +95,10 @@ type TakeoverResponse struct {
 	// but had no record of which labels came from the previous owner, and
 	// this call wrote that record back.
 	ProtectionRepaired bool `json:"protection_repaired,omitempty"`
+	// AlreadyWaiting is true when a take over (or adopt) pull request for
+	// this cluster was already open. Git points at it; no second one was
+	// opened.
+	AlreadyWaiting bool `json:"already_waiting,omitempty"`
 
 	Git       *orchestrator.GitResult    `json:"git,omitempty"`
 	DryRun    *orchestrator.DryRunResult `json:"dry_run,omitempty"`
@@ -449,12 +453,18 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 			resp.DroppedLabels = report.LegacyLabels
 		}
 		resp.Message = takeoverPlanMessage(name, preserve, report.LegacyLabels)
+		if gitResult != nil && gitResult.AlreadyWaiting && gitResult.Git != nil {
+			resp.AlreadyWaiting = true
+			resp.Git = gitResult.Git
+			resp.Message += " " + fmt.Sprintf(takeoverPlanAlreadyWaitingFmt, gitResult.Git.PRID, gitResult.Git.PRUrl)
+		}
 		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 		return
 	}
 
 	if gitResult != nil {
 		resp.Git = gitResult.Git
+		resp.AlreadyWaiting = gitResult.AlreadyWaiting
 	}
 
 	// Now the swap. One in-place update on the existing Secret — see
@@ -465,7 +475,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	if swapErr != nil {
 		resp.Status = "partial"
 		resp.Message = fmt.Sprintf(
-			"The pull request adding %s to the fleet was opened, but Sharko could not take ownership of its ArgoCD connection: %v. Nothing was deleted. Fix the problem and run the takeover again — it is safe to repeat.",
+			"The Git side of taking over %s is done, but Sharko could not take ownership of its ArgoCD connection: %v. Nothing was deleted. Fix the problem and run the takeover again — it is safe to repeat.",
 			name, swapErr)
 		audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_partial", Resource: "cluster:" + name})
 		writeJSON(w, http.StatusMultiStatus, resp)
@@ -474,7 +484,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	if !swap.Found {
 		resp.Status = "partial"
 		resp.Message = fmt.Sprintf(
-			"The pull request adding %s to the fleet was opened, but its ArgoCD connection disappeared between the check and the swap. Nothing was deleted. Check the cluster still exists in ArgoCD, then run the takeover again.",
+			"The Git side of taking over %s is done, but its ArgoCD connection disappeared between the check and the swap. Nothing was deleted. Check the cluster still exists in ArgoCD, then run the takeover again.",
 			name)
 		audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_partial", Resource: "cluster:" + name})
 		writeJSON(w, http.StatusMultiStatus, resp)
@@ -490,7 +500,8 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	if swap.Server != "" {
 		resp.Server = swap.Server
 	}
-	resp.Message = takeoverDoneMessage(name, swap.AlreadyOwned, swap.ProtectionRepaired, swap.PreservedLabels, swap.DroppedLabels)
+	resp.Message = takeoverDoneMessage(name, swap.AlreadyOwned, swap.ProtectionRepaired, swap.PreservedLabels, swap.DroppedLabels) +
+		" " + takeoverGitSentence(name, gitResult)
 
 	if s.clusterRecon != nil {
 		s.clusterRecon.Trigger()
@@ -508,6 +519,29 @@ func takeoverLegacyLabelKey(key string) bool {
 		return false
 	}
 	return !takeover.SharkoOwnedLabelKey(key)
+}
+
+// takeoverPlanAlreadyWaitingFmt is added to a dry run's plan when a pull
+// request for this cluster is already open.
+const takeoverPlanAlreadyWaitingFmt = "A pull request for this is already open: #%d, %s. Running the take over for real will not open a second one."
+
+// takeoverGitSentence says, truthfully, where the fleet record in Git
+// stands after a take over. It replaces "Its fleet record is up to date",
+// which was said even while the pull request was still waiting (episode 3
+// dry run, design call 8).
+func takeoverGitSentence(name string, res *orchestrator.TakeoverGitResult) string {
+	switch {
+	case res == nil || res.NothingToWrite || res.Git == nil:
+		return "The fleet record in Git already has it, so no pull request was needed."
+	case res.AlreadyWaiting:
+		return fmt.Sprintf("Taking over %s is already waiting in pull request #%d: %s. Sharko did not open a second one. Merge it to finish.",
+			name, res.Git.PRID, res.Git.PRUrl)
+	case res.Git.Merged:
+		return fmt.Sprintf("The change that adds it to the fleet record in Git was merged: %s.", res.Git.PRUrl)
+	default:
+		return fmt.Sprintf("The pull request that adds it to the fleet record in Git is open: #%d, %s. Merge it to finish.",
+			res.Git.PRID, res.Git.PRUrl)
+	}
 }
 
 func takeoverPlanMessage(name string, preserve bool, legacy map[string]string) string {
@@ -534,7 +568,7 @@ func takeoverDoneMessage(name string, alreadyOwned, protectionRepaired bool, pre
 				"Sharko already owned %s's connection. Its address, its credentials and its labels were not touched — but the note saying which of those labels came from the previous owner was missing, so Sharko wrote it back: %s. That note is what stops a later re-sync taking those labels off.",
 				name, joinList(takeover.SortedKeys(preserved)))
 		}
-		return fmt.Sprintf("Sharko already owned %s's connection, so nothing about it changed. Its fleet record is up to date.", name)
+		return fmt.Sprintf("Sharko already owned %s's connection, so nothing about it changed.", name)
 	}
 	base := fmt.Sprintf("Sharko now owns %s's ArgoCD connection. It kept the same name and the same address, and nothing was deleted.", name)
 	if len(preserved) > 0 {

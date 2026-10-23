@@ -205,8 +205,9 @@ func (c *Client) GetClusterNodes(t *testing.T) map[string]any {
 // Discovery / batch / orphan wrappers
 // ---------------------------------------------------------------------------
 
-// ListAvailableClusters issues GET /api/v1/clusters/available. 503 is
-// returned when no credentials provider is configured (the EKS path).
+// ListAvailableClusters issues GET /api/v1/clusters/available: the
+// clusters ArgoCD knows that Sharko does not manage. It reads ArgoCD and
+// Git, so it does not need a credentials provider.
 func (c *Client) ListAvailableClusters(t *testing.T) (status int, body map[string]any) {
 	t.Helper()
 	resp := c.Do(t, http.MethodGet, "/api/v1/clusters/available", nil)

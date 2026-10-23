@@ -208,7 +208,7 @@ func (m *Manager) RepairOwnedConnection(ctx context.Context, desired *corev1.Sec
 
 	// The live read. Everything from here to the Update is deliberately
 	// I/O-free.
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return RepairOutcome{}, ErrRepairSecretMissing
 	}

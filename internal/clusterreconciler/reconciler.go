@@ -1507,7 +1507,7 @@ func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedCl
 	// observedLive as "nothing to compare"); the label sync below still
 	// runs regardless.
 	var observedLive map[string]string
-	if liveSecret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{}); getErr == nil {
+	if liveSecret, getErr := argosecrets.GetClusterSecret(ctx, r.deps.ArgoClient, r.namespace, entry.Name); getErr == nil {
 		observedLive = liveSecret.Labels
 		if observedLive == nil {
 			// The Secret exists but currently carries NO labels at all — a
@@ -1769,7 +1769,7 @@ func (r *Reconciler) selfHealManagedCluster(ctx context.Context, name string, de
 	// label must also still be present (the exact regression this story
 	// guards). If either check fails we report the truth, never a false
 	// "corrected".
-	fresh, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	fresh, getErr := argosecrets.GetClusterSecret(ctx, r.deps.ArgoClient, r.namespace, name)
 	if getErr != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] managed cluster self-heal post-write verify read failed",
@@ -1971,7 +1971,7 @@ func (r *Reconciler) ResyncClusterLabels(ctx context.Context, name string) (Resy
 	// entirely by the reused primitive below, not by anything here.
 	var before, beforeAnnotations map[string]string
 	secretExists := false
-	if secret, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{}); getErr == nil {
+	if secret, getErr := argosecrets.GetClusterSecret(ctx, r.deps.ArgoClient, r.namespace, name); getErr == nil {
 		before = secret.Labels
 		beforeAnnotations = secret.Annotations
 		secretExists = true
@@ -2084,7 +2084,7 @@ func annotationsOf(secret *corev1.Secret) map[string]string {
 // mutation later in the very same tick).
 func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
-	fresh, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	fresh, getErr := argosecrets.GetClusterSecret(ctx, r.deps.ArgoClient, r.namespace, name)
 	if getErr != nil {
 		if apierrors.IsNotFound(getErr) {
 			log.Info("[clusterreconciler] registration-pending Secret already gone before annotation clear — nothing to do",
@@ -2182,7 +2182,11 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 }
 
 // listManagedSecrets fetches all sharko-labeled cluster Secrets from the
-// argocd namespace as a name→Secret map. Filtered by
+// argocd namespace as a cluster name→Secret map. The key is the cluster
+// name ArgoCD shows (the `name` field inside the Secret), NOT the Secret's
+// Kubernetes name — `argocd cluster add` names Secrets
+// cluster-<host>-<hash>, and those must still line up with the cluster's
+// entry in git (episode 3 dry run, finding 5). Filtered by
 // app.kubernetes.io/managed-by=sharko so externally-owned Secrets are
 // invisible to the reconciler — the cornerstone of the ownership model
 // (design doc §9: "without sharko label → never touched").
@@ -2196,7 +2200,7 @@ func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1
 	out := make(map[string]*corev1.Secret, len(list.Items))
 	for i := range list.Items {
 		s := &list.Items[i]
-		out[s.Name] = s
+		out[argosecrets.ClusterNameOf(s)] = s
 	}
 	return out, nil
 }
@@ -2213,7 +2217,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// Defensive: a same-name Secret may already exist without our label
 	// (operator-created, or adopted-by-another-tool). The list step
 	// filtered those out, so we re-check via Get before we Create.
-	existing, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{})
+	existing, getErr := argosecrets.GetClusterSecret(ctx, r.deps.ArgoClient, r.namespace, entry.Name)
 	if getErr != nil && !apierrors.IsNotFound(getErr) {
 		stats.Errors++
 		log.Error("[clusterreconciler] pre-create Get failed — skipping cluster",
@@ -2480,7 +2484,9 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 		return
 	}
 
-	if err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+	// Delete by the Secret's own Kubernetes name, which can differ from
+	// the cluster name (cluster-<host>-<hash>).
+	if err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Delete(ctx, cached.Name, metav1.DeleteOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Already gone (concurrent delete by an operator). Idempotent.
 			log.Info("[clusterreconciler] orphan Secret already deleted",

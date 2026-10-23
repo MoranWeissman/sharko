@@ -43,7 +43,7 @@ import (
 //
 // Adding a route means bumping this by hand. That is the point — the bump is
 // the moment somebody looks at the new endpoint.
-const wantRegisteredRoutes = 178
+const wantRegisteredRoutes = 179
 
 // wantMutatingHandlers is the EXACT number of distinct handler functions
 // registered under POST/PUT/PATCH/DELETE. Same rule: exact, and a change here

@@ -2,10 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/takeover"
 )
 
 // adoptV4Git returns a mock repo that already looks like a v4 repo (the
@@ -35,7 +37,8 @@ func TestAdoptClusters_V4_HappyPath_WritesBothFilesAndSwapsOwnership(t *testing.
 	orch.SetApplicationSetManager(newFakeAppSetManager())
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		Clusters: []string{"prod-eu"},
+		AcknowledgedFindings: []string{"secret-owner"},
+		Clusters:             []string{"prod-eu"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -49,9 +52,9 @@ func TestAdoptClusters_V4_HappyPath_WritesBothFilesAndSwapsOwnership(t *testing.
 	}
 	// An unclaimed connection is no longer a silent pass (task #150): the
 	// preflight warns that nobody claims it and asks the human to confirm
-	// nothing else manages it. The adopt door has no acknowledgment
-	// protocol — it proceeds and carries the warning on the result.
-	if len(cr.Warnings) != 1 || !strings.Contains(cr.Warnings[0], "Nobody has claimed") {
+	// nothing else manages it. The request acknowledges that warning by
+	// its id, so the write goes ahead and the warning rides along.
+	if len(cr.Warnings) != 1 || !strings.Contains(cr.Warnings[0].Message, "Nobody has claimed") {
 		t.Errorf("expected exactly the confirm-nobody-manages warning to ride along, got %v", cr.Warnings)
 	}
 
@@ -161,7 +164,8 @@ func TestAdoptClusters_V4_WarningSurfacesButProceeds(t *testing.T) {
 	orch.SetApplicationSetManager(newFakeAppSetManager())
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		Clusters: []string{"prod-eu"},
+		AcknowledgedFindings: []string{"secret-owner"},
+		Clusters:             []string{"prod-eu"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -173,12 +177,15 @@ func TestAdoptClusters_V4_WarningSurfacesButProceeds(t *testing.T) {
 	if len(cr.Warnings) == 0 {
 		t.Fatal("expected the foreign-owner warning to surface on the result")
 	}
-	joined := strings.Join(cr.Warnings, " | ")
+	msgs := []string{}
+	for _, w := range cr.Warnings {
+		msgs = append(msgs, w.Message)
+	}
+	joined := strings.Join(msgs, " | ")
 	if !strings.Contains(joined, "flux") {
 		t.Errorf("expected the warning to name the foreign owner, got: %q", joined)
 	}
-	// No acknowledged_findings protocol on this door — the write proceeded
-	// on its own, which is the point of the assertion above.
+	// The warning was acknowledged by id, so the write went ahead.
 	if _, ok := git.files[V4ManagedClustersPath]; !ok {
 		t.Error("a warned-but-ready adoption must still write")
 	}
@@ -222,6 +229,94 @@ func TestAdoptClusters_V4_RivalManagedByBlocks(t *testing.T) {
 	}
 	if len(asm.takenOver) != 0 {
 		t.Error("a blocked adoption must not swap ArgoCD ownership")
+	}
+	// Every reason is listed, by id, not only the summary (finding 4).
+	if len(cr.Blockers) != 1 || cr.Blockers[0].ID != takeover.FindingSecretOwner {
+		t.Fatalf("blockers = %+v, want exactly the %s blocker", cr.Blockers, takeover.FindingSecretOwner)
+	}
+	if !strings.Contains(cr.Blockers[0].Message, "terraform") {
+		t.Errorf("the blocker should say who owns it, got %q", cr.Blockers[0].Message)
+	}
+}
+
+// TestAdoptClusters_V4_RefusesUntilEveryWarningIsAcknowledged pins call 5
+// of the episode 3 fixes: a real adopt with a warning that was not
+// acknowledged writes nothing and names the missing ids.
+func TestAdoptClusters_V4_RefusesUntilEveryWarningIsAcknowledged(t *testing.T) {
+	git := adoptV4Git()
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "prod-eu", Server: "https://prod-eu.example.com"},
+	}
+	asm := newMockArgoSecretManager()
+	asm.secretDetails = map[string]ClusterSecretDetail{
+		"prod-eu": {Found: true, Server: "https://prod-eu.example.com"},
+	}
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+	orch.SetApplicationSetManager(newFakeAppSetManager())
+
+	for _, acked := range [][]string{nil, {"some-other-id"}} {
+		_, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+			Clusters:             []string{"prod-eu"},
+			AcknowledgedFindings: acked,
+		})
+		var needsAck *AdoptNeedsAcknowledgementError
+		if !errors.As(err, &needsAck) {
+			t.Fatalf("acked=%v: want AdoptNeedsAcknowledgementError, got %v", acked, err)
+		}
+		if len(needsAck.Missing) != 1 || needsAck.Missing[0] != takeover.FindingSecretOwner {
+			t.Errorf("acked=%v: missing = %v, want [%s]", acked, needsAck.Missing, takeover.FindingSecretOwner)
+		}
+		if len(needsAck.Results) != 1 || len(needsAck.Results[0].Warnings) != 1 ||
+			needsAck.Results[0].Warnings[0].ID != takeover.FindingSecretOwner || needsAck.Results[0].Warnings[0].Title == "" {
+			t.Errorf("acked=%v: results must carry the warning with id and title: %+v", acked, needsAck.Results)
+		}
+		want := "Sharko did not adopt anything. Read each warning and acknowledge it first — not acknowledged yet: secret-owner"
+		if err.Error() != want {
+			t.Errorf("error text = %q, want %q", err.Error(), want)
+		}
+	}
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
+		t.Error("an unacknowledged adoption must not write anything")
+	}
+	if len(asm.takenOver) != 0 {
+		t.Error("an unacknowledged adoption must not swap ArgoCD ownership")
+	}
+
+	// A dry run needs no acknowledgement and shows the warning by id.
+	res, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{Clusters: []string{"prod-eu"}, DryRun: true})
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	if len(res.Results[0].Warnings) != 1 || res.Results[0].Warnings[0].ID != takeover.FindingSecretOwner {
+		t.Errorf("dry run warnings = %+v", res.Results[0].Warnings)
+	}
+}
+
+// TestAdoptSingleClusterV4_WarningThatAppearsLateStillStops covers the
+// second check: a warning that was not there when AdoptClusters first
+// looked still stops that cluster before anything is written.
+func TestAdoptSingleClusterV4_WarningThatAppearsLateStillStops(t *testing.T) {
+	git := adoptV4Git()
+	asm := newMockArgoSecretManager()
+	asm.secretDetails = map[string]ClusterSecretDetail{
+		"prod-eu": {Found: true, Server: "https://prod-eu.example.com"},
+	}
+	orch := New(nil, nil, newMockArgocd(), git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+	orch.SetApplicationSetManager(newFakeAppSetManager())
+
+	cr := orch.adoptSingleClusterV4(context.Background(), "prod-eu", "https://prod-eu.example.com", AdoptClustersRequest{})
+	if cr.Status != "failed" || len(cr.UnacknowledgedFindings) != 1 || cr.UnacknowledgedFindings[0] != takeover.FindingSecretOwner {
+		t.Fatalf("got status %q, unacknowledged %v", cr.Status, cr.UnacknowledgedFindings)
+	}
+	want := "Not adopted: there is a warning you have not acknowledged yet (secret-owner). Read it, then adopt again and acknowledge it."
+	if cr.Error != want {
+		t.Errorf("error = %q, want %q", cr.Error, want)
+	}
+	if _, ok := git.files[V4ManagedClustersPath]; ok {
+		t.Error("nothing may be written")
 	}
 }
 
@@ -308,7 +403,8 @@ func TestAdoptClusters_V4_Batch_OneBlockedOneSucceeds(t *testing.T) {
 	orch.SetApplicationSetManager(newFakeAppSetManager())
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		Clusters: []string{"ready-cluster", "blocked-cluster"},
+		AcknowledgedFindings: []string{"secret-owner"},
+		Clusters:             []string{"ready-cluster", "blocked-cluster"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

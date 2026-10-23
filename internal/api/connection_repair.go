@@ -53,7 +53,6 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -398,7 +397,7 @@ func (s *Server) handleRepairConnection(w http.ResponseWriter, r *http.Request) 
 
 	// The live Secret, for classifying the mode only. It is NEVER used to build
 	// what gets written.
-	live, getErr := client.CoreV1().Secrets(ns).Get(ctx, cluster, metav1.GetOptions{})
+	live, getErr := argosecrets.GetClusterSecret(ctx, client, ns, cluster)
 	liveFound := true
 	switch {
 	case apierrors.IsNotFound(getErr):
@@ -819,7 +818,7 @@ func (s *Server) freshComparisonAfterRepair(
 		}))
 	}
 
-	live, getErr := client.CoreV1().Secrets(ns).Get(ctx, cluster, metav1.GetOptions{})
+	live, getErr := argosecrets.GetClusterSecret(ctx, client, ns, cluster)
 	liveFound := true
 	switch {
 	case apierrors.IsNotFound(getErr):

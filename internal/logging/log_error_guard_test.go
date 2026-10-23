@@ -137,7 +137,16 @@ import (
 // managed-clusters.yaml text a register writes, so the preview and the pull
 // request use the same builder. It makes no log call of any kind and does
 // not search for credential characters.
-const wantSweptGoFiles = 438
+//
+// 441 since the episode 3 dry run fixes (story B) added three files.
+// internal/argosecrets/lookup.go finds ArgoCD's connection Secret by the
+// cluster name inside it. internal/orchestrator/adopt_findings.go builds
+// adopt's warnings and blockers. Neither makes a log call of any kind.
+// internal/api/adopt_finish.go finishes an adopt when its pull request
+// merges and logs fixed-text messages with the cluster name, the pull
+// request number and the error. None of the three searches for credential
+// characters.
+const wantSweptGoFiles = 441
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -161,6 +170,14 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/ai/memory.go", fn: "load", msg: "failed to parse agent memory", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/ai/memory.go", fn: "save", msg: "failed to marshal agent memory", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/ai/memory.go", fn: "save", msg: "failed to save agent memory", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: adopted, but the waiting mark could not be taken off", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: could not read the cluster's ArgoCD connection", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: pull request closed, but the waiting mark could not be taken off", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: pull request merged, but Sharko could not take ownership of the ArgoCD connection — run adopt again", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: took ownership, but could not mark the connection adopted", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/clusters.go", fn: "argocdKnowsCluster", msg: "[cluster-get] could not ask ArgoCD whether it knows the cluster", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/clusters_discover.go", fn: "handleDiscoverClusters", msg: "[cluster-discover] could not read ArgoCD's cluster Secrets, sending the list without secret names", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/takeover.go", fn: "findOpenJoinPR", msg: "take over: could not list open pull requests — carrying on", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addon_secret_single.go", fn: "handleRefreshAddonValuesSecret", msg: "[secrets] could not check one addon-values secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addon_secret_single.go", fn: "handleSyncAddonValuesSecret", msg: "[secrets] could not sync one addon-values secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addons_write.go", fn: "handleAddAddon", msg: "smart-values pre-fetch failed; falling back to minimal stub", carriers: "ident:ferr", verdict: "sink"},

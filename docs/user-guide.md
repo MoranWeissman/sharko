@@ -145,11 +145,18 @@ Sharko supports two modes for onboarding clusters: **direct registration** (abov
 
 #### Discover Available Clusters
 
-Find clusters that exist in the configured secrets provider but are not yet registered:
+Find clusters ArgoCD already connects to that Sharko does not manage yet:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
+```
+
+Find clusters in the configured secrets provider, and which ones ArgoCD already has:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/providers/clusters
 ```
 
 Sharko only reads from its configured secrets backend and cross-references ArgoCD here — it never
@@ -651,11 +658,18 @@ Clusters are registered sequentially. Each cluster gets its own PR. If one clust
 
 ### Discover Available Clusters
 
-Find clusters that exist in the configured secrets provider but are not yet registered:
+Find clusters ArgoCD already connects to that Sharko does not manage yet:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
+```
+
+Find clusters in the configured secrets provider, and which ones ArgoCD already has:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/providers/clusters
 ```
 
 ---

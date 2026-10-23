@@ -216,3 +216,82 @@ func TestAdoptDryRun_IsStillASuccess(t *testing.T) {
 		t.Errorf("a dry run previewed successfully and the command still exits non-zero: %v", err)
 	}
 }
+
+// `sharko adopt` sends --acknowledge as acknowledged_findings, and on the
+// server's 409 prints each warning with its id and says how to go ahead.
+// --yes alone does not get past a warning (episode 3 fixes, call 5).
+func TestAdopt_WarningsNeedAcknowledge(t *testing.T) {
+	var sent map[string]any
+	startCLITestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		sent = nil
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		w.Header().Set("Content-Type", "application/json")
+		if _, ok := sent["acknowledged_findings"]; !ok {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":                   "Sharko did not adopt anything.",
+				"code":                    "unacknowledged_findings",
+				"unacknowledged_findings": []string{"appset-deletion-safety", "secret-owner"},
+				"results": []map[string]any{{"name": "c0", "status": "skipped", "warnings": []map[string]any{
+					{"id": "secret-owner", "title": "Who owns the connection", "message": "Nobody has claimed it."},
+					{"id": "appset-deletion-safety", "message": "One ApplicationSet deletes what it installed."},
+				}}},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{"name": "c0", "status": "success"}}})
+	})
+
+	resetFlags(adoptCmd)
+	setFlags(t, adoptCmd, map[string]string{"yes": "true"})
+	out, err := captureStdoutT(t, func() error { return adoptCmd.RunE(adoptCmd, []string{"c0"}) })
+	if err == nil {
+		t.Fatal("--yes alone must not get past a warning")
+	}
+	for _, want := range []string{
+		"Sharko did not adopt anything. There are warnings to read first.",
+		"- [secret-owner] Who owns the connection: Nobody has claimed it.",
+		"- [appset-deletion-safety] One ApplicationSet deletes what it installed.",
+		"run the same command again with --acknowledge appset-deletion-safety,secret-owner",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output is missing %q:\n%s", want, out)
+		}
+	}
+
+	resetFlags(adoptCmd)
+	setFlags(t, adoptCmd, map[string]string{"yes": "true", "acknowledge": "appset-deletion-safety,secret-owner"})
+	out, err = captureStdoutT(t, func() error { return adoptCmd.RunE(adoptCmd, []string{"c0"}) })
+	if err != nil {
+		t.Fatalf("acknowledged adopt: %v\n%s", err, out)
+	}
+	got, _ := sent["acknowledged_findings"].([]any)
+	if len(got) != 2 || got[0] != "appset-deletion-safety" || got[1] != "secret-owner" {
+		t.Errorf("acknowledged_findings sent = %v", sent["acknowledged_findings"])
+	}
+}
+
+// A dry run prints the warnings and says "would adopt", never "adopted".
+func TestAdoptDryRun_PrintsWarningsAndSaysWouldAdopt(t *testing.T) {
+	startCLITestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{{
+			"name": "c0", "status": "success",
+			"warnings": []map[string]any{{"id": "secret-owner", "message": "Nobody has claimed it."}},
+		}}})
+	})
+	resetFlags(adoptCmd)
+	setFlags(t, adoptCmd, map[string]string{"dry-run": "true"})
+	out, err := captureStdoutT(t, func() error { return adoptCmd.RunE(adoptCmd, []string{"c0"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "c0: would adopt") || strings.Contains(out, "c0: adopted") {
+		t.Errorf("a dry run must say \"would adopt\":\n%s", out)
+	}
+	if !strings.Contains(out, "- [secret-owner] Nobody has claimed it.") {
+		t.Errorf("a dry run must print the warnings:\n%s", out)
+	}
+}

@@ -397,9 +397,10 @@ func TestEnsure_CreateRecordsCorrectActions(t *testing.T) {
 	}
 
 	actions := client.Actions()
-	// Expect: get (not found) + create
-	if len(actions) < 2 {
-		t.Fatalf("expected at least 2 actions, got %d", len(actions))
+	// Expect: get (not found) + list (look for the cluster by its ArgoCD
+	// name) + create
+	if len(actions) < 3 {
+		t.Fatalf("expected at least 3 actions, got %d", len(actions))
 	}
 	verbs := make([]string, len(actions))
 	for i, a := range actions {
@@ -408,8 +409,11 @@ func TestEnsure_CreateRecordsCorrectActions(t *testing.T) {
 	if verbs[0] != "get" {
 		t.Errorf("action[0] = %q, want get", verbs[0])
 	}
-	if verbs[1] != "create" {
-		t.Errorf("action[1] = %q, want create", verbs[1])
+	if verbs[1] != "list" {
+		t.Errorf("action[1] = %q, want list", verbs[1])
+	}
+	if verbs[2] != "create" {
+		t.Errorf("action[2] = %q, want create", verbs[2])
 	}
 }
 
