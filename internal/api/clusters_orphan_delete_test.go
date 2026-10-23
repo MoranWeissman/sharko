@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,12 +14,15 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -262,19 +266,12 @@ func TestHandleDeleteOrphanCluster_SuccessRealOrphan(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Errorf("expected 1 ArgoCD DELETE call, got %d", got)
+	// R8: the Secret is deleted by its own name, never through ArgoCD by
+	// server address (two connections can share one address).
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Errorf("deleted through ArgoCD by server address (%d calls)", got)
 	}
-	// Go's net/http unescapes the path before exposing it on r.URL.Path,
-	// so we assert on the unescaped form (the wire-level form is
-	// url.PathEscape(server) — verified separately by the argocd client
-	// unit tests). Either form is acceptable to net/http; a literal
-	// https://... in the path is unusual but legal. What matters is the
-	// server URL appears verbatim and the DELETE fired.
-	last := argo.deleteCallURL.Load().(string)
-	if last == "" || !strings.Contains(last, "kind-orphan.local:6443") {
-		t.Errorf("unexpected DELETE path: %q", last)
-	}
+	assertSecretGone(t, k8s, "kind-orphan")
 	_ = url.PathEscape // keep the import if a future test wants the escaped form
 }
 
@@ -382,19 +379,18 @@ func TestHandleDeleteOrphanCluster_NotFoundInArgoCD(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteOrphanCluster_ArgocdDeleteErrorPropagates(t *testing.T) {
-	// The cluster IS an orphan — but the ArgoCD DELETE itself errors.
-	// The handler must surface a 5xx (upstream-error path), not silently
+func TestHandleDeleteOrphanCluster_SecretDeleteErrorPropagates(t *testing.T) {
+	// The cluster IS an orphan — but the Secret delete itself errors. The
+	// handler must surface a 5xx (upstream-error path), not silently
 	// pretend success.
-	//
-	// V125-1-8.2 — the test reaches the DELETE step only when the new
-	// ownership-label gate accepts the Secret, so seed it with the
-	// sharko label.
 	argo := newStubArgoSrv(t, []map[string]interface{}{
 		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
-	}, http.StatusInternalServerError)
+	}, http.StatusOK)
 	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
-	k8s := orphanK8sClient(orphanK8sSecret("kind-orphan", true))
+	k8s := orphanK8sClient(orphanK8sSecret("kind-orphan", true)).(*fake.Clientset)
+	k8s.PrependReactor("delete", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("etcd unavailable")
+	})
 	_, router := orphanTestServer(t, gp, argo.URL, k8s)
 
 	w := httptest.NewRecorder()
@@ -403,8 +399,76 @@ func TestHandleDeleteOrphanCluster_ArgocdDeleteErrorPropagates(t *testing.T) {
 	if w.Code < 500 || w.Code > 599 {
 		t.Fatalf("expected 5xx upstream error, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Errorf("expected 1 ArgoCD DELETE call (which errored), got %d", got)
+}
+
+// R8: a Secret that changed between the checks and the delete is not
+// deleted. The answer is a 409 in plain words.
+func TestHandleDeleteOrphan_SecretChangedInBetween_Refuses409(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	sec := orphanK8sSecret("kind-orphan", true)
+	sec.UID = "uid-checked"
+	sec.ResourceVersion = "5"
+	k8s := orphanK8sClient(sec).(*fake.Clientset)
+	var gotPre *metav1.Preconditions
+	k8s.PrependReactor("delete", "secrets", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		gotPre = a.(k8stesting.DeleteAction).GetDeleteOptions().Preconditions
+		return true, nil, apierrors.NewConflict(corev1.Resource("secrets"), "kind-orphan", errors.New("the object has been modified"))
+	})
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	want := `Sharko did not delete the ArgoCD connection for cluster "kind-orphan": it changed while Sharko was checking it. Nothing was deleted. Look at it again, then try again.`
+	if got, _ := decodeMap(t, w)["error"].(string); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+	if gotPre == nil || gotPre.UID == nil || *gotPre.UID != "uid-checked" || gotPre.ResourceVersion == nil || *gotPre.ResourceVersion != "5" {
+		t.Fatalf("the delete did not carry the checked Secret's UID and version: %+v", gotPre)
+	}
+}
+
+// R1: a connection with a waiting mark is never discarded, even when it
+// also carries an old registration-pending mark.
+func TestHandleDeleteOrphan_WaitingMark_Refuses409(t *testing.T) {
+	for _, mark := range argosecrets.PendingPRMarks {
+		t.Run(mark, func(t *testing.T) {
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+			}, http.StatusOK)
+			sec := orphanK8sSecret("kind-orphan", true)
+			sec.Annotations[mark] = "4"
+			k8s := orphanK8sClient(sec)
+			_, router := orphanTestServer(t, &orphanFakeGP{managedYAML: []byte("clusters: []")}, argo.URL, k8s)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+			if w.Code != http.StatusConflict {
+				t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
+			}
+			want := `Sharko will not delete the ArgoCD connection for cluster "kind-orphan": a pull request still has to finish with it. It stays as it is.`
+			if got, _ := decodeMap(t, w)["error"].(string); got != want {
+				t.Fatalf("error = %q, want %q", got, want)
+			}
+			if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "kind-orphan", metav1.GetOptions{}); err != nil {
+				t.Fatalf("the marked Secret was deleted: %v", err)
+			}
+			// The leftovers list leaves it out too.
+			if names := listSharkoOwnedSecretNames(context.Background(), k8s, "argocd"); len(names) != 0 {
+				t.Fatalf("the leftovers list offers a marked connection: %v", names)
+			}
+		})
+	}
+}
+
+func assertSecretGone(t *testing.T, k8s kubernetes.Interface, name string) {
+	t.Helper()
+	if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("Secret %q is still there: %v", name, err)
 	}
 }
 
@@ -581,15 +645,10 @@ func TestHandleDeleteOrphan_LabeledSecret_DeletesAsBeforeShipped(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 (labeled Secret deletes as before), got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Errorf("expected 1 ArgoCD DELETE call (gate passed), got %d", got)
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Errorf("deleted through ArgoCD by server address (%d calls)", got)
 	}
-	// Verify it was the right URL — defence-in-depth in case a future
-	// refactor accidentally targets the wrong cluster after the gate.
-	last := argo.deleteCallURL.Load().(string)
-	if last == "" || !strings.Contains(last, "kind-owned.local:6443") {
-		t.Errorf("unexpected DELETE path: %q", last)
-	}
+	assertSecretGone(t, k8s, "kind-owned")
 }
 
 func TestHandleDeleteOrphan_NoK8sClient_Returns503(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -194,8 +195,13 @@ func TestDiscardOrphan_ArgocdAddNamedSecret(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Fatalf("want 1 ArgoCD DELETE, got %d", got)
+	// R8: the delete goes by the Secret's own name, never through ArgoCD
+	// by server address.
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Fatalf("deleted through ArgoCD by server address (%d calls)", got)
+	}
+	if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), addedSecretName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Secret %s is still there: %v", addedSecretName, err)
 	}
 }
 
