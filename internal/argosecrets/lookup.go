@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"sort"
 	"strings"
 
@@ -142,14 +143,28 @@ func (m *Manager) GetClusterSecret(ctx context.Context, clusterName string) (*co
 // Kubernetes name of its Secret. A cluster name that two Secrets share is
 // left out, because Sharko will not guess which one is meant.
 func (m *Manager) ClusterSecretNames(ctx context.Context) (map[string]string, error) {
+	names, _, err := m.ClusterSecretIndex(ctx)
+	return names, err
+}
+
+// ClusterSecretIndex reads ArgoCD's cluster Secrets once. names is what
+// ClusterSecretNames returns. registering holds the cluster names (as
+// ArgoCD shows them) whose Secret carries the registration-pending mark:
+// a register whose pull request has not merged yet (EP3 dry run round R,
+// R7).
+func (m *Manager) ClusterSecretIndex(ctx context.Context) (names map[string]string, registering map[string]bool, err error) {
 	list, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: LabelSecretType + "=cluster"})
 	if err != nil {
-		return nil, fmt.Errorf("listing ArgoCD cluster Secrets in namespace %q: %w", m.namespace, err)
+		return nil, nil, fmt.Errorf("listing ArgoCD cluster Secrets in namespace %q: %w", m.namespace, err)
 	}
 	out := make(map[string]string, len(list.Items))
+	registering = map[string]bool{}
 	shared := map[string]bool{}
 	for i := range list.Items {
 		name := ClusterNameOf(&list.Items[i])
+		if _, pending := models.RegistrationPendingValue(list.Items[i].Annotations); pending {
+			registering[name] = true
+		}
 		if _, seen := out[name]; seen {
 			shared[name] = true
 			continue
@@ -159,5 +174,5 @@ func (m *Manager) ClusterSecretNames(ctx context.Context) (map[string]string, er
 	for name := range shared {
 		delete(out, name)
 	}
-	return out, nil
+	return out, registering, nil
 }

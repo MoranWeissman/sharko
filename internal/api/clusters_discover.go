@@ -59,7 +59,7 @@ func reachableFromConnectionState(state string) *bool {
 // handleDiscoverClusters godoc
 //
 // @Summary List clusters ArgoCD knows that Sharko does not manage
-// @Description Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git and ArgoCD's own in-cluster entry.
+// @Description Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git, ArgoCD's own in-cluster entry, and the ones being registered (an open register pull request, or a connection with the registration-pending mark).
 // @Description Each one can be adopted or taken over. reachable is ArgoCD's own connection state and is left out when ArgoCD has not checked yet.
 // @Tags clusters
 // @Produce json
@@ -99,10 +99,22 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	// Secret names come from one list of ArgoCD's cluster Secrets. When
 	// that cannot be read the list still goes out, without the names.
 	var secretNames map[string]string
+	var registering map[string]bool
 	if s.argoSecretManager != nil {
-		if secretNames, err = s.argoSecretManager.ClusterSecretNames(r.Context()); err != nil {
+		if secretNames, registering, err = s.argoSecretManager.ClusterSecretIndex(r.Context()); err != nil {
 			slog.Warn("[cluster-discover] could not read ArgoCD's cluster Secrets, sending the list without secret names", "error", err)
-			secretNames = nil
+			secretNames, registering = nil, nil
+		}
+	}
+	// A cluster whose register pull request is still open is not
+	// available: it shows in the pending list, and adopt or take over
+	// would open a second pull request for it (EP3 dry run round R, R7).
+	for _, p := range resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix) {
+		if p.Operation == models.PendingOperationRegister {
+			if registering == nil {
+				registering = map[string]bool{}
+			}
+			registering[p.ClusterName] = true
 		}
 	}
 
@@ -112,6 +124,9 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		if _, isManaged := managed[c.Name]; isManaged {
+			continue
+		}
+		if registering[c.Name] {
 			continue
 		}
 		out = append(out, availableCluster{
