@@ -147,7 +147,7 @@ func (s *Server) listArgoClustersOrFail(w http.ResponseWriter, r *http.Request, 
 	}
 	// PUBLIC BOUNDARY. err can be a *url.Error carrying the full ArgoCD
 	// base URL, so the answer is the classified sentence, never err's text.
-	slog.Error("["+logTag+"] listing ArgoCD clusters failed", "step", "list-argocd-clusters")
+	slog.Error("listing ArgoCD clusters failed", "handler", logTag, "step", "list-argocd-clusters")
 	writeError(w, http.StatusBadGateway, argoListFailureSentence(argoReadClusters, err))
 	return nil, false
 }
