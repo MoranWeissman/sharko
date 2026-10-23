@@ -15,9 +15,12 @@ func init() {
 var testClusterCmd = &cobra.Command{
 	Use:   "test-cluster <name>",
 	Short: "Test connectivity to a cluster",
-	Long: `Test connectivity to a cluster. Verifies that Sharko can reach the
-cluster's Kubernetes API using the credentials stored in the secrets
-provider (a secret create/read/delete round-trip).`,
+	Long: `Check that Sharko can reach the cluster's Kubernetes API.
+
+Sharko uses the connection it has for that cluster. That is the one in your
+secrets provider, or, for a cluster whose connection ArgoCD holds, the one
+stored in ArgoCD. It makes a small test secret on the cluster, reads it back
+and deletes it.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]

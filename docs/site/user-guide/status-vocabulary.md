@@ -19,7 +19,8 @@ warning (Not in Git) at the same time.
 
 Shown on: Clusters table and cards, Dashboard cluster cards, the Clusters
 stat cards, and the Clusters legend. This is ArgoCD's own connection to the
-cluster.
+cluster. The legend on the Clusters page writes out the meaning of every
+name below, so you do not need to hover over anything.
 
 | Name | Color | Meaning |
 |------|-------|---------|
@@ -27,7 +28,7 @@ cluster.
 | **Connecting…** | Neutral | Waiting for ArgoCD's first connection result — normal for about a minute after registering. |
 | **Not checked yet** | Neutral | ArgoCD only checks a cluster once something is deployed to it, and nothing is deployed here yet. Enable an addon and ArgoCD will check the connection. |
 | **Not connected** | Amber | ArgoCD has no connection for this cluster at all. It may be unreachable from the hub (common for local or kind clusters), or its registration didn't finish. Check the cluster is reachable, then re-run Test connection. |
-| **Not managed** | Amber | In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons. |
+| **Available to manage** | Indigo | In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons. It has its own color because it is an offer, not a fault. |
 | **Disconnected** | Red | ArgoCD tried to reach this cluster and failed. |
 
 "Not connected" and "Connecting…" look similar but mean different things:
@@ -38,10 +39,21 @@ is going to resolve it on its own — go check reachability and re-test. **Disco
 (red) is one step further still: ArgoCD had a connection and *tried* to reach the
 cluster, and that attempt failed.
 
-Each cluster row shows **one composite status pill**. The pill shows the
-worst of the cluster's status parts (ArgoCD connection, deploy check,
-Sharko test); click it for the full breakdown. Worst-first order:
-**problem → attention → in progress → unknown → good**.
+Each cluster row shows **one status pill**. The pill shows the worst of the
+cluster's three status lines. Click it and the popover always lists the same
+three lines:
+
+| Line | What it says |
+|------|--------------|
+| **ArgoCD → cluster** | The connection state from the table above, with its meaning. |
+| **Deploy check** | **Passed** ("A small test app was deployed to this cluster and it worked."), **Running…** ("The deploy check is still rolling out — usually under a minute."), **Failed** ("The test workload could not be deployed to this cluster."), or **Not run** ("No deploy check has run for this cluster."). |
+| **Sharko → cluster** | **Reachable** ("Sharko can reach this cluster directly."), **Test failing** ("Sharko's last direct connection test failed."), or **Not run** ("Sharko has not tested this cluster yet. Use Test connection to run it."). |
+
+A line that says **Not run** is only shown for information. It never changes
+the color of the pill. After you press **Test connection** and it passes, the
+third line says **Reachable**, with how many checks passed.
+
+Worst-first order: **problem → attention → in progress → unknown → good**.
 
 ## Cluster test ladder (Sharko → cluster)
 
@@ -58,13 +70,14 @@ test results — they can differ from ArgoCD's connection above.
 
 ## Deploy check (test workload through ArgoCD)
 
-Shown inside the composite pill breakdown and on Cluster Detail.
+Shown inside the status pill popover and on Cluster Detail.
 
 | Name | Color | Meaning |
 |------|-------|---------|
-| **Verified** | Green | The check passed — the deploy path to this cluster works. |
+| **Passed** | Green | A small test app was deployed to this cluster and it worked. The deploy path works. |
 | **Running…** | Neutral/blue | The check is still rolling out — usually under a minute. |
 | **Failed** | Amber | The test workload could not be deployed to this cluster. |
+| **Not run** | Neutral | No deploy check has run for this cluster. |
 
 ## Addon deployment coverage (Addons page)
 

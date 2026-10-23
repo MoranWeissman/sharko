@@ -200,8 +200,8 @@ func startupRejectionClasses() []struct {
 
 // TestStartupRejection_BothPrintsNeverCarryTheAddress is the BF16 guard:
 // for each of the three reproduced rejection classes, the built binary
-// refuses to start (exit 1), prints the rejection exactly twice on stderr
-// (cobra + main), and neither print — nor anything else on either stream —
+// refuses to start (exit 1), prints the rejection exactly once on stderr
+// (main; cobra is silenced), and neither print — nor anything else on either stream —
 // carries the configured address in any form.
 func TestStartupRejection_BothPrintsNeverCarryTheAddress(t *testing.T) {
 	if testing.Short() {
@@ -234,14 +234,13 @@ func TestStartupRejection_BothPrintsNeverCarryTheAddress(t *testing.T) {
 				t.Errorf("exit code = %d, want exactly 1 (refuse to start)", exitCode)
 			}
 
-			// BOTH prints happen, and only those two: cobra's "Error: ..."
-			// line and main's second print. The count is EXACT — one print
-			// would mean the doubled-print path changed shape under this
-			// test's feet, and more than two would mean a new print
-			// appeared unreviewed.
+			// The error prints ONCE, from main. Cobra's own "Error: ..."
+			// print is silenced (rootCmd.SilenceErrors), so a second print
+			// would mean a new, unreviewed print appeared. The count is
+			// EXACT. (It used to be two: cobra and main.)
 			marker := "load catalog sources from env: SHARKO_CATALOG_URLS:"
-			if got := strings.Count(stderr, marker); got != 2 {
-				t.Errorf("rejection appears %d times on stderr, want exactly 2 (cobra + main)\nstderr:\n%s", got, stderr)
+			if got := strings.Count(stderr, marker); got != 1 {
+				t.Errorf("rejection appears %d times on stderr, want exactly 1 (main only: cobra is silenced)\nstderr:\n%s", got, stderr)
 			}
 
 			// The address never appears — not raw, not percent-encoded,
@@ -321,8 +320,8 @@ func probeCredSchemeStartup(text string) []string {
 
 // TestStartupRejection_CredentialShapedScheme_BothPrintsClean runs the
 // built binary with the reproduced credential shape as the 2nd source and
-// asserts: exit 1, the rejection printed exactly twice on stderr (cobra +
-// main), and no derived form of the token on either stream — with the
+// asserts: exit 1, the rejection printed exactly once on stderr (main;
+// cobra is silenced), and no derived form of the token on either stream — with the
 // positive control checked FIRST.
 func TestStartupRejection_CredentialShapedScheme_BothPrintsClean(t *testing.T) {
 	if testing.Short() {
@@ -359,10 +358,10 @@ func TestStartupRejection_CredentialShapedScheme_BothPrintsClean(t *testing.T) {
 		t.Errorf("exit code = %d, want exactly 1 (refuse to start)", exitCode)
 	}
 
-	// BOTH prints happen, and only those two.
+	// The error prints once, from main. Cobra is silenced.
 	marker := "load catalog sources from env: SHARKO_CATALOG_URLS:"
-	if got := strings.Count(stderr, marker); got != 2 {
-		t.Errorf("rejection appears %d times on stderr, want exactly 2 (cobra + main)\nstderr:\n%s", got, stderr)
+	if got := strings.Count(stderr, marker); got != 1 {
+		t.Errorf("rejection appears %d times on stderr, want exactly 1 (main only: cobra is silenced)\nstderr:\n%s", got, stderr)
 	}
 
 	// The token never appears — in ANY derived form — on either stream.

@@ -89,8 +89,12 @@ this by hand.
 Before Sharko owns anything, make sure Sharko's picture of the cluster
 matches reality.
 
-1. Open the cluster in Sharko. It appears under discovered clusters —
-   Sharko can see it, but does not manage it.
+1. Go to **Clusters**. A line above the list says how many clusters
+   ArgoCD already knows that Sharko does not manage yet. Click it (you
+   need the admin role) and pick the cluster from **Discovered
+   clusters**. You can also open the cluster itself: its page says
+   **Sharko doesn't manage this cluster yet**. Sharko can see the
+   cluster, but does not manage it.
 2. Compare what ArgoCD is deploying there with what you expect. The
    preflight in the next step gives you the full list, but do this with
    your own eyes too.
@@ -104,7 +108,8 @@ Nothing has changed yet.
 
 ## Step 2 — Preflight
 
-Open the cluster and choose **Take ownership**. The dialog opens on four
+On the cluster's page, choose **Take ownership** (the same button sits
+next to the cluster in the **Discovered clusters** list). The dialog opens on four
 checks:
 
 | Check | What it answers |

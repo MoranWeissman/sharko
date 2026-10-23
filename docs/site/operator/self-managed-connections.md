@@ -97,8 +97,11 @@ ApplicationSet looks for that label to decide where to deploy the addon.
 
 ArgoCD finds a cluster through a Kubernetes Secret in the `argocd`
 namespace that has the label `argocd.argoproj.io/secret-type: cluster`. You
-create it once. Sharko finds it **by name**: the Secret's name must be
-exactly the cluster's name in Sharko.
+create it once. Sharko finds it **by the name inside the Secret**: the
+`name` field under `stringData` must be exactly the cluster's name in
+Sharko. The Secret's own Kubernetes name can be anything. If two Secrets
+carry the same cluster name, Sharko stops and asks you to rename one,
+because it will not guess.
 
 Here are three common shapes. ArgoCD's own
 [declarative setup — clusters](https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters)
@@ -110,13 +113,13 @@ page has the full reference.
 apiVersion: v1
 kind: Secret
 metadata:
-  name: prod-us                      # MUST match the cluster name in Sharko
+  name: prod-us                      # any name you like; prod-us is a good habit
   namespace: argocd
   labels:
     argocd.argoproj.io/secret-type: cluster
 type: Opaque
 stringData:
-  name: prod-us
+  name: prod-us                      # THIS must match the cluster name in Sharko
   server: https://prod-us.example.com:6443
   config: |
     {

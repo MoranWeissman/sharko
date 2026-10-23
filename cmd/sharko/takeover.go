@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,7 +20,7 @@ func init() {
 	takeoverCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	takeoverCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	takeoverCmd.Flags().StringArray("acknowledge", nil, "Finding id to acknowledge (repeatable)")
-	takeoverCmd.Flags().Bool("preserve-legacy-labels", true, "Carry the previous owner's labels over to Sharko's connection (default true — only sent when you set this flag)")
+	takeoverCmd.Flags().Bool("preserve-legacy-labels", true, "Carry the previous owner's labels over to Sharko's connection (only sent when you set this flag)")
 	takeoverCmd.Flags().String("region", "", "Region to record on the fleet entry")
 	takeoverCmd.Flags().Bool("auto-merge", false, "Auto-merge the takeover PR (overrides the server default; only sent when you set this flag)")
 	rootCmd.AddCommand(takeoverCmd)
@@ -269,7 +270,7 @@ run with --dry-run first to see the exact ids to pass.`,
 			if !dryRun {
 				fmt.Println("failed")
 			}
-			return handleTakeover409(respBody, name, acks, dryRun, region, cmd)
+			return handleTakeover409(respBody, name, acks, dryRun, region, cmd, &report)
 		}
 
 		if status != 200 && status != 207 {
@@ -345,12 +346,17 @@ run with --dry-run first to see the exact ids to pass.`,
 // handleTakeover409 prints the takeover 409 body (either "not ready" or
 // "warnings not acknowledged") and, for the second case, the exact rerun
 // command including every --acknowledge flag still needed.
-func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun bool, region string, cmd *cobra.Command) error {
+//
+// The command has already printed the preflight report before it asked, so
+// the report in the 409 is printed again only when it says something
+// different (the world changed in between). The error itself is returned and
+// printed once, by Execute.
+func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun bool, region string, cmd *cobra.Command, printed *preflightReport) error {
 	var b takeover409Body
 	if err := json.Unmarshal(body, &b); err != nil {
 		return printAPIError(body, 409)
 	}
-	if b.Preflight != nil {
+	if b.Preflight != nil && !reflect.DeepEqual(b.Preflight, printed) {
 		printPreflightReport(b.Preflight)
 	}
 	fmt.Println()
@@ -369,8 +375,6 @@ func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun b
 		}
 	}
 
-	fmt.Println(b.Error)
-	fmt.Println()
 	rerun := []string{"sharko", "takeover", name, "-y"}
 	for _, id := range combined {
 		rerun = append(rerun, "--acknowledge", id)
@@ -386,7 +390,26 @@ func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun b
 		rerun = append(rerun, "--auto-merge="+fmt.Sprint(v))
 	}
 	fmt.Printf("Rerun with: %s\n", strings.Join(rerun, " "))
-	return fmt.Errorf("%s", b.Error)
+	return fmt.Errorf("%s", takeoverAckSentence(b.UnacknowledgedFindings))
+}
+
+// takeoverAckSentence is what the CLI says when warnings have not been read
+// yet. It points at the checks printed above and at the CLI flag. The server's
+// own sentence names an API field, which means nothing on a command line.
+func takeoverAckSentence(ids []string) string {
+	list := strings.Join(ids, ", ")
+	if len(ids) == 1 {
+		return fmt.Sprintf("1 warning has not been read yet. Look at %s in the checks above, then run the command again with --acknowledge %s", list, ids[0])
+	}
+	return fmt.Sprintf("%d warnings have not been read yet. Look at %s in the checks above, then run the command again with %s", len(ids), list, acknowledgeFlags(ids))
+}
+
+func acknowledgeFlags(ids []string) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, "--acknowledge "+id)
+	}
+	return strings.Join(parts, " ")
 }
 
 func containsStr(haystack []string, needle string) bool {
@@ -550,7 +573,6 @@ func handleDropLegacyLabels409(body []byte, name string, alreadyAcked []string, 
 		fmt.Printf("  ⚠ [%s] %s\n", id, w)
 	}
 	fmt.Println()
-	fmt.Println(b.Error)
 
 	combined := append([]string{}, alreadyAcked...)
 	for _, id := range b.UnacknowledgedFindings {

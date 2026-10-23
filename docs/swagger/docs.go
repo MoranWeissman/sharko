@@ -4218,7 +4218,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.",
+                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open pull request. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open pull request to register, adopt, take over or remove it), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.",
                 "produces": [
                     "application/json"
                 ],

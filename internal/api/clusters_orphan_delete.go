@@ -9,12 +9,13 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // handleDeleteOrphanCluster godoc
 //
 // @Summary Delete an orphan cluster
-// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.
+// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open pull request. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open pull request to register, adopt, take over or remove it), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -116,12 +117,14 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check #2: cluster must NOT have an open registration PR.
+	// Check #2: cluster must NOT have an open pull request of any kind
+	// (register, adopt, take over or remove). The message names what the
+	// pull request really waits to do.
 	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
 	for _, p := range pending {
 		if p.ClusterName == name {
 			writeError(w, http.StatusBadRequest,
-				fmt.Sprintf("cluster %q has an open registration PR (%s) — close the PR first, then retry orphan delete", name, p.PRURL))
+				fmt.Sprintf("cluster %q has an open pull request that waits to %s (%s) — close the pull request first, then retry orphan delete", name, pendingWaitsTo(p.Operation), p.PRURL))
 			return
 		}
 	}
@@ -236,4 +239,22 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// pendingWaitsTo says, in plain words, what an open pull request of the given
+// kind waits to do to the cluster. An unknown kind gets a neutral phrase
+// rather than a wrong one.
+func pendingWaitsTo(operation string) string {
+	switch operation {
+	case models.PendingOperationRegister:
+		return "register it"
+	case models.PendingOperationAdopt:
+		return "adopt it"
+	case models.PendingOperationTakeover:
+		return "take it over"
+	case models.PendingOperationRemove:
+		return "remove it"
+	default:
+		return "change it"
+	}
 }

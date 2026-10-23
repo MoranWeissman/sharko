@@ -402,6 +402,10 @@ connection stays), or "none" (only the fleet-record entry).`,
 			FailedStep string `json:"failed_step"`
 			Error      string `json:"error"`
 			Message    string `json:"message"`
+			Git        *struct {
+				PRUrl  string `json:"pr_url"`
+				Merged bool   `json:"merged"`
+			} `json:"git,omitempty"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
 			fmt.Println("no readable answer")
@@ -413,8 +417,20 @@ connection stays), or "none" (only the fleet-record entry).`,
 		// through, and the command printed "Cluster prod-eu removed." over
 		// the top of that and exited 0.
 		outcome := fanout.SingleStatus(result.Status, status == 207)
-		fmt.Println(outcome.ProgressWord())
+		waiting := outcome.Completed() && result.Git != nil && prWaiting(result.Git.PRUrl, result.Git.Merged)
+		if waiting {
+			fmt.Println(waitingProgressWord)
+		} else {
+			fmt.Println(outcome.ProgressWord())
+		}
 
+		if waiting {
+			// Nothing is removed until the pull request is merged, so
+			// "removed" would be untrue here.
+			fmt.Println(waitingForMergeLine(result.Git.PRUrl))
+			fmt.Printf("  Nothing has changed on cluster %s yet. Sharko finishes the removal after the pull request is merged.\n", name)
+			return outcome.ExitError(removeClusterOperation, name)
+		}
 		if outcome.Completed() {
 			fmt.Printf("Cluster %s removed.\n", name)
 		} else {

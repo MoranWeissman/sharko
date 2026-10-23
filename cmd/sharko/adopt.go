@@ -21,9 +21,11 @@ var adoptCmd = &cobra.Command{
 	Use:     "adopt <cluster1> [cluster2] ...",
 	Aliases: []string{"adopt-cluster"},
 	Short:   "Adopt existing ArgoCD clusters under Sharko management",
-	Long: `Adopt one or more existing ArgoCD clusters. This creates GitOps
-configuration (values file + managed-clusters.yaml entry) for clusters
-that are already registered in ArgoCD but not yet managed by Sharko.
+	Long: `Adopt one or more existing ArgoCD clusters. Sharko adds each cluster to
+managed-clusters.yaml in your Git repo through a pull request. The clusters
+are already in ArgoCD but not yet managed by Sharko. When the pull request is
+merged, Sharko takes over the ArgoCD connection and marks it as adopted. If
+the pull request is closed without a merge, nothing changes on the cluster.
 
 Sharko checks each cluster first, the same way take over does. If it finds
 something you should read (for example an ApplicationSet that could delete
@@ -38,7 +40,7 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 		acknowledge, _ := cmd.Flags().GetStringSlice("acknowledge")
 
 		if !dryRun && !yes {
-			fmt.Printf("Adopt %d cluster(s): %s\nThis will create GitOps configuration and mark them as Sharko-managed. Continue? [y/N]: ",
+			fmt.Printf("Adopt %d cluster(s): %s\nThis opens a pull request that adds them to Sharko. Continue? [y/N]: ",
 				len(args), strings.Join(args, ", "))
 			var confirm string
 			fmt.Scanln(&confirm)
@@ -129,12 +131,25 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 		}
 		outcome := fanout.Count(statuses)
 
+		// A cluster whose pull request is still open is not adopted yet:
+		// Sharko takes the ArgoCD connection over after the merge.
+		waitingCount := 0
+		if !dryRun {
+			for _, cr := range result.Results {
+				if cr.Status == "success" && cr.Git != nil && prWaiting(cr.Git.PRUrl, cr.Git.Merged) {
+					waitingCount++
+				}
+			}
+		}
+
 		// "done" used to be printed the moment the HTTP call came back, so an
 		// adoption in which every cluster failed still said "done" — and the
 		// endpoint answers 200 for exactly that case, so nothing else
 		// contradicted it either.
 		if !dryRun {
-			if outcome.EverythingCompleted() {
+			if waitingCount > 0 && outcome.EverythingCompleted() {
+				fmt.Println(waitingProgressWord)
+			} else if outcome.EverythingCompleted() {
 				fmt.Println("done")
 			} else {
 				fmt.Println("not all clusters finished")
@@ -143,7 +158,12 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 
 		fmt.Println()
 		if !dryRun {
-			fmt.Print(outcome.SummaryLine(adoptOperation))
+			if waitingCount > 0 && outcome.EverythingCompleted() {
+				fmt.Printf("Nothing is adopted yet: %s for the pull request to be merged.\n",
+					waitingClusters(waitingCount))
+			} else {
+				fmt.Print(outcome.SummaryLine(adoptOperation))
+			}
 			fmt.Print(outcome.ReviewWarning())
 			fmt.Println()
 		}
@@ -151,6 +171,8 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 			switch {
 			case dryRun && cr.Status == "success":
 				fmt.Printf("  %s: would adopt\n", cr.Name)
+			case cr.Status == "success" && cr.Git != nil && prWaiting(cr.Git.PRUrl, cr.Git.Merged):
+				fmt.Printf("  %s: %s\n", cr.Name, waitingForMergeLine(cr.Git.PRUrl))
 			case cr.Status == "success":
 				fmt.Printf("  %s: adopted\n", cr.Name)
 			case cr.Status == "partial":
@@ -180,7 +202,7 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 					if cr.Git.Merged {
 						fmt.Printf("    PR:     %s (merged)\n", cr.Git.PRUrl)
 					} else {
-						fmt.Printf("    PR:     %s (open — merge manually)\n", cr.Git.PRUrl)
+						fmt.Printf("    PR:     %s (waiting for merge)\n", cr.Git.PRUrl)
 					}
 				}
 			}
@@ -279,4 +301,12 @@ func adoptNeedsAcknowledgement(body []byte) (bool, error) {
 	fmt.Println()
 	fmt.Printf("When you have read them, run the same command again with --acknowledge %s\n", ids)
 	return true, fmt.Errorf("adoption stopped: warnings not acknowledged yet: %s", ids)
+}
+
+// waitingClusters says how many clusters wait, in plain words.
+func waitingClusters(n int) string {
+	if n == 1 {
+		return "1 cluster waits"
+	}
+	return fmt.Sprintf("%d clusters wait", n)
 }

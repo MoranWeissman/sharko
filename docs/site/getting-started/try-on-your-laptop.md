@@ -137,7 +137,7 @@ In Sharko, open **Clusters** and click **Add Cluster**.
 
 1. Leave **Connection managed by** as it is.
 2. Under **Connection source**, choose **Kubeconfig from a secrets backend**.
-3. Set **Cluster Name** to `spoke-1`. The name is also the Secret name, so the Secret from step 6 is found. The **Secret name / path** field can stay empty.
+3. Set **Cluster Name** to `spoke-1`. The name is also the Secret name, so the Secret from step 6 is found. The **Secret name** field can stay empty.
 4. Click **Preview**. You should see one new file, `managed-clusters.yaml`.
 5. Click **Register**.
 

@@ -138,7 +138,7 @@ import (
 // request use the same builder. It makes no log call of any kind and does
 // not search for credential characters.
 //
-// 442 since the episode 3 dry run fixes added four files. Story B added
+// 443 since the episode 3 dry run fixes added five files. Story B added
 // three: internal/argosecrets/lookup.go finds ArgoCD's connection Secret by
 // the cluster name inside it. internal/orchestrator/adopt_findings.go builds
 // adopt's warnings and blockers. Neither makes a log call of any kind.
@@ -148,8 +148,11 @@ import (
 // internal/api/cluster_followup_on_merge.go, the pull-request-merge hook
 // that finishes a cluster removal or un-adopt after its pull request is
 // merged. It logs fixed-text messages. None of the four searches for
+// credential characters. Story E added one more, 443 in all:
+// cmd/sharko/waiting.go holds the words the command line uses when a pull
+// request is still waiting. It makes no log call and does not search for
 // credential characters.
-const wantSweptGoFiles = 442
+const wantSweptGoFiles = 443
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by

@@ -305,35 +305,58 @@ func TestHandleDeleteOrphanCluster_RefusesManagedCluster(t *testing.T) {
 }
 
 func TestHandleDeleteOrphanCluster_RefusesPendingCluster(t *testing.T) {
-	// Cluster has an open registration PR — the handler must refuse
-	// (400) and tell the user to close the PR first.
-	argo := newStubArgoSrv(t, []map[string]interface{}{
-		{"name": "kind-pending", "server": "https://kind-pending.local:6443"},
-	}, http.StatusOK)
-	gp := &orphanFakeGP{
-		managedYAML: []byte("clusters: []"),
-		prs: []gitprovider.PullRequest{
-			{
-				Title:        "sharko: register cluster kind-pending (kubeconfig provider)",
-				URL:          "https://github.com/o/r/pull/77",
-				SourceBranch: "sharko/register-cluster-kind-pending-abcd",
-			},
-		},
+	// Cluster has an open pull request — the handler must refuse (400) and
+	// tell the user to close it first. The message names what the pull
+	// request really waits to do, not always "registration".
+	cases := []struct {
+		title string
+		want  string
+	}{
+		{"sharko: register cluster kind-pending (kubeconfig provider)", `cluster "kind-pending" has an open pull request that waits to register it (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
+		{"sharko: adopt cluster kind-pending", `cluster "kind-pending" has an open pull request that waits to adopt it (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
+		{"sharko: take over cluster kind-pending", `cluster "kind-pending" has an open pull request that waits to take it over (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
+		{"sharko: remove cluster kind-pending", `cluster "kind-pending" has an open pull request that waits to remove it (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
 	}
-	// nil k8s client — pending check rejects before the label gate.
-	_, router := orphanTestServer(t, gp, argo.URL, nil)
+	for _, tc := range cases {
+		t.Run(tc.title, func(t *testing.T) {
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": "kind-pending", "server": "https://kind-pending.local:6443"},
+			}, http.StatusOK)
+			gp := &orphanFakeGP{
+				managedYAML: []byte("clusters: []"),
+				prs: []gitprovider.PullRequest{
+					{
+						Title:        tc.title,
+						URL:          "https://github.com/o/r/pull/77",
+						SourceBranch: "sharko/register-cluster-kind-pending-abcd",
+					},
+				},
+			}
+			// nil k8s client — pending check rejects before the label gate.
+			_, router := orphanTestServer(t, gp, argo.URL, nil)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, orphanAdminReq("kind-pending"))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, orphanAdminReq("kind-pending"))
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
-	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
-		t.Errorf("expected 0 ArgoCD DELETE calls (refused), got %d", got)
-	}
-	if !strings.Contains(w.Body.String(), "registration PR") {
-		t.Errorf("expected error to mention 'registration PR', got: %s", w.Body.String())
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
+			}
+			if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+				t.Errorf("expected 0 ArgoCD DELETE calls (refused), got %d", got)
+			}
+			var body struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body is not JSON: %v (%s)", err, w.Body.String())
+			}
+			if body.Error != tc.want {
+				t.Errorf("error = %q, want %q", body.Error, tc.want)
+			}
+			if strings.Contains(w.Body.String(), "registration PR") {
+				t.Errorf("old wording 'registration PR' must not appear: %s", w.Body.String())
+			}
+		})
 	}
 }
 
