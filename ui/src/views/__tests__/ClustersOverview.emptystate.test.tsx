@@ -109,9 +109,10 @@ describe('Register New Cluster dialog text (F4)', () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        'The connection details are optional. You can add them later if an addon needs secrets on this cluster.',
+        'You can add the connection details later, when an addon needs secrets on this cluster.',
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByText(/The connection details are optional/)).not.toBeInTheDocument();
     // The old wording is gone.
     expect(screen.queryByText(/three options/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Connection credentials below are optional/)).not.toBeInTheDocument();

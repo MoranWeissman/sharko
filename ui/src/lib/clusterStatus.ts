@@ -68,6 +68,13 @@ export interface ClusterConnectionStateDef {
   dot: string;
   /** Text color classes for the label. */
   text: string;
+  /**
+   * Own colours for the pill, for a state that must not look like another
+   * one of the same severity ("Not connected" and "Available to manage" were
+   * both amber). Missing means the severity's colours.
+   */
+  pill?: string;
+  pillDot?: string;
 }
 
 export const CLUSTER_CONNECTION_STATES: Record<ClusterConnectionKind, ClusterConnectionStateDef> = {
@@ -101,8 +108,12 @@ export const CLUSTER_CONNECTION_STATES: Record<ClusterConnectionKind, ClusterCon
     meaning:
       "In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons.",
     severity: 'attention',
-    dot: 'bg-amber-500',
-    text: 'text-amber-700 dark:text-amber-400',
+    // Its own colour: it is an offer, not a fault, and must not look like
+    // "Not connected" next to it in the legend.
+    dot: 'bg-indigo-500',
+    text: 'text-indigo-700 dark:text-indigo-400',
+    pill: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+    pillDot: 'bg-indigo-500',
   },
   failed: {
     label: 'Disconnected',
@@ -138,7 +149,7 @@ export function classifyClusterConnection(status: string | null | undefined): Cl
 // ClusterConnectionKind (that would ripple through every exhaustive switch
 // keyed on kind), just a different label/meaning for the SAME 'pending'
 // kind when the caller tells us the addon count is exactly 0.
-const NO_ADDONS_YET_STATE: ClusterConnectionStateDef = {
+export const NO_ADDONS_YET_STATE: ClusterConnectionStateDef = {
   label: 'Not checked yet',
   meaning:
     'ArgoCD only checks a cluster once something is deployed to it, and nothing is deployed here yet. Enable an addon and ArgoCD will check the connection.',

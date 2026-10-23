@@ -273,6 +273,13 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
           server_url: 'https://discovered-aks.hcp.eastus.azmk8s.io:443',
           managed: false,
         },
+        // Two to pick from, so nothing is picked for the user (finding 25).
+        {
+          name: 'discovered-eks',
+          labels: {},
+          server_url: 'https://discovered-eks.example.com:443',
+          managed: false,
+        },
       ],
     });
     mockHealth.mockResolvedValue({
@@ -320,6 +327,10 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
 
     // F1 pin: the Connection source and Cluster Name fields are NOW VISIBLE
     // (the pick was cleared on ownership toggle)
+    // In user mode the connection source is tucked away (finding 23), so open it.
+    fireEvent.click(
+      await screen.findByText(/Add connection credentials \(optional/),
+    );
     await waitFor(() => {
       expect(screen.getByText(/connection source/i)).toBeInTheDocument();
     });

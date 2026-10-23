@@ -47,12 +47,13 @@ describe('ConnectionStatus', () => {
     expect(wrapper.className).toContain('text-amber-700');
   });
 
-  it('"not_in_git" shows "Available to manage" with amber attention color', () => {
+  it('"not_in_git" shows "Available to manage" in its own colour, not the amber of "Not connected"', () => {
     const { container } = render(<ConnectionStatus status="not_in_git" />);
     expect(screen.getByText('Available to manage')).toBeInTheDocument();
 
     const wrapper = container.firstChild as HTMLElement;
-    expect(wrapper.className).toContain('text-amber-700');
+    expect(wrapper.className).toContain('text-indigo-700');
+    expect(wrapper.className).not.toContain('text-amber-700');
   });
 
   it('an unrecognized status falls through to "Disconnected" (red), never a silent green', () => {
