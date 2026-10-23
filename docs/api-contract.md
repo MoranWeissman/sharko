@@ -133,6 +133,7 @@ These endpoints are already implemented and working. Listed here for completenes
 | POST | `/api/v1/connections/test` | Test a connection |
 | POST | `/api/v1/connections/test-credentials` | Test credentials without saving |
 | GET | `/api/v1/connections/discover-argocd` | Auto-discover ArgoCD in-cluster |
+| GET | `/api/v1/connections/git-defaults` | Git provider and address set in the Helm chart |
 
 ### Clusters (Read)
 

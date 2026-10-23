@@ -321,3 +321,16 @@ func TestTestCredentials_UnreadableGitAddressMeansArgoCDNotTested(t *testing.T) 
 		t.Fatalf("ArgoCD result = %v, want ErrArgocdNotTested", argocdErr)
 	}
 }
+
+// Finding 30: the message for a host Sharko cannot place names the way out
+// (give the provider) instead of only listing two supported hosts.
+func TestDeriveProviderFromURL_UnknownHostSentenceNamesTheWayOut(t *testing.T) {
+	_, err := deriveProviderFromURL("https://gitea.example.test/acme/platform")
+	if err == nil {
+		t.Fatal("want an error for an unknown host")
+	}
+	const want = `unsupported git host "gitea.example.test": Sharko cannot tell which Git product runs there. Set the Git provider (github or gitea), or use a github.com or dev.azure.com address`
+	if err.Error() != want {
+		t.Errorf("got %q\nwant %q", err.Error(), want)
+	}
+}

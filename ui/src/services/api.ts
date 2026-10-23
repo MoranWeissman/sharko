@@ -1704,6 +1704,8 @@ export const api = {
   testCredentials: (data: unknown) => postJSON<{ git: { status: string; message?: string; auth?: string }; argocd: { status: string; message?: string; auth?: string } }>('/connections/test-credentials', data),
   discoverArgocd: (namespace?: string) => fetchJSON<{ server_url: string; has_env_token: boolean; namespace: string }>(`/connections/discover-argocd${namespace ? `?namespace=${namespace}` : ''}`),
 
+  gitDefaults: () => fetchJSON<{ provider: string; repo_url: string }>('/connections/git-defaults'),
+
   // Observability
   getObservability: () => fetchJSON<ObservabilityOverviewResponse>('/observability/overview'),
 

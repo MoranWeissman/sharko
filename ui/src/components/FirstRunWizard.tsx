@@ -73,8 +73,16 @@ function wizardProviderType(raw: string | undefined | null): ProviderType {
   return canonicalizeProviderType(raw)
 }
 
+// The Git provider the user picked for the address. '' means "work it out from
+// the address" (github.com, GitHub Enterprise, Azure DevOps).
+type GitProviderChoice = '' | 'github' | 'gitea'
+
+export const GIT_PROVIDER_HELP =
+  'GitHub, GitHub Enterprise and Azure DevOps are picked from the address. For Gitea or a server you run yourself, choose the provider here.'
+
 interface WizardForm {
   git_url: string
+  git_provider: GitProviderChoice
   git_token: string
   argocd_server_url: string
   argocd_token: string
@@ -87,6 +95,7 @@ interface WizardForm {
 
 const emptyForm: WizardForm = {
   git_url: '',
+  git_provider: '',
   git_token: '',
   argocd_server_url: '',
   argocd_token: '',
@@ -101,7 +110,7 @@ type TestState = 'idle' | 'testing' | 'ok' | 'error'
 
 // The form fields each connection test depends on. Changing one of these
 // clears that test's result; changing anything else leaves it alone.
-const GIT_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = ['git_url', 'git_token']
+const GIT_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = ['git_url', 'git_provider', 'git_token']
 const ARGOCD_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = [
   'argocd_server_url',
   'argocd_token',
@@ -235,9 +244,21 @@ function StepGit({
             onChange={(e) => onChange({ git_url: e.target.value })}
             placeholder="https://github.com/your-org/your-repo"
           />
-          <p className="mt-1 text-sm text-[#3a6a8a]">
-            GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)
-          </p>
+        </div>
+
+        <div>
+          <label className={labelCls} htmlFor="wizard-git-provider">Git provider</label>
+          <select
+            id="wizard-git-provider"
+            className={inputCls}
+            value={form.git_provider}
+            onChange={(e) => onChange({ git_provider: e.target.value as GitProviderChoice })}
+          >
+            <option value="">Work it out from the address</option>
+            <option value="github">GitHub (including GitHub Enterprise)</option>
+            <option value="gitea">Gitea</option>
+          </select>
+          <p className="mt-1 text-sm text-[#3a6a8a]">{GIT_PROVIDER_HELP}</p>
         </div>
 
         <div>
@@ -1790,6 +1811,32 @@ export function FirstRunWizard({
   // is tracked so save hits PUT /connections/{name} for a guaranteed
   // token-preserving merge update (vs POST upsert-by-derived-name).
   const existingConnection = connections[0]
+
+  // Fresh install: if the Helm chart names a Git provider and address
+  // (connection.git.provider / connection.git.repoURL), pre-pick the provider
+  // and fill in the address — never over something the user already typed.
+  useEffect(() => {
+    if (initialStep === 4 || typeof api.gitDefaults !== 'function') return
+    let cancelled = false
+    api
+      .gitDefaults()
+      .then((d) => {
+        if (cancelled || !d) return
+        const provider: GitProviderChoice =
+          d.provider === 'github' || d.provider === 'gitea' ? d.provider : ''
+        setForm((prev) => ({
+          ...prev,
+          git_provider: prev.git_provider || provider,
+          git_url: prev.git_url || d.repo_url || '',
+        }))
+      })
+      .catch(() => {
+        // No defaults is the normal case; the user fills the form in.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialStep])
   const [loadedConnectionName, setLoadedConnectionName] = useState<string | null>(null)
   // The saved provider block and GitOps settings, kept as they were loaded.
   // The server replaces the whole provider block on save, and it keeps a
@@ -1817,6 +1864,7 @@ export function FirstRunWizard({
       setForm((prev) => ({
         ...prev,
         git_url: gitUrl,
+        git_provider: existingConnection.git_provider === 'gitea' ? 'gitea' : '',
         argocd_server_url: existingConnection.argocd_server_url,
         argocd_namespace: existingConnection.argocd_namespace || 'argocd',
         argocd_insecure: existingConnection.argocd_insecure ?? false,
@@ -1854,7 +1902,7 @@ export function FirstRunWizard({
       // doesn't fire on wizard submission. `undefined` is dropped by
       // JSON.stringify, in which case the backend's deriveProviderFromURL
       // takes over. See detectGitProvider for the recognized-host list.
-      provider: detectGitProvider(form.git_url),
+      provider: form.git_provider || detectGitProvider(form.git_url),
       repo_url: form.git_url,
       token: form.git_token || undefined,
     },

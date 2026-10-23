@@ -305,3 +305,15 @@ func declaredArgocdServerURLIsSafe() bool {
 	}
 	return true
 }
+
+// DeclaredGitDefaults returns the Git provider and repository address the
+// operator declared in the Helm chart (connection.git.provider and
+// connection.git.repoURL). Both are empty when not declared. The first-run
+// wizard uses them to pre-pick the provider and fill in the address before
+// any connection is saved. Neither value is a secret (the chart refuses a
+// credential inside the address).
+func DeclaredGitDefaults() (provider, repoURL string) {
+	provider, _ = desiredStringFromEnv(envConnGitProvider)
+	repoURL, _ = desiredStringFromEnv(envConnGitRepoURL)
+	return provider, repoURL
+}
