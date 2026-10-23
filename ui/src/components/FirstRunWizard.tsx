@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   GitBranch,
@@ -1811,6 +1811,13 @@ export function FirstRunWizard({
   // is tracked so save hits PUT /connections/{name} for a guaranteed
   // token-preserving merge update (vs POST upsert-by-derived-name).
   const existingConnection = connections[0]
+  // Read by the late git-defaults answer: the list of connections can load
+  // after the defaults call started.
+  const existingConnectionRef = useRef(existingConnection)
+  existingConnectionRef.current = existingConnection
+  // The form fields the user has changed. A late default never replaces
+  // them, even when the user's choice is an empty value.
+  const touchedFieldsRef = useRef<Set<keyof WizardForm>>(new Set())
 
   // Fresh install: if the Helm chart names a Git provider and address
   // (connection.git.provider / connection.git.repoURL), pre-pick the provider
@@ -1822,13 +1829,20 @@ export function FirstRunWizard({
       .gitDefaults()
       .then((d) => {
         if (cancelled || !d) return
+        // A saved connection already says what to use.
+        if (existingConnectionRef.current) return
         const provider: GitProviderChoice =
           d.provider === 'github' || d.provider === 'gitea' ? d.provider : ''
-        setForm((prev) => ({
-          ...prev,
-          git_provider: prev.git_provider || provider,
-          git_url: prev.git_url || d.repo_url || '',
-        }))
+        const touched = touchedFieldsRef.current
+        setForm((prev) => {
+          const gitUrl = touched.has('git_url') ? prev.git_url : prev.git_url || d.repo_url || ''
+          // Never put a provider on an address it does not match, such as
+          // Gitea on a github.com address.
+          const detected = detectGitProvider(gitUrl)
+          const fits = provider !== '' && (detected === undefined || detected === provider)
+          const gitProvider = touched.has('git_provider') || prev.git_provider || !fits ? prev.git_provider : provider
+          return { ...prev, git_url: gitUrl, git_provider: gitProvider }
+        })
       })
       .catch(() => {
         // No defaults is the normal case; the user fills the form in.
@@ -1864,7 +1878,12 @@ export function FirstRunWizard({
       setForm((prev) => ({
         ...prev,
         git_url: gitUrl,
-        git_provider: existingConnection.git_provider === 'gitea' ? 'gitea' : '',
+        // Keep a saved GitHub choice: a GitHub Enterprise address cannot be
+        // worked out from the address alone.
+        git_provider:
+          existingConnection.git_provider === 'gitea' || existingConnection.git_provider === 'github'
+            ? existingConnection.git_provider
+            : '',
         argocd_server_url: existingConnection.argocd_server_url,
         argocd_namespace: existingConnection.argocd_namespace || 'argocd',
         argocd_insecure: existingConnection.argocd_insecure ?? false,
@@ -1881,6 +1900,7 @@ export function FirstRunWizard({
   }, [initialStep, existingConnection, loadedConnectionName])
 
   const patchForm = (patch: Partial<WizardForm>) => {
+    for (const k of Object.keys(patch) as Array<keyof WizardForm>) touchedFieldsRef.current.add(k)
     setForm((prev) => ({ ...prev, ...patch }))
     // A change clears only the test result it can affect. Changing the
     // secrets provider, for example, keeps both "Connected" results.

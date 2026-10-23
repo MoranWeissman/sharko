@@ -50,6 +50,18 @@ describe('ClusterStatusLegend', () => {
     expect(screen.getByText(NO_ADDONS_YET_STATE.meaning)).toBeVisible();
   });
 
+  // Round R (R20): the meaning uses the user's words and names both ways in.
+  it('"Available to manage" says what it means, with no "Git catalog"', () => {
+    const meaning = CLUSTER_CONNECTION_STATES.unmanaged.meaning;
+    expect(meaning).toBe(
+      'ArgoCD connects to it, but Sharko does not manage it yet. Adopt it or take ownership of it to let Sharko manage its addons.',
+    );
+    render(<ClusterStatusLegend />);
+    expect(screen.getByText(meaning)).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Git catalog/i);
+    expect(document.body.textContent).not.toContain("In ArgoCD but not in Sharko's");
+  });
+
   it('"Not connected" and "Available to manage" do not share a colour', () => {
     const missing = CLUSTER_CONNECTION_STATES.missing;
     const unmanaged = CLUSTER_CONNECTION_STATES.unmanaged;

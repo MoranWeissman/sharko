@@ -201,7 +201,7 @@ describe('ClustersOverview — LW-11: "Not managed" reframed as "Available to ma
     expect(legendItem).toBeInTheDocument();
     // The meaning is plain visible text next to the name, not a tooltip.
     expect(
-      screen.getByText(/In ArgoCD but not in Sharko's Git catalog/),
+      screen.getByText(/ArgoCD connects to it, but Sharko does not manage it yet\./),
     ).toBeInTheDocument();
     expect(legendItem.closest('[title]')).toBeNull();
   });

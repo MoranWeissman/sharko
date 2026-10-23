@@ -106,7 +106,7 @@ export const CLUSTER_CONNECTION_STATES: Record<ClusterConnectionKind, ClusterCon
   unmanaged: {
     label: 'Available to manage',
     meaning:
-      "In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons.",
+      'ArgoCD connects to it, but Sharko does not manage it yet. Adopt it or take ownership of it to let Sharko manage its addons.',
     severity: 'attention',
     // Its own colour: it is an offer, not a fault, and must not look like
     // "Not connected" next to it in the legend.
