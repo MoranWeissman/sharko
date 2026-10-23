@@ -49,11 +49,22 @@ func ClusterNameOf(s *corev1.Secret) string {
 	return s.Name
 }
 
+// isNotAClusterSecret reports a Secret that ArgoCD's type label marks as
+// something other than a cluster.
+func isNotAClusterSecret(s *corev1.Secret) bool {
+	v, ok := s.Labels[LabelSecretType]
+	return ok && v != "cluster"
+}
+
 // GetClusterSecret finds the ArgoCD cluster Secret for clusterName in
 // namespace.
 //
 // A Secret matches when the `name` inside it equals clusterName, or when its
 // Kubernetes name equals clusterName and it has no different `name` inside.
+// A Secret found by its Kubernetes name whose ArgoCD type label says it is
+// something else (a repository, repo-creds, ...) never matches. One with no
+// type label at all still matches: a cluster Secret whose labels were all
+// wiped must still be found, or the reconciler could not see or fix it.
 // No match returns a Kubernetes NotFound error, so callers can keep using
 // apierrors.IsNotFound. Two or more matches return an error wrapping
 // ErrAmbiguousClusterSecret that names each Secret.
@@ -64,6 +75,12 @@ func GetClusterSecret(ctx context.Context, client kubernetes.Interface, namespac
 	direct, err := secrets.Get(ctx, clusterName, metav1.GetOptions{})
 	switch {
 	case err == nil:
+		// A repository Secret or any other typed ArgoCD Secret that happens
+		// to have this Kubernetes name is not a cluster's connection (EP3
+		// dry run round R, R13).
+		if isNotAClusterSecret(direct) {
+			break
+		}
 		if ClusterNameOf(direct) == clusterName {
 			matches = append(matches, direct)
 		}

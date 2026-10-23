@@ -236,3 +236,25 @@ func TestManager_ClusterSecretNames(t *testing.T) {
 		}
 	}
 }
+
+// R13 (m5): a repository Secret that happens to have the cluster's
+// Kubernetes name is not that cluster's connection.
+func TestGetClusterSecret_SkipsATypedNonClusterSecret(t *testing.T) {
+	repo := argoAddedSecret("prod-eu", "", map[string]string{LabelSecretType: "repository"})
+	delete(repo.Data, "name")
+	client := fake.NewSimpleClientset(repo)
+	_, err := GetClusterSecret(context.Background(), client, testNamespace, "prod-eu")
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("a repository Secret named prod-eu was taken as the cluster's connection; err = %v", err)
+	}
+
+	// A cluster Secret whose labels were all wiped is still found, so the
+	// reconciler can see it and put its labels back.
+	wiped := argoAddedSecret("prod-us", "", nil)
+	delete(wiped.Data, "name")
+	wiped.Labels = nil
+	client = fake.NewSimpleClientset(wiped)
+	if got, err := GetClusterSecret(context.Background(), client, testNamespace, "prod-us"); err != nil || got.Name != "prod-us" {
+		t.Fatalf("a cluster Secret with no labels left was not found: %v, %v", got, err)
+	}
+}

@@ -104,10 +104,10 @@ func TestRepairAddonLabelsWithOwnershipCheck_EverySystemLabelByteForByteUnchange
 			expectedOwned: true,
 		},
 		{
-			name: "owned, secret-type and the check label present with values Sharko would not stamp",
+			name: "owned, the check label present with a value Sharko would not stamp",
 			labels: map[string]string{
 				LabelManagedBy:                ManagedByValue,
-				LabelSecretType:               "repository",
+				LabelSecretType:               "cluster",
 				models.LabelConnectivityCheck: "somebody-elses-value",
 				"datadog":                     "disabled",
 			},
@@ -150,9 +150,9 @@ func TestRepairAddonLabelsWithOwnershipCheck_EverySystemLabelByteForByteUnchange
 			expectedOwned: false,
 		},
 		{
-			name: "guest, secret-type and the check label present with values Sharko would not stamp",
+			name: "guest, the check label present with a value Sharko would not stamp",
 			labels: map[string]string{
-				LabelSecretType:               "repository",
+				LabelSecretType:               "cluster",
 				models.LabelConnectivityCheck: "somebody-elses-value",
 				"datadog":                     "disabled",
 			},
