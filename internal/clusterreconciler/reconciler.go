@@ -2727,21 +2727,21 @@ func (k *keptConnections) load(ctx context.Context, fn func(context.Context) (ma
 	k.names, k.err = fn(ctx)
 }
 
-// keeps matches the cluster name the pull request recorded against both
-// the Secret's Kubernetes name and the cluster name ArgoCD shows (the
-// Secret's data.name), so a Secret whose Kubernetes name differs from the
-// cluster name is still kept.
-func (k *keptConnections) keeps(secretName string, secret *corev1.Secret) bool {
+// keeps matches the cluster name the pull request recorded against the
+// cluster name ArgoCD shows for the Secret (argosecrets.ClusterNameOf: the
+// `name` inside it, else its Kubernetes name), so a Secret whose
+// Kubernetes name differs from the cluster name (cluster-<host>-<hash>) is
+// still kept. clusterName is the sweep's key, which listManagedSecrets
+// builds with the same ClusterNameOf.
+func (k *keptConnections) keeps(clusterName string, secret *corev1.Secret) bool {
 	if len(k.names) == 0 {
 		return false
 	}
-	if k.names[secretName] {
+	if k.names[clusterName] {
 		return true
 	}
-	if secret != nil {
-		if shown := string(secret.Data["name"]); shown != "" && k.names[shown] {
-			return true
-		}
+	if secret != nil && k.names[argosecrets.ClusterNameOf(secret)] {
+		return true
 	}
 	return false
 }
