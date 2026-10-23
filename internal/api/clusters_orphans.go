@@ -35,10 +35,11 @@ type argocdClusterLister interface {
 // externally-created Secret, foot-gunning whichever tool was supposed
 // to own it). The gate set is supplied by the caller via
 // sharkoOwnedNames — typically the output of
-// listSharkoOwnedSecretNames fetched via the k8s client. Passing nil
-// for sharkoOwnedNames disables the gate (dev mode without a k8s
-// client) — see the "ownership gate" branch below for the explicit
-// nil-handling contract.
+// listSharkoOwnedSecretNames fetched via the k8s client, which also
+// applies the rest of the leftovers rule (the registration-pending mark,
+// never adopted or taken over — EP3-DRYRUN-FIXES call 4). Passing nil
+// for sharkoOwnedNames shows NO orphans: without the Secret list Sharko
+// cannot check the rule, so it fails closed.
 //
 // Algorithm:
 //
@@ -47,7 +48,7 @@ type argocdClusterLister interface {
 //  3. For each ArgoCD cluster: skip the in-cluster entry (`name == "in-cluster"`
 //     or server starts with `https://kubernetes.default`); skip names that
 //     are in the git-managed set OR in the pending set; skip names that are
-//     NOT in sharkoOwnedNames (when non-nil); everything else is an orphan.
+//     NOT in sharkoOwnedNames (nil = none are); everything else is an orphan.
 //  4. Return the slice with LastSeenAt = the call-time timestamp (the ArgoCD
 //     cluster Secret API exposes no stable creation timestamp, so this is a
 //     degraded approximation — see OrphanRegistration doc on
@@ -57,9 +58,9 @@ type argocdClusterLister interface {
 // slice + a log warning rather than failing the entire /clusters
 // endpoint. A missing Orphan Registrations section on the next refresh
 // is acceptable; a 500 that takes down the whole clusters page is not.
-// Same pattern for the ownership gate: when sharkoOwnedNames is nil
-// (k8s client unwired or list-Secrets errored), the gate is disabled
-// so orphans that pre-date the label gate stay visible.
+// The ownership gate fails closed instead: when sharkoOwnedNames is nil
+// (k8s client unwired or list-Secrets errored), no orphans are shown —
+// the list is only ever a list of things Discard may really delete.
 //
 // The return type is always a non-nil slice — never let a nil array
 // reach the FE.
@@ -112,16 +113,18 @@ func resolveOrphanRegistrations(
 				continue
 			}
 		}
-		// Ownership gate: when sharkoOwnedNames is non-nil, only
-		// surface Secrets that ARE in that set. Unlabeled Secrets are
-		// Adopt territory and must never appear on the orphan surface
-		// — they represent externally-owned resources that the Discard
-		// action would silently destroy. When sharkoOwnedNames is nil
-		// the gate is disabled.
-		if sharkoOwnedNames != nil {
-			if _, hit := sharkoOwnedNames[ac.Name]; !hit {
-				continue
-			}
+		// Ownership gate: only surface Secrets that ARE in that set.
+		// Unlabeled Secrets are Adopt territory and must never appear on
+		// the orphan surface — they represent externally-owned resources
+		// that the Discard action would silently destroy.
+		// Fail closed (EP3-DRYRUN-FIXES call 4): an entry needs ALL of
+		// Sharko's label, not in Git, no open PR AND the
+		// registration-pending mark. Without the Secret list (no k8s
+		// client, or the list failed) Sharko cannot check the label or
+		// the mark, so it shows nothing rather than offering a Secret
+		// for discard that it never confirmed.
+		if _, hit := sharkoOwnedNames[ac.Name]; !hit {
+			continue
 		}
 		out = append(out, models.OrphanRegistration{
 			ClusterName: ac.Name,

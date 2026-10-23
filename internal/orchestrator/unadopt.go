@@ -5,17 +5,22 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // UnadoptCluster reverses a cluster adoption:
 //  1. Check that the cluster has the adopted annotation (error if not).
-//  2. Remove the managed-by label and adopted annotation from the ArgoCD secret (keep secret).
-//  3. Delete Sharko-created addon secrets from the remote cluster.
-//  4. Create PR to remove the cluster from Sharko's records.
+//  2. Create PR to remove the cluster from Sharko's records (step 4 below).
+//  3. ONLY ONCE THAT PR IS MERGED (EP3-DRYRUN-FIXES call 9): remove the
+//     managed-by label, the adopted annotation and the take-over marks
+//     from the ArgoCD secret (keep secret), then delete Sharko-created
+//     addon secrets from the remote cluster. If the PR merged at once this
+//     runs now; else the PR tracker's merge hook runs it later.
 //
-// Steps 1-3 are layout-agnostic and run unchanged on any repo. Step 4
+// Steps 1 and 3 are layout-agnostic and run unchanged on any repo. Step 4
 // diverges: a v3 repo removes the entry from
 // configuration/managed-clusters.yaml and deletes the combined per-cluster
 // values file (unchanged v3 behaviour, below); a v4 repo removes the entry
@@ -133,25 +138,22 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		return result, nil
 	}
 
-	// Step 2: Remove managed-by label and adopted annotation from ArgoCD secret.
-	// Do this BEFORE the Git PR so the reconciler won't treat the removal as an orphan.
-	if o.argoSecretManager != nil {
-		if err := o.argoSecretManager.Unadopt(ctx, name); err != nil {
-			return nil, fmt.Errorf("removing managed-by label from ArgoCD secret for cluster %q: %w", name, err)
-		}
-		log.Info("ArgoCD secret unadopted — labels removed", "cluster", name)
+	// Where the cluster's credentials live, read NOW from the pre-mutation
+	// registry bytes: the PR below removes the cluster's entry, and the
+	// addon secrets on the cluster are removed only after it merges
+	// (V2-cleanup-55.1 secretPath override, EP3-DRYRUN-FIXES call 9).
+	var registryData []byte
+	if v4Repo {
+		registryData = v4Plan.managedClustersData
+	} else {
+		registryData = clusterAddonsData
 	}
-
-	// Step 3: Delete Sharko-created addon secrets from remote cluster (best-effort).
-	// Resolve the stored secretPath override BEFORE step 4 removes the
-	// cluster's managed-clusters.yaml entry (V2-cleanup-55.1).
-	if o.credProvider != nil {
-		creds, credErr := o.fetchClusterCredentials(ctx, name)
-		if credErr == nil {
-			o.deleteAllAddonSecrets(ctx, name, creds.Raw) // best-effort
-		} else {
-			log.Warn("could not fetch credentials for remote secret cleanup", "cluster", name, "error", credErr)
-		}
+	credLookupKey, credsSource, credRoleARN := config.ResolveCredentialRoutingFromData(registryData, name)
+	followUp := ClusterFollowUp{
+		KeepConnection:    true,
+		CredentialKey:     credLookupKey,
+		CredentialsSource: credsSource,
+		CredentialRoleARN: credRoleARN,
 	}
 
 	// Step 4: Create PR removing the cluster from Sharko's records. Reuse
@@ -171,23 +173,96 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		deletePaths = append(deletePaths, valuesPath)
 	}
 
-	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("unadopt cluster %s", name),
-		o.prMeta(req.AutoMerge, "unadopt-cluster", fmt.Sprintf("Unadopt cluster %s", name), name, ""))
+	meta := o.prMeta(req.AutoMerge, "unadopt-cluster", fmt.Sprintf("Unadopt cluster %s", name), name, "")
+	fu := followUp
+	meta.FollowUp = &fu
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("unadopt cluster %s", name), meta)
 	if gitErr != nil {
 		if gitResult != nil {
 			result.Status = "partial"
 			result.Error = gitErr.Error()
-			result.Message = fmt.Sprintf("PR created but merge failed: %s", gitResult.PRUrl)
+			result.Message = fmt.Sprintf("PR created but merge failed: %s. Nothing on the cluster's ArgoCD connection was changed — Sharko finishes the un-adopt after the PR is merged.", gitResult.PRUrl)
 			result.Git = gitResult
 			return result, nil
 		}
 		result.Status = "failed"
 		result.Error = gitErr.Error()
-		result.Message = "Git commit failed during unadoption — ArgoCD secret labels have already been removed"
+		result.Message = UnadoptGitFailedMessage
 		return result, nil
 	}
 
-	result.Status = "success"
 	result.Git = gitResult
+
+	// NOTHING CHANGES ON THE CONNECTION BEFORE THE PR IS MERGED
+	// (EP3-DRYRUN-FIXES call 9, same rule as call 1). While the PR waits,
+	// the Secret keeps its label and its adopted mark — the orphan sweep
+	// never deletes an adopted Secret, so it is safe. The PR tracker's
+	// merge hook runs FinishUnadoptAfterMerge once a person merges it.
+	if !gitResult.Merged {
+		result.Status = "success"
+		result.Message = UnadoptWaitingForMergeMessage(name, gitResult.PRUrl)
+		return result, nil
+	}
+
+	if err := o.finishUnadopt(ctx, name, followUp); err != nil {
+		result.Status = "partial"
+		result.Error = err.Error()
+		result.Message = fmt.Sprintf("The pull request was merged, but Sharko could not take its marks off the ArgoCD cluster Secret for %s: %s", name, err.Error())
+		return result, nil
+	}
+	result.Status = "success"
 	return result, nil
+}
+
+// UnadoptGitFailedMessage is the message when the un-adopt pull request
+// could not be opened. Nothing was changed anywhere at that point.
+const UnadoptGitFailedMessage = "Git commit failed during unadoption — nothing was changed on the cluster's ArgoCD connection"
+
+// UnadoptWaitingForMergeMessage is the message an un-adopt answers with
+// while its pull request waits to be merged. Exported so tests pin it by
+// exact text.
+func UnadoptWaitingForMergeMessage(name, prURL string) string {
+	return fmt.Sprintf("Pull request opened, waiting for merge: %s. Nothing has changed on cluster %s yet — Sharko takes its marks off the ArgoCD cluster Secret after the pull request is merged.", prURL, name)
+}
+
+// FinishUnadoptAfterMerge does the ArgoCD side of an un-adopt whose pull
+// request was merged after UnadoptCluster returned. The PR tracker's merge
+// hook calls it (internal/api). The caller must have checked that the
+// cluster is not back in Git. Safe to run twice.
+func (o *Orchestrator) FinishUnadoptAfterMerge(ctx context.Context, name string, followUp ClusterFollowUp) error {
+	return o.finishUnadopt(ctx, name, followUp)
+}
+
+// finishUnadopt is the after-merge half of an un-adopt: take Sharko's
+// label, the adopted mark and the take-over marks off the ArgoCD cluster
+// Secret (the Secret itself stays), then remove the addon secrets Sharko
+// put on the cluster (best-effort).
+func (o *Orchestrator) finishUnadopt(ctx context.Context, name string, followUp ClusterFollowUp) error {
+	log := logging.LoggerFromContext(ctx)
+	if o.argoSecretManager != nil {
+		if err := o.argoSecretManager.Unadopt(ctx, name); err != nil {
+			return fmt.Errorf("removing managed-by label from ArgoCD secret for cluster %q: %w", name, err)
+		}
+		log.Info("ArgoCD secret unadopted — labels removed", "cluster", name)
+	}
+
+	if o.credProvider != nil {
+		lookupKey := followUp.CredentialKey
+		if lookupKey == "" {
+			lookupKey = name
+		}
+		var creds *providers.Kubeconfig
+		var credErr error
+		if o.credsRouter != nil {
+			creds, credErr = o.credsRouter.Fetch(name, lookupKey, followUp.CredentialsSource, followUp.CredentialRoleARN)
+		} else {
+			creds, credErr = providers.GetCredentialsWithOptionalRole(o.credProvider, lookupKey, followUp.CredentialRoleARN)
+		}
+		if credErr == nil && creds != nil {
+			o.deleteAllAddonSecrets(ctx, name, creds.Raw) // best-effort
+		} else {
+			log.Warn("could not fetch credentials for remote secret cleanup", "cluster", name, "error", credErr)
+		}
+	}
+	return nil
 }

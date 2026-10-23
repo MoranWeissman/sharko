@@ -1691,6 +1691,11 @@ func (m *Manager) Unadopt(ctx context.Context, name string) error {
 	// remove both, or the Secret would stay orphan-sweep-immune forever.
 	delete(updated.Annotations, AnnotationAdoptedDoubledPrefixLegacy)
 	delete(updated.Annotations, AnnotationAdoptedLegacy)
+	// A taken-over connection also carries the take-over marks. Un-adopt
+	// hands the connection back, so they go too (EP3-DRYRUN-FIXES call 9):
+	// left behind, they would still say Sharko took this Secret over.
+	delete(updated.Annotations, AnnotationTakenOverAt)
+	delete(updated.Annotations, AnnotationTakeoverPreservedLabels)
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return fmt.Errorf("unadopting secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}

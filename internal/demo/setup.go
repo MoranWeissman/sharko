@@ -456,7 +456,15 @@ func buildDemoClusterSecrets(estate *GeneratedEstate) []runtime.Object {
 		objs = append(objs, newSecret(c, !foreign[c.Name]))
 	}
 	for _, ao := range estate.ArgoOnlyClusters {
-		objs = append(objs, newSecret(ao.Cluster, ao.SharkoOwned))
+		sec := newSecret(ao.Cluster, ao.SharkoOwned)
+		if ao.SharkoOwned {
+			// A Sharko-owned connection that is not in Git shows on the
+			// leftovers list only when it is a registration that never
+			// finished, which carries the registration-pending mark
+			// (EP3-DRYRUN-FIXES call 4). The demo's orphan is that case.
+			sec.Annotations[models.AnnotationRegistrationPending] = models.RegistrationPendingTimestamp(now.Add(-2 * time.Hour))
+		}
+		objs = append(objs, sec)
 	}
 	return objs
 }

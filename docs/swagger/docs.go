@@ -2497,7 +2497,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all registered clusters with health stats, plus the clusters only ArgoCD knows (connection_status \"not_in_git\", with their ArgoCD labels).\nEvery item carries \"adopted\" (the ArgoCD connection has Sharko's adopted mark) and \"taken_over\" (the connection has sharko.dev/taken-over-at), both always sent as true or false.",
+                "description": "Returns all registered clusters with health stats, plus the clusters only ArgoCD knows (connection_status \"not_in_git\", with their ArgoCD labels).\nEvery item carries \"adopted\" (the ArgoCD connection has Sharko's adopted mark) and \"taken_over\" (the connection has sharko.dev/taken-over-at), both always sent as true or false.\npending_registrations lists open Sharko pull requests for a cluster; each row's operation says what the pull request does (register, adopt, takeover or remove) and pr_number is its number on the Git host. orphan_registrations lists only leftovers of a registration that never finished.",
                 "produces": [
                     "application/json"
                 ],
@@ -4218,7 +4218,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory.",
+                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.",
                 "produces": [
                     "application/json"
                 ],
@@ -4262,6 +4262,13 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Cluster Secret not found in ArgoCD",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "The Secret is not a leftover from a registration that never finished: it is or was adopted or taken over, or it has no registration-pending mark (for example a connection a removal kept)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -11196,6 +11203,18 @@ const docTemplate = `{
                 "opened_at": {
                     "type": "string"
                 },
+                "operation": {
+                    "type": "string",
+                    "enum": [
+                        "register",
+                        "adopt",
+                        "takeover",
+                        "remove"
+                    ]
+                },
+                "pr_number": {
+                    "type": "integer"
+                },
                 "pr_url": {
                     "type": "string"
                 }
@@ -13418,8 +13437,12 @@ const docTemplate = `{
                 "cluster": {
                     "type": "string"
                 },
+                "confirmation_api": {
+                    "description": "ConfirmationAPI is the same for a caller that uses the API directly.",
+                    "type": "string"
+                },
                 "confirmation_required": {
-                    "description": "ConfirmationRequired restates how to actually do it, so the caller\nnever has to guess the shape of the confirmation.",
+                    "description": "ConfirmationRequired restates how to actually do it, so the caller\nnever has to guess the shape of the confirmation.\nThe CLI prints it as the last line.",
                     "type": "string"
                 },
                 "consequences": {

@@ -49,44 +49,75 @@ func resolvePendingRegistrations(
 		return out
 	}
 
-	// Title pattern emitted by the orchestrator. Mirrors the existing
-	// matcher in internal/orchestrator/git_helpers.go.
+	// Title patterns emitted by the orchestrator, one per operation.
+	// Mirrors the matcher in internal/orchestrator/git_helpers.go.
 	//
 	// "<commit-prefix> register cluster <name>"
-	//   |-------- common prefix -------|
+	// "<commit-prefix> remove cluster <name>"
+	//   |-------- common header -------|
 	//
-	// Anything after that header is suffix decoration (e.g.,
-	// " (kubeconfig provider)") — we extract the cluster name as the
-	// first whitespace-bounded token after the header.
-	commonHeader := strings.TrimSpace(commitPrefix) + " register cluster "
+	// The header includes the commit prefix, so "unadopt cluster" never
+	// matches "adopt cluster". Anything after the header is suffix
+	// decoration (e.g. " (kubeconfig provider)") — the cluster name is
+	// the first whitespace-bounded token after the header.
+	prefix := strings.TrimSpace(commitPrefix)
+	headers := []struct {
+		header    string
+		operation string
+	}{
+		{prefix + " register cluster ", models.PendingOperationRegister},
+		{prefix + " remove cluster ", models.PendingOperationRemove},
+	}
 
 	for i := range prs {
 		title := prs[i].Title
-		idx := strings.Index(title, commonHeader)
-		if idx == -1 {
-			continue
+		for _, h := range headers {
+			idx := strings.Index(title, h.header)
+			if idx == -1 {
+				continue
+			}
+			rest := title[idx+len(h.header):]
+			// Cluster name = first whitespace-bounded token of `rest`.
+			// Examples:
+			//   "sharko: register cluster prod-eu"              -> "prod-eu"
+			//   "sharko: register cluster prod-eu (kubeconfig provider)"
+			//                                                   -> "prod-eu"
+			name := rest
+			if sp := strings.IndexAny(rest, " \t"); sp != -1 {
+				name = rest[:sp]
+			}
+			name = strings.TrimSpace(name)
+			if name == "" {
+				break
+			}
+			out = append(out, models.PendingRegistration{
+				ClusterName: name,
+				PRURL:       prs[i].URL,
+				Branch:      prs[i].SourceBranch,
+				OpenedAt:    prs[i].CreatedAt,
+				Operation:   h.operation,
+				PRNumber:    prs[i].ID,
+			})
+			break
 		}
-		rest := title[idx+len(commonHeader):]
-		// Cluster name = first whitespace-bounded token of `rest`.
-		// Examples:
-		//   "sharko: register cluster prod-eu"              -> "prod-eu"
-		//   "sharko: register cluster prod-eu (kubeconfig provider)"
-		//                                                   -> "prod-eu"
-		name := rest
-		if sp := strings.IndexAny(rest, " \t"); sp != -1 {
-			name = rest[:sp]
-		}
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
+	}
+	return out
+}
 
-		out = append(out, models.PendingRegistration{
-			ClusterName: name,
-			PRURL:       prs[i].URL,
-			Branch:      prs[i].SourceBranch,
-			OpenedAt:    prs[i].CreatedAt,
-		})
+// dropPendingForManagedClusters is the LW-18 (Part 2) filter: a register
+// pull request for a cluster that is already in Git is an idempotent
+// re-run and only noise, so it is dropped. A remove pull request is the
+// opposite — its cluster is always still in Git until it merges — so it is
+// kept (EP3-DRYRUN-FIXES finding 19: open remove PRs show as pending).
+func dropPendingForManagedClusters(pending []models.PendingRegistration, managedNames map[string]struct{}) []models.PendingRegistration {
+	out := make([]models.PendingRegistration, 0, len(pending))
+	for _, p := range pending {
+		if p.Operation == models.PendingOperationRegister {
+			if _, alreadyManaged := managedNames[p.ClusterName]; alreadyManaged {
+				continue
+			}
+		}
+		out = append(out, p)
 	}
 	return out
 }

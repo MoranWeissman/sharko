@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -142,6 +143,12 @@ func orphanK8sSecret(name string, labeled bool) *corev1.Secret {
 	}
 	if labeled {
 		clusterreconciler.ApplyManagedBySharkoLabel(s)
+		// A labelled Secret in these tests is a real leftover: a register
+		// that never merged, so it carries the registration-pending mark
+		// (EP3-DRYRUN-FIXES call 4).
+		s.Annotations = map[string]string{
+			models.AnnotationRegistrationPending: models.RegistrationPendingTimestamp(time.Now().Add(-time.Hour)),
+		}
 	}
 	return s
 }
@@ -587,5 +594,56 @@ func TestHandleDeleteOrphan_NoK8sClient_Returns503(t *testing.T) {
 	// Sanity: the op tag identifies the failure mode for log grepping.
 	if !strings.Contains(w.Body.String(), "delete_orphan_cluster_no_k8s_client") {
 		t.Errorf("expected op=delete_orphan_cluster_no_k8s_client in body, got: %s", w.Body.String())
+	}
+}
+
+// EP3-DRYRUN-FIXES call 4: Discard re-checks the leftovers rule on the
+// server. A Sharko-labelled Secret that is or was adopted or taken over, or
+// that has no registration-pending mark (a connection a removal kept), is
+// refused with 409 and plain words, and nothing is deleted.
+func TestHandleDeleteOrphan_NotALeftover_Refuses409(t *testing.T) {
+	cases := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+	}{
+		{"adopted", map[string]string{"sharko.dev/adopted": "true", models.AnnotationRegistrationPending: "x"}, orphanDiscardAdoptedMessage("kind-x")},
+		{"taken over", map[string]string{"sharko.dev/taken-over-at": "2026-10-23T10:00:00Z"}, orphanDiscardAdoptedMessage("kind-x")},
+		{"kept by a removal (no pending mark)", nil, orphanDiscardNotARegistrationMessage("kind-x")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": "kind-x", "server": "https://kind-x.local:6443"},
+			}, http.StatusOK)
+			gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+			sec := orphanK8sSecret("kind-x", true)
+			sec.Annotations = tc.annotations
+			_, router := orphanTestServer(t, gp, argo.URL, orphanK8sClient(sec))
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, orphanAdminReq("kind-x"))
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("expected 409, got %d (body=%s)", w.Code, w.Body.String())
+			}
+			if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+				t.Fatalf("expected no ArgoCD DELETE, got %d", got)
+			}
+			var body map[string]interface{}
+			_ = json.Unmarshal(w.Body.Bytes(), &body)
+			if body["error"] != tc.want {
+				t.Fatalf("message:\n got %v\nwant %q", body["error"], tc.want)
+			}
+		})
+	}
+}
+
+func TestOrphanDiscardMessages_ExactText(t *testing.T) {
+	if got, want := orphanDiscardAdoptedMessage("prod"), `Sharko will not delete the ArgoCD connection for cluster "prod": Sharko adopted it or took it over, so it is not a leftover from a registration that never finished. It stays as it is.`; got != want {
+		t.Fatalf("adopted message:\n got %q\nwant %q", got, want)
+	}
+	if got, want := orphanDiscardNotARegistrationMessage("prod"), `Sharko will not delete the ArgoCD connection for cluster "prod": it is not a leftover from a registration that never finished, so Sharko cannot be sure nobody needs it. It stays as it is. If you no longer want ArgoCD connected to this cluster, delete it in ArgoCD yourself.`; got != want {
+		t.Fatalf("not-a-registration message:\n got %q\nwant %q", got, want)
 	}
 }

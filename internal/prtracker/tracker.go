@@ -560,3 +560,31 @@ func (t *Tracker) encodePRs(data map[string]interface{}, prs map[string]PRInfo) 
 	data["prs"] = raw
 	return nil
 }
+
+// KeptConnections returns the names of clusters whose tracked remove or
+// un-adopt pull request says "keep the ArgoCD connection" (FollowUp with
+// KeepConnection). The cluster reconciler reads this before its orphan
+// sweep deletes a Sharko-labelled Secret that just left Git: between the
+// merge and the merge hook taking the label off, such a Secret looks
+// exactly like an orphan, and deleting it would cut off a connection the
+// person asked to keep.
+//
+// It only reads the tracker's ConfigMap, so a Tracker built with a nil Git
+// provider (read-only view) can answer it.
+func (t *Tracker) KeptConnections(ctx context.Context) (map[string]bool, error) {
+	data, err := t.cmStore.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	kept := make(map[string]bool)
+	for _, pr := range t.extractPRs(data) {
+		if pr.FollowUp == nil || !pr.FollowUp.KeepConnection || pr.Cluster == "" {
+			continue
+		}
+		if pr.Operation != OpRemoveCluster && pr.Operation != OpUnadoptCluster {
+			continue
+		}
+		kept[pr.Cluster] = true
+	}
+	return kept, nil
+}

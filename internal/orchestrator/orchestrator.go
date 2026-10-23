@@ -185,6 +185,19 @@ type TrackedPR struct {
 	Source     string
 	CreatedAt  time.Time
 	LastStatus string
+	// FollowUp mirrors prtracker.PRInfo.FollowUp: the after-merge work a
+	// remove or un-adopt pull request carries. nil for every other PR.
+	FollowUp *ClusterFollowUp
+}
+
+// ClusterFollowUp is the orchestrator-side mirror of
+// prtracker.ClusterFollowUp. See there for what each field means.
+type ClusterFollowUp struct {
+	Cleanup           string
+	KeepConnection    bool
+	CredentialKey     string
+	CredentialsSource string
+	CredentialRoleARN string
 }
 
 // PRMetadata describes the PR-level metadata needed to track a PR
@@ -205,6 +218,11 @@ type PRMetadata struct {
 	// commitChangesWithMeta via resolveAutoMerge — never mutate
 	// o.gitops.PRAutoMerge (shared state across concurrent requests).
 	AutoMergeOverride *bool
+
+	// FollowUp is the after-merge work this PR carries (remove-cluster and
+	// unadopt-cluster only). Copied onto the tracked PR so the merge hook
+	// can finish the job when a person merges the PR later.
+	FollowUp *ClusterFollowUp
 }
 
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,

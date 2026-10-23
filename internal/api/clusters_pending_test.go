@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // V125-1.5 / BUG-053 — pending-registration resolver behaviour.
@@ -74,9 +77,9 @@ func TestResolvePendingRegistrations_MatchesRegisterPRs(t *testing.T) {
 			},
 			{
 				// Unrelated PR — must be excluded.
-				ID:    99,
-				Title: "sharko: remove cluster staging",
-				URL:   "https://github.com/org/repo/pull/99",
+				ID:    98,
+				Title: "sharko: upgrade cert-manager on staging",
+				URL:   "https://github.com/org/repo/pull/98",
 			},
 		},
 	}
@@ -88,6 +91,9 @@ func TestResolvePendingRegistrations_MatchesRegisterPRs(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 pending registrations, got %d: %+v", len(got), got)
+	}
+	if got[0].Operation != "register" || got[0].PRNumber != 42 || got[1].Operation != "register" || got[1].PRNumber != 43 {
+		t.Errorf("operation / pr_number: got %+v", got)
 	}
 	if got[0].ClusterName != "prod-eu" {
 		t.Errorf("first cluster_name = %q, want %q", got[0].ClusterName, "prod-eu")
@@ -235,5 +241,41 @@ func TestPendingRegistrationsExcludeManagedClusters(t *testing.T) {
 		if p.ClusterName == "prod-eu" {
 			t.Errorf("managed cluster prod-eu incorrectly appears in pending registrations")
 		}
+	}
+}
+
+// EP3-DRYRUN-FIXES API contract + finding 19: an open remove pull request
+// shows in pending_registrations with operation "remove" and its PR
+// number, and stays there although its cluster is still in Git. A register
+// PR for a cluster already in Git is still dropped (LW-18). "unadopt
+// cluster" is not taken for anything else.
+func TestResolvePendingRegistrations_RemovePRsShowWithOperation(t *testing.T) {
+	gp := &fakeGP{prs: []gitprovider.PullRequest{
+		{ID: 7, Title: "sharko: remove cluster prod-eu", URL: "https://github.com/org/repo/pull/7", SourceBranch: "sharko/remove-cluster-prod-eu"},
+		{ID: 8, Title: "sharko: register cluster prod-eu", URL: "https://github.com/org/repo/pull/8"},
+		{ID: 9, Title: "sharko: register cluster dr-eu", URL: "https://github.com/org/repo/pull/9"},
+		{ID: 10, Title: "sharko: unadopt cluster legacy", URL: "https://github.com/org/repo/pull/10"},
+	}}
+	raw := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	if len(raw) != 3 {
+		t.Fatalf("expected 3 rows (remove prod-eu, register prod-eu, register dr-eu), got %+v", raw)
+	}
+	if raw[0].ClusterName != "prod-eu" || raw[0].Operation != "remove" || raw[0].PRNumber != 7 || raw[0].PRURL != "https://github.com/org/repo/pull/7" {
+		t.Fatalf("remove row: %+v", raw[0])
+	}
+
+	got := dropPendingForManagedClusters(raw, map[string]struct{}{"prod-eu": {}})
+	if len(got) != 2 || got[0].Operation != "remove" || got[0].ClusterName != "prod-eu" || got[1].ClusterName != "dr-eu" {
+		t.Fatalf("after the already-managed filter: want the remove row and dr-eu, got %+v", got)
+	}
+}
+
+func TestPendingRegistration_JSONHasOperationAndPRNumber(t *testing.T) {
+	b, err := json.Marshal(models.PendingRegistration{ClusterName: "c", Operation: "remove", PRNumber: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"operation":"remove"`) || !strings.Contains(string(b), `"pr_number":7`) {
+		t.Fatalf("json: %s", b)
 	}
 }
