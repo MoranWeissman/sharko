@@ -13,11 +13,12 @@ import (
 // handleListClusters handles GET /api/v1/clusters
 //
 // @Summary List clusters
-// @Description Returns all registered clusters with health stats
+// @Description Returns all registered clusters with health stats, plus the clusters only ArgoCD knows (connection_status "not_in_git", with their ArgoCD labels).
+// @Description Every item carries "adopted" (the ArgoCD connection has Sharko's adopted mark) and "taken_over" (the connection has sharko.dev/taken-over-at), both always sent as true or false.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} models.ClustersResponse
 // @Router /clusters [get]
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()

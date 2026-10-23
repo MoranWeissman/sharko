@@ -965,10 +965,14 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 // argocdClusterItem mirrors the nested JSON structure returned by the ArgoCD
 // clusters API.
 type argocdClusterItem struct {
-	Name          string   `json:"name"`
-	Server        string   `json:"server"`
-	ServerVersion string   `json:"serverVersion"`
-	Namespaces    []string `json:"namespaces"`
+	Name   string `json:"name"`
+	Server string `json:"server"`
+	// Labels and Annotations are the cluster Secret's own, as ArgoCD
+	// reports them.
+	Labels        map[string]string `json:"labels"`
+	Annotations   map[string]string `json:"annotations"`
+	ServerVersion string            `json:"serverVersion"`
+	Namespaces    []string          `json:"namespaces"`
 	Info          struct {
 		ConnectionState struct {
 			Status  string `json:"status"`
@@ -996,6 +1000,8 @@ func (c argocdClusterItem) toModel() models.ArgocdCluster {
 		ServerVersion:   serverVersion,
 		Namespaces:      c.Namespaces,
 		Info:            info,
+		Labels:          c.Labels,
+		Annotations:     c.Annotations,
 	}
 }
 

@@ -2491,7 +2491,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all registered clusters with health stats",
+                "description": "Returns all registered clusters with health stats, plus the clusters only ArgoCD knows (connection_status \"not_in_git\", with their ArgoCD labels).\nEvery item carries \"adopted\" (the ArgoCD connection has Sharko's adopted mark) and \"taken_over\" (the connection has sharko.dev/taken-over-at), both always sent as true or false.",
                 "produces": [
                     "application/json"
                 ],
@@ -2503,8 +2503,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClustersResponse"
                         }
                     }
                 }
@@ -10714,6 +10713,110 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_models.Cluster": {
+            "type": "object",
+            "properties": {
+                "addon_secrets_ready": {
+                    "description": "AddonSecretsReady reports whether Sharko currently has resolvable\ncredentials for this cluster (V2-cleanup-88.3 — lazy credentials).\nComputed on every read via CredentialsResolvable — a cheap\npresence-of-config check (creds_source / connection mode / whether a\nsecrets backend is configured), NOT a live probe, mirroring the\nDerivedHealthStatus precedent above. true means a secret-bearing\naddon can likely be enabled on this cluster without hitting the\nEnableAddon pre-flight rejection; false means the UI should surface\n\"add connection credentials before enabling an addon with secrets\"\ninstead of letting the request round-trip into a 422. Registration\nitself never requires credentials — this field only matters once the\noperator tries to enable a secret-bearing addon.",
+                    "type": "boolean"
+                },
+                "adopted": {
+                    "description": "Adopted is true when the cluster's ArgoCD connection carries\nSharko's adopted mark (sharko.dev/adopted, or one of its two older\nspellings). Read from ArgoCD on every list; never stored in Git.",
+                    "type": "boolean"
+                },
+                "already_managed_by_sharko": {
+                    "description": "AlreadyManagedBySharko is true when the live ArgoCD cluster Secret\nalready carries the app.kubernetes.io/managed-by=sharko label (walk\nday 4 locks, S2). Mirrors the same check the takeover preflight uses\nfor its \"secret-owner\" finding — see applyManagedSecretFields. False\n(the zero value / omitted) either means the Secret is foreign (a real\ntakeover candidate) or that Sharko could not check — see\napplyManagedSecretFields for why \"could not check\" degrades to false\nrather than hiding the takeover action on a guess.",
+                    "type": "boolean"
+                },
+                "connection_managed_by": {
+                    "description": "ConnectionManagedBy mirrors the managed-clusters.yaml entry's\nconnectionManagedBy field onto the API surface (V2-cleanup-57.2).\nEmpty means Sharko-managed (the default); \"user\" means the user\ncreated and maintains the ArgoCD cluster Secret and Sharko only\nsyncs addon labels onto it. The UI renders a read-only\n\"connection: managed by you\" caption off this field.",
+                    "type": "string"
+                },
+                "connection_status": {
+                    "type": "string"
+                },
+                "connectivity_detail": {
+                    "description": "detail for check_pending or check_failed",
+                    "type": "string"
+                },
+                "connectivity_status": {
+                    "description": "Connectivity check fields (V2-cleanup-29). Flat primitives only —\ncomputed at the API layer from ArgoCD application state. The models\npackage must not import internal/observations (no import cycle).\n\nconnectivity_status values:\n  \"verified_argocd\" — ArgoCD ConnectionStatus == \"Successful\"\n  \"verified_check\"  — connectivity-check Application is Synced+Healthy\n  \"check_pending\"   — check Application exists but not yet Synced+Healthy (deploying)\n  \"check_failed\"    — check Application has honest failure signals (Degraded,\n                      OperationPhase Failed/Error, or Error-type conditions)\n  \"\"               — nothing known (ArgoCD \"Unknown\" stands untouched)",
+                    "type": "string"
+                },
+                "creds_source": {
+                    "description": "CredsSource mirrors the managed-clusters.yaml entry's credsSource\nfield (V2-cleanup-60.4): \"inline-kubeconfig\" (credentials live only in\nthe ArgoCD cluster Secret), \"secret-kubeconfig\" / \"eks-token\" (the\nsecrets backend holds them), or \"\" (record predates the field). The\ncredential-fetch routing (Test / Diagnose / secrets / addon ops) keys\noff this so inline-registered clusters work under any backend.",
+                    "type": "string"
+                },
+                "derived_health_status": {
+                    "description": "DerivedHealthStatus is the auto-derived Sharko reachability verdict\n(V2-cleanup-85.4). Unlike SharkoStatus below — which stays empty\nforever until someone clicks \"Test connection\" — this field is\ncomputed fresh on every read from live ArgoCD state, with NO manual\nstep required. Priority order (first match wins):\n  1. any addon on this cluster is Synced+Healthy in ArgoCD -\u003e \"healthy\"\n  2. the connectivity-check application is Synced+Healthy  -\u003e \"reachable\"\n  3. ArgoCD's own connection to the cluster is \"Successful\" -\u003e \"reachable\"\n  4. none of the above                                      -\u003e \"unknown\"\nThe frontend should read this field (not SharkoStatus) to answer\n\"is this cluster healthy\" without requiring a manual test click.",
+                    "type": "string"
+                },
+                "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "last_reconcile": {
+                    "description": "LastReconcile is the most recent cluster-secret reconciler outcome for\nthis cluster (V2-cleanup-89.4 — reconcile results used to be\nserver-log-only; ArgoCD shows a failed apply, Sharko showed nothing).\nComputed at read time from clusterreconciler.Reconciler's in-memory\nper-cluster record — never stored in git. nil when the reconciler\nhasn't processed this cluster on this server instance yet (fresh\nstartup, a registration PR that hasn't merged, or no reconciler wired\nin this deployment mode).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcile"
+                        }
+                    ]
+                },
+                "last_test_at": {
+                    "description": "RFC3339",
+                    "type": "string"
+                },
+                "managed": {
+                    "description": "true if in cluster-addons.yaml",
+                    "type": "boolean"
+                },
+                "managed_secret_name": {
+                    "description": "ManagedSecretName is the \"namespace/name\" of the real ArgoCD cluster\nSecret this cluster's page is about (walk day 4 locks, S1). Computed\nat read time from the reconciler's configured namespace + this\ncluster's name — see applyManagedSecretFields. Empty when no\ncluster-secret reconciler is wired in this deployment mode.",
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "role_arn": {
+                    "description": "RoleARN mirrors the managed-clusters.yaml entry's roleArn field\n(V2-cleanup-62.2): the per-cluster IAM role to assume when minting\nEKS tokens (eks-token creds source only). Empty for records that\npredate the field or clusters that use the connection-level default.",
+                    "type": "string"
+                },
+                "secret_path": {
+                    "type": "string"
+                },
+                "server_url": {
+                    "description": "ServerURL is the cluster's ArgoCD-registered API-server URL (V2-cleanup-74.1).\nSourced from the matching models.ArgocdCluster.Server — never stored in Git,\nalways populated at read time. The UI's ClusterTypeBadge parses this hostname\nto classify EKS/AKS/GKE/kind/minikube/self-hosted. Left empty for the\nhub-local \"in-cluster\" entry (see ListClusters/GetClusterDetail skip logic).",
+                    "type": "string"
+                },
+                "server_version": {
+                    "type": "string"
+                },
+                "sharko_status": {
+                    "description": "Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).\nPopulated when obsStore is available; absent otherwise (omitempty).",
+                    "type": "string"
+                },
+                "taken_over": {
+                    "description": "TakenOver is true when the cluster's ArgoCD connection carries\nsharko.dev/taken-over-at, i.e. Sharko took it over from another\nowner. The UI shows \"Remove the old labels\" only then.",
+                    "type": "boolean"
+                },
+                "target_platform": {
+                    "description": "TargetPlatform is Sharko's auto-detected guess at whether this\nspecific cluster looks like EKS (V2-cleanup-88.1, design L11) —\ndistinct from the server's OWN AWS identity (see\nGET /api/v1/system/capabilities). Computed at read time from\nServerURL and CredsSource, the same way DerivedHealthStatus is\ncomputed from live state below — never stored in Git. One of \"eks\"\nor \"unknown\". The register-cluster screen uses this (via the list\nof already-registered clusters) plus system/capabilities to decide\nwhat to ask the user versus what it can already tell them.",
+                    "type": "string"
+                },
+                "test_error_code": {
+                    "type": "string"
+                },
+                "test_failing": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_models.ClusterAddonsAddonSettings": {
             "type": "object",
             "properties": {
@@ -10743,6 +10846,93 @@
                 },
                 "syncOptions": {
                     "description": "SyncOptions replaces (never merges with) the shipped/delta list —\ndesign doc §3.3 decision D12: there is no honest way to know\nwhether a per-cluster list was meant to add to or replace the\nfleet-wide one, so it always replaces.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ClusterHealthStats": {
+            "type": "object",
+            "properties": {
+                "connected": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "missing_from_argocd": {
+                    "type": "integer"
+                },
+                "not_in_git": {
+                    "type": "integer"
+                },
+                "total_in_git": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcile": {
+            "type": "object",
+            "properties": {
+                "applied_revision": {
+                    "description": "AppliedRevision (P2-C1) is the full commit SHA the last SUCCESSFUL\nWRITE to this cluster's ArgoCD secret was built from — the\ngeneration/observedGeneration pair's \"applied\" half. Empty until\nthis server instance has ever successfully written this cluster's\nsecret; a check pass never moves it.",
+                    "type": "string"
+                },
+                "compared_path": {
+                    "description": "ComparedPath (P2-C1) is the exact managed-clusters file path this\npass read from git.",
+                    "type": "string"
+                },
+                "compared_revision": {
+                    "description": "ComparedRevision (P2-C1) is the full branch head commit SHA the pass\nthat produced this record read git at. Empty when the active git\nprovider cannot say (see clusterreconciler.BranchRevisioner) — never\na guessed or stale value.",
+                    "type": "string"
+                },
+                "fight_count": {
+                    "description": "FightCount (P2-D D3) is the number of CONSECUTIVE ticks the connection\nreconciler's label-fight detector has observed something else revert\nSharko's own write on this cluster's self-managed ArgoCD secret — the\nsame counter clusterreconciler.Reconciler.FightCount reads. 0 (the\nzero value / omitted) means no fight currently in progress, including\nfor every Sharko-managed (non-self-managed) cluster, which has no\nfight concept at all.",
+                    "type": "integer"
+                },
+                "label_drift": {
+                    "description": "V3 G1 — drift detection",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcileLabelDrift"
+                        }
+                    ]
+                },
+                "message": {
+                    "description": "plain-English detail; set on failed/skipped",
+                    "type": "string"
+                },
+                "outcome": {
+                    "description": "\"succeeded\" | \"failed\" | \"skipped\"",
+                    "type": "string"
+                },
+                "time": {
+                    "description": "RFC3339",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ClusterLastReconcileLabelDrift": {
+            "type": "object",
+            "properties": {
+                "added": {
+                    "description": "keys in git but not on cluster",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "changed": {
+                    "description": "keys in both but values differ",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "removed": {
+                    "description": "keys on cluster but not in git",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -10796,6 +10986,33 @@
                 },
                 "status": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ClustersResponse": {
+            "type": "object",
+            "properties": {
+                "clusters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.Cluster"
+                    }
+                },
+                "health_stats": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ClusterHealthStats"
+                },
+                "orphan_registrations": {
+                    "description": "OrphanRegistrations: ArgoCD cluster Secrets that have no\nmanaged-clusters.yaml entry AND no open registration PR. The FE\nrenders these in a dedicated \"Cancelled / Orphan Registrations\"\nsection with a per-row Delete cluster Secret button.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.OrphanRegistration"
+                    }
+                },
+                "pending_registrations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.PendingRegistration"
+                    }
                 }
             }
         },
@@ -10905,6 +11122,37 @@
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.OrphanRegistration": {
+            "type": "object",
+            "properties": {
+                "cluster_name": {
+                    "type": "string"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "server_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.PendingRegistration": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "cluster_name": {
+                    "type": "string"
+                },
+                "opened_at": {
+                    "type": "string"
+                },
+                "pr_url": {
                     "type": "string"
                 }
             }
