@@ -62,7 +62,24 @@ export interface ClusterLatestTest {
   total?: number;
   /** Name of the step that failed, when it reported one. */
   failedStep?: string;
+  /**
+   * True when Sharko could not read the cluster's sign-in details, so
+   * nothing was tested. Shown as "Not verified", the same as the Adopt
+   * dialog, never as "Test failing".
+   */
+  notVerified?: boolean;
+  /** When this test finished (RFC3339). */
+  at?: string;
 }
+
+// Words in the popover, pinned by exact text in ClusterStatusSummary.test.tsx.
+export const DEPLOY_CHECK_NOT_NEEDED_MEANING =
+  'ArgoCD already confirms it can reach this cluster, so no deploy check was needed.';
+export const DEPLOY_CHECK_NOT_KNOWN_MEANING =
+  'Sharko got a deploy check result it does not know how to show.';
+export const DEPLOY_CHECK_NOT_RUN_MEANING = 'No deploy check has run for this cluster.';
+export const SHARKO_NOT_VERIFIED_MEANING =
+  "Sharko could not read this cluster's sign-in details, so it could not test the connection.";
 
 export interface ClusterStatusSummaryProps {
   /** ArgoCD's own connection state for the cluster (connection_status). */
@@ -183,12 +200,32 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
       severity: 'good',
       meaning: 'A small test app was deployed to this cluster and it worked.',
     });
-  } else {
+  } else if (cs === 'verified_argocd') {
+    // ArgoCD itself says the connection works, so the server ran no
+    // deploy check. That is not "no check has run": nothing is missing.
+    parts.push({
+      who: 'Deploy check',
+      label: 'Not needed',
+      severity: 'unknown',
+      meaning: DEPLOY_CHECK_NOT_NEEDED_MEANING,
+      informational: true,
+    });
+  } else if (cs === '') {
     parts.push({
       who: 'Deploy check',
       label: 'Not run',
       severity: 'unknown',
-      meaning: 'No deploy check has run for this cluster.',
+      meaning: DEPLOY_CHECK_NOT_RUN_MEANING,
+      informational: true,
+    });
+  } else {
+    // A value this page does not know (a newer server). Do not claim no
+    // check ran.
+    parts.push({
+      who: 'Deploy check',
+      label: 'Not known',
+      severity: 'unknown',
+      meaning: DEPLOY_CHECK_NOT_KNOWN_MEANING,
       informational: true,
     });
   }
@@ -196,7 +233,24 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
   // 3. Sharko's own direct connection test. The run the user just did on this
   // page beats what the server remembers, because it is newer.
   const when = props.lastTestAt ? ` Tested ${relativeTime(props.lastTestAt)}.` : '';
-  if (props.latestTest) {
+  // The run on this page wins, unless the server remembers a test that
+  // finished after it (another tab, the CLI, a background check).
+  const serverIsNewer =
+    !!props.latestTest?.at &&
+    !!props.lastTestAt &&
+    !!props.sharkoStatus &&
+    new Date(props.lastTestAt).getTime() > new Date(props.latestTest.at).getTime();
+  const useLatest = props.latestTest && !serverIsNewer;
+  if (useLatest && props.latestTest?.notVerified) {
+    parts.push({
+      who: SHARKO_CONN_LABEL,
+      whoTooltip: SHARKO_CONN_TOOLTIP,
+      label: 'Not verified',
+      severity: 'unknown',
+      meaning: SHARKO_NOT_VERIFIED_MEANING,
+      informational: true,
+    });
+  } else if (useLatest && props.latestTest) {
     const t = props.latestTest;
     const counts =
       typeof t.passed === 'number' && typeof t.total === 'number' && t.total > 0

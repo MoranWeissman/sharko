@@ -231,3 +231,60 @@ describe('<ClusterStatusSummary />', () => {
     });
   });
 });
+
+// Round R (R18): the popover never says "no check has run" when the server
+// said something else, and a newer server result beats an older page run.
+describe('round R: deploy check and Sharko lines', () => {
+  const deploy = (connectivityStatus: string) =>
+    clusterStatusParts({ connectionStatus: 'Successful', connectivityStatus }).find((p) => p.who === 'Deploy check')!;
+  const sharko = (props: Parameters<typeof clusterStatusParts>[0]) =>
+    clusterStatusParts(props)[2];
+
+  it('verified_argocd reads "Not needed", not "Not run"', () => {
+    const d = deploy('verified_argocd');
+    expect(d.label).toBe('Not needed');
+    expect(d.meaning).toBe('ArgoCD already confirms it can reach this cluster, so no deploy check was needed.');
+    expect(d.meaning).not.toBe('No deploy check has run for this cluster.');
+    expect(d.informational).toBe(true);
+  });
+
+  it('an empty status is "Not run"', () => {
+    const d = deploy('');
+    expect(d.label).toBe('Not run');
+    expect(d.meaning).toBe('No deploy check has run for this cluster.');
+  });
+
+  it('a status this page does not know reads "Not known"', () => {
+    const d = deploy('something_new');
+    expect(d.label).toBe('Not known');
+    expect(d.meaning).toBe('Sharko got a deploy check result it does not know how to show.');
+    expect(d.meaning).not.toMatch(/No deploy check has run/);
+  });
+
+  it('a failed sign-in lookup on this page reads "Not verified", not "Test failing"', () => {
+    const s = sharko({ latestTest: { success: false, notVerified: true } });
+    expect(s.label).toBe('Not verified');
+    expect(s.meaning).toBe("Sharko could not read this cluster's sign-in details, so it could not test the connection.");
+    expect(s.informational).toBe(true);
+  });
+
+  it('a server test that finished after the page run wins', () => {
+    const s = sharko({
+      sharkoStatus: 'Connected',
+      testFailing: true,
+      lastTestAt: '2026-10-23T10:05:00Z',
+      latestTest: { success: true, at: '2026-10-23T10:00:00Z' },
+    });
+    expect(s.label).toBe('Test failing');
+  });
+
+  it('the page run wins when it is newer', () => {
+    const s = sharko({
+      sharkoStatus: 'Connected',
+      testFailing: true,
+      lastTestAt: '2026-10-23T09:00:00Z',
+      latestTest: { success: true, at: '2026-10-23T10:00:00Z' },
+    });
+    expect(s.label).toBe('Reachable');
+  });
+});

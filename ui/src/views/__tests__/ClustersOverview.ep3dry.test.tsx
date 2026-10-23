@@ -96,7 +96,7 @@ describe('ClustersOverview - episode 3 dry run (story D)', () => {
     let release: (v: unknown) => void = () => {};
     mockGetClusters.mockReturnValue(new Promise((r) => { release = r; }));
     fireEvent.click(confirm);
-    const link = await screen.findByRole('link', { name: /PR/i });
+    const link = await screen.findByRole('link', { name: /view pull request/i });
     expect(link).toBeInTheDocument();
     expect(screen.queryByText('Loading clusters...')).not.toBeInTheDocument();
     release(response());
