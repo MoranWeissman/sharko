@@ -353,9 +353,33 @@ func (o *Orchestrator) findOpenPRForCluster(ctx context.Context, clusterName, op
 	// Match PRs by title pattern: "<prefix> <operation> cluster <name>"
 	pattern := fmt.Sprintf("%s %s cluster %s", o.gitops.CommitPrefix, operation, clusterName)
 	for i := range prs {
-		if strings.Contains(prs[i].Title, pattern) {
+		if titleNamesCluster(prs[i].Title, pattern) {
 			return &prs[i], nil
 		}
 	}
 	return nil, nil
+}
+
+// titleNamesCluster reports whether title contains pattern AND the cluster
+// name in it ends there. A plain substring check let "take over cluster
+// prod" match the pull request for "prod-eu", so a retry for one cluster
+// was answered with another cluster's pull request.
+func titleNamesCluster(title, pattern string) bool {
+	for start := 0; start <= len(title); {
+		idx := strings.Index(title[start:], pattern)
+		if idx == -1 {
+			return false
+		}
+		end := start + idx + len(pattern)
+		if end == len(title) || !isClusterNameChar(title[end]) {
+			return true
+		}
+		start += idx + 1
+	}
+	return false
+}
+
+func isClusterNameChar(c byte) bool {
+	return c == '-' || c == '.' || c == '_' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }

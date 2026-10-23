@@ -13048,6 +13048,10 @@ const docTemplate = `{
                 "already_owned": {
                     "type": "boolean"
                 },
+                "already_waiting": {
+                    "description": "AlreadyWaiting is true when a take over (or adopt) pull request for\nthis cluster was already open. Git points at it; no second one was\nopened.",
+                    "type": "boolean"
+                },
                 "cluster": {
                     "type": "string"
                 },

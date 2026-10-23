@@ -2850,6 +2850,12 @@ definitions:
     properties:
       already_owned:
         type: boolean
+      already_waiting:
+        description: |-
+          AlreadyWaiting is true when a take over (or adopt) pull request for
+          this cluster was already open. Git points at it; no second one was
+          opened.
+        type: boolean
       cluster:
         type: string
       dropped_labels:

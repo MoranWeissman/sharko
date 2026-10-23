@@ -23,10 +23,13 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -52,6 +55,13 @@ type TakeoverGitResult struct {
 	FilesWritten   []string      `json:"files_written,omitempty"`
 	DryRun         *DryRunResult `json:"dry_run,omitempty"`
 	AlreadyInFleet bool          `json:"already_in_fleet,omitempty"`
+	// AlreadyWaiting is true when a take over (or adopt) pull request for
+	// this cluster is already open. Git then points at that pull request
+	// and no second one is opened.
+	AlreadyWaiting bool `json:"already_waiting,omitempty"`
+	// NothingToWrite is true when the fleet record in Git already has
+	// everything a take over writes, so no pull request was opened.
+	NothingToWrite bool `json:"nothing_to_write,omitempty"`
 }
 
 // ErrTakeoverNeedsV4Repo is returned when the connected repo is still in
@@ -101,11 +111,24 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 
 	result := &TakeoverGitResult{Cluster: req.Name}
 
+	// Taking over twice must not open two pull requests (episode 3 dry
+	// run, design call 8). An open take over or adopt pull request for
+	// this cluster is the answer. If the list cannot be read, carry on:
+	// the worst case is the old behaviour, a second pull request.
+	if open := o.findOpenJoinPR(ctx, req.Name); open != nil {
+		result.AlreadyWaiting = true
+		result.Git = &GitResult{PRUrl: open.URL, PRID: open.ID, Branch: open.SourceBranch}
+		if !req.DryRun {
+			return result, nil
+		}
+	}
+
 	build, err := o.buildTakeoverFiles(ctx, req.Name, req.Region)
 	if err != nil {
 		return nil, err
 	}
 	result.AlreadyInFleet = build.alreadyInFleet
+	result.NothingToWrite = build.unchanged()
 
 	if req.DryRun {
 		result.DryRun = &DryRunResult{
@@ -119,6 +142,12 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 
 	if !req.Yes {
 		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
+	}
+
+	if result.NothingToWrite {
+		// The fleet record already has this cluster and its addon file.
+		// A pull request with no changes in it would only be noise.
+		return result, nil
 	}
 
 	files := build.files()
@@ -162,6 +191,31 @@ type takeoverFilesBuild struct {
 	updatedClusterAddons  []byte // after
 
 	alreadyInFleet bool
+}
+
+// unchanged reports whether both files would be written back exactly as
+// they already are.
+func (b *takeoverFilesBuild) unchanged() bool {
+	return b.connectionsExists && b.clusterAddonsExists &&
+		bytes.Equal(b.connectionsData, b.updatedConnections) &&
+		bytes.Equal(b.existingClusterAddons, b.updatedClusterAddons)
+}
+
+// findOpenJoinPR returns an open take over or adopt pull request for the
+// cluster, or nil. Both write the same two files, so either one means the
+// cluster is already on its way into the fleet.
+func (o *Orchestrator) findOpenJoinPR(ctx context.Context, name string) *gitprovider.PullRequest {
+	for _, op := range []string{"take over", "adopt"} {
+		pr, err := o.findOpenPRForCluster(ctx, name, op)
+		if err != nil {
+			slog.Warn("take over: could not list open pull requests — carrying on", "cluster", name, "error", err)
+			return nil
+		}
+		if pr != nil {
+			return pr
+		}
+	}
+	return nil
 }
 
 // files returns the map ready for commitChangesWithMeta / BatchCreateFiles.

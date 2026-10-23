@@ -61,6 +61,9 @@ type takeoverFakeGP struct {
 	branches []string
 	written  map[string][]byte
 	prs      int
+	// open is every pull request CreatePullRequest made, listed back by
+	// ListPullRequests, so a second take over can find the first one.
+	open []gitprovider.PullRequest
 }
 
 func newTakeoverFakeGP() *takeoverFakeGP {
@@ -92,7 +95,9 @@ func (f *takeoverFakeGP) ListDirectory(_ context.Context, _, _ string) ([]string
 	return nil, nil
 }
 func (f *takeoverFakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]gitprovider.PullRequest(nil), f.open...), nil
 }
 func (f *takeoverFakeGP) TestConnection(_ context.Context) error { return nil }
 func (f *takeoverFakeGP) CreateBranch(_ context.Context, name, _ string) error {
@@ -116,11 +121,13 @@ func (f *takeoverFakeGP) BatchCreateFiles(_ context.Context, files map[string][]
 	return nil
 }
 func (f *takeoverFakeGP) DeleteFile(_ context.Context, _, _, _ string) error { return nil }
-func (f *takeoverFakeGP) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+func (f *takeoverFakeGP) CreatePullRequest(_ context.Context, title, _, head, _ string) (*gitprovider.PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prs++
-	return &gitprovider.PullRequest{ID: f.prs, URL: "https://example.invalid/pr/1"}, nil
+	pr := gitprovider.PullRequest{ID: f.prs, Title: title, SourceBranch: head, URL: fmt.Sprintf("https://example.invalid/pr/%d", f.prs)}
+	f.open = append(f.open, pr)
+	return &pr, nil
 }
 func (f *takeoverFakeGP) MergePullRequest(_ context.Context, _ int) error { return nil }
 func (f *takeoverFakeGP) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
@@ -814,6 +821,53 @@ func TestUnregisterConsequences_KeepsTheInstructionsOnAV3Repo(t *testing.T) {
 	for _, c := range resp.Consequences {
 		if c.ID == "removal-not-available" {
 			t.Errorf("a v3 repo was told removal is unavailable: %+v", c)
+		}
+	}
+}
+
+// TestTakeover_Twice_OpensOnePullRequestAndSaysItIsWaiting — episode 3 dry
+// run, design call 8. The second take over points at the open pull request
+// and never says "Its fleet record is up to date" while it is still open.
+func TestTakeover_Twice_OpensOnePullRequestAndSaysItIsWaiting(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	_, router, _ := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
+		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
+	body := TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin", body))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first take over: %d %s", first.Code, first.Body.String())
+	}
+	var r1 TakeoverResponse
+	_ = json.Unmarshal(first.Body.Bytes(), &r1)
+	if !strings.HasSuffix(r1.Message, " The pull request that adds it to the fleet record in Git is open: #1, https://example.invalid/pr/1. Merge it to finish.") {
+		t.Fatalf("first message = %q", r1.Message)
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin", body))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second take over: %d %s", second.Code, second.Body.String())
+	}
+	var r2 TakeoverResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &r2); err != nil {
+		t.Fatal(err)
+	}
+	if gp.prs != 1 {
+		t.Fatalf("taking over twice opened %d pull requests, want 1", gp.prs)
+	}
+	if !r2.AlreadyWaiting || r2.Git == nil || r2.Git.PRID != 1 {
+		t.Fatalf("second take over does not point at pull request #1: %s", second.Body.String())
+	}
+	want := "Sharko already owned prod-eu's connection, so nothing about it changed. Taking over prod-eu is already waiting in pull request #1: https://example.invalid/pr/1. Sharko did not open a second one. Merge it to finish."
+	if r2.Message != want {
+		t.Fatalf("second message:\n%s\nwant:\n%s", r2.Message, want)
+	}
+	for _, m := range []string{r1.Message, r2.Message} {
+		if strings.Contains(m, "Its fleet record is up to date") {
+			t.Fatalf("the old untrue sentence is back: %q", m)
 		}
 	}
 }

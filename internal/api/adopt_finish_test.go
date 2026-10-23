@@ -97,9 +97,9 @@ func TestFinishAdopt_IgnoresPullRequestsThatAreNotTheWaitingOne(t *testing.T) {
 		mark string
 		pr   prtracker.PRInfo
 	}{
-		"other pull request number": {"12", adoptPR(13)},
+		"other pull request number":                                    {"12", adoptPR(13)},
 		"no mark (a take over pull request shares the operation code)": {"", adoptPR(12)},
-		"other operation": {"12", prtracker.PRInfo{PRID: 12, Cluster: "prod-eu", Operation: prtracker.OpRegisterCluster}},
+		"other operation":                                              {"12", prtracker.PRInfo{PRID: 12, Cluster: "prod-eu", Operation: prtracker.OpRegisterCluster}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

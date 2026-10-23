@@ -165,6 +165,13 @@ Confirm, and Sharko:
    ownership marker, keeps every label that was already there, and does
    not touch the credentials or the server address.
 
+If you run the take over again while that pull request is still open,
+Sharko does not open a second one. It tells you the take over is already
+waiting in that pull request, and gives you its link. If the cluster is
+already in `managed-clusters.yaml` and has its addon file, no pull
+request is opened at all. The comment lines at the top of
+`managed-clusters.yaml` stay where they are.
+
 ### The note that protects the old labels
 
 While it does that, Sharko writes down the exact list of labels it

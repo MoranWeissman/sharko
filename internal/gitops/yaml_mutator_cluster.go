@@ -9,9 +9,10 @@
 //
 // Trade-off: the mutators no longer preserve inline comments, blank-line
 // separators, or original key ordering inside cluster entries — the
-// yaml.v3 marshaller emits canonical formatting. The schema header
-// (models.ManagedClustersSchemaHeader) is always preserved as line 1
-// because SaveManagedClusters prepends it on every emit.
+// yaml.v3 marshaller emits canonical formatting. The comment block at the
+// very top of the file is kept (saveKeepingHeader), and the schema line
+// (models.ManagedClustersSchemaHeader) is always there because
+// SaveManagedClusters prepends it on every emit.
 //
 // Behavioural contract (matches the legacy mutators where possible):
 //
@@ -35,6 +36,7 @@ package gitops
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -84,7 +86,7 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 	// secret creation failed" path) don't surface a misleading error.
 	for _, c := range spec.Clusters {
 		if c.Name == entry.Name {
-			return models.SaveManagedClusters(spec)
+			return saveKeepingHeader(data, spec)
 		}
 	}
 
@@ -106,7 +108,7 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 	}
 	spec.Clusters = append(spec.Clusters, newEntry)
 
-	return models.SaveManagedClusters(spec)
+	return saveKeepingHeader(data, spec)
 }
 
 // RemoveClusterEntry removes the named cluster from the spec. Returns an
@@ -131,7 +133,7 @@ func RemoveClusterEntry(data []byte, name string) ([]byte, error) {
 	}
 	spec.Clusters = filtered
 
-	return models.SaveManagedClusters(spec)
+	return saveKeepingHeader(data, spec)
 }
 
 // EnableAddonLabel sets addonName to the canonical "enabled" value
@@ -171,7 +173,7 @@ func setClusterAddonLabel(data []byte, clusterName, addonName, value string) ([]
 		return nil, fmt.Errorf("cluster %q not found in managed-clusters.yaml", clusterName)
 	}
 
-	return models.SaveManagedClusters(spec)
+	return saveKeepingHeader(data, spec)
 }
 
 // UpdateClusterSecretPath sets or clears the secretPath field for a
@@ -197,7 +199,7 @@ func UpdateClusterSecretPath(data []byte, clusterName, secretPath string) ([]byt
 		return nil, fmt.Errorf("cluster %q not found in managed-clusters.yaml", clusterName)
 	}
 
-	return models.SaveManagedClusters(spec)
+	return saveKeepingHeader(data, spec)
 }
 
 // loadOrBootstrap parses an existing managed-clusters.yaml body or
@@ -278,6 +280,63 @@ func copyLabels(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for k, v := range in {
 		out[k] = v
+	}
+	return out
+}
+
+// saveKeepingHeader renders spec and puts back the comment lines that sat
+// at the very top of the file before (the plain-English header Sharko
+// writes when it creates the file, or the owner's own notes). Rendering
+// alone dropped them, so the first adopt or take over removed the header
+// for good (episode 3 dry run, finding 12).
+//
+// Only the top comment block is kept: comments further down are attached
+// to entries yaml re-renders, and are out of reach here. Comment lines the
+// rendered file already starts with (the schema line) are not doubled, and
+// no blank line is added.
+func saveKeepingHeader(data []byte, spec models.ManagedClustersSpec) ([]byte, error) {
+	out, err := models.SaveManagedClusters(spec)
+	if err != nil {
+		return nil, err
+	}
+	return keepLeadingComments(data, out), nil
+}
+
+// keepLeadingComments returns updated with the leading "#" lines of before
+// that updated does not already open with put back in front, in order.
+func keepLeadingComments(before, updated []byte) []byte {
+	oldLead := leadingCommentLines(before)
+	if len(oldLead) == 0 {
+		return updated
+	}
+	have := map[string]struct{}{}
+	for _, l := range leadingCommentLines(updated) {
+		have[l] = struct{}{}
+	}
+	var head strings.Builder
+	for _, l := range oldLead {
+		if _, dup := have[l]; dup {
+			continue
+		}
+		head.WriteString(l)
+		head.WriteByte('\n')
+	}
+	if head.Len() == 0 {
+		return updated
+	}
+	return append([]byte(head.String()), updated...)
+}
+
+// leadingCommentLines returns the lines at the top of data that start with
+// "#", stopping at the first line that does not.
+func leadingCommentLines(data []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimRight(line, "\r")
+		if !strings.HasPrefix(strings.TrimSpace(trimmed), "#") {
+			break
+		}
+		out = append(out, trimmed)
 	}
 	return out
 }
