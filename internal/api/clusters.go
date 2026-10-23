@@ -1,10 +1,13 @@
 package api
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
@@ -290,7 +293,7 @@ func sortClusters(clusters []models.Cluster, field, order string) {
 // @Param name path string true "Cluster name"
 // @Success 200 {object} map[string]interface{} "Cluster detail"
 // @Failure 400 {object} map[string]interface{} "Bad request"
-// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 404 {object} clusterNotManagedResponse "Cluster not found. code is not_managed and argocd_known is true when ArgoCD connects to it but Sharko does not manage it"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /clusters/{name} [get]
 func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
@@ -319,6 +322,14 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resp == nil {
+		if argocdKnowsCluster(r, ac, name) {
+			writeJSON(w, http.StatusNotFound, clusterNotManagedResponse{
+				Error:       fmt.Sprintf(clusterNotManagedFmt, name),
+				Code:        clusterNotManagedCode,
+				ArgocdKnown: true,
+			})
+			return
+		}
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
 	}
@@ -506,4 +517,39 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	s.applyManagedSecretFields(r.Context(), &resp.Cluster)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// clusterNotManagedCode is the code GET /clusters/{name} sends when Sharko
+// does not manage the cluster but ArgoCD already connects to it. The UI
+// shows the adopt and take over choices on it (episode 3 dry run, finding 7).
+const clusterNotManagedCode = "not_managed"
+
+// clusterNotManagedFmt is the sentence that goes with clusterNotManagedCode.
+const clusterNotManagedFmt = "Sharko does not manage %s yet. ArgoCD already connects to it, so you can adopt it or take it over."
+
+// clusterNotManagedResponse is the 404 body for a cluster ArgoCD knows and
+// Sharko does not manage.
+type clusterNotManagedResponse struct {
+	Error       string `json:"error"`
+	Code        string `json:"code"`
+	ArgocdKnown bool   `json:"argocd_known"`
+}
+
+// argocdKnowsCluster reports whether ArgoCD has a cluster called name. A
+// failed ArgoCD read counts as no, so the answer stays the plain 404.
+func argocdKnowsCluster(r *http.Request, ac *argocd.Client, name string) bool {
+	if ac == nil {
+		return false
+	}
+	clusters, err := ac.ListClusters(r.Context())
+	if err != nil {
+		slog.Warn("[cluster-get] could not ask ArgoCD whether it knows the cluster", "cluster", name, "error", err)
+		return false
+	}
+	for _, c := range clusters {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }

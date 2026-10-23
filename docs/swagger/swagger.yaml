@@ -3660,6 +3660,15 @@ definitions:
           $ref: '#/definitions/internal_api.catalogVersionEntry'
         type: array
     type: object
+  internal_api.clusterNotManagedResponse:
+    properties:
+      argocd_known:
+        type: boolean
+      code:
+        type: string
+      error:
+        type: string
+    type: object
   internal_api.connectionCheckStatusView:
     properties:
       interval_seconds:
@@ -7182,10 +7191,10 @@ paths:
             additionalProperties: true
             type: object
         "404":
-          description: Cluster not found
+          description: Cluster not found. code is not_managed and argocd_known is
+            true when ArgoCD connects to it but Sharko does not manage it
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.clusterNotManagedResponse'
         "500":
           description: Internal error
           schema:

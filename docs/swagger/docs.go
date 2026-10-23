@@ -3017,10 +3017,9 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Cluster not found",
+                        "description": "Cluster not found. code is not_managed and argocd_known is true when ArgoCD connects to it but Sharko does not manage it",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.clusterNotManagedResponse"
                         }
                     },
                     "500": {
@@ -13916,6 +13915,20 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.catalogVersionEntry"
                     }
+                }
+            }
+        },
+        "internal_api.clusterNotManagedResponse": {
+            "type": "object",
+            "properties": {
+                "argocd_known": {
+                    "type": "boolean"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
                 }
             }
         },
