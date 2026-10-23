@@ -1240,6 +1240,7 @@ func registerRoutes(srv *Server, mux *routeMux, staticFS fs.FS) {
 	mux.HandleFunc("POST /api/v1/clusters/batch", srv.handleBatchRegisterClusters)
 	mux.HandleFunc("POST /api/v1/clusters/adopt", srv.handleAdoptClusters)
 	mux.HandleFunc("GET /api/v1/clusters/available", srv.handleDiscoverClusters)
+	mux.HandleFunc("GET /api/v1/providers/clusters", srv.handleListProviderClusters)
 
 	// Clusters (read)
 	mux.HandleFunc("GET /api/v1/clusters", srv.handleListClusters)

@@ -103,7 +103,9 @@ Examples:
 
 		if fromProvider {
 			// Discover unregistered clusters from the provider.
-			respBody, status, err := apiGet("/api/v1/clusters/available")
+			// /clusters/available now lists what ArgoCD knows instead;
+			// the credentials-backend list moved to /providers/clusters.
+			respBody, status, err := apiGet("/api/v1/providers/clusters")
 			if err != nil {
 				return err
 			}

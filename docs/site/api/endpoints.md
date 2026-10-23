@@ -10,7 +10,8 @@ Key endpoints reference. For full request/response schemas, use the interactive 
 |--------|------|-------------|
 | `GET` | `/api/v1/clusters` | List all registered clusters with health stats |
 | `GET` | `/api/v1/clusters/{name}` | Cluster detail with addon status |
-| `GET` | `/api/v1/clusters/available` | Discover available clusters from the secrets provider |
+| `GET` | `/api/v1/clusters/available` | Clusters ArgoCD already connects to that Sharko does not manage yet |
+| `GET` | `/api/v1/providers/clusters` | Clusters in the credentials backend, and which ones ArgoCD already has |
 
 List endpoints support pagination via `?page=<n>&limit=<n>` query params (default: `limit=50`).
 

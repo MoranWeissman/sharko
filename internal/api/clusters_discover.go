@@ -6,39 +6,173 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/events"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
-// discoverClusterEntry is a single cluster in the discover response.
-type discoverClusterEntry struct {
+// availableCluster is one cluster ArgoCD already connects to that Sharko
+// does not manage yet.
+type availableCluster struct {
+	// Name is the cluster name ArgoCD shows.
+	Name string `json:"name"`
+	// ServerURL is the cluster's API server address in ArgoCD.
+	ServerURL string `json:"server_url"`
+	// SecretName is the Kubernetes name of ArgoCD's connection Secret for
+	// this cluster. Left out when Sharko could not read it.
+	SecretName string `json:"secret_name,omitempty"`
+	// Reachable is ArgoCD's own last word on the connection: true when
+	// ArgoCD says Successful, false when it says Failed. Left out when
+	// ArgoCD has not said yet.
+	Reachable *bool `json:"reachable,omitempty"`
+}
+
+// availableClustersResponse is the body of GET /clusters/available.
+type availableClustersResponse struct {
+	Clusters []availableCluster `json:"clusters"`
+}
+
+// reachableFromConnectionState turns ArgoCD's connection state into the
+// reachable field. Anything other than Successful or Failed is unknown.
+func reachableFromConnectionState(state string) *bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "successful":
+		v := true
+		return &v
+	case "failed":
+		v := false
+		return &v
+	}
+	return nil
+}
+
+// handleDiscoverClusters godoc
+//
+// @Summary List clusters ArgoCD knows that Sharko does not manage
+// @Description Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git and ArgoCD's own in-cluster entry.
+// @Description Each one can be adopted or taken over. reachable is ArgoCD's own connection state and is left out when ArgoCD has not checked yet.
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} availableClustersResponse "Clusters ArgoCD knows that Sharko does not manage"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Sharko could not read ArgoCD or Git"
+// @Router /clusters/available [get]
+func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "cluster.discover") {
+		return
+	}
+
+	// The orchestrator-interface accessor honours the test override, so
+	// the ArgoCD-failure path below is unit-testable with a fake client.
+	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
+	if err != nil {
+		writeNoActiveArgocdConnection(w, r)
+		return
+	}
+	argoClusters, ok := s.listArgoClustersOrFail(w, r, ac, "cluster-discover")
+	if !ok {
+		return
+	}
+
+	gp, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeNoActiveGitConnection(w, r)
+		return
+	}
+	managed, err := s.clusterSvc.ManagedClusterNames(r.Context(), gp)
+	if err != nil {
+		writeUpstreamError(w, "list_available_clusters", err)
+		return
+	}
+
+	// Secret names come from one list of ArgoCD's cluster Secrets. When
+	// that cannot be read the list still goes out, without the names.
+	var secretNames map[string]string
+	if s.argoSecretManager != nil {
+		if secretNames, err = s.argoSecretManager.ClusterSecretNames(r.Context()); err != nil {
+			slog.Warn("[cluster-discover] could not read ArgoCD's cluster Secrets, sending the list without secret names", "error", err)
+			secretNames = nil
+		}
+	}
+
+	out := make([]availableCluster, 0, len(argoClusters))
+	for _, c := range argoClusters {
+		if c.Name == "in-cluster" || strings.HasPrefix(c.Server, "https://kubernetes.default") {
+			continue
+		}
+		if _, isManaged := managed[c.Name]; isManaged {
+			continue
+		}
+		out = append(out, availableCluster{
+			Name:       c.Name,
+			ServerURL:  c.Server,
+			SecretName: secretNames[c.Name],
+			Reachable:  reachableFromConnectionState(c.ConnectionState),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+
+	writeJSON(w, http.StatusOK, availableClustersResponse{Clusters: out})
+}
+
+// listArgoClustersOrFail lists ArgoCD's clusters. On failure it raises the
+// Kubernetes Warning event, writes the 502 with the fixed sentence, and
+// returns false.
+func (s *Server) listArgoClustersOrFail(w http.ResponseWriter, r *http.Request, ac orchestrator.ArgocdClient, logTag string) ([]models.ArgocdCluster, bool) {
+	argoClusters, err := ac.ListClusters(r.Context())
+	if err == nil {
+		return argoClusters, true
+	}
+	// V3 E1: surface the host-ArgoCD API failure as a k8s Warning event.
+	// A 403 (ErrPermissionDenied) means the token lacks RBAC permission
+	// (auth failure); anything else is treated as unreachable. The message
+	// carries no token or URL — only the operational condition.
+	if errors.Is(err, argocd.ErrPermissionDenied) {
+		s.emitWarning(events.ReasonArgoCDAuthFailed,
+			"Host ArgoCD rejected Sharko's token: the account does not have permission to list clusters.")
+	} else {
+		s.emitWarning(events.ReasonArgoCDUnreachable,
+			"Host ArgoCD is unreachable: Sharko could not list clusters from the ArgoCD API.")
+	}
+	// PUBLIC BOUNDARY. err can be a *url.Error carrying the full ArgoCD
+	// base URL, so the answer is the classified sentence, never err's text.
+	slog.Error("["+logTag+"] listing ArgoCD clusters failed", "step", "list-argocd-clusters")
+	writeError(w, http.StatusBadGateway, argoListFailureSentence(argoReadClusters, err))
+	return nil, false
+}
+
+// providerClusterEntry is one cluster in GET /providers/clusters.
+type providerClusterEntry struct {
 	Name       string `json:"name"`
 	Region     string `json:"region"`
 	Registered bool   `json:"registered"`
 }
 
-// handleDiscoverClusters godoc
+// handleListProviderClusters godoc
 //
-// @Summary Discover available clusters
-// @Description Lists clusters from the credentials provider and marks which are registered in ArgoCD
+// @Summary List clusters in the credentials backend
+// @Description Lists the clusters the credentials backend has sign-in details for, and marks which ones ArgoCD already has.
+// @Description This is what GET /clusters/available used to send. The CLI's batch register --from-provider uses it.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{} "Available clusters"
+// @Success 200 {object} map[string]interface{} "Clusters in the credentials backend"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 503 {object} map[string]interface{} "Credentials provider not configured"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Router /clusters/available [get]
-// handleDiscoverClusters handles GET /api/v1/clusters/available — list provider clusters
-// and mark which are already registered in ArgoCD.
-func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) {
+// @Router /providers/clusters [get]
+func (s *Server) handleListProviderClusters(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.discover") {
 		return
 	}
@@ -47,62 +181,33 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Use the orchestrator-interface accessor (honours the test override) so
-	// this handler's ArgoCD-failure event path (V3 E1) is unit-testable with a
-	// fake client — behaviourally identical to GetActiveArgocdClient in
-	// production (same underlying *argocd.Client).
 	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
 	if err != nil {
 		writeNoActiveArgocdConnection(w, r)
 		return
 	}
 
-	// Get all clusters from the credentials provider.
-	//
-	// PUBLIC BOUNDARY. This used to concatenate the backend's raw error onto the
-	// response. A credentials-backend error gets the fixed sentence instead;
-	// anything else keeps its text.
+	// PUBLIC BOUNDARY. A credentials-backend error gets the fixed sentence
+	// instead of the backend's raw text; anything else keeps its text.
 	providerClusters, err := s.credProvider().ListClusters()
 	if err != nil {
-		slog.Error("[cluster-discover] listing provider clusters failed", "step", "list-provider-clusters")
+		slog.Error("[provider-clusters] listing provider clusters failed", "step", "list-provider-clusters")
 		writeError(w, http.StatusBadGateway, "failed to list provider clusters: "+credsafe.Sentence(err))
 		return
 	}
 
-	// Get all clusters registered in ArgoCD.
-	argoClusters, err := ac.ListClusters(r.Context())
-	if err != nil {
-		// V3 E1: surface the host-ArgoCD API failure as a k8s Warning event.
-		// A 403 (ErrPermissionDenied) means the token lacks RBAC permission
-		// (auth failure); anything else is treated as unreachable. The message
-		// carries no token or URL — only the operational condition.
-		if errors.Is(err, argocd.ErrPermissionDenied) {
-			s.emitWarning(events.ReasonArgoCDAuthFailed,
-				"Host ArgoCD rejected Sharko's token: the account does not have permission to list clusters.")
-		} else {
-			s.emitWarning(events.ReasonArgoCDUnreachable,
-				"Host ArgoCD is unreachable: Sharko could not list clusters from the ArgoCD API.")
-		}
-		// PUBLIC BOUNDARY. This used to append err.Error(), which on a
-		// transport failure is a *url.Error carrying the full ArgoCD base
-		// URL — while the event three lines up was already careful to carry
-		// "no token or URL". Same sentinel classification, now used for the
-		// response sentence too.
-		slog.Error("[cluster-discover] listing ArgoCD clusters failed", "step", "list-argocd-clusters")
-		writeError(w, http.StatusBadGateway, argoListFailureSentence(argoReadClusters, err))
+	argoClusters, ok := s.listArgoClustersOrFail(w, r, ac, "provider-clusters")
+	if !ok {
 		return
 	}
 
-	// Build a set of registered cluster names.
 	registered := make(map[string]bool, len(argoClusters))
 	for _, c := range argoClusters {
 		registered[c.Name] = true
 	}
-
-	// Cross-reference provider clusters with ArgoCD.
-	entries := make([]discoverClusterEntry, 0, len(providerClusters))
+	entries := make([]providerClusterEntry, 0, len(providerClusters))
 	for _, pc := range providerClusters {
-		entries = append(entries, discoverClusterEntry{
+		entries = append(entries, providerClusterEntry{
 			Name:       pc.Name,
 			Region:     pc.Region,
 			Registered: registered[pc.Name],

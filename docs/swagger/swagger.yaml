@@ -3449,6 +3449,33 @@ definitions:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.Entry'
         type: array
     type: object
+  internal_api.availableCluster:
+    properties:
+      name:
+        description: Name is the cluster name ArgoCD shows.
+        type: string
+      reachable:
+        description: |-
+          Reachable is ArgoCD's own last word on the connection: true when
+          ArgoCD says Successful, false when it says Failed. Left out when
+          ArgoCD has not said yet.
+        type: boolean
+      secret_name:
+        description: |-
+          SecretName is the Kubernetes name of ArgoCD's connection Secret for
+          this cluster. Left out when Sharko could not read it.
+        type: string
+      server_url:
+        description: ServerURL is the cluster's API server address in ArgoCD.
+        type: string
+    type: object
+  internal_api.availableClustersResponse:
+    properties:
+      clusters:
+        items:
+          $ref: '#/definitions/internal_api.availableCluster'
+        type: array
+    type: object
   internal_api.catalogFreshnessResponse:
     properties:
       addons_checked:
@@ -8868,34 +8895,29 @@ paths:
       - clusters
   /clusters/available:
     get:
-      description: Lists clusters from the credentials provider and marks which are
-        registered in ArgoCD
+      description: |-
+        Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git and ArgoCD's own in-cluster entry.
+        Each one can be adopted or taken over. reachable is ArgoCD's own connection state and is left out when ArgoCD has not checked yet.
       produces:
       - application/json
       responses:
         "200":
-          description: Available clusters
+          description: Clusters ArgoCD knows that Sharko does not manage
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.availableClustersResponse'
         "401":
           description: Unauthorized
           schema:
             additionalProperties: true
             type: object
         "502":
-          description: Gateway error
-          schema:
-            additionalProperties: true
-            type: object
-        "503":
-          description: Credentials provider not configured
+          description: Sharko could not read ArgoCD or Git
           schema:
             additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Discover available clusters
+      summary: List clusters ArgoCD knows that Sharko does not manage
       tags:
       - clusters
   /clusters/batch:
@@ -10480,6 +10502,39 @@ paths:
       summary: Get providers
       tags:
       - system
+  /providers/clusters:
+    get:
+      description: |-
+        Lists the clusters the credentials backend has sign-in details for, and marks which ones ArgoCD already has.
+        This is what GET /clusters/available used to send. The CLI's batch register --from-provider uses it.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Clusters in the credentials backend
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Credentials provider not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List clusters in the credentials backend
+      tags:
+      - clusters
   /providers/test:
     post:
       consumes:

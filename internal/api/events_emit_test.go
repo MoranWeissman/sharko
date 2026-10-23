@@ -110,10 +110,11 @@ func TestEvent_AWSSecretsGetFailed(t *testing.T) {
 // ArgoCD-unreachable vs auth-failed branches.
 type discoverFakeArgocd struct {
 	listClustersErr error
+	clusters        []models.ArgocdCluster
 }
 
 func (a *discoverFakeArgocd) ListClusters(context.Context) ([]models.ArgocdCluster, error) {
-	return nil, a.listClustersErr
+	return a.clusters, a.listClustersErr
 }
 func (a *discoverFakeArgocd) ListApplications(context.Context) ([]models.ArgocdApplication, error) {
 	return nil, nil

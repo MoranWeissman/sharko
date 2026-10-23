@@ -119,3 +119,28 @@ func (m *Manager) getClusterSecret(ctx context.Context, clusterName string) (*co
 func (m *Manager) GetClusterSecret(ctx context.Context, clusterName string) (*corev1.Secret, error) {
 	return m.getClusterSecret(ctx, clusterName)
 }
+
+// ClusterSecretNames lists every ArgoCD cluster Secret in the Manager's
+// namespace once and returns, for each cluster name ArgoCD shows, the
+// Kubernetes name of its Secret. A cluster name that two Secrets share is
+// left out, because Sharko will not guess which one is meant.
+func (m *Manager) ClusterSecretNames(ctx context.Context) (map[string]string, error) {
+	list, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: LabelSecretType + "=cluster"})
+	if err != nil {
+		return nil, fmt.Errorf("listing ArgoCD cluster Secrets in namespace %q: %w", m.namespace, err)
+	}
+	out := make(map[string]string, len(list.Items))
+	shared := map[string]bool{}
+	for i := range list.Items {
+		name := ClusterNameOf(&list.Items[i])
+		if _, seen := out[name]; seen {
+			shared[name] = true
+			continue
+		}
+		out[name] = list.Items[i].Name
+	}
+	for name := range shared {
+		delete(out, name)
+	}
+	return out, nil
+}

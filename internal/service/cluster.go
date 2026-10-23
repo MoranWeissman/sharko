@@ -141,6 +141,28 @@ func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprov
 	return nil, nil
 }
 
+// ManagedClusterNames returns the name of every cluster in the fleet
+// record in Git (managed-clusters.yaml, v3 or v4 place). An empty or
+// missing file gives an empty set.
+func (s *ClusterService) ManagedClusterNames(ctx context.Context, gp gitprovider.GitProvider) (map[string]struct{}, error) {
+	data, err := s.readManagedClustersData(ctx, gp)
+	if err != nil {
+		return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
+	}
+	names := map[string]struct{}{}
+	if data == nil {
+		return names, nil
+	}
+	clusters, err := s.parser.ParseClusterAddons(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range clusters {
+		names[c.Name] = struct{}{}
+	}
+	return names, nil
+}
+
 // ListClusters returns all clusters with health stats from Git + ArgoCD.
 // Cached for readcache.DefaultTTL (perf M1) — see internal/readcache's
 // package doc for the invalidation contract. Fleet-wide, not per-user:

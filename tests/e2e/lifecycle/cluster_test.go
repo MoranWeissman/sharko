@@ -398,8 +398,9 @@ func TestClusterLifecycle(t *testing.T) {
 	})
 
 	t.Run("ListAvailable", func(t *testing.T) {
-		// /clusters/available is the discovery endpoint — requires
-		// credProvider (EKS path). Skip-graceful on 503.
+		// /clusters/available lists the clusters ArgoCD knows that
+		// Sharko does not manage. Skip-graceful on 503 is kept for
+		// harnesses with no ArgoCD connection.
 		status, body := admin.ListAvailableClusters(t)
 		switch status {
 		case http.StatusOK:

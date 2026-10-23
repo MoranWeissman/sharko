@@ -210,3 +210,29 @@ func assertOnlySecret(t *testing.T, client *fake.Clientset, want string) {
 		t.Fatalf("Secrets in namespace = %v, want only %q (the user's Secret must not be renamed or copied)", names, want)
 	}
 }
+
+func TestManager_ClusterSecretNames(t *testing.T) {
+	notCluster := argoAddedSecret("not-a-cluster", "other", nil)
+	delete(notCluster.Labels, LabelSecretType)
+	client := fake.NewSimpleClientset(
+		argoAddedSecret(argoK8sName, "legacy-1", nil),
+		argoAddedSecret("legacy-2", "legacy-2", nil),
+		// Two Secrets with the same cluster name: Sharko will not guess.
+		argoAddedSecret("twin-a", "twin", nil),
+		argoAddedSecret("twin-b", "twin", nil),
+		notCluster,
+	)
+	got, err := NewManager(client, testNamespace).ClusterSecretNames(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"legacy-1": argoK8sName, "legacy-2": "legacy-2"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

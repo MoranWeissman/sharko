@@ -683,14 +683,16 @@ A cluster's own `results[].status` says which it was: `success`, `partial`, or `
 
 ### GET /api/v1/clusters/available — Discover Available Clusters
 
-List clusters available in the configured secrets provider that have not yet been registered.
+Lists the clusters ArgoCD already connects to that Sharko does not manage yet. Clusters in the fleet record in Git (`managed-clusters.yaml`) and ArgoCD's own in-cluster entry are left out. Each one can be adopted or taken over. It does not need a credentials backend.
+
+`secret_name` is the Kubernetes name of ArgoCD's connection Secret, left out when Sharko could not read it. `reachable` is ArgoCD's own connection state (`true` for Successful, `false` for Failed), left out when ArgoCD has not checked yet.
 
 **Response (200 OK):**
 ```json
 {
   "clusters": [
-    {"name": "staging-eu", "region": "eu-west-1"},
-    {"name": "dev-us", "region": "us-east-1"}
+    {"name": "legacy-1", "server_url": "https://10.0.0.5:6443", "secret_name": "cluster-10.0.0.5-3621829410", "reachable": true},
+    {"name": "legacy-3", "server_url": "https://10.0.0.7:6443"}
   ]
 }
 ```
@@ -698,8 +700,29 @@ List clusters available in the configured secrets provider that have not yet bee
 **Error Responses:**
 | Code | Condition |
 |------|-----------|
-| 501 | Secrets provider not configured |
-| 502 | Secrets provider unreachable |
+| 502 | ArgoCD or Git could not be read |
+
+---
+
+### GET /api/v1/providers/clusters — Clusters in the Credentials Backend
+
+Lists the clusters the credentials backend has sign-in details for, and marks which ones ArgoCD already has. This is what `GET /api/v1/clusters/available` used to send. `sharko add-clusters --from-provider` uses it.
+
+**Response (200 OK):**
+```json
+{
+  "clusters": [
+    {"name": "staging-eu", "region": "eu-west-1", "registered": false},
+    {"name": "dev-us", "region": "us-east-1", "registered": true}
+  ]
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 503 | Credentials backend not configured |
+| 502 | Credentials backend or ArgoCD could not be read |
 
 ---
 
