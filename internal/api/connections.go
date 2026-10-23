@@ -11,6 +11,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
@@ -562,7 +563,7 @@ func (s *Server) handleDiscoverArgocd(w http.ResponseWriter, r *http.Request) {
 // handleGitDefaults godoc
 //
 // @Summary Git settings declared in the Helm chart
-// @Description Returns the Git provider and repository address the operator set in the Helm chart connection settings for Git. Both are empty strings when the chart does not set them. The first-run wizard uses this to pre-pick the provider and fill in the address.
+// @Description Returns the Git provider and repository address the operator set in the Helm chart connection settings for Git. Both are empty strings when the chart does not set them. A user name or password written into the address is never sent back: it is taken out, and an address Sharko cannot read safely comes back empty. The first-run wizard uses this to pre-pick the provider and fill in the address.
 // @Tags connections
 // @Produce json
 // @Security BearerAuth
@@ -570,9 +571,13 @@ func (s *Server) handleDiscoverArgocd(w http.ResponseWriter, r *http.Request) {
 // @Router /connections/git-defaults [get]
 func (s *Server) handleGitDefaults(w http.ResponseWriter, r *http.Request) {
 	provider, repoURL := config.DeclaredGitDefaults()
+	// The chart value is the operator's own text and nothing checks it for a
+	// credential, so a token written into the address (https://x:TOKEN@host)
+	// would otherwise come straight back. SafeRepoURL takes it out, and gives
+	// "" for an address it cannot read safely.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"provider": provider,
-		"repo_url": repoURL,
+		"repo_url": credsafe.SafeRepoURL(repoURL),
 	})
 }
 

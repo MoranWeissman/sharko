@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -117,5 +118,62 @@ func TestGitDefaults_EmptyWhenTheChartSaysNothing(t *testing.T) {
 	}
 	if got["provider"] != "" || got["repo_url"] != "" {
 		t.Errorf("got %v, want both empty", got)
+	}
+}
+
+// EP3-DRYRUN-FIXES join: GET /connections/git-defaults sits behind login.
+// Without a session it answers 401 and says nothing about the chart.
+func TestGitDefaults_NeedsLogin(t *testing.T) {
+	t.Setenv("SHARKO_CONN_GIT_PROVIDER", "gitea")
+	t.Setenv("SHARKO_CONN_GIT_REPO_URL", "http://gitea.dev.svc:3000/acme/platform")
+	srv, token := newAuthedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	rw := httptest.NewRecorder()
+	router.ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/api/v1/connections/git-defaults", nil))
+	if rw.Code != http.StatusUnauthorized {
+		t.Fatalf("no session: want 401, got %d (body=%s)", rw.Code, rw.Body.String())
+	}
+	if strings.Contains(rw.Body.String(), "gitea") {
+		t.Fatalf("the 401 body tells the chart's Git settings: %s", rw.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/connections/git-defaults", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rw = httptest.NewRecorder()
+	router.ServeHTTP(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("with a session: want 200, got %d (body=%s)", rw.Code, rw.Body.String())
+	}
+}
+
+// EP3-DRYRUN-FIXES join: a token the operator wrote into the chart's repo
+// address never comes back. The answer has only provider and repo_url.
+func TestGitDefaults_NeverReturnsATokenInTheAddress(t *testing.T) {
+	const secret = "not-a-real-chart-token-123"
+	cases := []struct{ name, raw, want string }{
+		{"user and token", "https://x-access-token:" + secret + "@github.example.com/acme/platform.git", "https://github.example.com/acme/platform.git"},
+		{"token as the user", "https://" + secret + "@github.example.com/acme/platform", "https://github.example.com/acme/platform"},
+		{"token in the query", "https://github.example.com/acme/platform?access_token=" + secret, "https://github.example.com/acme/platform"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SHARKO_CONN_GIT_PROVIDER", "github")
+			t.Setenv("SHARKO_CONN_GIT_REPO_URL", tc.raw)
+			srv := newIsolatedTestServer(t)
+
+			rw := httptest.NewRecorder()
+			srv.handleGitDefaults(rw, httptest.NewRequest(http.MethodGet, "/api/v1/connections/git-defaults", nil))
+			if strings.Contains(rw.Body.String(), secret) {
+				t.Fatalf("the token came back: %s", rw.Body.String())
+			}
+			var got map[string]interface{}
+			if err := json.Unmarshal(rw.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(got) != 2 || got["provider"] != "github" || got["repo_url"] != tc.want {
+				t.Fatalf("got %v, want only provider=github and repo_url=%q", got, tc.want)
+			}
+		})
 	}
 }

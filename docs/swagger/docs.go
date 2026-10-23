@@ -5526,7 +5526,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the Git provider and repository address the operator set in the Helm chart connection settings for Git. Both are empty strings when the chart does not set them. The first-run wizard uses this to pre-pick the provider and fill in the address.",
+                "description": "Returns the Git provider and repository address the operator set in the Helm chart connection settings for Git. Both are empty strings when the chart does not set them. A user name or password written into the address is never sent back: it is taken out, and an address Sharko cannot read safely comes back empty. The first-run wizard uses this to pre-pick the provider and fill in the address.",
                 "produces": [
                     "application/json"
                 ],
