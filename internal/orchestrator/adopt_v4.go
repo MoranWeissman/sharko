@@ -8,11 +8,9 @@
 // writes (buildTakeoverFiles, takeover.go), gated by the same takeover
 // preflight the brownfield-takeover door runs — a cluster that is not
 // Ready fails outright, one that is Ready-but-warned proceeds and carries
-// the warnings back on the per-cluster result. Unlike the takeover door,
-// there is no acknowledged_findings protocol here: the adopt door's
-// existing confirmation contract (dry_run / not-dry_run) is what gates the
-// write, matching v3 AdoptClusters, which never asked for a separate "yes"
-// either.
+// the warnings back on the per-cluster result, each with an id. Like the
+// takeover door, a real adopt goes ahead only when every warning id is in
+// the request's acknowledged_findings (see adopt_findings.go).
 package orchestrator
 
 import (
@@ -153,26 +151,36 @@ func (o *Orchestrator) gatherAdoptPreflightInputs(ctx context.Context, clusterNa
 // and stamps the v3-style adopted annotation — gated on the adoption PR
 // having actually merged, exactly as adoptSingleCluster gates its Ensure +
 // SetAnnotation calls today.
-func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL string, req AdoptClustersRequest, extraWarnings []string) AdoptClusterResult {
+func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL string, req AdoptClustersRequest) AdoptClusterResult {
 	log := logging.LoggerFromContext(ctx)
 	cr := AdoptClusterResult{Name: name}
-	cr.Warnings = append(cr.Warnings, extraWarnings...)
 
 	in, err := o.gatherAdoptPreflightInputs(ctx, name, serverURL)
 	if err != nil {
 		cr.Status = "failed"
 		cr.Error = err.Error()
+		cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerCannotCheck, Message: cr.Error}}
 		return cr
 	}
 	report := takeover.Preflight(in)
+	// Warnings are listed even when something also blocks, so a person sees
+	// everything there is to read in one go.
+	cr.Warnings = adoptWarningsFromReport(report)
 	if !report.Ready {
 		cr.Status = "failed"
 		cr.Error = report.Summary
+		cr.Blockers = adoptBlockersFromReport(report)
 		return cr
 	}
-	for _, f := range report.Findings {
-		if f.Status == takeover.StatusWarning {
-			cr.Warnings = append(cr.Warnings, fmt.Sprintf("%s: %s", f.Title, f.Detail))
+
+	// A warning can show up between the check AdoptClusters ran first and
+	// this one (a new ApplicationSet, say). It still has to be read.
+	if !req.DryRun {
+		if missing := missingAcknowledgements(cr.Warnings, req.AcknowledgedFindings); len(missing) > 0 {
+			cr.Status = "failed"
+			cr.UnacknowledgedFindings = missing
+			cr.Error = unacknowledgedAdoptWarningsMessage(missing)
+			return cr
 		}
 	}
 

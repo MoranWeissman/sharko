@@ -2597,7 +2597,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adopts one or more existing ArgoCD clusters under Sharko management.\nPhase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.\nOn a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.\nCLIENTS MUST INSPECT THE RESPONSE BODY. HTTP 200 does NOT mean every cluster was adopted: an adoption in which every single cluster failed also answers 200, and so does one in which every cluster stopped part-way. Read `outcome` — `completed`, `partly_completed` and `failed` — and treat anything other than `completed == total` as work that did not finish. A `partly_completed` cluster was NOT rolled back, so real changes may already be in Git and on the cluster.",
+                "description": "Adopts one or more existing ArgoCD clusters under Sharko management.\nPhase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.\nOn a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.\nEvery cluster result lists `blockers` (each reason it cannot be adopted yet, as {id, message}) and `warnings` (each thing to read first, as {id, message, title, what_it_means, what_to_do, application_sets, applications}). A real adopt (not dry_run) goes ahead only when the id of every warning on every cluster in the request is in `acknowledged_findings`; otherwise it answers 409 with code `unacknowledged_findings`, the missing ids, and the warnings per cluster, and writes nothing. One id covers that warning on every cluster in the request.\nCLIENTS MUST INSPECT THE RESPONSE BODY. HTTP 200 does NOT mean every cluster was adopted: an adoption in which every single cluster failed also answers 200, and so does one in which every cluster stopped part-way. Read `outcome` — `completed`, `partly_completed` and `failed` — and treat anything other than `completed == total` as work that did not finish. A `partly_completed` cluster was NOT rolled back, so real changes may already be in Git and on the cluster.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2654,10 +2654,9 @@
                         }
                     },
                     "409": {
-                        "description": "The repo carries both the old and the new layout (code repo_layout)",
+                        "description": "A warning was not acknowledged (code unacknowledged_findings, nothing was written), or the repo carries both the old and the new layout (code repo_layout)",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.adoptNeedsAcknowledgementResponse"
                         }
                     },
                     "502": {
@@ -11269,9 +11268,27 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptBlocker": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult": {
             "type": "object",
             "properties": {
+                "blockers": {
+                    "description": "Blockers lists every reason this cluster cannot be adopted yet.\nEmpty/omitted when nothing blocks it.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptBlocker"
+                    }
+                },
                 "dry_run": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
                 },
@@ -11291,14 +11308,21 @@
                     "description": "\"success\", \"partial\", \"failed\", \"skipped\"",
                     "type": "string"
                 },
+                "unacknowledged_findings": {
+                    "description": "UnacknowledgedFindings lists the warning ids on this cluster that were\nnot in the request's acknowledged_findings, when that is why this\ncluster was not adopted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "verification": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result"
                 },
                 "warnings": {
-                    "description": "Warnings holds plain-English advisories that do NOT fail the\nadoption — e.g. this cluster's ArgoCD cluster Secret turning out to\nbe rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/\nomitted when there is nothing to warn about.",
+                    "description": "Warnings holds plain-English advisories that do NOT fail the\nadoption — e.g. this cluster's ArgoCD cluster Secret turning out to\nbe rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/\nomitted when there is nothing to warn about. Each one has an id to\nsend back in acknowledged_findings.",
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptWarning"
                     }
                 }
             }
@@ -11306,6 +11330,13 @@
         "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest": {
             "type": "object",
             "properties": {
+                "acknowledged_findings": {
+                    "description": "AcknowledgedFindings lists the id of every warning the person has\nread (the ids come back in results[].warnings[].id from a preview).\nA real adopt (not a dry run) refuses, with nothing written, while any\ncluster in the request has a warning whose id is not in this list.\nOne id covers that warning on every cluster in the request.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "auto_merge": {
                     "type": "boolean"
                 },
@@ -11336,6 +11367,38 @@
                     "items": {
                         "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult"
                     }
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptWarning": {
+            "type": "object",
+            "properties": {
+                "application_sets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "applications": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "what_it_means": {
+                    "type": "string"
+                },
+                "what_to_do": {
+                    "type": "string"
                 }
             }
         },
@@ -13148,6 +13211,38 @@
                 "state": {
                     "description": "State is one of \"in_sync\", \"out_of_sync\", \"missing\", \"foreign\", or\n\"unknown\" — derived here from the addon-values reconciler's per-item\noutcome (see addonValuesSecretRowState) rather than its own\nper-cluster record. \"foreign\" (P1-A) means a secret with this name is\non the cluster and Sharko did not create it, so Sharko will not\nchange or remove it.\nCompared against the vault (the secrets provider), NOT git — git only\nholds a pointer to where the value lives (S3(a) honesty lock).",
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.adoptNeedsAcknowledgementResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "results": {
+                    "description": "Results lists, for each cluster with a warning, its warnings.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult"
+                    }
+                },
+                "unacknowledged_findings": {
+                    "description": "UnacknowledgedFindings is every warning id that still needs to be\nacknowledged, sorted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "warnings": {
+                    "description": "Warnings is every warning across the clusters, each id once.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptWarning"
+                    }
                 }
             }
         },

@@ -80,6 +80,15 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		clusterServerMap[c.Name] = c.Server
 	}
 
+	// A real adopt waits until every warning has been read (call 5 of the
+	// episode 3 fixes). Checked for every cluster before anything is
+	// written, so a missing acknowledgement never leaves half a batch done.
+	if !req.DryRun {
+		if ackErr := o.checkAdoptAcknowledgements(ctx, req, clusterServerMap, v4Repo); ackErr != nil {
+			return nil, ackErr
+		}
+	}
+
 	for _, clusterName := range req.Clusters {
 		cr := AdoptClusterResult{Name: clusterName}
 
@@ -88,12 +97,13 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		if !exists {
 			cr.Status = "failed"
 			cr.Error = fmt.Sprintf("cluster %q not found in ArgoCD — cannot adopt", clusterName)
+			cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerNotInArgoCD, Message: cr.Error}}
 			result.Results = append(result.Results, cr)
 			continue
 		}
 
 		if v4Repo {
-			result.Results = append(result.Results, o.adoptSingleClusterV4(ctx, clusterName, serverURL, req, nil))
+			result.Results = append(result.Results, o.adoptSingleClusterV4(ctx, clusterName, serverURL, req))
 			continue
 		}
 
@@ -113,12 +123,14 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 				cr.Error = fmt.Sprintf(
 					"could not confirm who owns cluster %q's ArgoCD connection: %v — Sharko will not adopt a connection whose owner it cannot read. Fix the read problem and try again.",
 					clusterName, labelErr)
+				cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerOtherOwner, Message: cr.Error}}
 				result.Results = append(result.Results, cr)
 				continue
 			}
 			if managedBy != "" && managedBy != "sharko" {
 				cr.Status = "failed"
 				cr.Error = fmt.Sprintf("cluster %q is managed by %q, not sharko — cannot adopt", clusterName, managedBy)
+				cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerOtherOwner, Message: cr.Error}}
 				result.Results = append(result.Results, cr)
 				continue
 			}
@@ -133,7 +145,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			log.Warn("could not check cluster secret for foreign ArgoCD ownership — proceeding with adoption",
 				"cluster", clusterName, "error", warnErr)
 		} else if len(warnings) > 0 {
-			cr.Warnings = append(cr.Warnings, warnings...)
+			cr.Warnings = append(cr.Warnings, foreignOwnerAdoptWarnings(warnings)...)
 		}
 
 		// Phase 1: Verification (Stage1 connectivity test).

@@ -13,6 +13,7 @@ func init() {
 	adoptCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	adoptCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	adoptCmd.Flags().Bool("auto-merge", false, "Auto-merge the adoption PR (overrides server default)")
+	adoptCmd.Flags().StringSlice("acknowledge", nil, "Ids of the warnings you have read, comma-separated (run with --dry-run first to see them). --yes does not skip warnings")
 	rootCmd.AddCommand(adoptCmd)
 }
 
@@ -22,12 +23,19 @@ var adoptCmd = &cobra.Command{
 	Short:   "Adopt existing ArgoCD clusters under Sharko management",
 	Long: `Adopt one or more existing ArgoCD clusters. This creates GitOps
 configuration (values file + managed-clusters.yaml entry) for clusters
-that are already registered in ArgoCD but not yet managed by Sharko.`,
+that are already registered in ArgoCD but not yet managed by Sharko.
+
+Sharko checks each cluster first, the same way take over does. If it finds
+something you should read (for example an ApplicationSet that could delete
+what it installed), it stops and prints each warning with an id. Read them,
+then run again with --acknowledge <id,id,...>. --yes only skips the "Continue?"
+question; it does not skip warnings. --dry-run prints the warnings too.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		yes, _ := cmd.Flags().GetBool("yes")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		autoMerge, _ := cmd.Flags().GetBool("auto-merge")
+		acknowledge, _ := cmd.Flags().GetStringSlice("acknowledge")
 
 		if !dryRun && !yes {
 			fmt.Printf("Adopt %d cluster(s): %s\nThis will create GitOps configuration and mark them as Sharko-managed. Continue? [y/N]: ",
@@ -49,6 +57,9 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 		if autoMerge {
 			body["auto_merge"] = true
 		}
+		if len(acknowledge) > 0 {
+			body["acknowledged_findings"] = acknowledge
+		}
 
 		if dryRun {
 			fmt.Printf("Dry-run: previewing adoption of %d cluster(s)...\n", len(args))
@@ -62,6 +73,13 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 				fmt.Println("failed")
 			}
 			return err
+		}
+
+		if status == 409 {
+			if ok, ackErr := adoptNeedsAcknowledgement(respBody); ok {
+				fmt.Println("stopped")
+				return ackErr
+			}
 		}
 
 		if status != 200 && status != 207 {
@@ -88,7 +106,9 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 					Branch string `json:"branch"`
 					Merged bool   `json:"merged"`
 				} `json:"git,omitempty"`
-				DryRun *cliDryRunResult `json:"dry_run,omitempty"`
+				DryRun   *cliDryRunResult  `json:"dry_run,omitempty"`
+				Warnings []adoptCLIWarning `json:"warnings,omitempty"`
+				Blockers []adoptCLIBlocker `json:"blockers,omitempty"`
 			} `json:"results"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
@@ -128,16 +148,23 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 			fmt.Println()
 		}
 		for _, cr := range result.Results {
-			switch cr.Status {
-			case "success":
+			switch {
+			case dryRun && cr.Status == "success":
+				fmt.Printf("  %s: would adopt\n", cr.Name)
+			case cr.Status == "success":
 				fmt.Printf("  %s: adopted\n", cr.Name)
-			case "partial":
+			case cr.Status == "partial":
 				fmt.Printf("  %s: partial (warning: %s)\n", cr.Name, cr.Error)
-			case "failed":
+			case dryRun && cr.Status == "failed":
+				fmt.Printf("  %s: would NOT adopt — %s\n", cr.Name, cr.Error)
+			case cr.Status == "failed":
 				fmt.Printf("  %s: FAILED — %s\n", cr.Name, cr.Error)
 			default:
 				fmt.Printf("  %s: %s\n", cr.Name, cr.Status)
 			}
+
+			printAdoptBlockers(cr.Blockers)
+			printAdoptWarnings(cr.Warnings)
 
 			if cr.Verification != nil {
 				if cr.Verification.Success {
@@ -184,3 +211,72 @@ that are already registered in ArgoCD but not yet managed by Sharko.`,
 // adoptOperation names what `sharko adopt` attempted, for the summary line
 // and the exit message.
 const adoptOperation = "Adoption"
+
+// adoptCLIWarning is one warning from POST /clusters/adopt.
+type adoptCLIWarning struct {
+	ID       string `json:"id"`
+	Message  string `json:"message"`
+	Title    string `json:"title,omitempty"`
+	WhatToDo string `json:"what_to_do,omitempty"`
+}
+
+// adoptCLIBlocker is one reason a cluster cannot be adopted yet.
+type adoptCLIBlocker struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+}
+
+func printAdoptBlockers(blockers []adoptCLIBlocker) {
+	if len(blockers) == 0 {
+		return
+	}
+	fmt.Println("    Fix these first:")
+	for _, b := range blockers {
+		fmt.Printf("      - [%s] %s\n", b.ID, b.Message)
+	}
+}
+
+func printAdoptWarnings(warnings []adoptCLIWarning) {
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Println("    Read these first:")
+	for _, w := range warnings {
+		if w.Title != "" {
+			fmt.Printf("      - [%s] %s: %s\n", w.ID, w.Title, w.Message)
+		} else {
+			fmt.Printf("      - [%s] %s\n", w.ID, w.Message)
+		}
+		if w.WhatToDo != "" {
+			fmt.Printf("        What to do: %s\n", w.WhatToDo)
+		}
+	}
+}
+
+// adoptNeedsAcknowledgement reads the 409 the server sends when a warning
+// was not acknowledged. It prints each warning and returns the error that
+// tells the person how to go ahead. The bool is false when the body is some other
+// 409.
+func adoptNeedsAcknowledgement(body []byte) (bool, error) {
+	var resp struct {
+		Code                   string   `json:"code"`
+		UnacknowledgedFindings []string `json:"unacknowledged_findings"`
+		Results                []struct {
+			Name     string            `json:"name"`
+			Warnings []adoptCLIWarning `json:"warnings"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Code != "unacknowledged_findings" {
+		return false, nil
+	}
+	fmt.Println()
+	fmt.Println("Sharko did not adopt anything. There are warnings to read first.")
+	for _, r := range resp.Results {
+		fmt.Printf("  %s:\n", r.Name)
+		printAdoptWarnings(r.Warnings)
+	}
+	ids := strings.Join(resp.UnacknowledgedFindings, ",")
+	fmt.Println()
+	fmt.Printf("When you have read them, run the same command again with --acknowledge %s\n", ids)
+	return true, fmt.Errorf("adoption stopped: warnings not acknowledged yet: %s", ids)
+}
