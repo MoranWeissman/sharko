@@ -2070,6 +2070,12 @@ export interface AdoptResult {
     values_file?: string
   }
   verification?: VerifyResult
+  // True only when the pull request merged and the adopt really finished.
+  // Missing means false: the pull request may still be open.
+  merged?: boolean
+  // What the server says happened to this cluster, in plain words (for
+  // example, that the pull request is open and waits for a merge).
+  message?: string
   // Plain-English advisories that do NOT fail the adoption — e.g. this
   // cluster's ArgoCD cluster secret turning out to be rendered by another
   // ArgoCD Application (V2-cleanup-89.5).

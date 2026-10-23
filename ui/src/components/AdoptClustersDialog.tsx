@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   CheckCircle,
   XCircle,
+  AlertTriangle,
+  Clock,
   Loader2,
   GitMerge,
   ExternalLink,
@@ -33,13 +35,69 @@ interface AdoptClustersDialogProps {
 
 type VerificationState = 'pending' | 'verifying' | 'passed' | 'failed' | 'not-verified'
 
+// Words on the screen, pinned by exact text in AdoptClustersDialog.test.tsx.
+// An adopt whose pull request is still open is NOT done: Sharko takes
+// ownership only after the merge. So the dialog never says "Adoption
+// complete." or "Adopted" for it.
+export const ADOPT_WAITING_FOR_MERGE = 'Pull request opened, waiting for merge'
+export const ADOPT_DONE_ALL_MERGED = 'Adoption complete.'
+export const ADOPT_DONE_WAITING = 'Pull request opened, waiting for merge.'
+export const ADOPT_DONE_NOT_ALL = 'Not every cluster finished. Read each one below.'
+export const ADOPT_NOT_FINISHED = 'Not finished yet'
+export const ADOPT_NEW_WARNINGS =
+  'There is something new to read. Tick each warning below, then confirm again.'
+export function adoptBlockedText(blockedClusters: string[]): string {
+  if (blockedClusters.length === 1) {
+    return `"${blockedClusters[0]}" cannot be adopted yet. See the reasons below.`
+  }
+  return `${blockedClusters.length} of the clusters cannot be adopted yet. See the reasons below.`
+}
+
 // A warning or blocker, with the cluster it belongs to. The ids can repeat
-// from one cluster to the next, so the key is always cluster + id.
+// from one cluster to the next, so the key is cluster + id. The message is
+// part of the key too: two warnings that share an id are still two things
+// to read, and each gets its own tick. An empty cluster means the server did
+// not say which cluster, so it counts for every selected one.
 interface FindingFor<T> {
   cluster: string
   item: T
 }
-const findingKey = (cluster: string, id: string) => `${cluster}\u0000${id}`
+const findingKey = (cluster: string, id: string, message = '') =>
+  `${cluster}\u0000${id}\u0000${message}`
+const warningKey = (w: FindingFor<AdoptWarning>) => findingKey(w.cluster, w.item.id, w.item.message)
+const blockerKey = (b: FindingFor<AdoptBlocker>) => findingKey(b.cluster, b.item.id, b.item.message)
+
+// Add the findings of `incoming` to `prev`. A cluster named in `replaceFor`
+// gets exactly what `incoming` has for it; every other cluster keeps what it
+// had. Each finding appears once.
+function mergeFindings<T>(
+  prev: FindingFor<T>[],
+  incoming: FindingFor<T>[],
+  keyOf: (f: FindingFor<T>) => string,
+  replaceFor?: Set<string>,
+): FindingFor<T>[] {
+  const kept = replaceFor ? prev.filter((f) => !replaceFor.has(f.cluster)) : prev
+  const seen = new Set(kept.map(keyOf))
+  const out = [...kept]
+  for (const f of incoming) {
+    const k = keyOf(f)
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push(f)
+  }
+  return out
+}
+
+// How one cluster's adopt ended, read from the server's answer. `merged` is
+// true only when the pull request merged and the adopt really finished; a
+// missing `merged` reads as false.
+type AdoptOutcome = 'done' | 'waiting' | 'partial' | 'failed' | 'skipped'
+function adoptOutcomeOf(r: AdoptResult): AdoptOutcome {
+  if (r.status === 'failed') return 'failed'
+  if (r.status === 'partial') return 'partial'
+  if (r.status === 'skipped') return 'skipped'
+  return r.merged === true ? 'done' : 'waiting'
+}
 
 interface ClusterVerification {
   cluster: Cluster
@@ -75,6 +133,16 @@ export function AdoptClustersDialog({
   // reliable trigger regardless of what `phase` happened to be before.
   const [verifyRunId, setVerifyRunId] = useState(0)
 
+  // Start over only when the dialog opens or the set of clusters changes.
+  // Keyed by the names, not by the array: a parent that builds a new array
+  // on every render must not wipe the ticks and the step the user is on.
+  const clustersKey = clusters.map((c) => c.name).join('\u0000')
+  const serverURLOf = useMemo(() => {
+    const m = new Map<string, string | undefined>()
+    for (const c of clusters) m.set(c.name, c.server_url)
+    return m
+  }, [clusters])
+
   // Initialize verifications when dialog opens
   useEffect(() => {
     if (!open || clusters.length === 0) return
@@ -93,7 +161,8 @@ export function AdoptClustersDialog({
     setBlockers([])
     setWarnings([])
     setTicked(new Set())
-  }, [open, clusters])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, clustersKey])
 
   // Run verifications sequentially for each fresh run triggered above.
   useEffect(() => {
@@ -227,18 +296,27 @@ export function AdoptClustersDialog({
   const passedCount = verifications.filter((v) => v.state === 'passed').length
   const failedCount = verifications.filter((v) => v.state === 'failed').length
 
+  // Only the clusters still selected count. A blocker or a warning of a
+  // cluster the user unticked does not hold Confirm back.
+  const selectedNames = new Set(selectedClusters.map((v) => v.cluster.name))
+  const counts = (cluster: string) => cluster === '' || selectedNames.has(cluster)
+  const activeBlockers = blockers.filter((b) => counts(b.cluster))
+  const activeWarnings = warnings.filter((w) => counts(w.cluster))
+
   // Read the warnings and blockers out of an answer and keep them on screen.
-  // A warning the user already ticked stays ticked.
+  // Each cluster in the answer gets what the answer says for it; the others
+  // keep theirs. A warning the user already ticked stays ticked.
   const takeFindings = useCallback((results: AdoptResult[]) => {
-    const nextBlockers: FindingFor<AdoptBlocker>[] = []
-    const nextWarnings: FindingFor<AdoptWarning>[] = []
+    const incomingBlockers: FindingFor<AdoptBlocker>[] = []
+    const incomingWarnings: FindingFor<AdoptWarning>[] = []
     for (const r of results) {
-      for (const b of adoptBlockersOf(r)) nextBlockers.push({ cluster: r.name, item: b })
-      for (const w of adoptWarningsOf(r)) nextWarnings.push({ cluster: r.name, item: w })
+      for (const b of adoptBlockersOf(r)) incomingBlockers.push({ cluster: r.name, item: b })
+      for (const w of adoptWarningsOf(r)) incomingWarnings.push({ cluster: r.name, item: w })
     }
-    setBlockers(nextBlockers)
-    setWarnings(nextWarnings)
-    return { nextBlockers, nextWarnings }
+    const answered = new Set(results.map((r) => r.name))
+    setBlockers((prev) => mergeFindings(prev, incomingBlockers, blockerKey, answered))
+    setWarnings((prev) => mergeFindings(prev, incomingWarnings, warningKey, answered))
+    return { incomingBlockers, incomingWarnings }
   }, [])
 
   const toggleTick = useCallback((key: string) => {
@@ -250,29 +328,33 @@ export function AdoptClustersDialog({
     })
   }, [])
 
-  const allTicked = warnings.every((w) => ticked.has(findingKey(w.cluster, w.item.id)))
+  const allTicked = activeWarnings.every((w) => ticked.has(warningKey(w)))
+  const canConfirm = selectedClusters.length > 0 && allTicked && activeBlockers.length === 0
 
   const handlePreview = useCallback(async () => {
     const names = selectedClusters.map((v) => v.cluster.name)
     if (names.length === 0) return
     setPhase('previewing')
     setPreviewError(null)
+    let answered = false
     try {
       const response = await adoptClusters({
         clusters: names,
         dry_run: true,
       })
-      const { nextBlockers } = takeFindings(response.results)
+      answered = true
+      const { incomingBlockers } = takeFindings(response.results)
       // The server puts the preview on the first result's `dry_run` field.
       const first = response.results[0]
       const preview = first?.dry_run ?? first?.preview
-      if (!preview) {
+      if (!preview || incomingBlockers.length > 0) {
         // Say why. Every reason the server gave is on screen in the review
-        // step; this line is for when it gave none.
+        // step, each with its cluster; this line names the clusters.
+        const blocked = Array.from(new Set(incomingBlockers.map((b) => b.cluster)))
         const failed = response.results.find((r) => r.status === 'failed' && r.error)
         throw new Error(
-          nextBlockers.length > 0
-            ? 'This cluster cannot be adopted yet. See the reasons below.'
+          blocked.length > 0
+            ? adoptBlockedText(blocked)
             : failed?.error ?? 'No preview data returned',
         )
       }
@@ -280,13 +362,11 @@ export function AdoptClustersDialog({
       setPhase('preview-ready')
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Preview failed')
-      // A refusal carries every reason in its body.
-      if (err instanceof ApiError) {
-        const body = err.body as { blockers?: AdoptBlocker[] }
-        const fromBody = adoptBlockersOf({ blockers: body.blockers })
-        if (fromBody.length > 0) {
-          setBlockers(fromBody.map((item) => ({ cluster: names.length === 1 ? names[0] : '', item })))
-        }
+      // The server sends blockers only inside each cluster's result (read
+      // above). A preview that failed without an answer says nothing about
+      // blockers, so the old ones no longer stand.
+      if (!answered) {
+        setBlockers((prev) => prev.filter((b) => !names.includes(b.cluster)))
       }
       setPhase('review')
     }
@@ -302,14 +382,23 @@ export function AdoptClustersDialog({
       // clusters include informational-not-verified ones (F14) — the backend
       // (adopt.go:103-139) skips verification when credentials are unavailable
       // and proceeds with adoption anyway.
+      // Send every warning the user ticked, for every selected cluster. One
+      // id covers that warning on every cluster, so each id goes once. A
+      // list built from only the last answer would drop the ticks of the
+      // other clusters, and the server would ask about them again.
+      const ackIds = Array.from(
+        new Set(
+          warnings
+            .filter((w) => (w.cluster === '' || names.includes(w.cluster)) && ticked.has(warningKey(w)))
+            .map((w) => w.item.id),
+        ),
+      )
       const response = await adoptClusters({
         clusters: names,
-        acknowledged_findings: warnings
-          .filter((w) => ticked.has(findingKey(w.cluster, w.item.id)))
-          .map((w) => w.item.id),
+        acknowledged_findings: ackIds,
       })
       setAdoptResults(response.results)
-      const { nextBlockers } = takeFindings(response.results)
+      const { incomingBlockers: nextBlockers } = takeFindings(response.results)
 
       // F2: Check if ANY result has status === 'failed'. If so, surface the
       // errors and do NOT proceed to done/refetch. The server returns HTTP 200
@@ -338,8 +427,11 @@ export function AdoptClustersDialog({
           for (const w of fromBody) merged.push({ cluster: names.length === 1 ? names[0] : '', item: w })
         }
         if (merged.length > 0) {
-          setWarnings(merged)
-          setAdoptError('There is something new to read. Tick each warning below, then confirm again.')
+          // Add the new ones to the list. The 409 names only the clusters
+          // still missing a tick, so replacing the list would lose the
+          // others' ticks and send the user round in a loop.
+          setWarnings((prev) => mergeFindings(prev, merged, warningKey))
+          setAdoptError(ADOPT_NEW_WARNINGS)
           setPhase('review')
           return
         }
@@ -348,6 +440,16 @@ export function AdoptClustersDialog({
       setPhase('review')
     }
   }, [selectedClusters, onSuccess, warnings, ticked, takeFindings])
+
+  // The line under the title on the done screen. "Adoption complete." only
+  // when every cluster's pull request merged and the adopt really finished.
+  const outcomes = adoptResults.map(adoptOutcomeOf)
+  const doneText =
+    outcomes.length > 0 && outcomes.every((o) => o === 'done')
+      ? ADOPT_DONE_ALL_MERGED
+      : outcomes.some((o) => o === 'partial' || o === 'failed' || o === 'skipped')
+        ? ADOPT_DONE_NOT_ALL
+        : ADOPT_DONE_WAITING
 
   const handleBackToReview = useCallback(() => {
     setPhase('review')
@@ -371,7 +473,7 @@ export function AdoptClustersDialog({
             {phase === 'previewing' && 'Generating preview...'}
             {phase === 'preview-ready' && 'Review the changes that will be made.'}
             {phase === 'adopting' && 'Adopting clusters...'}
-            {phase === 'done' && 'Adoption complete.'}
+            {phase === 'done' && doneText}
           </DialogDescription>
         </DialogHeader>
 
@@ -387,7 +489,7 @@ export function AdoptClustersDialog({
               <p>{previewError}</p>
             </div>
           )}
-          {(phase === 'review' || phase === 'preview-ready') && blockers.length > 0 && (
+          {(phase === 'review' || phase === 'preview-ready') && activeBlockers.length > 0 && (
             <div
               role="alert"
               data-testid="adopt-blockers"
@@ -395,8 +497,8 @@ export function AdoptClustersDialog({
             >
               <p className="font-medium">Fix these first:</p>
               <ul className="mt-1 list-disc space-y-1 pl-5">
-                {blockers.map((b) => (
-                  <li key={findingKey(b.cluster, b.item.id)}>
+                {activeBlockers.map((b) => (
+                  <li key={blockerKey(b)}>
                     {clusters.length > 1 && b.cluster ? `${b.cluster}: ` : ''}
                     {b.item.message}
                   </li>
@@ -404,14 +506,14 @@ export function AdoptClustersDialog({
               </ul>
             </div>
           )}
-          {(phase === 'review' || phase === 'preview-ready') && warnings.length > 0 && (
+          {(phase === 'review' || phase === 'preview-ready') && activeWarnings.length > 0 && (
             <div
               data-testid="adopt-warnings"
               className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
             >
               <p className="font-medium">Read each of these and tick it to go ahead:</p>
-              {warnings.map((w) => {
-                const key = findingKey(w.cluster, w.item.id)
+              {activeWarnings.map((w) => {
+                const key = warningKey(w)
                 return (
                   <label key={key} className="flex items-start gap-2">
                     <input
@@ -503,8 +605,8 @@ export function AdoptClustersDialog({
                       <td className="px-4 py-2 font-medium text-[#0a2a4a] dark:text-gray-100">
                         {v.cluster.name}
                       </td>
-                      <td className="px-4 py-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 max-w-[200px] truncate" title={v.cluster.server_url}>
-                        {v.cluster.server_url ?? '--'}
+                      <td className="px-4 py-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 max-w-[200px] truncate" title={serverURLOf.get(v.cluster.name) ?? v.cluster.server_url}>
+                        {serverURLOf.get(v.cluster.name) ?? v.cluster.server_url ?? '--'}
                       </td>
                       <td className="px-4 py-2">
                         {v.state === 'pending' && (
@@ -604,38 +706,71 @@ export function AdoptClustersDialog({
           {(phase === 'done' || (phase === 'review' && adoptResults.length > 0)) && (
             <div className="space-y-2">
               {adoptResults.map((r) => {
-                const isSuccess = r.status === 'success' || r.status === 'partial'
-                const isFailed = r.status === 'failed'
+                const outcome = adoptOutcomeOf(r)
+                const prURL = r.git?.pr_url
+                const tone =
+                  outcome === 'done'
+                    ? 'bg-green-50 text-green-800 ring-1 ring-green-200 dark:bg-green-900/20 dark:text-green-300 dark:ring-green-800'
+                    : outcome === 'waiting'
+                      ? 'bg-sky-50 text-sky-900 ring-1 ring-sky-200 dark:bg-sky-900/20 dark:text-sky-200 dark:ring-sky-800'
+                      : outcome === 'failed'
+                        ? 'bg-red-50 text-red-800 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800'
+                        : 'bg-amber-50 text-amber-900 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-200 dark:ring-amber-800'
+                const icon =
+                  outcome === 'done' ? <CheckCircle className="h-4 w-4" />
+                    : outcome === 'waiting' ? <Clock className="h-4 w-4" />
+                      : outcome === 'failed' ? <XCircle className="h-4 w-4" />
+                        : <AlertTriangle className="h-4 w-4" />
+                // What the server said about this cluster, in its words.
+                const detail = outcome === 'failed' ? r.error : (r.message || r.error)
                 return (
                   <div
                     key={r.name}
-                    className={`flex items-center justify-between rounded-md px-3 py-2 text-sm ${
-                      isSuccess
-                        ? 'bg-green-50 text-green-800 ring-1 ring-green-200 dark:bg-green-900/20 dark:text-green-300 dark:ring-green-800'
-                        : 'bg-red-50 text-red-800 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800'
-                    }`}
+                    data-testid={`adopt-result-${r.name}`}
+                    data-outcome={outcome}
+                    className={`rounded-md px-3 py-2 text-sm ${tone}`}
                   >
-                    <span className="inline-flex items-center gap-1.5">
-                      {isSuccess ? <CheckCircle className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-                      {r.name}
-                    </span>
-                    {isSuccess && r.git?.pr_url && (
-                      <a
-                        href={r.git.pr_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-medium underline"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        PR
-                      </a>
-                    )}
-                    {isSuccess && !r.git?.pr_url && (
-                      <span className="text-xs">Adopted</span>
-                    )}
-                    {isFailed && r.error && (
-                      <span className="text-xs">{r.error}</span>
-                    )}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5">
+                        {icon}
+                        {r.name}
+                      </span>
+                      {outcome === 'done' && <span className="text-xs">Adopted</span>}
+                      {outcome === 'waiting' && (
+                        <span className="text-xs">
+                          {ADOPT_WAITING_FOR_MERGE}
+                          {prURL && (
+                            <>
+                              {' '}
+                              <a
+                                href={prURL}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 font-medium underline"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                View pull request
+                              </a>
+                            </>
+                          )}
+                        </span>
+                      )}
+                      {(outcome === 'partial' || outcome === 'skipped') && (
+                        <span className="text-xs">{ADOPT_NOT_FINISHED}</span>
+                      )}
+                      {outcome === 'done' && prURL && (
+                        <a
+                          href={prURL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-medium underline"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          PR
+                        </a>
+                      )}
+                    </div>
+                    {detail && <p className="mt-1 text-xs">{detail}</p>}
                   </div>
                 )
               })}
@@ -670,7 +805,7 @@ export function AdoptClustersDialog({
               <button
                 type="button"
                 onClick={handleConfirmAdoption}
-                disabled={selectedClusters.length === 0 || !allTicked || blockers.length > 0}
+                disabled={!canConfirm}
                 className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 <GitMerge className="h-4 w-4" />
@@ -701,7 +836,7 @@ export function AdoptClustersDialog({
               <button
                 type="button"
                 onClick={handleConfirmAdoption}
-                disabled={!allTicked || blockers.length > 0}
+                disabled={!canConfirm}
                 className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 <GitMerge className="h-4 w-4" />

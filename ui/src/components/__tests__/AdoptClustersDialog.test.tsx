@@ -505,7 +505,7 @@ describe('AdoptClustersDialog', () => {
       })
 
       // Should show the PR link
-      const prLink = screen.getByRole('link', { name: /PR/i })
+      const prLink = screen.getByRole('link', { name: /view pull request/i })
       expect(prLink).toBeInTheDocument()
       expect(prLink).toHaveAttribute('href', 'https://example.test/pr/1')
     })
@@ -648,7 +648,8 @@ describe('AdoptClustersDialog', () => {
       expect(await screen.findByText('ArgoCD has no connection saved for prod-cluster.')).toBeInTheDocument()
       expect(screen.getByText('Another cluster already uses this name.')).toBeInTheDocument()
       // The step is review again, so the error is not hidden.
-      expect(screen.getByText(/This cluster cannot be adopted yet/)).toBeInTheDocument()
+      expect(screen.getAllByText('"prod-cluster" cannot be adopted yet. See the reasons below.').length).toBeGreaterThan(0)
+      expect(screen.queryByText(/This cluster cannot be adopted yet/)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeDisabled()
     })
 
@@ -735,9 +736,225 @@ describe('AdoptClustersDialog', () => {
       const user = userEvent.setup()
       open1()
       await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
-      const link = await screen.findByRole('link', { name: /PR/ })
+      const link = await screen.findByRole('link', { name: /view pull request/i })
       expect(link).toHaveAttribute('href', 'https://git/pr/3')
-      expect(screen.getByText('Adoption complete.')).toBeInTheDocument()
+      // The pull request is open, not merged: the adopt is not done yet.
+      expect(screen.getByText('Pull request opened, waiting for merge.')).toBeInTheDocument()
+      expect(screen.queryByText('Adoption complete.')).not.toBeInTheDocument()
+    })
+  })
+
+  // Round R (R16): the Adopt dialog tells the truth about an open pull
+  // request, never loops on new warnings, and only counts selected clusters.
+  describe('round R: adopt results, warnings and blockers', () => {
+    const reachable = () => {
+      vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+      vi.mocked(api.testClusterConnection).mockResolvedValue({
+        success: true,
+        reachable: true,
+        server_version: 'v1.31.0',
+      } as never)
+    }
+    const preview = { effective_addons: [], files_to_write: [], pr_title: 't', secrets_to_create: [] }
+    const openWith = (clusters: Cluster[]) =>
+      render(
+        <AdoptClustersDialog open={true} onClose={mockOnClose} clusters={clusters} onSuccess={mockOnSuccess} onDiagnose={mockOnDiagnose} />,
+      )
+    const openMsg =
+      'Pull request #7 is open: https://git/pr/7. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection.'
+
+    it('an open pull request says it waits for the merge, never "Adoption complete." or "Adopted"', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success', merged: false, message: openMsg, git: { pr_url: 'https://git/pr/7', merged: false } }],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+      const row = await screen.findByTestId('adopt-result-prod-cluster')
+      expect(row).toHaveTextContent('Pull request opened, waiting for merge')
+      expect(screen.getByRole('link', { name: /view pull request/i })).toHaveAttribute('href', 'https://git/pr/7')
+      expect(screen.getByText(openMsg)).toBeInTheDocument()
+      expect(screen.getByText('Pull request opened, waiting for merge.')).toBeInTheDocument()
+      expect(screen.queryByText('Adoption complete.')).not.toBeInTheDocument()
+      expect(screen.queryByText('Adopted')).not.toBeInTheDocument()
+    })
+
+    it('a result with no merged field reads as not merged', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success' }],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+      await screen.findByTestId('adopt-result-prod-cluster')
+      expect(screen.queryByText('Adoption complete.')).not.toBeInTheDocument()
+      expect(screen.queryByText('Adopted')).not.toBeInTheDocument()
+    })
+
+    it('a merged adopt says "Adoption complete." and "Adopted"', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success', merged: true, git: { pr_url: 'https://git/pr/8', merged: true } }],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+      expect(await screen.findByText('Adoption complete.')).toBeInTheDocument()
+      expect(screen.getByText('Adopted')).toBeInTheDocument()
+      expect(screen.queryByText('Pull request opened, waiting for merge')).not.toBeInTheDocument()
+    })
+
+    it('a partial adopt shows what the server said, not a green "Adopted"', async () => {
+      reachable()
+      const partialMsg =
+        "The pull request is open, but Sharko could not mark prod-cluster's ArgoCD connection as waiting for it, so merging it would not finish the adopt. Run adopt again before you merge it — it finds the open pull request and tries the mark again."
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'partial', message: partialMsg, git: { pr_url: 'https://git/pr/9' } }],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+      const row = await screen.findByTestId('adopt-result-prod-cluster')
+      expect(row).toHaveAttribute('data-outcome', 'partial')
+      expect(row).toHaveTextContent('Not finished yet')
+      expect(screen.getByText(partialMsg)).toBeInTheDocument()
+      expect(screen.getByText('Not every cluster finished. Read each one below.')).toBeInTheDocument()
+      expect(screen.queryByText('Adoption complete.')).not.toBeInTheDocument()
+      expect(screen.queryByText('Adopted')).not.toBeInTheDocument()
+    })
+
+    it('a 409 with a new warning keeps the other cluster\'s ticks and sends them all', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [
+          { name: 'prod-cluster', status: 'success', warnings: [{ id: 'owner', message: 'Another tool owns prod today.' }], dry_run: preview },
+          { name: 'staging-cluster', status: 'success', warnings: [{ id: 'appsets', message: 'Two ApplicationSets pick staging.' }], dry_run: preview },
+        ],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1, mockCluster2])
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      await user.click(await screen.findByTestId('adopt-warning-owner'))
+      await user.click(screen.getByTestId('adopt-warning-appsets'))
+
+      // The server finds a new warning on staging only. Its 409 names only staging.
+      vi.mocked(api.adoptClusters).mockRejectedValueOnce(
+        new api.ApiError(
+          409,
+          {
+            error: 'needs acknowledgement',
+            code: 'unacknowledged_findings',
+            unacknowledged_findings: ['new-hook'],
+            warnings: [{ id: 'new-hook', message: 'A new hook watches staging.' }],
+            results: [{ name: 'staging-cluster', warnings: [{ id: 'new-hook', message: 'A new hook watches staging.' }] }],
+          },
+          'Conflict',
+        ),
+      )
+      await user.click(screen.getByRole('button', { name: /confirm adoption/i }))
+      expect(await screen.findByText('There is something new to read. Tick each warning below, then confirm again.')).toBeInTheDocument()
+      // prod's warning is still on screen and still ticked.
+      expect(screen.getByText('Another tool owns prod today.')).toBeInTheDocument()
+      expect(screen.getByTestId('adopt-warning-owner')).toBeChecked()
+      await user.click(screen.getByTestId('adopt-warning-new-hook'))
+
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [
+          { name: 'prod-cluster', status: 'success', merged: true },
+          { name: 'staging-cluster', status: 'success', merged: true },
+        ],
+      } as never)
+      await user.click(screen.getByRole('button', { name: /confirm adoption/i }))
+      await waitFor(() =>
+        expect(api.adoptClusters).toHaveBeenLastCalledWith({
+          clusters: ['prod-cluster', 'staging-cluster'],
+          acknowledged_findings: ['owner', 'appsets', 'new-hook'],
+        }),
+      )
+    })
+
+    it('a blocker on a cluster the user unticks does not hold Confirm back', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [
+          { name: 'prod-cluster', status: 'success', dry_run: preview },
+          { name: 'staging-cluster', status: 'failed', error: '1 thing to fix first', blockers: [{ id: 'no-connection', message: 'ArgoCD has no connection saved for staging.' }] },
+        ],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1, mockCluster2])
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      expect(await screen.findByText(/ArgoCD has no connection saved for staging\./)).toBeInTheDocument()
+      expect(screen.getAllByText('"staging-cluster" cannot be adopted yet. See the reasons below.').length).toBeGreaterThan(0)
+      const confirm = screen.getByRole('button', { name: /confirm adoption/i })
+      expect(confirm).toBeDisabled()
+      // Untick staging (the second cluster row).
+      const rowBoxes = screen.getAllByRole('checkbox')
+      await user.click(rowBoxes[1])
+      expect(screen.queryByText(/ArgoCD has no connection saved for staging\./)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeEnabled()
+    })
+
+    it('two warnings with the same id each need their own tick', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [
+          {
+            name: 'prod-cluster',
+            status: 'success',
+            warnings: [
+              { id: 'foreign-owner', message: 'The Application "a" renders this connection.' },
+              { id: 'foreign-owner', message: 'The Application "b" renders this connection.' },
+            ],
+            dry_run: preview,
+          },
+        ],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      const boxes = await screen.findAllByTestId('adopt-warning-foreign-owner')
+      expect(boxes).toHaveLength(2)
+      await user.click(boxes[0])
+      expect(boxes[0]).toBeChecked()
+      expect(boxes[1]).not.toBeChecked()
+      expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeDisabled()
+      await user.click(boxes[1])
+      expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeEnabled()
+    })
+
+    it('a new clusters array with the same names does not reset the ticks', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [{ name: 'prod-cluster', status: 'success', warnings: [{ id: 'owner', message: 'Another tool owns prod today.' }], dry_run: preview }],
+      } as never)
+      const user = userEvent.setup()
+      const { rerender } = openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      await user.click(await screen.findByTestId('adopt-warning-owner'))
+      expect(screen.getByTestId('adopt-warning-owner')).toBeChecked()
+      rerender(
+        <AdoptClustersDialog open={true} onClose={mockOnClose} clusters={[{ ...mockCluster1 }]} onSuccess={mockOnSuccess} onDiagnose={mockOnDiagnose} />,
+      )
+      expect(screen.getByTestId('adopt-warning-owner')).toBeChecked()
+      expect(api.testClusterConnection).toHaveBeenCalledTimes(1)
+    })
+
+    it('a preview that fails with no answer clears the old blockers', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [{ name: 'prod-cluster', status: 'failed', blockers: [{ id: 'no-connection', message: 'ArgoCD has no connection saved for prod.' }] }],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      expect(await screen.findByText('ArgoCD has no connection saved for prod.')).toBeInTheDocument()
+      vi.mocked(api.adoptClusters).mockRejectedValueOnce(new Error('Git is not reachable'))
+      await user.click(screen.getByRole('button', { name: /preview changes/i }))
+      expect(await screen.findByText('Git is not reachable')).toBeInTheDocument()
+      expect(screen.queryByText('ArgoCD has no connection saved for prod.')).not.toBeInTheDocument()
     })
   })
 })
