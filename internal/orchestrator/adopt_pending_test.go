@@ -71,8 +71,9 @@ func TestAdoptV4_OpenPR_MarkFailsIsPartialAndSaysRunAgain(t *testing.T) {
 	if cr.Status != "partial" {
 		t.Fatalf("status = %q, want partial", cr.Status)
 	}
-	if !strings.Contains(cr.Message, "Run adopt again before you merge it") {
-		t.Fatalf("message = %q", cr.Message)
+	wantMsg := "The pull request is open, but Sharko could not mark prod-eu's ArgoCD connection as waiting for it, so merging it would not finish the adopt. Run adopt again before you merge it — it finds the open pull request and tries the mark again."
+	if cr.Message != wantMsg {
+		t.Fatalf("message:\n got %q\nwant %q", cr.Message, wantMsg)
 	}
 }
 

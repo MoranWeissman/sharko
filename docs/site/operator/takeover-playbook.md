@@ -92,9 +92,10 @@ matches reality.
 1. Go to **Clusters**. A line above the list says how many clusters
    ArgoCD already knows that Sharko does not manage yet. Click it (you
    need the admin role) and pick the cluster from **Discovered
-   clusters**. You can also open the cluster itself: its page says
-   **Sharko doesn't manage this cluster yet**. Sharko can see the
-   cluster, but does not manage it.
+   clusters**. The list has no link to the cluster's own page. If you
+   know the name, type the page address in your browser
+   (`/clusters/<name>`). That page says **Sharko doesn't manage this
+   cluster yet**. Sharko can see the cluster, but does not manage it.
 2. Compare what ArgoCD is deploying there with what you expect. The
    preflight in the next step gives you the full list, but do this with
    your own eyes too.
@@ -108,9 +109,10 @@ Nothing has changed yet.
 
 ## Step 2 — Preflight
 
-On the cluster's page, choose **Take ownership** (the same button sits
-next to the cluster in the **Discovered clusters** list). The dialog opens on four
-checks:
+On the cluster's page, choose **Take ownership**. The same button is in
+the **Discovered clusters** list: pick the cluster there with its round
+button, then click **Take ownership of <name>** under the list. The
+dialog opens on four checks:
 
 | Check | What it answers |
 |---|---|
@@ -154,7 +156,8 @@ nothing, and you can run it as many times as you like.
 ## Step 3 — The secret swap
 
 This is the handover. Sharko becomes the owner of the ArgoCD cluster
-secret that is already there.
+secret that is already there, but only after your pull request is
+merged.
 
 Before you confirm, the dialog lists **every label currently on that
 secret that came from the previous owner**, and — for each one — which
@@ -166,10 +169,19 @@ Confirm, and Sharko:
 
 1. Opens a pull request adding the cluster to `managed-clusters.yaml`
    and creating an empty `cluster-addons/<name>.yaml`.
-2. Edits the existing cluster secret **in place**: adds its own
-   ownership marker, keeps every label that was already there, and does
-   not touch the credentials or the server address.
+2. Puts one small mark on the cluster secret, so it can find that pull
+   request later. Nothing else about the secret changes now. The owner
+   is still the previous owner.
+3. When the pull request is merged, edits the existing cluster secret
+   **in place**: adds its own ownership marker, keeps every label that
+   was already there, and does not touch the credentials or the server
+   address.
 
+If the pull request is closed without a merge, Sharko takes its mark off
+the secret and changes nothing else. It works the same way as adopt. Until
+the merge, the change is listed under **Pending Changes** on the Clusters
+page. The command line says `PR opened, waiting for merge:` and exits 0
+while it waits.
 If you run the take over again while that pull request is still open,
 Sharko does not open a second one. It tells you the take over is already
 waiting in that pull request, and gives you its link. If the cluster is
@@ -222,7 +234,9 @@ that gap ArgoCD would drop the cluster and every Application pointed at
 it would go to an unknown state.
 
 So the swap is a single in-place edit of the one object that is already
-there. There is no gap, and no half-finished state to recover from.
+there, made after the merge. There is no gap. If the pull request is
+closed, the only thing to undo is the small mark, and Sharko takes it off
+for you.
 
 ### Downtime, honestly
 

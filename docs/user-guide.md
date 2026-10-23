@@ -159,13 +159,14 @@ curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/providers/clusters
 ```
 
-Sharko only reads from its configured secrets backend and cross-references ArgoCD here — it never
-scans your cloud account's infrastructure directly. In the UI, navigate to **Clusters** to see
-unregistered clusters as candidates for adoption.
+The first call reads the list from ArgoCD. The second reads it from your secrets provider and
+cross-references ArgoCD. Sharko never scans your cloud account's infrastructure directly. In the UI,
+the **Clusters** page has a line that says how many clusters ArgoCD already knows that Sharko does not
+manage yet. Click it to pick one to adopt.
 
 #### Adopt Existing Clusters
 
-Adoption is for clusters that already have an ArgoCD cluster secret but are not managed by Sharko. It verifies connectivity, creates a values file, adds the cluster to `managed-clusters.yaml`, and creates a PR.
+Adoption is for clusters that already have an ArgoCD cluster secret but are not managed by Sharko. It checks the cluster the same way take over does, then opens a pull request that adds the cluster to `managed-clusters.yaml` and creates its addon file. Nothing is adopted until that pull request is merged.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
@@ -173,7 +174,7 @@ curl -H "Authorization: Bearer $TOKEN" \
   -d '{"clusters": ["prod-eu", "staging-us"], "auto_merge": false}'
 ```
 
-In the UI, discovered clusters show a **Start Managing** button. Clicking it triggers adoption.
+In the UI, pick the cluster under **Discovered clusters** in **Add Cluster** and click **Adopt <name>**.
 
 Key behaviors:
 - Adoption rejects clusters managed by a different tool (non-`sharko` `managed-by` label).
@@ -194,7 +195,7 @@ Steps:
 1. Verifies the cluster has the `adopted` annotation (errors if not -- use `remove-cluster` instead).
 2. Removes the `managed-by` label and `adopted` annotation from the ArgoCD secret (keeps the secret).
 3. Deletes Sharko-created addon secrets from the remote cluster (best-effort).
-4. Creates a PR to remove the cluster from `managed-clusters.yaml` and delete its values file.
+4. Creates a PR to remove the cluster from `managed-clusters.yaml` and delete its addon file. Steps 2 and 3 happen only after that PR is merged.
 
 ### Batch Register Clusters
 
