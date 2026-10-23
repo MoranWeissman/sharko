@@ -169,6 +169,9 @@ var connectionGateSites = []connectionGateSite{
 	{file: "internal/api/engine_pin.go", fn: "handleUpgradeEnginePin", lookups: "git", routed: "git"},
 	{file: "internal/api/fleet.go", fn: "computeFleetStatus", lookups: "argocd,git", notRouted: "swallowed"},
 	{file: "internal/api/cluster_followup_on_merge.go", fn: "FinishClusterFollowUpOnMerge", lookups: "argocd,git", notRouted: "swallowed"},
+	// The background waiting-marks pass: no Git connection means it skips
+	// this pass and tries on the next one (EP3 dry run round R, R4).
+	{file: "internal/api/waiting_marks.go", fn: "FinishWaitingClusterMarks", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/init.go", fn: "handleInit", lookups: "argocd,git", routed: "argocd,git"},
 	{file: "internal/api/init_status.go", fn: "handleInitStatus", lookups: "argocd,git", routed: "git"},
 	{file: "internal/api/migration.go", fn: "CompleteMigrationHandoffOnMerge", lookups: "git", notRouted: "swallowed"},

@@ -103,3 +103,16 @@ func TestSweep_TwoSecretsSameShownName_DeletesNeither(t *testing.T) {
 	secretExists(t, k8s, "cluster-a-1")
 	secretExists(t, k8s, "cluster-a-2")
 }
+
+// R4: every pass runs the waiting-marks step once, before the diff.
+func TestPollOnce_RunsTheWaitingMarksStep(t *testing.T) {
+	k8s := fake.NewSimpleClientset(keeperSecret())
+	r := newReconcilerForTest(t, nil, k8s, &fakeVault{}, &auditCollector{}, envelopedManagedClusters("keeper"))
+	calls := 0
+	r.deps.WaitingMarksFn = func(context.Context) { calls++ }
+	r.pollOnce(context.Background())
+	r.pollOnce(context.Background())
+	if calls != 2 {
+		t.Fatalf("the waiting-marks step ran %d times in two passes, want 2", calls)
+	}
+}

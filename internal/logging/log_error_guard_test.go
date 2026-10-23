@@ -152,7 +152,13 @@ import (
 // cmd/sharko/waiting.go holds the words the command line uses when a pull
 // request is still waiting. It makes no log call and does not search for
 // credential characters.
-const wantSweptGoFiles = 443
+//
+// 444 since round R added internal/api/waiting_marks.go: the pass that
+// finishes a waiting mark whose pull request the tracker no longer has.
+// It logs fixed-text messages with the cluster name, the mark, the pull
+// request number and the error. It does not search for credential
+// characters.
+const wantSweptGoFiles = 444
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -221,6 +227,10 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/api/router.go", fn: "writeJSON", msg: "error encoding response", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/router.go", fn: "writeServerError", msg: "server error", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/secrets_reconcile.go", fn: "handleCheckSecrets", msg: "[secrets] check-all could not run", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "finishOneWaitingMark", msg: "waiting marks: Sharko gave up finishing this pull request; the mark stays on the cluster's ArgoCD connection, so nothing deletes it — look at the pull request and the connection by hand", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "finishOneWaitingMark", msg: "waiting marks: could not finish a pull request the tracker no longer had; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "finishOneWaitingMark", msg: "waiting marks: could not read the tracked pull requests; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "finishWaitingMarks", msg: "waiting marks: could not list the ArgoCD cluster Secrets; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
 	// BF8 folded the four per-verb transport lines (doGet, doPost, doPut,
 	// doDelete) into one shared helper, so there is one entry here now
 	// instead of four.

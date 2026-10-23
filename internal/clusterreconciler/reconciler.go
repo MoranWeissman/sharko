@@ -334,6 +334,12 @@ type Deps struct {
 	// means no pull request keeps anything.
 	KeptConnectionsFn func(ctx context.Context) (map[string]bool, error)
 
+	// WaitingMarksFn, when non-nil, runs once per pass, before the diff.
+	// It finishes the waiting marks (adopt, take over, kept connection)
+	// whose pull request the PR tracker no longer has
+	// (api.Server.FinishWaitingClusterMarks, EP3 dry run round R, R4).
+	WaitingMarksFn func(ctx context.Context)
+
 	// EventRecorder (V3 E1) emits Kubernetes events for reconciler-detected
 	// conditions an operator should see via `kubectl get events` — currently
 	// just the label-fight warning (see recordFightCheck). nil means "no
@@ -662,6 +668,9 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// completed (or even attempted) pass, the same distinction
 	// secrets.Reconciler's "no Git connection" branch already draws for its
 	// own engine.
+	if r.deps.WaitingMarksFn != nil {
+		r.deps.WaitingMarksFn(ctx)
+	}
 	start := r.now()
 
 	// Fetch the branch head SHA ONCE for this pass (P2-C1), best effort —

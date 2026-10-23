@@ -1382,6 +1382,9 @@ var serveCmd = &cobra.Command{
 					// deletes one between the merge and the merge hook
 					// taking its label off (EP3-DRYRUN-FIXES call 1).
 					KeptConnectionsFn: prtracker.NewTracker(prCMStore, nil, nil).KeptConnections,
+					// Finishes waiting marks whose pull request the tracker
+					// no longer has (EP3 dry run round R, R4).
+					WaitingMarksFn: srv.FinishWaitingClusterMarks,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
