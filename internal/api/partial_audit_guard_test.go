@@ -329,6 +329,11 @@ var auditResultWriters = map[string]auditResultSite{
 		file: "clusters_adopt.go",
 		how:  "FAN-OUT. Result comes from adoptAuditOutcome → fanoutAuditOutcome. Driven by Layer 1.",
 	},
+	"recordAdoptFinish": {
+		file: "adopt_finish.go",
+		how: "SINGLE DEFINITE OUTCOME. One cluster's adopt finishing (or being released) after " +
+			"its pull request merged or closed. No item list, so no partial to fold.",
+	},
 	"record": {
 		file: "connection_credential_check.go",
 		how: "SINGLE DEFINITE OUTCOME, read-only. One connection's credential check: it ran " +

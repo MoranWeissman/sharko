@@ -34,6 +34,15 @@ const AnnotationAdoptedDoubledPrefixLegacy = "sharko.sharko.dev/adopted"
 // Kept in lockstep with internal/argosecrets.AnnotationAdoptedLegacy.
 const AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 
+// AnnotationAdoptPendingPR holds the number of the adopt pull request that
+// is still waiting to be merged. It is the only thing an adopt puts on the
+// Secret before the merge: it changes no label, so no ApplicationSet and
+// no ownership check sees a difference. When the pull request merges,
+// Sharko takes ownership of the connection and marks it adopted; when it is
+// closed without merging, Sharko takes this mark off and changes nothing
+// else. Kept in lockstep with internal/argosecrets.AnnotationAdoptPendingPR.
+const AnnotationAdoptPendingPR = "sharko.dev/adopt-pending-pr"
+
 // AdoptClusters orchestrates the two-phase adoption of existing ArgoCD clusters.
 //
 // Phase 1: Per-cluster verification — Stage1 connectivity test.

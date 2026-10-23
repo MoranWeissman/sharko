@@ -236,8 +236,10 @@ What the adopt operation does:
 1. Verifies the cluster exists in ArgoCD
 2. Verifies there is no existing values file in Git (returns 409 if already managed)
 3. Generates a values file from the current ArgoCD cluster labels
-4. Creates a PR to add the values file to the Git repo
-5. Marks the cluster as managed in ArgoCD labels
+4. Shows every warning first. A real adopt stops until you acknowledge each warning by its id (`--acknowledge <id>` on the CLI, `acknowledged_findings` in the API)
+5. Creates a PR to add the cluster to the Git repo
+6. While the PR is open, Sharko only puts one mark on ArgoCD's connection (the `sharko.dev/adopt-pending-pr` annotation, holding the PR number). Nothing else changes yet
+7. When the PR is merged, Sharko takes ownership of the connection (its old labels are kept) and marks it adopted. If the PR is closed without merging, Sharko takes its mark off and changes nothing else
 
 The cluster does **not** need to be in your secrets provider — it is already in ArgoCD, so no kubeconfig fetch is required for the adoption step.
 

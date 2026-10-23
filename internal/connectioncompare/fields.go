@@ -292,6 +292,7 @@ var ignoredAnnotationKeys = []string{
 	argosecrets.AnnotationAdoptedDoubledPrefixLegacy,
 	argosecrets.AnnotationTakenOverAt,
 	argosecrets.AnnotationTakeoverPreservedLabels,
+	argosecrets.AnnotationAdoptPendingPR,
 }
 
 // Data keys Sharko writes. Everything else in a connection Secret's data

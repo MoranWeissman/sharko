@@ -1589,6 +1589,32 @@ func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) er
 	return nil
 }
 
+// AnnotationAdoptPendingPR holds the number of the adopt pull request that
+// is still waiting to be merged. It is the only thing an adopt puts on the
+// Secret before the merge. Kept in lockstep with
+// internal/orchestrator.AnnotationAdoptPendingPR.
+const AnnotationAdoptPendingPR = "sharko.dev/adopt-pending-pr"
+
+// RemoveAnnotation takes one annotation off the named cluster Secret.
+// Returns (false, nil) when the annotation was not there; nothing is
+// written then. Returns an error if the secret does not exist.
+func (m *Manager) RemoveAnnotation(ctx context.Context, name, key string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	if _, ok := existing.Annotations[key]; !ok {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	delete(updated.Annotations, key)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("removing annotation %q from secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation removed from cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
 // GetAnnotation returns the value of a specific annotation on the named secret.
 // Returns ("", nil) if the secret exists but the annotation is not set.
 // Returns an error if the secret does not exist.
