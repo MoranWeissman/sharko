@@ -57,7 +57,10 @@ func TestAdoptV4_OpenPR_OnlyPutsTheWaitingMark(t *testing.T) {
 	}
 }
 
-func TestAdoptV4_OpenPR_MarkFailsIsPartialAndSaysRunAgain(t *testing.T) {
+// Round R, R4: the tracked pull request finishes the adopt, so a waiting
+// mark that cannot be written no longer makes the adopt partial, and the
+// old "run adopt again before you merge" advice is gone.
+func TestAdoptV4_OpenPR_MarkFailsStillWaitsForTheMerge(t *testing.T) {
 	orch, _, asm := adoptPendingSetup(t)
 	asm.annotationErr = errors.New("secret update refused")
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
@@ -68,11 +71,15 @@ func TestAdoptV4_OpenPR_MarkFailsIsPartialAndSaysRunAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	cr := result.Results[0]
-	if cr.Status != "partial" {
-		t.Fatalf("status = %q, want partial", cr.Status)
+	if cr.Status != "success" || cr.Merged {
+		t.Fatalf("status = %q merged = %v, want success and not merged", cr.Status, cr.Merged)
 	}
-	if !strings.Contains(cr.Message, "Run adopt again before you merge it") {
-		t.Fatalf("message = %q", cr.Message)
+	want := "Pull request #1 is open: https://github.com/example/repo/pull/1. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection."
+	if cr.Message != want {
+		t.Fatalf("message:\n%s\nwant:\n%s", cr.Message, want)
+	}
+	if strings.Contains(cr.Message, "Run adopt again before you merge it") || strings.Contains(cr.Message, "would not finish the adopt") {
+		t.Fatalf("the old advice is back: %q", cr.Message)
 	}
 }
 

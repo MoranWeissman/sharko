@@ -169,9 +169,18 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		// Adoption always records connectionManagedBy: user (see
 		// adoptSingleCluster below), so this is the earliest point a
 		// foreign owner can be surfaced to the caller.
+		//
+		// A check that cannot be read stops the adopt for this cluster: a
+		// warning nobody could see cannot be acknowledged (EP3 dry run round
+		// R, R11).
 		if warnings, warnErr := o.detectForeignOwnerWarnings(ctx, clusterName); warnErr != nil {
-			log.Warn("could not check cluster secret for foreign ArgoCD ownership — proceeding with adoption",
+			log.Warn("could not check cluster secret for foreign ArgoCD ownership — not adopting this cluster",
 				"cluster", clusterName, "error", warnErr)
+			cr.Status = "failed"
+			cr.Error = ForeignOwnerUnreadableMessage(clusterName)
+			cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerCannotCheck, Message: cr.Error}}
+			result.Results = append(result.Results, cr)
+			continue
 		} else if len(warnings) > 0 {
 			cr.Warnings = append(cr.Warnings, foreignOwnerAdoptWarnings(warnings)...)
 		}
@@ -320,7 +329,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		// adoptSingleCluster returns a fresh AdoptClusterResult that
 		// doesn't carry it forward on its own.
 		if len(cr.Warnings) > 0 {
-			adoptResult.Warnings = append(adoptResult.Warnings, cr.Warnings...)
+			adoptResult.Warnings = uniqueAdoptWarningIDs(append(adoptResult.Warnings, cr.Warnings...))
 		}
 		result.Results = append(result.Results, adoptResult)
 	}
@@ -428,8 +437,15 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 	}
 
 	cr.Status = "success"
+	cr.Merged = gitResult.Merged && o.argoSecretManager != nil
 	if !gitResult.Merged {
 		cr.Message = fmt.Sprintf("PR created — adopted annotation will be set after PR is merged: %s", gitResult.PRUrl)
 	}
 	return cr
+}
+
+// ForeignOwnerUnreadableMessage is the answer when Sharko cannot check
+// whether another ArgoCD Application renders the cluster's connection.
+func ForeignOwnerUnreadableMessage(name string) string {
+	return fmt.Sprintf("Sharko could not check whether another ArgoCD Application owns cluster %s's connection, so it did not adopt it. Nothing has changed. Try again.", name)
 }

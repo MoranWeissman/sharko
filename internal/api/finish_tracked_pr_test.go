@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -215,5 +218,65 @@ func TestFinishTrackedPR_TakeoverClosed_TakesOnlyTheMarkOff(t *testing.T) {
 	}
 	if len(live.Annotations) != 0 {
 		t.Fatalf("annotations left: %v", live.Annotations)
+	}
+}
+
+// R5: a take over whose pull request could not be recorded is a 207 partial
+// in plain words, and the connection is left exactly as it was.
+func TestTakeover_PRNotRecorded_Is207AndChangesNothing(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	srv, router, k8s := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)}, fakeAppSetReader{})
+	cm := fake.NewSimpleClientset()
+	cm.PrependReactor("*", "configmaps", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("configmap write refused")
+	})
+	srv.SetPRTracker(prtracker.NewTracker(cmstore.NewStore(cm, "default", "sharko-pending-prs"),
+		func() prtracker.GitProvider { return nil }, func(audit.Entry) {}))
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{"secret-owner"}}))
+	if w.Code != http.StatusMultiStatus {
+		t.Fatalf("got %d, want 207 (body=%s)", w.Code, w.Body.String())
+	}
+	var resp TakeoverResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	want := "Sharko opened pull request https://example.invalid/pr/1 but could not record it, so it could not finish the take over after the merge. Nothing has changed on the cluster's ArgoCD connection. Close that pull request without merging it, then try again."
+	if resp.Status != "partial" || resp.Message != want || resp.SecretSwapped || resp.WaitingForMerge {
+		t.Fatalf("got %s\nwant message %q", w.Body.String(), want)
+	}
+	live := liveSecret(t, k8s, "prod-eu")
+	if live.Labels[argosecrets.LabelManagedBy] != "" || live.Annotations[argosecrets.AnnotationTakeoverPendingPR] != "" {
+		t.Fatalf("the connection changed: labels %v annotations %v", live.Labels, live.Annotations)
+	}
+}
+
+// R5: the tracked take over pull request remembers what the person asked
+// for the old labels, so the merge does the same thing the call would have.
+func TestTakeover_TrackedPRKeepsTheLabelChoice(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		gp := newTakeoverFakeGP()
+		srv, router, _ := takeoverTestServer(t, gp,
+			[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)}, fakeAppSetReader{})
+		tracker := prtracker.NewTracker(cmstore.NewStore(fake.NewSimpleClientset(), "default", "sharko-pending-prs"),
+			func() prtracker.GitProvider { return nil }, func(audit.Entry) {})
+		srv.SetPRTracker(tracker)
+		k := keep
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+			TakeoverRequest{Yes: true, PreserveLegacyLabels: &k, AcknowledgedFindings: []string{"secret-owner"}}))
+		if w.Code != http.StatusOK {
+			t.Fatalf("keep=%v: got %d (body=%s)", keep, w.Code, w.Body.String())
+		}
+		pr, err := tracker.GetPR(context.Background(), 1)
+		if err != nil || pr == nil || pr.FollowUp == nil {
+			t.Fatalf("keep=%v: the take over pull request was not tracked with its finish step: %+v %v", keep, pr, err)
+		}
+		if pr.FollowUp.Finish != orchestrator.FinishTakeover || pr.FollowUp.PreserveLegacyLabels != keep {
+			t.Fatalf("keep=%v: follow-up = %+v", keep, *pr.FollowUp)
+		}
 	}
 }

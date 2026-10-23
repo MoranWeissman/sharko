@@ -19,7 +19,7 @@ const takeoverOperation = "The takeover"
 func init() {
 	takeoverCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	takeoverCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
-	takeoverCmd.Flags().StringArray("acknowledge", nil, "Finding id to acknowledge (repeatable)")
+	takeoverCmd.Flags().StringArray("acknowledge", nil, "Finding id to acknowledge (repeat it, or give several ids split by commas)")
 	takeoverCmd.Flags().Bool("preserve-legacy-labels", true, "Carry the previous owner's labels over to Sharko's connection (only sent when you set this flag)")
 	takeoverCmd.Flags().String("region", "", "Region to record on the fleet entry")
 	takeoverCmd.Flags().Bool("auto-merge", false, "Auto-merge the takeover PR (overrides the server default; only sent when you set this flag)")
@@ -164,6 +164,7 @@ type takeoverResponse struct {
 	PreservedLabels    map[string]string  `json:"preserved_labels,omitempty"`
 	DroppedLabels      map[string]string  `json:"dropped_labels,omitempty"`
 	SecretSwapped      bool               `json:"secret_swapped"`
+	WaitingForMerge    bool               `json:"waiting_for_merge,omitempty"`
 	AlreadyOwned       bool               `json:"already_owned,omitempty"`
 	ProtectionRepaired bool               `json:"protection_repaired,omitempty"`
 	Git                *takeoverGitResult `json:"git,omitempty"`
@@ -186,10 +187,12 @@ type takeover409Body struct {
 var takeoverCmd = &cobra.Command{
 	Use:   "takeover <cluster>",
 	Short: "Take over a cluster ArgoCD already manages",
-	Long: `Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping
-the same name, the same API address and — by default — every label the
-previous owner left on it. Adds the cluster to Sharko's fleet through a pull
-request and creates an empty addon file for it; no addon is turned on.
+	Long: `Opens a pull request that adds the cluster to Sharko's fleet and creates an
+empty addon file for it; no addon is turned on. When that pull request is
+merged, Sharko becomes the owner of the cluster's existing ArgoCD connection,
+keeping the same name, the same API address and — by default — every label
+the previous owner left on it. If the pull request is closed without merging,
+nothing on the connection changes.
 
 Always fetches and prints the preflight report first. Any warning finding
 must be named with --acknowledge before the takeover is allowed to run —
@@ -200,6 +203,7 @@ run with --dry-run first to see the exact ids to pass.`,
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		yes, _ := cmd.Flags().GetBool("yes")
 		acks, _ := cmd.Flags().GetStringArray("acknowledge")
+		acks = splitAcknowledgeIDs(acks)
 		region, _ := cmd.Flags().GetString("region")
 
 		// The preflight is always fetched and shown first — it is the read
@@ -220,7 +224,7 @@ run with --dry-run first to see the exact ids to pass.`,
 		fmt.Println()
 
 		if !dryRun && !yes {
-			fmt.Printf("Take over cluster %q? Sharko becomes the owner of its existing ArgoCD connection. [y/N]: ", name)
+			fmt.Printf("Take over cluster %q? Sharko opens a pull request, and becomes the owner of its existing ArgoCD connection when it is merged. [y/N]: ", name)
 			var confirm string
 			fmt.Scanln(&confirm)
 			if confirm != "y" && confirm != "Y" {
@@ -295,15 +299,26 @@ run with --dry-run first to see the exact ids to pass.`,
 		// above a line that then said the takeover had only got part of the
 		// way.
 		outcome := fanout.SingleStatus(result.Status, status == 207)
+		// A pull request that waits for its merge has changed nothing on
+		// the connection yet, so it must never say "Sharko now owns" (EP3
+		// dry run round R, R5).
+		waiting := !dryRun && outcome.Completed() && result.Git != nil &&
+			(result.WaitingForMerge || prWaiting(result.Git.PRUrl, result.Git.Merged))
 		if !dryRun {
-			fmt.Println(outcome.ProgressWord())
+			if waiting {
+				fmt.Println(waitingProgressWord)
+			} else {
+				fmt.Println(outcome.ProgressWord())
+			}
 		}
 
 		fmt.Println()
 		if dryRun {
 			printDryRun(result.DryRun)
 		} else {
-			if outcome.Completed() {
+			if waiting {
+				fmt.Println(waitingForMergeLine(result.Git.PRUrl))
+			} else if outcome.Completed() {
 				fmt.Printf("Sharko now owns %s.\n", name)
 			} else {
 				fmt.Print(outcome.TroubleHeadline(takeoverOperation, name))
@@ -318,7 +333,7 @@ run with --dry-run first to see the exact ids to pass.`,
 			if len(result.DroppedLabels) > 0 {
 				fmt.Printf("  Dropped labels:   %s\n", strings.Join(sortedKeys(result.DroppedLabels), ", "))
 			}
-			if result.Git != nil && result.Git.PRUrl != "" {
+			if result.Git != nil && result.Git.PRUrl != "" && !waiting {
 				if result.Git.Merged {
 					fmt.Printf("  PR: %s (merged)\n", result.Git.PRUrl)
 				} else {
@@ -402,6 +417,21 @@ func takeoverAckSentence(ids []string) string {
 		return fmt.Sprintf("1 warning has not been read yet. Look at %s in the checks above, then run the command again with --acknowledge %s", list, ids[0])
 	}
 	return fmt.Sprintf("%d warnings have not been read yet. Look at %s in the checks above, then run the command again with %s", len(ids), list, acknowledgeFlags(ids))
+}
+
+// splitAcknowledgeIDs lets --acknowledge take "a,b" as well as being given
+// twice. Empty pieces and repeats are dropped.
+func splitAcknowledgeIDs(in []string) []string {
+	var out []string
+	for _, v := range in {
+		for _, id := range strings.Split(v, ",") {
+			id = strings.TrimSpace(id)
+			if id != "" && !containsStr(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }
 
 func acknowledgeFlags(ids []string) string {

@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,11 @@ type TakeoverResponse struct {
 	// this cluster was already open. Git points at it; no second one was
 	// opened.
 	AlreadyWaiting bool `json:"already_waiting,omitempty"`
+	// WaitingForMerge is true when the pull request is open and nothing on
+	// the connection has changed yet. Sharko becomes the owner when it is
+	// merged; if it is closed without merging, nothing changes (EP3 dry run
+	// round R, R5).
+	WaitingForMerge bool `json:"waiting_for_merge,omitempty"`
 
 	Git       *orchestrator.GitResult    `json:"git,omitempty"`
 	DryRun    *orchestrator.DryRunResult `json:"dry_run,omitempty"`
@@ -324,7 +330,7 @@ func (s *Server) handleClusterTakeoverPreflight(w http.ResponseWriter, r *http.R
 // handleClusterTakeover godoc
 //
 // @Summary Take over a cluster ArgoCD already manages
-// @Description Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.
+// @Description Opens a pull request that adds the cluster to Sharko's fleet and creates an empty addon file for it; no addon is turned on. When that pull request is merged, Sharko becomes the owner of the cluster's existing ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. If the pull request merges at once (auto-merge), that happens on this call. Until the merge only a waiting mark goes on the connection; if the pull request is closed without merging, Sharko takes that mark off and changes nothing else.
 // @Description Nothing is written without "yes": true in the body. The checks are re-run on this call, and every warning they raise has to be named in "acknowledged_findings" by its finding id — a warning that appeared since you last looked comes back as a 409 naming it. Send "dry_run": true to see the plan and change nothing.
 // @Tags clusters
 // @Accept json
@@ -332,12 +338,12 @@ func (s *Server) handleClusterTakeoverPreflight(w http.ResponseWriter, r *http.R
 // @Security BearerAuth
 // @Param name path string true "Cluster name"
 // @Param body body api.TakeoverRequest true "Takeover request"
-// @Success 200 {object} api.TakeoverResponse "Cluster taken over (or the plan, on a dry run)"
+// @Success 200 {object} api.TakeoverResponse "Pull request open and waiting for the merge (waiting_for_merge), cluster taken over, or the plan on a dry run"
 // @Success 207 {object} api.TakeoverResponse "Partly done — see the message"
 // @Failure 400 {object} map[string]interface{} "Bad request, or the confirmation is missing"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
-// @Failure 409 {object} map[string]interface{} "The preflight is blocking, or a warning was not named in acknowledged_findings, or the repo has not been migrated"
+// @Failure 409 {object} map[string]interface{} "The preflight is blocking, or a warning was not named in acknowledged_findings, or a register pull request for the cluster is still open, or the repo has not been migrated"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Failure 503 {object} map[string]interface{} "Sharko cannot reach the cluster's connection in this install"
 // @Router /clusters/{name}/takeover [post]
@@ -384,7 +390,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		if unacked := unacknowledgedFindings(report, req.AcknowledgedFindings); len(unacked) > 0 {
 			writeJSON(w, http.StatusConflict, map[string]interface{}{
 				"error": fmt.Sprintf(
-					"%s %s not been read yet — look at %s in the checks below, then send %s back in acknowledged_findings: %s",
+					"%s %s not been read yet — look at %s in the preflight report in this answer, then send %s back in acknowledged_findings: %s",
 					plural(len(unacked), "warning", "warnings"), wasWere(len(unacked)),
 					joinList(unacked), pluralIt(len(unacked)), report.Summary),
 				"unacknowledged_findings": unacked,
@@ -433,18 +439,29 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	s.attachPRTracker(orch)
 
 	gitResult, gitErr := orch.TakeoverClusterGit(ctx, orchestrator.TakeoverClusterRequest{
-		Name:      name,
-		Region:    req.Region,
-		DryRun:    req.DryRun,
-		Yes:       req.Yes,
-		AutoMerge: req.AutoMerge,
+		Name:                 name,
+		Region:               req.Region,
+		DryRun:               req.DryRun,
+		Yes:                  req.Yes,
+		AutoMerge:            req.AutoMerge,
+		PreserveLegacyLabels: preserve,
 	})
 	if gitErr != nil {
-		if gitErr == orchestrator.ErrTakeoverNeedsV4Repo {
+		var waitingErr *orchestrator.ClusterPRWaitingError
+		switch {
+		case gitErr == orchestrator.ErrTakeoverNeedsV4Repo, errors.As(gitErr, &waitingErr):
 			writeError(w, http.StatusConflict, gitErr.Error())
-			return
+		case errors.Is(gitErr, orchestrator.ErrPRNotRecorded) && gitResult != nil && gitResult.Git != nil:
+			// Nothing would finish the take over after the merge, so the
+			// connection is left alone and the person is told to close it.
+			resp.Status = "partial"
+			resp.Git = gitResult.Git
+			resp.Message = orchestrator.PRNotRecordedMessage("take over", gitResult.Git.PRUrl)
+			audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_partial", Resource: "cluster:" + name})
+			writeJSON(w, http.StatusMultiStatus, resp)
+		default:
+			writeError(w, http.StatusBadGateway, gitErr.Error())
 		}
-		writeError(w, http.StatusBadGateway, gitErr.Error())
 		return
 	}
 
@@ -473,7 +490,29 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		resp.AlreadyWaiting = gitResult.AlreadyWaiting
 	}
 
-	// Now the swap. One in-place update on the existing Secret — see
+	// A pull request that is still open changes nothing on the connection
+	// (EP3 dry run round R, R5). Only a waiting mark goes on, with the pull
+	// request number. The tracked pull request carries the finish step, so
+	// the merge does the swap and a close takes only the mark off.
+	if gitResult != nil && gitResult.Git != nil && !gitResult.NothingToWrite && !gitResult.Git.Merged {
+		resp.Status = "success"
+		resp.WaitingForMerge = true
+		if gitResult.AlreadyWaiting {
+			resp.Message = takeoverGitSentence(name, gitResult)
+		} else {
+			if markErr := s.argoSecretManager.SetAnnotation(ctx, name, argosecrets.AnnotationTakeoverPendingPR, strconv.Itoa(gitResult.Git.PRID)); markErr != nil {
+				slog.Warn("take over: could not put the waiting mark on the cluster's ArgoCD connection; the merge still finishes the take over",
+					"cluster", name, "pr", gitResult.Git.PRID, "error", markErr)
+			}
+			resp.Message = takeoverWaitingMessage(name, gitResult.Git.PRID, gitResult.Git.PRUrl, preserve, report.LegacyLabels)
+		}
+		audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_waiting", Resource: "cluster:" + name})
+		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
+		return
+	}
+
+	// The pull request is merged (or there was nothing to write), so the
+	// swap happens now. One in-place update on the existing Secret — see
 	// argosecrets.TakeOverClusterSecret for why this is not a
 	// create-then-delete.
 	swap, swapErr := s.argoSecretManager.TakeOverClusterSecret(
@@ -525,6 +564,24 @@ func takeoverLegacyLabelKey(key string) bool {
 		return false
 	}
 	return !takeover.SharkoOwnedLabelKey(key)
+}
+
+// takeoverWaitingMessage is what a take over says while its pull request
+// waits to be merged. Nothing on the connection has changed yet, so it must
+// never say "Sharko now owns".
+func takeoverWaitingMessage(name string, prID int, prURL string, preserve bool, legacy map[string]string) string {
+	labels := ""
+	if len(legacy) > 0 {
+		keys := joinList(takeover.SortedKeys(legacy))
+		if preserve {
+			labels = fmt.Sprintf(" and keeps the previous owner's labels on it (%s)", keys)
+		} else {
+			labels = fmt.Sprintf(" and takes the previous owner's labels off it (%s)", keys)
+		}
+	}
+	return fmt.Sprintf(
+		"Pull request #%d is open: %s. When it is merged, Sharko takes ownership of %s's ArgoCD connection%s. If it is closed without merging, Sharko changes nothing on the connection.",
+		prID, prURL, name, labels)
 }
 
 // takeoverPlanAlreadyWaitingFmt is added to a dry run's plan when a pull

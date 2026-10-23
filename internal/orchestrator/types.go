@@ -378,6 +378,12 @@ type AdoptClusterResult struct {
 	Message      string         `json:"message,omitempty"`
 	DryRun       *DryRunResult  `json:"dry_run,omitempty"`
 
+	// Merged is true only when the pull request merged AND the adopt
+	// really finished on this call (Sharko owns the connection and marked
+	// it adopted). An open pull request, a partial result and a dry run
+	// are all false (EP3 dry run round R, R11).
+	Merged bool `json:"merged"`
+
 	// Warnings holds plain-English advisories that do NOT fail the
 	// adoption — e.g. this cluster's ArgoCD cluster Secret turning out to
 	// be rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/
