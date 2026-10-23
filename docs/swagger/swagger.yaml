@@ -9232,6 +9232,25 @@ paths:
       summary: Discover ArgoCD URL
       tags:
       - connections
+  /connections/git-defaults:
+    get:
+      description: Returns the Git provider and repository address the operator set
+        in the Helm chart connection settings for Git. Both are empty strings when
+        the chart does not set them. The first-run wizard uses this to pre-pick the
+        provider and fill in the address.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Declared Git provider and repository address
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Git settings declared in the Helm chart
+      tags:
+      - connections
   /connections/test:
     post:
       description: Tests the currently active Git and ArgoCD connection

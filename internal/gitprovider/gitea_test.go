@@ -1433,3 +1433,67 @@ func TestGiteaProviderMergePullRequest405RetryThenSucceed(t *testing.T) {
 		t.Errorf("expected at least 3 merge attempts, got %d", mergeAttempts)
 	}
 }
+
+// giteaEmptyListFake answers like Gitea 1.22 does: the raw endpoint returns
+// 200 with `[]` for a path that is not there, the repo endpoint says whether
+// the repo has any commits, and the contents endpoint says what a path is.
+func giteaEmptyListFake(t *testing.T, repoEmpty bool, contentsStatus int, contentsBody string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/version":
+			w.Write([]byte(`{"version":"1.22.0"}`))
+		case r.URL.Path == "/api/v1/repos/o/r":
+			if repoEmpty {
+				w.Write([]byte(`{"name":"r","empty":true}`))
+			} else {
+				w.Write([]byte(`{"name":"r","empty":false}`))
+			}
+		case strings.HasPrefix(r.URL.Path, "/api/v1/repos/o/r/raw/"):
+			w.Write([]byte("[]"))
+		case strings.HasPrefix(r.URL.Path, "/api/v1/repos/o/r/contents/"):
+			w.WriteHeader(contentsStatus)
+			w.Write([]byte(contentsBody))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+}
+
+// Gitea 1.22 answers an empty repo with 200 `[]`. That must read as "file
+// not found", not as a file whose content is `[]` (finding 31).
+func TestGiteaProviderGetFileContent_EmptyListIsNotFound(t *testing.T) {
+	cases := []struct {
+		name           string
+		repoEmpty      bool
+		contentsStatus int
+		contentsBody   string
+		wantNotFound   bool
+	}{
+		{"empty repo", true, 404, `{"message":"not found"}`, true},
+		{"missing path in a repo with commits", false, 404, `{"message":"not found"}`, true},
+		{"path is a directory", false, 200, `[{"name":"x","path":"a/x","type":"file"}]`, true},
+		{"a real file that holds only []", false, 200, `{"name":"f.json","path":"f.json","type":"file"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := giteaEmptyListFake(t, tc.repoEmpty, tc.contentsStatus, tc.contentsBody)
+			defer srv.Close()
+			p, err := NewGiteaProvider(srv.URL, "o", "r", "tok")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := p.GetFileContent(context.Background(), "f.json", "main")
+			if tc.wantNotFound {
+				if !errors.Is(err, ErrFileNotFound) {
+					t.Fatalf("want ErrFileNotFound, got content %q err %v", got, err)
+				}
+				return
+			}
+			if err != nil || string(got) != "[]" {
+				t.Fatalf("a real file holding [] must come back as it is, got %q err %v", got, err)
+			}
+		})
+	}
+}

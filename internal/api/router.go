@@ -1231,6 +1231,7 @@ func registerRoutes(srv *Server, mux *routeMux, staticFS fs.FS) {
 	mux.HandleFunc("POST /api/v1/connections/test", srv.handleTestConnection)
 	mux.HandleFunc("POST /api/v1/connections/test-credentials", srv.handleTestCredentials)
 	mux.HandleFunc("GET /api/v1/connections/discover-argocd", srv.handleDiscoverArgocd)
+	mux.HandleFunc("GET /api/v1/connections/git-defaults", srv.handleGitDefaults)
 
 	// Default addons (GitOps-native)
 	mux.HandleFunc("GET /api/v1/default-addons", srv.handleGetDefaultAddons)

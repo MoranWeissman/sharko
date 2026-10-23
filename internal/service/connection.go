@@ -41,6 +41,18 @@ var ErrValidation = errors.New("validation failed")
 // "Connected" for an ArgoCD nobody had asked.
 var ErrArgocdNotTested = errors.New("the ArgoCD connection was not tested")
 
+// UnrecognisedGitHostError is returned by TestCredentials as the Git result
+// when the request gave no Git provider and the address is not one Sharko
+// knows by its host name (github.com, dev.azure.com). Before this the test
+// guessed "GitHub" for every unknown host, asked the GitHub API on a Gitea
+// server, and reported "Sharko can't reach your Git host" — which was not the
+// real reason. Error() is the finished sentence the user reads.
+type UnrecognisedGitHostError struct{ Host string }
+
+func (e *UnrecognisedGitHostError) Error() string {
+	return fmt.Sprintf("Sharko does not recognise the Git host %q. Choose the Git provider (GitHub or Gitea) next to the address, then test again.", e.Host)
+}
+
 // validationError is a message-only error that errors.Is-matches
 // ErrValidation without literally embedding ErrValidation's own text
 // ("validation failed") in the rendered message.
@@ -373,7 +385,7 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 		}
 	}
 
-	return "", newValidationError("unsupported git host %q (supported: github.com, dev.azure.com)", host)
+	return "", newValidationError("unsupported git host %q: Sharko cannot tell which Git product runs there. Set the Git provider (github or gitea), or use a github.com or dev.azure.com address", host)
 }
 
 // validateConnectionRequest checks that the create/update request has the
@@ -720,6 +732,18 @@ type AuthInfo struct {
 
 // TestCredentials tests Git and ArgoCD connectivity for unsaved credentials.
 func (s *ConnectionService) TestCredentials(ctx context.Context, conn *models.Connection) (gitErr, argocdErr error, auth AuthInfo) {
+	// No provider given and a host Sharko does not know by name: say so,
+	// instead of guessing GitHub and reporting a made-up network failure.
+	// A given provider (github, gitea) works with any self-hosted address.
+	if conn.Git.Provider == "" && conn.Git.RepoURL != "" {
+		if _, err := deriveProviderFromURL(conn.Git.RepoURL); err != nil {
+			host := conn.Git.RepoURL
+			if u, perr := url.Parse(conn.Git.RepoURL); perr == nil && u.Host != "" {
+				host = strings.ToLower(u.Host)
+			}
+			return &UnrecognisedGitHostError{Host: host}, ErrArgocdNotTested, auth
+		}
+	}
 	// Parse repo URL if provided
 	if err := conn.Git.ParseRepoURL(); err != nil {
 		// ArgoCD was never asked. Say so, rather than leave its result nil

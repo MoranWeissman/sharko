@@ -252,6 +252,7 @@ Surface default: **`stable`**.
 | POST | `/connections/test-credentials` | `stable` | Surface default. |
 | POST | `/connections/test` | `stable` | Surface default. |
 | GET | `/connections/discover-argocd` | `stable` | Surface default. |
+| GET | `/connections/git-defaults` | `stable` | Surface default. |
 
 ### AI features
 

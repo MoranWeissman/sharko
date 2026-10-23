@@ -90,6 +90,7 @@ var readEndpointsWithoutRoleGate = map[string]struct{}{
 	"GET /api/v1/config":                                          {},
 	"GET /api/v1/connections/":                                    {},
 	"GET /api/v1/connections/discover-argocd":                     {},
+	"GET /api/v1/connections/git-defaults":                        {},
 	"GET /api/v1/dashboard/attention":                             {},
 	"GET /api/v1/dashboard/pull-requests":                         {},
 	"GET /api/v1/dashboard/stats":                                 {},

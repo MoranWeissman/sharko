@@ -1,6 +1,7 @@
 package gitprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -121,8 +122,28 @@ func (g *GiteaProvider) GetFileContent(ctx context.Context, filePath, ref string
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)
 	}
+	// Gitea 1.22 answers 200 with the body `[]` (an empty directory
+	// listing) instead of 404 when the repo has no commits yet, or when the
+	// path is not there. Handing that back as the file's content made an
+	// empty repo look like a repo with a file in it, and the caller never
+	// saw "file not found". A real file can also hold just `[]`, so ask the
+	// JSON contents API what is at the path before deciding.
+	if bytes.Equal(bytes.TrimSpace(content), []byte("[]")) && !g.isRealFile(filePath, ref) {
+		return nil, fmt.Errorf("get file content: path %q at ref %q: %w", filePath, ref, ErrFileNotFound)
+	}
 	slog.Info("gitea file fetched", "path", filePath, "ref", ref, "size", len(content))
 	return content, nil
+}
+
+// isRealFile reports whether filePath at ref is a file Gitea can describe.
+// An empty repo, a missing path, a directory and a failed lookup all answer
+// false: the caller only asks after Gitea returned the suspicious `[]` body.
+func (g *GiteaProvider) isRealFile(filePath, ref string) bool {
+	if repo, _, err := g.client.GetRepo(g.owner, g.repo); err == nil && repo != nil && repo.Empty {
+		return false
+	}
+	cr, _, err := g.client.GetContents(g.owner, g.repo, ref, filePath)
+	return err == nil && cr != nil && cr.Type == "file"
 }
 
 // ListDirectory returns the names of entries in a directory at the given ref.

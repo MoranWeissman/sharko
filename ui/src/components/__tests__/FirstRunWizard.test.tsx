@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { FirstRunWizard, detectGitProvider, WIZARD_SETUP_MERGE_NOTE } from '@/components/FirstRunWizard'
+import { FirstRunWizard, detectGitProvider, GIT_PROVIDER_HELP, WIZARD_SETUP_MERGE_NOTE } from '@/components/FirstRunWizard'
 import * as apiModule from '@/services/api'
 import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
@@ -75,6 +75,8 @@ vi.mock('@/services/api', () => {
       discoverArgocd: vi
         .fn()
         .mockResolvedValue({ server_url: '', has_env_token: false, namespace: 'argocd' }),
+      // Finding 30: what the Helm chart declared for Git. Empty by default.
+      gitDefaults: vi.fn().mockResolvedValue({ provider: '', repo_url: '' }),
       // Legacy shims kept for older tests that may still reference them.
       testGitConnection: vi.fn().mockResolvedValue({ ok: true }),
       testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
@@ -2370,5 +2372,77 @@ describe('FirstRunWizard — secrets backend list (ep3 fix 10)', () => {
   it('has no "SM lookup" or "register-cluster" words in the section', async () => {
     await openProviderSection({ type: 'aws-sm', region: 'eu-west-1', prefix: 'k8s-' })
     expect(document.body.innerHTML).not.toMatch(/SM lookup|register-cluster/)
+  })
+})
+
+// Finding 30 - Gitea (and other self-hosted servers) in the first-run wizard.
+describe('FirstRunWizard - Git provider for Gitea and self-hosted servers', () => {
+  const api = apiModule.api as unknown as {
+    gitDefaults: ReturnType<typeof vi.fn>
+    testCredentials: ReturnType<typeof vi.fn>
+  }
+  const urlInput = () => screen.getByPlaceholderText('https://github.com/your-org/your-repo') as HTMLInputElement
+  const providerSelect = () => screen.getByLabelText('Git provider') as HTMLSelectElement
+  const lastGitPayload = () => api.testCredentials.mock.calls.at(-1)![0].git
+
+  beforeEach(() => {
+    api.testCredentials.mockClear()
+  })
+  afterEach(() => {
+    api.gitDefaults.mockResolvedValue({ provider: '', repo_url: '' })
+    api.testCredentials.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } })
+  })
+
+  it('pre-picks Gitea and fills the address when the Helm chart declares them', async () => {
+    api.gitDefaults.mockResolvedValue({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    await waitFor(() => expect(urlInput().value).toBe('http://gitea.dev.svc:3000/acme/platform'))
+    expect(providerSelect().value).toBe('gitea')
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => expect(api.testCredentials).toHaveBeenCalled())
+    expect(lastGitPayload().provider).toBe('gitea')
+  })
+
+  it('sends the provider the user picked for a self-hosted address', async () => {
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(urlInput(), { target: { value: 'https://git.example.test/acme/platform' } })
+    fireEvent.change(providerSelect(), { target: { value: 'gitea' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => expect(api.testCredentials).toHaveBeenCalled())
+    expect(lastGitPayload().provider).toBe('gitea')
+  })
+
+  it('sends no provider for an unknown address when none is picked, and the server sentence shows as is', async () => {
+    const sentence = 'Sharko does not recognise the Git host "git.example.test". Choose the Git provider (GitHub or Gitea) next to the address, then test again.'
+    api.testCredentials.mockResolvedValue({ git: { status: 'error', message: sentence }, argocd: { status: 'not_tested' } })
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(urlInput(), { target: { value: 'https://git.example.test/acme/platform' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    expect(await screen.findByText(sentence)).toBeInTheDocument()
+    expect(lastGitPayload().provider).toBeUndefined()
+    expect(document.body.textContent).not.toContain("can't reach your Git host")
+  })
+
+  it('does not overwrite an address the user already typed with the chart default', async () => {
+    let release: (v: { provider: string; repo_url: string }) => void = () => {}
+    api.gitDefaults.mockReturnValue(new Promise((r) => { release = r }))
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(urlInput(), { target: { value: 'https://github.com/me/mine' } })
+    await act(async () => { release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' }) })
+    expect(urlInput().value).toBe('https://github.com/me/mine')
+  })
+
+  it('explains the provider choice in the user\'s words', async () => {
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    expect(GIT_PROVIDER_HELP).toBe(
+      'GitHub, GitHub Enterprise and Azure DevOps are picked from the address. For Gitea or a server you run yourself, choose the provider here.',
+    )
+    expect(screen.getByText(GIT_PROVIDER_HELP)).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('(auto-detected from URL)')
   })
 })
