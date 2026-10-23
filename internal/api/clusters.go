@@ -5,8 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 )
@@ -134,7 +133,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// gracefully by leaving the baseline ConnectivityDetail as-is.
 		if verdict.Status == "check_pending" && allApps != nil {
 			if k8sClient, namespace, ok := s.k8sClientAndNamespace(); ok {
-				secret, err := k8sClient.CoreV1().Secrets(namespace).Get(r.Context(), c.Name, metav1.GetOptions{})
+				secret, err := argosecrets.GetClusterSecret(r.Context(), k8sClient, namespace, c.Name)
 				if err == nil && secret != nil {
 					if driftReason := detectConnectivityCheckDrift(r.Context(), ac, c.Name, secret.Labels, allApps); driftReason != "" {
 						c.ConnectivityDetail = driftReason

@@ -52,7 +52,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/authz"
@@ -512,7 +511,7 @@ func (s *Server) compareClusterConnection(parent context.Context, cluster string
 
 	// The live Secret. A missing one is an ANSWER (status missing); a failed
 	// read is a check_failed and is never softened into a difference.
-	live, getErr := client.CoreV1().Secrets(ns).Get(ctx, cluster, metav1.GetOptions{})
+	live, getErr := argosecrets.GetClusterSecret(ctx, client, ns, cluster)
 	liveFound := true
 	switch {
 	case apierrors.IsNotFound(getErr):

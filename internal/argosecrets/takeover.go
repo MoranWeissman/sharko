@@ -102,7 +102,7 @@ func EncodePreservedLabelKeys(keys []string) string {
 // matching GetTrackingOwner / GetSecretOwnership's convention, because
 // "there is nothing there yet" is an ordinary answer for a preflight.
 func (m *Manager) GetClusterSecretDetail(ctx context.Context, name string) (ClusterSecretDetail, error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return ClusterSecretDetail{Found: false}, nil
 	}
@@ -195,7 +195,7 @@ func (m *Manager) TakeOverClusterSecret(ctx context.Context, name string, preser
 		return TakeOverResult{}, fmt.Errorf("takeover of cluster %q: no legacy-label classifier supplied", name)
 	}
 
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return TakeOverResult{Found: false}, nil
 	}
@@ -394,7 +394,7 @@ func (m *Manager) DropLabels(ctx context.Context, name string, keys []string) (r
 		}
 	}
 
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return nil, false, nil
 	}

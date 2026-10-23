@@ -10,7 +10,6 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
@@ -835,7 +834,7 @@ func (s *Server) doctorCheckConnectivityApp(ctx context.Context, clusterName str
 		}
 	}
 
-	secret, err := k8sClient.CoreV1().Secrets(namespace).Get(cctx, clusterName, metav1.GetOptions{})
+	secret, err := argosecrets.GetClusterSecret(cctx, k8sClient, namespace, clusterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return doctorCheck{

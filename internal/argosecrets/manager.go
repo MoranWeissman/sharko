@@ -206,7 +206,7 @@ func DetectForeignOwner(secret *corev1.Secret) (appName string, confidence Owner
 // found=false, err=nil — because this is commonly called before the user
 // has created their self-managed connection's Secret yet.
 func (m *Manager) GetTrackingOwner(ctx context.Context, name string) (appName string, confidence OwnerConfidence, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return "", "", false, nil
 	}
@@ -240,7 +240,7 @@ type SecretOwnership struct {
 // GetTrackingOwner — so callers can tell "nothing to check yet" apart from
 // a real read failure (permission, timeout, etc.) without inspecting err.
 func (m *Manager) GetSecretOwnership(ctx context.Context, name string) (ownership SecretOwnership, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return SecretOwnership{}, false, nil
 	}
@@ -546,7 +546,7 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	}
 	desiredHash := hashSecretState(desiredLabels, desiredData)
 
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, spec.Name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, spec.Name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, fmt.Errorf("getting secret %q in namespace %q: %w", spec.Name, m.namespace, err)
 	}
@@ -768,7 +768,7 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 //   - changed == true → a label write occurred.
 //   - changed == false, found == true → labels already converged; no write.
 func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels map[string]string) (changed bool, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return false, false, nil
 	}
@@ -949,7 +949,7 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 	// R3-9 rule 2: re-read the Secret and confirm ownership mode matches what
 	// was classified. This Get and the Update below have nothing but in-memory
 	// map work between them — no git read, no backend fetch, no lock.
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return RepairOutcome{}, false, nil
 	}
@@ -1269,7 +1269,7 @@ type ManagedLabelSyncResult struct {
 // calling in a context where the caller has nothing to say) and leaves
 // Annotations byte-identical to before this parameter existed.
 func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, desiredAddonLabels map[string]string, annotations map[string]string) (ManagedLabelSyncResult, error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return ManagedLabelSyncResult{Found: false}, nil
 	}
@@ -1406,7 +1406,7 @@ func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, des
 // Not-found is NOT an error (Found=false) — same contract as
 // SyncManagedClusterLabels / SyncLabelsOnly.
 func (m *Manager) SyncConnectivityCheckLabel(ctx context.Context, name string, desiredAddonLabels map[string]string, featureOn bool) (changed, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return false, false, nil
 	}
@@ -1543,7 +1543,7 @@ func (m *Manager) ListSecrets(ctx context.Context) ([]corev1.Secret, error) {
 // Returns nil if the secret does not exist (idempotent).
 // Returns an error if the secret exists but is not managed by Sharko.
 func (m *Manager) Delete(ctx context.Context, name string) error {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return nil // idempotent — already gone
 	}
@@ -1557,8 +1557,8 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			name, LabelManagedBy, ManagedByValue)
 	}
 
-	if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
-		return fmt.Errorf("deleting secret %q in namespace %q: %w", name, m.namespace, err)
+	if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, existing.Name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("deleting secret %q in namespace %q: %w", existing.Name, m.namespace, err)
 	}
 
 	slog.Info("[argosecrets] cluster secret deleted",
@@ -1570,7 +1570,7 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 // SetAnnotation adds or updates a single annotation on the named secret.
 // Returns an error if the secret does not exist.
 func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) error {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1593,7 +1593,7 @@ func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) er
 // Returns ("", nil) if the secret exists but the annotation is not set.
 // Returns an error if the secret does not exist.
 func (m *Manager) GetAnnotation(ctx context.Context, name, key string) (string, error) {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return "", fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1603,7 +1603,7 @@ func (m *Manager) GetAnnotation(ctx context.Context, name, key string) (string, 
 // GetManagedByLabel returns the managed-by label value for the named secret.
 // Returns ("", nil) if the secret exists but the label is not set.
 func (m *Manager) GetManagedByLabel(ctx context.Context, name string) (string, error) {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return "", fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1627,7 +1627,7 @@ func (m *Manager) GetManagedByLabel(ctx context.Context, name string) (string, e
 //     never touched).
 //   - (true, nil) — the label was removed.
 func (m *Manager) StripOwnershipLabel(ctx context.Context, name string) (bool, error) {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
@@ -1653,7 +1653,7 @@ func (m *Manager) StripOwnershipLabel(ctx context.Context, name string) (bool, e
 // without deleting it. The secret remains in the argocd namespace so ArgoCD can still
 // connect to the cluster.
 func (m *Manager) Unadopt(ctx context.Context, name string) error {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
