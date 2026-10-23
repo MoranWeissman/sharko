@@ -72,6 +72,12 @@ type PRInfo struct {
 	// and the merge hook reads them back. Stored in the same ConfigMap as
 	// the rest of PRInfo; older entries without it decode to nil.
 	FollowUp *ClusterFollowUp `json:"follow_up,omitempty"`
+
+	// FinishAttempts counts how many times the finish step (see
+	// Tracker.SetFinishFn) failed for this pull request after it merged or
+	// closed. While it is above zero the entry is kept with its terminal
+	// LastStatus so the next poll tries again.
+	FinishAttempts int `json:"finish_attempts,omitempty"`
 }
 
 // ClusterFollowUp is the after-merge work a remove or un-adopt pull request
@@ -93,4 +99,20 @@ type ClusterFollowUp struct {
 	CredentialKey     string `json:"credential_key,omitempty"`
 	CredentialsSource string `json:"credentials_source,omitempty"`
 	CredentialRoleARN string `json:"credential_role_arn,omitempty"`
+
+	// Finish names the ownership step that waits for this pull request:
+	// FinishAdopt or FinishTakeover. Empty for remove and un-adopt. The
+	// finish step reads it, not the mark on the Secret, so an adopt or a
+	// take over that merged before its mark was written still finishes
+	// (EP3 dry run round R, R4 and R5).
+	Finish string `json:"finish,omitempty"`
+	// PreserveLegacyLabels is the take over choice to keep the previous
+	// owner's labels. Only read when Finish is FinishTakeover.
+	PreserveLegacyLabels bool `json:"preserve_legacy_labels,omitempty"`
 }
+
+// Finish kinds carried by ClusterFollowUp.Finish.
+const (
+	FinishAdopt    = "adopt"
+	FinishTakeover = "takeover"
+)

@@ -49,10 +49,15 @@ type Tracker struct {
 	auditFn      func(audit.Entry)
 	onMergeFn    func(PRInfo)         // callback when a PR is merged (e.g. trigger reconciler)
 	onCompleteFn func(PRInfo, string) // callback when a PR reaches ANY terminal state (merged OR closed); string is "merged" | "closed"
-	interval     time.Duration
-	triggerCh    chan struct{}
-	stopCh       chan struct{}
-	stopOnce     sync.Once
+	finishFn     FinishFn             // the step that can fail and is tried again; see SetFinishFn
+	// maxFinishAttempts caps the tries of finishFn; 0 means DefaultMaxFinishAttempts.
+	maxFinishAttempts int
+	finishMu          sync.Mutex
+	finishing         map[int]bool
+	interval          time.Duration
+	triggerCh         chan struct{}
+	stopCh            chan struct{}
+	stopOnce          sync.Once
 }
 
 // NewTracker creates a PR tracker.
@@ -97,6 +102,29 @@ func (t *Tracker) SetOnMergeFn(fn func(PRInfo)) {
 // changes too, not just successful ones.
 func (t *Tracker) SetOnCompleteFn(fn func(PRInfo, string)) {
 	t.onCompleteFn = fn
+}
+
+// FinishFn is the work Sharko still has to do on a cluster's ArgoCD
+// connection once a pull request reaches "merged" or "closed": take the
+// ownership label off a kept connection, swap ownership after an adopt or
+// a take over, or take a waiting mark off. Unlike the merge and complete
+// hooks it can fail, and a failure keeps the pull request tracked so the
+// next poll tries again.
+type FinishFn func(ctx context.Context, pr PRInfo, status string) error
+
+// SetFinishFn registers the finish step. It runs after the merge and
+// complete hooks. When it returns an error the pull request stays tracked
+// with its terminal status, and every later poll runs only this step
+// again (the merge and complete hooks never run twice), up to
+// maxFinishAttempts times.
+func (t *Tracker) SetFinishFn(fn FinishFn) {
+	t.finishFn = fn
+}
+
+// SetMaxFinishAttempts changes how many failed finish runs the tracker
+// allows before it gives up. n <= 0 puts back DefaultMaxFinishAttempts.
+func (t *Tracker) SetMaxFinishAttempts(n int) {
+	t.maxFinishAttempts = n
 }
 
 // Start launches the background poll loop. Runs one reconcile immediately,
@@ -215,6 +243,12 @@ func (t *Tracker) ListPRsFiltered(ctx context.Context, status, cluster, addon, u
 
 	var result []PRInfo
 	for _, pr := range prs {
+		// A pull request already merged or closed that is only waiting
+		// for its finish step is not "pending" any more. It is listed
+		// only when that exact status is asked for.
+		if isTerminal(pr.LastStatus) && status != pr.LastStatus {
+			continue
+		}
 		if status != "" && pr.LastStatus != status {
 			continue
 		}
@@ -237,9 +271,33 @@ func (t *Tracker) ListPRsFiltered(ctx context.Context, status, cluster, addon, u
 	return result, nil
 }
 
+// DefaultMaxFinishAttempts is how many times the tracker runs a pull
+// request's finish step (see SetFinishFn) before it gives up on it. With
+// the default 30 s poll that is about ten minutes of tries. When it gives
+// up it logs an error and writes an audit entry, and it drops the pull
+// request, but the finish step never ran to the end, so whatever mark was
+// protecting the cluster's connection stays on it. Nothing gets deleted
+// because a finish failed.
+const DefaultMaxFinishAttempts = 20
+
+// isTerminal says whether a status is one a pull request never leaves.
+func isTerminal(status string) bool {
+	return status == "merged" || status == "closed"
+}
+
 // PollOnce performs a single poll pass: for each tracked PR, queries
 // the Git provider for status, updates ConfigMap on change, and emits
 // audit events on merge or close.
+//
+// It never writes back the copy it read at the start. Every change goes
+// into the state as it is at write time, inside ReadModifyWrite, and only
+// for the pull requests this pass handled. So a pull request tracked
+// while the pass runs is never lost (EP3 dry run round R, R2). The hooks
+// run outside the store's lock.
+//
+// A pull request that reached merged or closed but whose finish step
+// failed is kept with that status. Later passes do not ask Git about it
+// again; they only run the finish step again (R1, R4).
 //
 // All slog lines emitted within a single poll pass carry the request_id
 // attached to ctx (synthetic `prtrack-<unix_ts>` when called from the tick
@@ -263,10 +321,17 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 		return
 	}
 
-	var changed bool
-	var toRemove []string
+	polledAt := make(map[string]time.Time)
+	newStatus := make(map[string]string)
+	var gone []string
 
 	for id, pr := range prs {
+		if isTerminal(pr.LastStatus) {
+			// Git already said merged or closed and the hooks already
+			// ran. Only the finish step is still owed.
+			t.runFinish(ctx, pr, pr.LastStatus)
+			continue
+		}
 		status, err := gp.GetPullRequestStatus(ctx, pr.PRID)
 		if err != nil {
 			// A definitive not-found (HTTP 404) means the PR no longer
@@ -296,83 +361,222 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 					Result:    "failure",
 					RequestID: logging.RequestID(ctx),
 				})
-				toRemove = append(toRemove, id)
+				gone = append(gone, id)
 				continue
 			}
 			log.Warn("[prtracker] failed to poll PR", "pr_id", pr.PRID, "error", err)
 			continue
 		}
 
-		if status == pr.LastStatus {
-			pr.LastPolled = time.Now()
-			prs[id] = pr
+		if !isTerminal(status) {
+			polledAt[id] = time.Now()
+			if status != pr.LastStatus {
+				newStatus[id] = status
+			}
 			continue
 		}
+		t.handleTerminal(ctx, gp, pr.PRID, status)
+	}
 
-		pr.LastStatus = status
-		pr.LastPolled = time.Now()
-		prs[id] = pr
-		changed = true
-
-		if status == "merged" {
-			log.Info("[prtracker] PR merged", "pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
-			t.auditFn(audit.Entry{
-				Level:     "info",
-				Event:     "pr_merged",
-				User:      pr.User,
-				Action:    pr.Operation,
-				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:    "prtracker",
-				Result:    "success",
-				RequestID: logging.RequestID(ctx),
-			})
-			// Delete the source branch on observed-merge. Skip silently
-			// when the tracker has no branch on file (legacy state-store
-			// entries may lack PRBranch). Best-effort: a DeleteBranch
-			// error is logged but never blocks the tracker loop.
-			if pr.PRBranch != "" {
-				if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
-					log.Warn("[prtracker] failed to delete branch after observed merge",
-						"branch", pr.PRBranch, "pr_id", pr.PRID, "error", delErr)
-				}
+	if len(newStatus) == 0 && len(gone) == 0 && len(polledAt) == 0 {
+		return
+	}
+	if err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		cur := t.extractPRs(data)
+		for _, id := range gone {
+			if p, ok := cur[id]; ok && !isTerminal(p.LastStatus) {
+				delete(cur, id)
 			}
-			if t.onMergeFn != nil {
-				t.onMergeFn(pr)
-			}
-			if t.onCompleteFn != nil {
-				t.onCompleteFn(pr, "merged")
-			}
-			toRemove = append(toRemove, id)
-		} else if status == "closed" {
-			log.Info("[prtracker] PR closed without merge", "pr_id", pr.PRID, "cluster", pr.Cluster)
-			t.auditFn(audit.Entry{
-				Level:     "warn",
-				Event:     "pr_closed_without_merge",
-				User:      pr.User,
-				Action:    pr.Operation,
-				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:    "prtracker",
-				Result:    "failure",
-				RequestID: logging.RequestID(ctx),
-			})
-			if t.onCompleteFn != nil {
-				t.onCompleteFn(pr, "closed")
-			}
-			toRemove = append(toRemove, id)
 		}
+		for id, at := range polledAt {
+			p, ok := cur[id]
+			if !ok || isTerminal(p.LastStatus) {
+				continue
+			}
+			p.LastPolled = at
+			if st, changed := newStatus[id]; changed {
+				p.LastStatus = st
+			}
+			cur[id] = p
+		}
+		return t.encodePRs(data, cur)
+	}); err != nil {
+		log.Error("[prtracker] failed to write state", "error", err)
+	}
+}
+
+// claimTerminal records, in the stored state, that a tracked pull request
+// reached a terminal status. Only the first caller to do this claims it,
+// so a pull request seen merged by the poll loop and by a refresh at the
+// same moment runs its hooks once. found is false when the pull request is
+// not tracked at all.
+func (t *Tracker) claimTerminal(ctx context.Context, prID int, status string) (pr PRInfo, found, claimed bool, err error) {
+	err = t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		prs := t.extractPRs(data)
+		key := strconv.Itoa(prID)
+		cur, ok := prs[key]
+		found, claimed = ok, false
+		if !ok {
+			return nil
+		}
+		pr = cur
+		if isTerminal(cur.LastStatus) {
+			return nil
+		}
+		cur.LastStatus = status
+		cur.LastPolled = time.Now()
+		cur.FinishAttempts = 0
+		prs[key] = cur
+		pr = cur
+		claimed = true
+		return t.encodePRs(data, prs)
+	})
+	return pr, found, claimed, err
+}
+
+// handleTerminal claims a pull request that just reached merged or closed,
+// then (outside the store's lock) writes its audit entry, deletes its
+// branch on merge, runs the merge and complete hooks once, and runs the
+// finish step. It returns the claimed entry, or nil when someone else
+// claimed it first or it is not tracked.
+func (t *Tracker) handleTerminal(ctx context.Context, gp GitProvider, prID int, status string) (*PRInfo, bool, error) {
+	log := logging.LoggerFromContext(ctx)
+	pr, found, claimed, err := t.claimTerminal(ctx, prID, status)
+	if err != nil {
+		log.Error("[prtracker] failed to write state", "pr_id", prID, "error", err)
+		return nil, found, err
+	}
+	if !claimed {
+		return nil, found, nil
 	}
 
-	// Remove merged/closed PRs from tracking.
-	for _, id := range toRemove {
-		delete(prs, id)
+	if status == "merged" {
+		log.Info("[prtracker] PR merged", "pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
+		t.auditFn(audit.Entry{
+			Level:     "info",
+			Event:     "pr_merged",
+			User:      pr.User,
+			Action:    pr.Operation,
+			Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+			Source:    "prtracker",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
+		// Delete the source branch on observed-merge. Skip silently
+		// when the tracker has no branch on file (legacy state-store
+		// entries may lack PRBranch). Best-effort: a DeleteBranch
+		// error is logged but never blocks the tracker loop.
+		if pr.PRBranch != "" {
+			if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
+				log.Warn("[prtracker] failed to delete branch after observed merge",
+					"branch", pr.PRBranch, "pr_id", pr.PRID, "error", delErr)
+			}
+		}
+		if t.onMergeFn != nil {
+			t.onMergeFn(pr)
+		}
+	} else {
+		log.Info("[prtracker] PR closed without merge", "pr_id", pr.PRID, "cluster", pr.Cluster)
+		t.auditFn(audit.Entry{
+			Level:     "warn",
+			Event:     "pr_closed_without_merge",
+			User:      pr.User,
+			Action:    pr.Operation,
+			Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+			Source:    "prtracker",
+			Result:    "failure",
+			RequestID: logging.RequestID(ctx),
+		})
+	}
+	if t.onCompleteFn != nil {
+		t.onCompleteFn(pr, status)
+	}
+	t.runFinish(ctx, pr, status)
+	return &pr, true, nil
+}
+
+// runFinish runs the finish step for a pull request that reached a
+// terminal status, then settles the stored entry: dropped when the step
+// worked (or there is no step), kept with one more attempt counted when it
+// failed, and dropped with a loud error once it has failed
+// maxFinishAttempts times. Two finish runs for the same pull request never
+// overlap.
+func (t *Tracker) runFinish(ctx context.Context, pr PRInfo, status string) {
+	log := logging.LoggerFromContext(ctx)
+
+	t.finishMu.Lock()
+	if t.finishing == nil {
+		t.finishing = make(map[int]bool)
+	}
+	if t.finishing[pr.PRID] {
+		t.finishMu.Unlock()
+		return
+	}
+	t.finishing[pr.PRID] = true
+	t.finishMu.Unlock()
+	defer func() {
+		t.finishMu.Lock()
+		delete(t.finishing, pr.PRID)
+		t.finishMu.Unlock()
+	}()
+
+	var finishErr error
+	if t.finishFn != nil {
+		finishErr = t.finishFn(ctx, pr, status)
 	}
 
-	if changed || len(toRemove) > 0 {
-		if err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+	maxTries := t.maxFinishAttempts
+	if maxTries <= 0 {
+		maxTries = DefaultMaxFinishAttempts
+	}
+	var attempts int
+	var gaveUp, kept bool
+	err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+		prs := t.extractPRs(data)
+		key := strconv.Itoa(pr.PRID)
+		cur, ok := prs[key]
+		attempts, gaveUp, kept = 0, false, false
+		if !ok {
+			return nil
+		}
+		if finishErr == nil {
+			delete(prs, key)
 			return t.encodePRs(data, prs)
-		}); err != nil {
-			log.Error("[prtracker] failed to write state", "error", err)
 		}
+		cur.FinishAttempts++
+		attempts = cur.FinishAttempts
+		if attempts >= maxTries {
+			gaveUp = true
+			delete(prs, key)
+		} else {
+			kept = true
+			prs[key] = cur
+		}
+		return t.encodePRs(data, prs)
+	})
+	if err != nil {
+		log.Error("[prtracker] failed to write state", "pr_id", pr.PRID, "error", err)
+		return
+	}
+	switch {
+	case gaveUp:
+		log.Error("[prtracker] GAVE UP finishing a pull request after every try failed. The mark that protects the cluster's connection stays on it, so nothing gets deleted. Look at the connection and finish it by hand.",
+			"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation,
+			"status", status, "attempts", attempts, "error", finishErr)
+		t.auditFn(audit.Entry{
+			Level:     "error",
+			Event:     "pr_finish_gave_up",
+			User:      pr.User,
+			Action:    pr.Operation,
+			Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+			Source:    "prtracker",
+			Result:    "failure",
+			RequestID: logging.RequestID(ctx),
+		})
+	case kept:
+		log.Warn("[prtracker] could not finish a pull request yet; keeping it tracked to try again",
+			"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation,
+			"status", status, "attempt", attempts, "max_attempts", maxTries, "error", finishErr)
 	}
 }
 
@@ -418,7 +622,9 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 				prs := t.extractPRs(data)
 				key := strconv.Itoa(prID)
 				pr, ok := prs[key]
-				if !ok {
+				if !ok || isTerminal(pr.LastStatus) {
+					// Already merged or closed and waiting for its
+					// finish step: leave it for the poll loop.
 					return nil
 				}
 				gonePR = &pr
@@ -449,6 +655,30 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 		return nil, fmt.Errorf("poll PR #%d: %w: %w", prID, ErrPRPollUpstream, err)
 	}
 
+	if isTerminal(status) {
+		claimedPR, found, err := t.handleTerminal(ctx, gp, prID, status)
+		if err != nil {
+			return nil, err
+		}
+		if claimedPR != nil {
+			return claimedPR, nil
+		}
+		if !found {
+			return nil, fmt.Errorf("PR #%d not tracked: %w", prID, ErrPRNotTracked)
+		}
+		// Someone else already saw it finish; it is waiting for its
+		// finish step (or about to be dropped). Report what is stored.
+		cur, err := t.GetPR(ctx, prID)
+		if err != nil {
+			return nil, err
+		}
+		if cur == nil {
+			p := PRInfo{PRID: prID, LastStatus: status}
+			return &p, nil
+		}
+		return cur, nil
+	}
+
 	var result *PRInfo
 	updateErr := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
 		prs := t.extractPRs(data)
@@ -457,55 +687,12 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 		if !ok {
 			return fmt.Errorf("PR #%d not tracked: %w", prID, ErrPRNotTracked)
 		}
-
-		pr.LastStatus = status
+		if !isTerminal(pr.LastStatus) {
+			pr.LastStatus = status
+		}
 		pr.LastPolled = time.Now()
 		prs[key] = pr
 		result = &pr
-
-		if status == "merged" {
-			t.auditFn(audit.Entry{
-				Level:     "info",
-				Event:     "pr_merged",
-				User:      pr.User,
-				Action:    pr.Operation,
-				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:    "prtracker",
-				Result:    "success",
-				RequestID: logging.RequestID(ctx),
-			})
-			// Delete the source branch on observed-merge.
-			// Best-effort: log on failure, never block the poll.
-			if pr.PRBranch != "" {
-				if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
-					log.Warn("[prtracker] failed to delete branch after observed merge",
-						"branch", pr.PRBranch, "pr_id", pr.PRID, "error", delErr)
-				}
-			}
-			if t.onMergeFn != nil {
-				t.onMergeFn(pr)
-			}
-			if t.onCompleteFn != nil {
-				t.onCompleteFn(pr, "merged")
-			}
-			delete(prs, key)
-		} else if status == "closed" {
-			t.auditFn(audit.Entry{
-				Level:     "warn",
-				Event:     "pr_closed_without_merge",
-				User:      pr.User,
-				Action:    pr.Operation,
-				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:    "prtracker",
-				Result:    "failure",
-				RequestID: logging.RequestID(ctx),
-			})
-			if t.onCompleteFn != nil {
-				t.onCompleteFn(pr, "closed")
-			}
-			delete(prs, key)
-		}
-
 		return t.encodePRs(data, prs)
 	})
 
