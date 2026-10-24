@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { isCredentialLookupFailure } from '@/lib/verifyStage';
 import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, getSystemCapabilities, type PRWriteResult } from '@/services/api';
-import { PRLifecycleProgress, extractPR, writeFailureMessage } from '@/components/PRFeedback';
+import { PRLifecycleProgress, extractPR, useFollowedPR, writeFailureMessage } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
@@ -591,6 +591,13 @@ export function ClustersOverview() {
   const [addClusterError, setAddClusterError] = useState<unknown>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
   const [addClusterResultMsg, setAddClusterResultMsg] = useState<string | null>(null);
+  // The number of the registration pull request while it is open, so the green
+  // banner can follow it to a later merge or close.
+  const [addClusterPRId, setAddClusterPRId] = useState<number | null>(null);
+  const registerPRState = useFollowedPR(
+    addClusterPRId,
+    addClusterPRId !== null && (addClusterResultMsg?.startsWith('__pending__|') ?? false),
+  );
 
   // Credential-source selection (creds-reframe-2). This is the PRIMARY
   // question the Direct-mode form asks: "How should Sharko get this
@@ -740,6 +747,11 @@ export function ClustersOverview() {
   const handleRefresh = useCallback(() => {
     void fetchData(true);
   }, [fetchData]);
+
+  // A registration pull request that gets merged later: bring the list current.
+  useEffect(() => {
+    if (registerPRState === 'merged') void fetchData(true);
+  }, [registerPRState, fetchData]);
 
   // S4: fetch the next page beyond what api.getClusters() already loaded.
   // Only reachable once allClusters.length has hit a full CLUSTERS_PAGE_SIZE
@@ -1012,6 +1024,7 @@ export function ClustersOverview() {
     setAddClusterError(null);
     setAddClusterResult(null);
     setAddClusterResultMsg(null);
+    setAddClusterPRId(null);
     try {
       // The chosen creds source (creds-reframe-2) decides which disjoint
       // field set is sent — see buildRegisterPayload. `creds_source` is
@@ -1077,6 +1090,7 @@ export function ClustersOverview() {
         // activate" wording rather than the legacy "Cluster registered"
         // wording.
         setAddClusterResultMsg(`__pending__|${prUrl}`);
+        setAddClusterPRId(extractPR(result).prId);
       } else {
         // The server said "success" but sent no PR link and no merge.
         // Stay truthful — don't claim "registered" without evidence, and
@@ -2251,11 +2265,16 @@ export function ClustersOverview() {
         // (__merged__|<url> vs __pending__|<url>). The tag is set in
         // handleAddCluster; we strip it here so external callers never
         // see the marker characters.
-        const isMergedTag = addClusterResultMsg.startsWith('__merged__|');
-        const isPendingTag = addClusterResultMsg.startsWith('__pending__|');
-        const taggedURL = isMergedTag
+        // A pending banner follows the pull request: once it is merged the
+        // banner reads like the merged one, once it is closed it says so.
+        const followedMerged = addClusterResultMsg.startsWith('__pending__|') && registerPRState === 'merged';
+        const followedClosed = addClusterResultMsg.startsWith('__pending__|') && registerPRState === 'closed';
+        const followedFinishing = addClusterResultMsg.startsWith('__pending__|') && registerPRState === 'finishing';
+        const isMergedTag = addClusterResultMsg.startsWith('__merged__|') || followedMerged;
+        const isPendingTag = addClusterResultMsg.startsWith('__pending__|') && !followedMerged;
+        const taggedURL = addClusterResultMsg.startsWith('__merged__|')
           ? addClusterResultMsg.slice('__merged__|'.length)
-          : isPendingTag
+          : addClusterResultMsg.startsWith('__pending__|')
             ? addClusterResultMsg.slice('__pending__|'.length)
             : '';
         const isPartial = addClusterResult?.status === 'partial' || addClusterResult?.partial;
@@ -2270,7 +2289,7 @@ export function ClustersOverview() {
         //     outcome of a PR-only write. Per the status-vocabulary color
         //     law, "a change is in progress" is blue, not amber.
         //   - "success" (green) — the PR already merged.
-        const tone: 'success' | 'warn' | 'pending' = isPartial
+        const tone: 'success' | 'warn' | 'pending' = isPartial || followedClosed
           ? 'warn'
           : isPendingTag || addClusterResultMsg === REGISTER_PR_NO_LINK
             ? 'pending'
@@ -2293,7 +2312,7 @@ export function ClustersOverview() {
         // exactly by ClustersOverview.pending.test.tsx) stays untouched.
         // Skipped for the untagged no-PR-URL fallback message, which
         // already says "pull request" and "GitOps repo" itself.
-        const showGitOpsLine = !isPartial && (isPendingTag || isMergedTag || addClusterResultMsg.startsWith('http'));
+        const showGitOpsLine = !isPartial && !followedClosed && (isPendingTag || isMergedTag || addClusterResultMsg.startsWith('http'));
         return (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${toneClasses}`}>
           <div className="flex flex-col gap-0.5">
@@ -2307,7 +2326,11 @@ export function ClustersOverview() {
                   </>}
                 </>
               : isPendingTag
-                ? <>Cluster registration PR opened — merge to activate.{' '}
+                ? <>{followedClosed
+                      ? 'Cluster registration PR was closed without merging — the cluster was not registered.'
+                      : followedFinishing
+                        ? 'Cluster registration PR merged — finishing up…'
+                        : 'Cluster registration PR opened — merge to activate.'}{' '}
                     <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
                       View PR <ExternalLink className="h-3 w-3" />
                     </a>
@@ -3113,6 +3136,8 @@ export function ClustersOverview() {
             autoMergeExpected={(unadoptResult.pr?.merged ?? unadoptResult.pr?.result?.merged) === true}
             mergedLabel="PR merged — cluster un-adopted"
             openLabel="PR open for review — cluster is un-adopted once it merges"
+            finishingLabel="PR merged — finishing the un-adopt…"
+            closedLabel="PR closed without merging — the cluster is still managed"
           />
           <button
             type="button"
@@ -3150,6 +3175,8 @@ export function ClustersOverview() {
             autoMergeExpected={removalNote.merged}
             mergedLabel={`Cluster "${removalNote.cluster}" removed`}
             openLabel={`Removal PR opened for "${removalNote.cluster}"`}
+            finishingLabel={`Removal PR merged — finishing the removal of "${removalNote.cluster}"…`}
+            closedLabel={`Removal PR for "${removalNote.cluster}" was closed without merging — the cluster is not removed`}
           />
           <button
             type="button"

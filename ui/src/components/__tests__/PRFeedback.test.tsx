@@ -280,14 +280,92 @@ describe('PRLifecycleProgress', () => {
       <PRLifecycleProgress
         result={{ pr_url: 'https://gh/pull/9', pr_id: 9, merged: false }}
         autoMergeExpected={true}
-        openLabel="Closed"
+        openLabel="Open for review"
       />,
     )
 
     await act(() => vi.advanceTimersByTimeAsync(7001))
 
-    expect(screen.getByText('Closed')).toBeInTheDocument()
+    expect(screen.getByText('PR closed without merging')).toBeInTheDocument()
+    expect(screen.queryByText('Open for review')).not.toBeInTheDocument()
     expect(mockRefreshPR).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  // T1b: a pull request that is still open keeps being followed.
+  it('an open pull request (autoMergeExpected=false) is followed: a later merge changes the label', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'open' })
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/6', pr_id: 6, merged: false }}
+        autoMergeExpected={false}
+        mergedLabel="All merged!"
+        openLabel="Open for review"
+      />,
+    )
+    expect(screen.getByText('Open for review')).toBeInTheDocument()
+    await act(() => vi.advanceTimersByTimeAsync(30_100))
+    expect(mockRefreshPR).toHaveBeenCalledWith(6)
+    expect(screen.getByText('Open for review')).toBeInTheDocument()
+    mockRefreshPR.mockResolvedValue({ status: 'merged' })
+    await act(() => vi.advanceTimersByTimeAsync(30_100))
+    expect(screen.getByText('All merged!')).toBeInTheDocument()
+    expect(screen.queryByText('Open for review')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('an open pull request is followed to a close, with the plain default sentence', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'closed' })
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/6', pr_id: 6, merged: false }}
+        autoMergeExpected={false}
+        openLabel="Open for review"
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(30_100))
+    expect(screen.getByText('PR closed without merging')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('after the two-minute wait gives up, a merge that comes later is still shown', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'open' })
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/8', pr_id: 8, merged: false }}
+        autoMergeExpected={true}
+        mergedLabel="All merged!"
+        openLabel="Timed out — open"
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(130_000))
+    expect(screen.getByText('Timed out — open')).toBeInTheDocument()
+    mockRefreshPR.mockResolvedValue({ status: 'merged' })
+    await act(() => vi.advanceTimersByTimeAsync(30_100))
+    expect(screen.getByText('All merged!')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('a merged pull request still being finished says so, then turns to merged', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'finishing', last_status: 'merged' })
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/7', pr_id: 7, merged: false }}
+        autoMergeExpected={true}
+        mergedLabel="All merged!"
+        openLabel="Open"
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(7001))
+    expect(screen.getByText('PR merged — finishing up…')).toBeInTheDocument()
+    mockRefreshPR.mockResolvedValue({ status: 'merged' })
+    await act(() => vi.advanceTimersByTimeAsync(7001))
+    expect(screen.getByText('All merged!')).toBeInTheDocument()
+    expect(screen.queryByText('PR merged — finishing up…')).not.toBeInTheDocument()
     vi.useRealTimers()
   })
 })

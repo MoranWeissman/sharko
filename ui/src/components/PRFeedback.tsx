@@ -7,8 +7,10 @@ import {
   GitPullRequest,
   Loader2,
   X,
+  XCircle,
 } from 'lucide-react'
 import { refreshPR } from '@/services/api'
+import { isFinishingPR } from '@/lib/prRef'
 import { useGitHost } from '@/hooks/useGitHost'
 
 /**
@@ -266,6 +268,61 @@ export function PRProgressBanner({
   )
 }
 
+// ─── Following a pull request after the write ────────────────────────────────
+
+/** Where a pull request stands, as the server last said. */
+export type PRFollowState = 'open' | 'finishing' | 'merged' | 'closed'
+
+/**
+ * Ask the server where a pull request stands now. The refresh route also
+ * answers for a pull request that merged at once or whose finish already ran,
+ * so a later merge or close is always seen. Returns null when the answer did
+ * not come (a short network or Git hiccup): the caller just asks again later.
+ */
+export async function readPRState(prId: number): Promise<PRFollowState | null> {
+  try {
+    const res = await refreshPR(prId)
+    const status = (res?.status ?? '').toLowerCase()
+    if (status === 'merged') return 'merged'
+    if (status === 'closed') return 'closed'
+    if (isFinishingPR(res ?? {})) return 'finishing'
+    return 'open'
+  } catch {
+    return null
+  }
+}
+
+/**
+ * useFollowedPR keeps asking the server about one pull request until it is
+ * merged or closed: every 7 s for the first two minutes, then every 30 s.
+ * `enabled` is false when there is nothing to follow (no number, or the
+ * pull request is already merged).
+ */
+export function useFollowedPR(prId: number | null, enabled: boolean): PRFollowState {
+  const [state, setState] = useState<PRFollowState>('open')
+  useEffect(() => {
+    setState('open')
+    if (!enabled || prId === null) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let polls = 0
+    const tick = async () => {
+      const next = await readPRState(prId)
+      if (stopped) return
+      polls += 1
+      if (next) setState(next)
+      if (next === 'merged' || next === 'closed') return
+      timer = setTimeout(tick, polls < 18 ? 7000 : 30000)
+    }
+    timer = setTimeout(tick, 7000)
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [prId, enabled])
+  return state
+}
+
 // ─── PR Lifecycle Progress (init-style step list) ────────────────────────────
 
 /**
@@ -274,8 +331,13 @@ export function PRProgressBanner({
  *  - created   : PR opened, auto-merge is on, polling for merge
  *  - merged    : PR merged (terminal, success)
  *  - open      : PR is open but not merging (auto-merge off, or timed out)
+ *  - finishing : PR merged, Sharko has not finished the follow-up yet
+ *  - closed    : PR closed without merging (terminal)
+ *
+ * An open pull request keeps being followed (every 30 s) so a later merge or
+ * close changes the label instead of leaving "open for review" on screen.
  */
-type LifecyclePhase = 'creating' | 'created' | 'merged' | 'open'
+type LifecyclePhase = 'creating' | 'created' | 'merged' | 'open' | 'finishing' | 'closed'
 
 export interface PRLifecycleProgressProps {
   /**
@@ -294,8 +356,12 @@ export interface PRLifecycleProgressProps {
   autoMergeExpected?: boolean
   /** Flow-specific label for the "PR merged" step. */
   mergedLabel?: string
-  /** Flow-specific label for the "PR opened for review" terminal step. */
+  /** Flow-specific label for the "PR opened for review" step. */
   openLabel?: string
+  /** Label once the PR is merged but Sharko has not finished the follow-up. */
+  finishingLabel?: string
+  /** Label once the PR was closed without merging. */
+  closedLabel?: string
 }
 
 /**
@@ -325,6 +391,8 @@ export function PRLifecycleProgress({
   autoMergeExpected = false,
   mergedLabel = 'PR merged — change applied',
   openLabel = 'PR open for review',
+  finishingLabel = 'PR merged — finishing up…',
+  closedLabel = 'PR closed without merging',
 }: PRLifecycleProgressProps) {
   const { prUrl, prId, merged: initiallyMerged } = extractPR(result)
 
@@ -332,8 +400,12 @@ export function PRLifecycleProgress({
   const [phase, setPhase] = useState<LifecyclePhase>('creating')
 
   // Sync phase from props on first receipt and when the result changes.
+  // Depends on plain values, not the `result` object: some callers build a
+  // new object on every render, and that must not reset a phase the polling
+  // has already moved on.
+  const hasResult = !!result
   useEffect(() => {
-    if (!result) {
+    if (!hasResult) {
       setPhase('creating')
       return
     }
@@ -343,39 +415,41 @@ export function PRLifecycleProgress({
       // PR is open — decide whether to poll or go straight to "open".
       setPhase(autoMergeExpected ? 'created' : 'open')
     }
-  }, [result, initiallyMerged, prId, autoMergeExpected])
+  }, [hasResult, initiallyMerged, prId, autoMergeExpected])
 
-  // Bounded polling: poll refreshPR every 7s, stop after ~2 min (≈18 polls).
+  // Polling: every 7 s while merging (bounded at ~2 min, then the label says
+  // "open for review"), and every 30 s after that for as long as the PR is
+  // open, so a later merge or close is shown too.
   const pollCount = useRef(0)
   const MAX_POLLS = 18
 
   useEffect(() => {
-    if (phase !== 'created' || prId === null) return
+    if (prId === null) return
+    if (phase !== 'created' && phase !== 'open' && phase !== 'finishing') return
 
     pollCount.current = 0
+    const delay = phase === 'open' ? 30000 : 7000
 
     const interval = setInterval(async () => {
       pollCount.current += 1
-      try {
-        const res = await refreshPR(prId)
-        if (res?.status === 'merged') {
-          clearInterval(interval)
-          setPhase('merged')
-          return
-        }
-        if (res?.status === 'closed') {
-          clearInterval(interval)
-          setPhase('open')
-          return
-        }
-      } catch {
-        // Transient error — keep polling.
+      const next = await readPRState(prId)
+      if (next === 'merged' || next === 'closed') {
+        clearInterval(interval)
+        setPhase(next)
+        return
       }
-      if (pollCount.current >= MAX_POLLS) {
+      if (next === 'finishing') {
+        if (phase !== 'finishing') {
+          clearInterval(interval)
+          setPhase('finishing')
+        }
+        return
+      }
+      if (phase === 'created' && pollCount.current >= MAX_POLLS) {
         clearInterval(interval)
         setPhase('open')
       }
-    }, 7000)
+    }, delay)
 
     return () => clearInterval(interval)
   }, [phase, prId])
@@ -407,14 +481,22 @@ export function PRLifecycleProgress({
           ? mergedLabel
           : phase === 'open'
           ? openLabel
+          : phase === 'finishing'
+          ? finishingLabel
+          : phase === 'closed'
+          ? closedLabel
           : 'Merging…',
       status: (
         phase === 'creating' || phase === 'created'
           ? phase === 'created'
             ? 'running'
             : 'pending'
+          : phase === 'finishing'
+          ? 'running'
+          : phase === 'closed'
+          ? 'stopped'
           : 'done'
-      ) as 'running' | 'done' | 'pending',
+      ) as 'running' | 'done' | 'pending' | 'stopped',
     },
   ]
 
@@ -428,6 +510,11 @@ export function PRLifecycleProgress({
           {step.status === 'done' ? (
             <CheckCircle2
               className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400"
+              aria-hidden="true"
+            />
+          ) : step.status === 'stopped' ? (
+            <XCircle
+              className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
               aria-hidden="true"
             />
           ) : step.status === 'running' ? (
