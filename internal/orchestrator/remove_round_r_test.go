@@ -239,6 +239,7 @@ func TestFinishRemove_UsesTheCredentialsRouter(t *testing.T) {
 	}
 	orch := New(nil, nil, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 	orch.SetCredsRouter(router)
+	orch.SetSecretManagement(map[string]AddonSecretDefinition{"dd": {AddonName: "datadog", SecretName: "dd-keys", Namespace: "datadog"}}, nil, roundSFakeClientFn)
 	orch.SetArgoSecretManager(newMockArgoSecretManagerR(), "")
 	orch.FinishRemoveAfterMerge(context.Background(), "inline", ClusterFollowUp{Cleanup: "all", CredentialsSource: models.CredsSourceInlineKubeconfig})
 	if !asked {

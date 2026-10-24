@@ -555,16 +555,31 @@ func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp C
 	// (best-effort). The credentials come through the same router the
 	// request path uses, so a cluster whose connection is kept only in
 	// ArgoCD is reached too (R13).
-	if cleanup == "all" && (o.credProvider != nil || o.credsRouter != nil) {
+	//
+	// A failure here is a failure, not a success: the result turns
+	// partial so the finish tries again, and the ArgoCD connection is NOT
+	// deleted yet, so the next try can still reach the cluster (EP3 dry
+	// run round S, S1).
+	if cleanup == "all" && (o.credProvider != nil || o.credsRouter != nil) && o.remoteClientFn != nil && len(o.secretDefs) > 0 {
 		creds, credErr := o.followUpCredentials(name, followUp)
-		if credErr == nil && creds != nil {
-			deleted, _ := o.deleteAllAddonSecrets(ctx, name, creds.Raw)
-			if len(deleted) > 0 {
-				*steps = append(*steps, "delete_remote_secrets")
+		if credErr != nil || creds == nil {
+			if credErr == nil {
+				credErr = errors.New("no credentials found")
 			}
-		} else {
 			log.Warn("could not fetch credentials for remote secret cleanup",
 				"cluster", name, "error", credErr)
+			removeAddonSecretsFailed(name, credErr, result)
+			return
+		}
+		deleted, delErr := o.deleteAllAddonSecrets(ctx, name, creds.Raw)
+		if len(deleted) > 0 {
+			*steps = append(*steps, "delete_remote_secrets")
+		}
+		if delErr != nil {
+			log.Warn("could not remove every addon secret from the cluster; Sharko tries again",
+				"cluster", name, "error", delErr)
+			removeAddonSecretsFailed(name, delErr, result)
+			return
 		}
 	}
 
@@ -675,6 +690,22 @@ func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp C
 			}
 		}
 	}
+}
+
+// removeAddonSecretsFailed turns the result partial when the addon secrets
+// Sharko put on the cluster could not all be removed yet.
+func removeAddonSecretsFailed(name string, err error, result *RemoveClusterResult) {
+	result.Status = "partial"
+	result.FailedStep = "delete_remote_secrets"
+	result.Error = err.Error()
+	result.Message = RemoveAddonSecretsNotYetMessage(name)
+}
+
+// RemoveAddonSecretsNotYetMessage is the answer when a cleanup=all removal
+// merged but Sharko could not yet remove the addon secrets it put on the
+// cluster. Exported so tests pin it by exact text.
+func RemoveAddonSecretsNotYetMessage(name string) string {
+	return fmt.Sprintf("Cluster %s was removed from Git, but Sharko could not yet remove the addon secrets it put on the cluster. Its ArgoCD connection stays until that is done. Sharko tries again by itself.", name)
 }
 
 // notSharkoLabelledMessage is the answer when cleanup=all finds a

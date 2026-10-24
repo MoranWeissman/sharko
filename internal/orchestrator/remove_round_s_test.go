@@ -2,9 +2,15 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // EP3 dry run round S, S4: a keep mark belongs to one pull request. A new
@@ -81,5 +87,66 @@ func TestFinishRemove_CleanupAll_LeavesAConnectionAnotherPRWaitsOn_RoundS(t *tes
 				t.Fatalf("message:\n got %q\nwant %q", fin.Message, want)
 			}
 		})
+	}
+}
+
+// EP3 dry run round S, S1: a cleanup=all finish that could not reach the
+// cluster to remove the addon secrets is a failure that retries, not a
+// success, and it does not delete the ArgoCD connection yet, so the next
+// try can still reach the cluster.
+func TestFinishRemove_CleanupAll_NoCredentials_RetriesAndKeepsTheConnection_RoundS(t *testing.T) {
+	router := &providers.ClusterCredsRouter{
+		ArgoCDReaderFn: func() (providers.ClusterCredentialsProvider, error) {
+			return nil, errors.New("secrets backend is down")
+		},
+	}
+	mgr := newMockArgoSecretManagerR()
+	mgr.owned("going")
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{{Name: "going", Server: "https://going.example.com"}}
+	orch := New(nil, nil, argocd, newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
+	orch.SetCredsRouter(router)
+	orch.SetSecretManagement(map[string]AddonSecretDefinition{"dd": {AddonName: "datadog", SecretName: "dd-keys", Namespace: "datadog"}}, nil, roundSFakeClientFn)
+	orch.SetArgoSecretManager(mgr, "")
+
+	fin := orch.FinishRemoveAfterMerge(context.Background(), "going", ClusterFollowUp{Cleanup: "all", CredentialsSource: models.CredsSourceInlineKubeconfig, PRID: 4})
+	if fin.Status != "partial" || fin.FailedStep != "delete_remote_secrets" {
+		t.Fatalf("status %q step %q, want partial/delete_remote_secrets", fin.Status, fin.FailedStep)
+	}
+	want := "Cluster going was removed from Git, but Sharko could not yet remove the addon secrets it put on the cluster. Its ArgoCD connection stays until that is done. Sharko tries again by itself."
+	if fin.Message != want {
+		t.Fatalf("message:\n got %q\nwant %q", fin.Message, want)
+	}
+	if len(mgr.deleted) != 0 || len(argocd.deletedServers) != 0 {
+		t.Fatalf("the connection was deleted before the addon secrets were removed: %v %v", mgr.deleted, argocd.deletedServers)
+	}
+}
+
+func roundSFakeClientFn(_ []byte) (kubernetes.Interface, error) {
+	return k8sfake.NewSimpleClientset(), nil
+}
+
+// S1 too: an addon secret that could not be deleted (not one Sharko left
+// alone because it did not create it) makes the finish retry, and the
+// connection stays.
+func TestFinishRemove_CleanupAll_AddonSecretDeleteFails_Retries_RoundS(t *testing.T) {
+	remote := k8sfake.NewSimpleClientset()
+	remote.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("the cluster API is not answering")
+	})
+	mgr := newMockArgoSecretManagerR()
+	mgr.owned("going")
+	creds := &mockCredProvider{creds: map[string]*providers.Kubeconfig{"going": {Raw: []byte("kubeconfig")}}}
+	orch := New(nil, creds, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
+	orch.SetSecretManagement(map[string]AddonSecretDefinition{"dd": {AddonName: "datadog", SecretName: "dd-keys", Namespace: "datadog"}}, nil,
+		func([]byte) (kubernetes.Interface, error) { return remote, nil })
+	orch.SetArgoSecretManager(mgr, "")
+
+	fin := orch.FinishRemoveAfterMerge(context.Background(), "going", ClusterFollowUp{Cleanup: "all", PRID: 4})
+	if fin.Status != "partial" || fin.FailedStep != "delete_remote_secrets" {
+		t.Fatalf("status %q step %q, want partial/delete_remote_secrets", fin.Status, fin.FailedStep)
+	}
+	if len(mgr.deleted) != 0 {
+		t.Fatalf("the connection was deleted before the addon secrets were removed: %v", mgr.deleted)
 	}
 }
