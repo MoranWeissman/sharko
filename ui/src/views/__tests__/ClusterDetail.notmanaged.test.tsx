@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { ClusterDetail, NOT_MANAGED_TITLE, notManagedDescription, CLUSTER_NOT_FOUND_DESCRIPTION } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
@@ -60,6 +60,10 @@ const managedComparison = (extra: Record<string, unknown> = {}) => ({
 let comparison: () => Response;
 // How long /clusters/available takes to answer, in ms.
 let availableDelay = 0;
+// What the addon catalog lists.
+let catalogAddons: string[] = [];
+// What /clusters/available lists. Tests change it.
+let availableList: Array<{ name: string; server_url?: string }> = [{ name: NAME, server_url: 'https://legacy.example.com' }];
 const calls: string[] = [];
 
 function installFetch() {
@@ -70,11 +74,12 @@ function installFetch() {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const path = url.split('?')[0];
       calls.push(path);
-      if (path === COMPARISON_URL) return comparison();
+      if (/^\/api\/v1\/clusters\/[^/]+\/comparison$/.test(path)) return comparison();
       if (path === '/api/v1/clusters/available') {
         if (availableDelay > 0) await new Promise((r) => setTimeout(r, availableDelay));
-        return jsonResponse(200, { clusters: [{ name: NAME, server_url: 'https://legacy.example.com' }] });
+        return jsonResponse(200, { clusters: availableList });
       }
+      if (path === '/api/v1/addons/catalog') return jsonResponse(200, { addons: catalogAddons.map((n) => ({ addon_name: n })) });
       if (path === '/api/v1/prs') return jsonResponse(200, { prs: [] });
       if (path === '/api/v1/connections/') return jsonResponse(200, { connections: [], active_connection: '' });
       if (path === `/api/v1/clusters/${NAME}/test`) {
@@ -85,10 +90,10 @@ function installFetch() {
   );
 }
 
-function renderPage() {
+function renderPage(path = `/clusters/${NAME}`) {
   return render(
     <AuthContext.Provider value={adminAuth}>
-      <MemoryRouter initialEntries={[`/clusters/${NAME}`]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/clusters/:name" element={<ClusterDetail />} />
         </Routes>
@@ -192,6 +197,7 @@ describe('ClusterDetail — not managed, against the real comparison answer', ()
         return jsonResponse(200, { results: [{ name: NAME, status: 'success', merged: true }] });
       }
       if (path === COMPARISON_URL) return comparison();
+      if (path === '/api/v1/addons/catalog') return jsonResponse(200, { addons: catalogAddons.map((n) => ({ addon_name: n })) });
       if (path === '/api/v1/prs') return jsonResponse(200, { prs: [] });
       return jsonResponse(200, {});
     });
@@ -256,5 +262,79 @@ describe('ClusterDetail — "Remove the old labels" from the real comparison ans
     renderPage();
     await screen.findAllByText(NAME);
     expect(screen.queryByTestId('open-drop-labels')).not.toBeInTheDocument();
+  });
+});
+
+describe('ClusterDetail — round S', () => {
+  beforeEach(() => {
+    localStorage.setItem('sharko-auth-token', 'test-token');
+    catalogAddons = [];
+    availableList = [{ name: NAME, server_url: 'https://legacy.example.com' }];
+    installFetch();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  // S28: the not-managed page turns into the managed page on a quiet reload
+  // (after an adopt or take over merged). The addon on/off map must be
+  // filled then, or the picker offers addons the cluster already runs.
+  it('after the page turns managed on a reload, the addon picker knows which addons are on', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    catalogAddons = ['cert-manager', 'external-dns'];
+    comparison = () => jsonResponse(404, NOT_MANAGED_BODY);
+    renderPage();
+    expect(await screen.findByText(NOT_MANAGED_TITLE)).toBeInTheDocument();
+    comparison = () =>
+      jsonResponse(200, {
+        ...managedComparison(),
+        addon_comparisons: [
+          { addon_name: 'cert-manager', git_enabled: true, git_configured: true, status: 'healthy', has_version_override: false, argocd_deployed: true, issues: [] },
+        ],
+      });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(31_000);
+    });
+    await waitFor(() => expect(screen.queryByText(NOT_MANAGED_TITLE)).not.toBeInTheDocument());
+    const add = await screen.findByTestId('manage-addons-enable-btn');
+    act(() => add.click());
+    expect(await screen.findByTestId('addon-picker-item-external-dns')).toBeInTheDocument();
+    expect(screen.queryByTestId('addon-picker-item-cert-manager')).not.toBeInTheDocument();
+  });
+
+  // S30: the page stays mounted when only the cluster name in the address
+  // changes. The next not-managed cluster must not show the first one's
+  // address.
+  it('going from one not-managed cluster to another never shows the first one\'s address', async () => {
+    const user = userEvent.setup();
+    comparison = () => jsonResponse(404, NOT_MANAGED_BODY);
+    // Only legacy-1 has an address; legacy-2 is not in the list.
+    function Nav() {
+      const navigate = useNavigate();
+      return <button type="button" onClick={() => navigate('/clusters/legacy-2')}>go to legacy-2</button>;
+    }
+    render(
+      <AuthContext.Provider value={adminAuth}>
+        <MemoryRouter initialEntries={[`/clusters/${NAME}`]}>
+          <Nav />
+          <Routes>
+            <Route path="/clusters/:name" element={<ClusterDetail />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    );
+    await user.click(await screen.findByTestId('not-managed-adopt'));
+    expect(await screen.findByText('https://legacy.example.com')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByText('Adopt Clusters')).not.toBeInTheDocument());
+    // legacy-2's comparison also answers not_managed.
+    await user.click(screen.getByText('go to legacy-2'));
+    await waitFor(() => expect(calls).toContain('/api/v1/clusters/legacy-2/comparison'));
+    await user.click(await screen.findByTestId('not-managed-adopt'));
+    expect(await screen.findByText('Adopt Clusters')).toBeInTheDocument();
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.queryByText('https://legacy.example.com')).not.toBeInTheDocument();
   });
 });

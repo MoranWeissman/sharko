@@ -302,7 +302,11 @@ export function ClusterDetail() {
   const [notManagedAdoptOpen, setNotManagedAdoptOpen] = useState(false);
   // The address ArgoCD has for a cluster Sharko does not manage, from
   // /clusters/available. Shown in the Adopt dialog. Empty when unknown.
-  const [notManagedServerURL, setNotManagedServerURL] = useState<string | undefined>(undefined);
+  // Kept with the cluster name it belongs to. The page stays mounted when
+  // only the name in the address changes, so an address found for one
+  // cluster must never show for the next one (EP3 round S, S30).
+  const [notManagedServer, setNotManagedServer] = useState<{ name: string; url: string } | null>(null);
+  const notManagedServerURL = notManagedServer && notManagedServer.name === name ? notManagedServer.url : undefined;
   // Set when an adopt or take ownership finished while its dialog was open.
   // The page reloads when the dialog closes, not before: a reload that finds
   // the cluster managed now would swap the page and take the open dialog
@@ -587,6 +591,8 @@ export function ClusterDetail() {
     return (argoStatus === '' || argoStatus === 'unknown') && serverUrl === '';
   }, [data]);
 
+  // True once a load has filled the addon on/off map for this cluster.
+  const togglesSeededRef = useRef(false);
   const fetchData = useCallback(async (background = false): Promise<ClusterComparisonResponse | undefined> => {
     if (!name) return undefined;
     try {
@@ -595,6 +601,7 @@ export function ClusterDetail() {
         setError(null);
         setErrorStatus(null);
         setNotManaged(false);
+        togglesSeededRef.current = false;
       }
       // Fetch cluster-scoped open PRs alongside the comparison so the
       // addons table can render per-row pending-PR badges. The .catch
@@ -639,7 +646,13 @@ export function ClusterDetail() {
       // unsaved changes or an open preview — the background poll would silently
       // discard the user's pending toggle edit and strand the preview. Only
       // seed toggles on the foreground/first load (background === false).
-      if (!background) {
+      //
+      // A background reload still seeds them when no load has seeded them
+      // yet: the page was the not-managed page or an error page, and an
+      // adopt or take over just made it a managed cluster. Without this the
+      // page shows an empty addon map (EP3 round S, S28).
+      if (!background || !togglesSeededRef.current) {
+        togglesSeededRef.current = true;
         const toggleMap: Record<string, boolean> = {};
         result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean; git_configured: boolean; status?: string }) => {
           if (!a.git_configured) return;
@@ -1120,7 +1133,7 @@ export function ClusterDetail() {
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return;
         const hit = list.find((c) => c.name === name);
-        if (hit?.server_url) setNotManagedServerURL(hit.server_url);
+        if (hit?.server_url) setNotManagedServer({ name, url: hit.server_url });
       })
       .catch(() => {});
     return () => {
