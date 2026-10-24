@@ -147,9 +147,12 @@ func TestAdoptV4_NoNumberAtAll_SaysAPullRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// With no number at all, the waiting mark cannot name the pull
+	// request, so it is not written and the adopt is partial (round S
+	// join: a mark with PR 0 would never be finished).
 	msg := result.Results[0].Message
-	want := "A pull request is open: https://git.example.com/example/repo/pulls/open. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection."
-	if msg != want {
+	want := MarkNotWrittenMessage("adopt", "prod-eu", "https://git.example.com/example/repo/pulls/open")
+	if msg != want || result.Results[0].Status != "partial" {
 		t.Fatalf("message %q, want %q", msg, want)
 	}
 	if strings.Contains(msg, "#0") {

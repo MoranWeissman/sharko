@@ -25,6 +25,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -296,9 +297,17 @@ func OtherJoinPRMessage(kind, cluster string) string {
 // ArgoCD connection, naming the pull request, its repository and (for a
 // take over) the label choice. A mark that already names this pull request
 // is left as it is. No-op without a Secret manager.
+//
+// A pull request with no number (0: neither the Git host nor the address
+// gave one) is refused. The waiting pass skips such a mark, so nothing
+// would ever finish it. The caller gets ErrMarkNotWritten: never
+// auto-merged, the tracker still holds the pull request (round S join).
 func (o *Orchestrator) putJoinMark(ctx context.Context, key, name string, prID int, prURL string, keepOldLabels *bool) error {
 	if o.argoSecretManager == nil {
 		return nil
+	}
+	if prID <= 0 {
+		return errJoinMarkNoPRNumber
 	}
 	if cur, err := o.argoSecretManager.GetAnnotation(ctx, name, key); err == nil && models.PendingPRMarkNames(cur, prID) {
 		return nil
@@ -311,6 +320,10 @@ func (o *Orchestrator) putJoinMark(ctx context.Context, key, name string, prID i
 	}
 	return o.argoSecretManager.SetAnnotation(ctx, name, key, m.String())
 }
+
+// errJoinMarkNoPRNumber is why putJoinMark refuses a pull request with no
+// number.
+var errJoinMarkNoPRNumber = errors.New("the pull request has no number, so the waiting mark could not name it")
 
 // ClusterPRWaitingError means a register pull request for the cluster is
 // still open. Adopt and take over refuse, because they would write the
