@@ -792,6 +792,19 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 	return result, nil
 }
 
+// FinishNow runs the finish step of a tracked pull request that is
+// already merged or closed, under the same retry rule as the poll loop
+// (the gap between tries, the limit, the one give-up). It does nothing for
+// an open, given-up or untracked pull request. The waiting-marks pass uses
+// it after it tracks a pull request again (EP3 dry run round S, S10).
+func (t *Tracker) FinishNow(ctx context.Context, prID int) {
+	pr, err := t.GetPR(ctx, prID)
+	if err != nil || pr == nil || !IsFinishing(*pr) {
+		return
+	}
+	t.runFinish(ctx, prID, pr.LastStatus, false)
+}
+
 // ReconcileOnStartup reads persisted state and reconciles any PRs that
 // changed while the server was down.
 func (t *Tracker) ReconcileOnStartup(ctx context.Context) {

@@ -31,7 +31,12 @@ var errFinishNoGit = errors.New("no usable Git connection to check the cluster l
 func (s *Server) FinishTrackedPR(ctx context.Context, pr prtracker.PRInfo, status string) error {
 	switch pr.Operation {
 	case prtracker.OpRemoveCluster, prtracker.OpUnadoptCluster:
-		if status == "merged" {
+		// A pull request Git says is gone may have merged before it went.
+		// The merged finish first checks the cluster is really gone from
+		// Git: when it is still there, that finish only takes the keep
+		// mark off, which is what a closed one does (EP3 dry run round S,
+		// S10).
+		if status == "merged" || pr.Gone {
 			return s.FinishClusterFollowUpOnMerge(ctx, pr)
 		}
 		return s.dropKeepMark(ctx, pr)

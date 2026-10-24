@@ -1660,6 +1660,32 @@ func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value 
 	return true, nil
 }
 
+// ReplaceAnnotationIfValue sets one annotation on the named cluster Secret
+// to value only when it now holds a value that matches old (the same pull
+// request, see models.PendingPRMarkMatches). The write carries the version
+// it read, so a change made in between makes it fail rather than be
+// overwritten. A missing Secret, a missing annotation or another value is
+// (false, nil) and writes nothing.
+func (m *Manager) ReplaceAnnotationIfValue(ctx context.Context, name, key, old, value string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	if cur, ok := existing.Annotations[key]; !ok || !models.PendingPRMarkMatches(cur, old) {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	updated.Annotations[key] = value
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("updating annotation %q on secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation updated on cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
 // ReleaseKeptConnection is the end of a removal or un-adopt that keeps the
 // connection: in one write it takes Sharko's ownership label off the
 // Secret and takes the remove-keep mark off. Nothing else changes. A
