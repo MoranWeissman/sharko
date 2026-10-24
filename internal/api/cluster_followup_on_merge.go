@@ -143,7 +143,11 @@ func (s *Server) FinishClusterFollowUpOnMerge(ctx context.Context, pr prtracker.
 				"cluster", pr.Cluster, "pr_id", pr.PRID)
 		}
 	}
-	if s.clusterRecon != nil {
+	// Only a finish that worked wakes the reconciler. A failed one is
+	// tried again by the tracker after its gap; waking the reconciler on
+	// every failure used to burn the tries in seconds (EP3 dry run round
+	// S, S10).
+	if finishErr == nil && s.clusterRecon != nil {
 		s.clusterRecon.Trigger()
 	}
 	return finishErr

@@ -351,9 +351,12 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/unadopt.go", fn: "finishUnadopt", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},
 	{file: "internal/orchestrator/unadopt.go", fn: "UnadoptCluster", msg: "failed to remove cluster entry from managed-clusters.yaml", carriers: "ident:removeErr", verdict: "sink"},
 	{file: "internal/providers/aws_sm.go", fn: "getCredentialsWithRoleARN", msg: "[provider] GetCredentials failed", carriers: "ident:tried", verdict: "safe", reason: "tried holds the Secrets Manager secret NAMES this lookup attempted, built from the cluster name and the operator’s own configured prefix. They are addresses the operator wrote, never secret values, and an operator who cannot see which names were tried cannot fix the path."},
-	{file: "internal/prtracker/tracker.go", fn: "handleTerminal", msg: "[prtracker] failed to delete branch after observed merge", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "runHooks", msg: "[prtracker] failed to delete branch after observed merge", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "handleTerminal", msg: "[prtracker] failed to write state", carriers: "ident:err", verdict: "sink"},
-	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] GAVE UP finishing a pull request after every try failed. The mark that protects the cluster's connection stays on it, so nothing gets deleted. Look at the connection and finish it by hand.", carriers: "ident:finishErr", verdict: "sink"},
+	// The give-up line's words are the constant prtracker.GaveUpLogMessage
+	// (pinned by its own test), so the walk keys it by its first literal.
+	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "pr_id", carriers: "ident:finishErr", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] failed to read state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] could not finish a pull request yet; keeping it tracked to try again", carriers: "ident:finishErr", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] failed to write state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "PollOnce", msg: "[prtracker] failed to poll PR", carriers: "ident:err", verdict: "sink"},

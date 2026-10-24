@@ -3040,6 +3040,18 @@ definitions:
         type: string
       source:
         type: string
+      status:
+        description: |-
+          Status is what the list shows: "finishing" for a pull request that
+          merged or closed while Sharko still has to finish its work on the
+          cluster (EP3 dry run round S, S21); otherwise the same as
+          last_status.
+        enum:
+        - open
+        - merged
+        - closed
+        - finishing
+        type: string
       user:
         type: string
     type: object
@@ -10689,7 +10701,8 @@ paths:
       description: Returns all tracked pull requests with optional filters. Sorted
         by created_at descending.
       parameters:
-      - description: Filter by status (open, merged, closed)
+      - description: Filter by status (open, merged, closed, finishing). Empty = open
+          ones plus merged or closed ones Sharko is still finishing.
         in: query
         name: status
         type: string

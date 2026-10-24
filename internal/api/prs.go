@@ -39,6 +39,11 @@ type PRItem struct {
 	Source     string `json:"source"`
 	CreatedAt  string `json:"created_at"`
 	LastStatus string `json:"last_status"`
+	// Status is what the list shows: "finishing" for a pull request that
+	// merged or closed while Sharko still has to finish its work on the
+	// cluster (EP3 dry run round S, S21); otherwise the same as
+	// last_status.
+	Status     string `json:"status" enums:"open,merged,closed,finishing"`
 	LastPolled string `json:"last_polled_at"`
 }
 
@@ -59,7 +64,7 @@ const (
 // @Tags prs
 // @Produce json
 // @Security BearerAuth
-// @Param status query string false "Filter by status (open, merged, closed)"
+// @Param status query string false "Filter by status (open, merged, closed, finishing). Empty = open ones plus merged or closed ones Sharko is still finishing."
 // @Param cluster query string false "Filter by cluster name"
 // @Param addon query string false "Filter by addon name"
 // @Param user query string false "Filter by user"
@@ -129,6 +134,7 @@ func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
 			Source:     pr.Source,
 			CreatedAt:  pr.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			LastStatus: pr.LastStatus,
+			Status:     prtracker.ListStatus(pr),
 			LastPolled: pr.LastPolled.Format("2006-01-02T15:04:05Z"),
 		})
 	}
@@ -188,6 +194,7 @@ func (s *Server) handleGetPR(w http.ResponseWriter, r *http.Request) {
 		Source:     pr.Source,
 		CreatedAt:  pr.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		LastStatus: pr.LastStatus,
+		Status:     prtracker.ListStatus(*pr),
 		LastPolled: pr.LastPolled.Format("2006-01-02T15:04:05Z"),
 	})
 }
@@ -274,6 +281,7 @@ func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
 		Source:     pr.Source,
 		CreatedAt:  pr.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		LastStatus: pr.LastStatus,
+		Status:     prtracker.ListStatus(*pr),
 		LastPolled: pr.LastPolled.Format("2006-01-02T15:04:05Z"),
 	})
 }

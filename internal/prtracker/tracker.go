@@ -53,12 +53,14 @@ type Tracker struct {
 	finishFn     FinishFn             // the step that can fail and is tried again; see SetFinishFn
 	// maxFinishAttempts caps the tries of finishFn; 0 means DefaultMaxFinishAttempts.
 	maxFinishAttempts int
-	finishMu          sync.Mutex
-	finishing         map[int]bool
-	interval          time.Duration
-	triggerCh         chan struct{}
-	stopCh            chan struct{}
-	stopOnce          sync.Once
+	// now is the clock; tests move it to step through the retry gaps.
+	now       func() time.Time
+	finishMu  sync.Mutex
+	finishing map[int]bool
+	interval  time.Duration
+	triggerCh chan struct{}
+	stopCh    chan struct{}
+	stopOnce  sync.Once
 }
 
 // NewTracker creates a PR tracker.
@@ -120,6 +122,20 @@ type FinishFn func(ctx context.Context, pr PRInfo, status string) error
 // maxFinishAttempts times.
 func (t *Tracker) SetFinishFn(fn FinishFn) {
 	t.finishFn = fn
+}
+
+// clock returns the current time from the tracker's clock.
+func (t *Tracker) clock() time.Time {
+	if t.now != nil {
+		return t.now()
+	}
+	return time.Now()
+}
+
+// SetClock replaces the clock the retry gaps are measured with. Tests
+// only; nil puts back time.Now.
+func (t *Tracker) SetClock(now func() time.Time) {
+	t.now = now
 }
 
 // SetMaxFinishAttempts changes how many failed finish runs the tracker
@@ -244,14 +260,24 @@ func (t *Tracker) ListPRsFiltered(ctx context.Context, status, cluster, addon, u
 
 	var result []PRInfo
 	for _, pr := range prs {
-		// A pull request already merged or closed that is only waiting
-		// for its finish step is not "pending" any more. It is listed
-		// only when that exact status is asked for.
-		if isTerminal(pr.LastStatus) && status != pr.LastStatus {
-			continue
-		}
-		if status != "" && pr.LastStatus != status {
-			continue
+		// The default list (no status) shows what is still going on:
+		// open pull requests, and merged or closed ones whose finish step
+		// has not run yet ("finishing", EP3 dry run round S, S21). One
+		// whose finish was given up is listed only when its exact status
+		// (merged or closed) is asked for.
+		switch status {
+		case "":
+			if pr.GaveUp {
+				continue
+			}
+		case StatusFinishing:
+			if !IsFinishing(pr) {
+				continue
+			}
+		default:
+			if pr.LastStatus != status {
+				continue
+			}
 		}
 		if cluster != "" && pr.Cluster != cluster {
 			continue
@@ -274,12 +300,45 @@ func (t *Tracker) ListPRsFiltered(ctx context.Context, status, cluster, addon, u
 
 // DefaultMaxFinishAttempts is how many times the tracker runs a pull
 // request's finish step (see SetFinishFn) before it gives up on it. With
-// the default 30 s poll that is about ten minutes of tries. When it gives
-// up it logs an error and writes an audit entry, and it drops the pull
-// request, but the finish step never ran to the end, so whatever mark was
-// protecting the cluster's connection stays on it. Nothing gets deleted
-// because a finish failed.
+// FinishRetryGap between tries that is about ten minutes in all, however
+// often something asks for a poll (EP3 dry run round S, S10). When it
+// gives up it logs an error and writes one audit entry, and it keeps the
+// entry marked as given up (see GaveUpKeepFor), so nothing starts the
+// same tries again.
 const DefaultMaxFinishAttempts = 20
+
+// FinishRetryGap is the least time between two tries of a failed finish
+// step. A poll that comes sooner (a Trigger, a refresh) skips it.
+const FinishRetryGap = 30 * time.Second
+
+// GaveUpKeepFor is how long an entry whose finish was given up stays in
+// the tracker's state before it is dropped.
+const GaveUpKeepFor = 30 * 24 * time.Hour
+
+// GaveUpLogMessage is the error line written once when the tracker gives
+// up on a finish step. It is true for every kind of pull request: it does
+// not say a mark protects the connection, because a removal with
+// cleanup=all has none.
+const GaveUpLogMessage = "[prtracker] Sharko gave up finishing a pull request: every try failed. The work after the merge or close is not done. Look at the cluster and its ArgoCD connection, and finish it by hand."
+
+// StatusFinishing is the list status of a pull request that merged or
+// closed and whose finish step has not run to the end yet.
+const StatusFinishing = "finishing"
+
+// IsFinishing says whether a tracked pull request merged or closed and
+// its finish step is still owed (not given up).
+func IsFinishing(pr PRInfo) bool {
+	return isTerminal(pr.LastStatus) && !pr.GaveUp
+}
+
+// ListStatus is the status the PR list shows: "finishing" while the
+// finish step is still owed, otherwise the status Git gave.
+func ListStatus(pr PRInfo) string {
+	if IsFinishing(pr) {
+		return StatusFinishing
+	}
+	return pr.LastStatus
+}
 
 // isTerminal says whether a status is one a pull request never leaves.
 func isTerminal(status string) bool {
@@ -324,13 +383,20 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 
 	polledAt := make(map[string]time.Time)
 	newStatus := make(map[string]string)
-	var gone []string
+	var expired []string
 
 	for id, pr := range prs {
 		if isTerminal(pr.LastStatus) {
-			// Git already said merged or closed and the hooks already
-			// ran. Only the finish step is still owed.
-			t.runFinish(ctx, pr, pr.LastStatus)
+			if pr.GaveUp {
+				if t.clock().Sub(pr.GaveUpAt) > GaveUpKeepFor {
+					expired = append(expired, id)
+				}
+				continue
+			}
+			// Git already said merged or closed. The finish step (and
+			// the hooks, if a restart came before they ran) is still
+			// owed. runFinish waits out the gap after a failed try.
+			t.runFinish(ctx, pr.PRID, pr.LastStatus, false)
 			continue
 		}
 		status, err := gp.GetPullRequestStatus(ctx, pr.PRID)
@@ -341,28 +407,11 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 			// lingering as a phantom "open" PR forever. Every other error
 			// (auth, rate-limit, 5xx, network) is treated as transient: keep
 			// the entry and retry on the next poll.
+			// It is handled as closed, so its finish step still runs: a
+			// waiting mark comes off and nothing is left waiting forever
+			// (EP3 dry run round S, S10).
 			if errors.Is(err, gitprovider.ErrPullRequestNotFound) {
-				log.Info("[prtracker] PR no longer exists on provider — dropping stale entry",
-					"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
-				// Result is "failure", not "warn" — "warn" is a log level, not
-				// one of the four valid audit result words
-				// (success/partial/rejected/failure), and had no UI badge.
-				// The PR vanishing out from under the tracker (deleted, or the
-				// repo was recreated) means the tracked operation never
-				// reached its intended end state — that's a failure outcome,
-				// even though we log it at "warn" level since the tracker
-				// self-heals by dropping the stale entry (V2-cleanup-85.2).
-				t.auditFn(audit.Entry{
-					Level:     "warn",
-					Event:     "pr_gone",
-					User:      pr.User,
-					Action:    pr.Operation,
-					Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-					Source:    "prtracker",
-					Result:    "failure",
-					RequestID: logging.RequestID(ctx),
-				})
-				gone = append(gone, id)
+				t.handleTerminal(ctx, pr.PRID, "closed", true)
 				continue
 			}
 			log.Warn("[prtracker] failed to poll PR", "pr_id", pr.PRID, "error", err)
@@ -376,16 +425,16 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 			}
 			continue
 		}
-		t.handleTerminal(ctx, gp, pr.PRID, status)
+		t.handleTerminal(ctx, pr.PRID, status, false)
 	}
 
-	if len(newStatus) == 0 && len(gone) == 0 && len(polledAt) == 0 {
+	if len(newStatus) == 0 && len(expired) == 0 && len(polledAt) == 0 {
 		return
 	}
 	if err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
 		cur := t.extractPRs(data)
-		for _, id := range gone {
-			if p, ok := cur[id]; ok && !isTerminal(p.LastStatus) {
+		for _, id := range expired {
+			if p, ok := cur[id]; ok && p.GaveUp {
 				delete(cur, id)
 			}
 		}
@@ -411,7 +460,7 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 // so a pull request seen merged by the poll loop and by a refresh at the
 // same moment runs its hooks once. found is false when the pull request is
 // not tracked at all.
-func (t *Tracker) claimTerminal(ctx context.Context, prID int, status string) (pr PRInfo, found, claimed bool, err error) {
+func (t *Tracker) claimTerminal(ctx context.Context, prID int, status string, gone bool) (pr PRInfo, found, claimed bool, err error) {
 	err = t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
 		prs := t.extractPRs(data)
 		key := strconv.Itoa(prID)
@@ -427,6 +476,9 @@ func (t *Tracker) claimTerminal(ctx context.Context, prID int, status string) (p
 		cur.LastStatus = status
 		cur.LastPolled = time.Now()
 		cur.FinishAttempts = 0
+		cur.NextFinishAt = time.Time{}
+		cur.HooksPending = true
+		cur.Gone = gone
 		prs[key] = cur
 		pr = cur
 		claimed = true
@@ -435,14 +487,13 @@ func (t *Tracker) claimTerminal(ctx context.Context, prID int, status string) (p
 	return pr, found, claimed, err
 }
 
-// handleTerminal claims a pull request that just reached merged or closed,
-// then (outside the store's lock) writes its audit entry, deletes its
-// branch on merge, runs the merge and complete hooks once, and runs the
-// finish step. It returns the claimed entry, or nil when someone else
-// claimed it first or it is not tracked.
-func (t *Tracker) handleTerminal(ctx context.Context, gp GitProvider, prID int, status string) (*PRInfo, bool, error) {
+// handleTerminal claims a pull request that just reached merged or closed
+// (gone: Git said it no longer exists, handled as closed), then runs its
+// hooks and its finish step through runFinish. It returns the claimed
+// entry, or nil when someone else claimed it first or it is not tracked.
+func (t *Tracker) handleTerminal(ctx context.Context, prID int, status string, gone bool) (*PRInfo, bool, error) {
 	log := logging.LoggerFromContext(ctx)
-	pr, found, claimed, err := t.claimTerminal(ctx, prID, status)
+	pr, found, claimed, err := t.claimTerminal(ctx, prID, status, gone)
 	if err != nil {
 		log.Error("[prtracker] failed to write state", "pr_id", prID, "error", err)
 		return nil, found, err
@@ -450,8 +501,18 @@ func (t *Tracker) handleTerminal(ctx context.Context, gp GitProvider, prID int, 
 	if !claimed {
 		return nil, found, nil
 	}
+	if done := t.runFinish(ctx, prID, status, true); done != nil {
+		pr = *done
+	}
+	return &pr, true, nil
+}
 
-	if status == "merged" {
+// runHooks writes the merged, closed or gone audit entry, deletes the
+// branch on merge, and runs the merge and complete hooks.
+func (t *Tracker) runHooks(ctx context.Context, pr PRInfo, status string) {
+	log := logging.LoggerFromContext(ctx)
+	switch {
+	case status == "merged":
 		log.Info("[prtracker] PR merged", "pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
 		t.auditFn(audit.Entry{
 			Level:     "info",
@@ -467,7 +528,7 @@ func (t *Tracker) handleTerminal(ctx context.Context, gp GitProvider, prID int, 
 		// when the tracker has no branch on file (legacy state-store
 		// entries may lack PRBranch). Best-effort: a DeleteBranch
 		// error is logged but never blocks the tracker loop.
-		if pr.PRBranch != "" {
+		if gp := t.gitProvider(); pr.PRBranch != "" && gp != nil {
 			if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
 				log.Warn("[prtracker] failed to delete branch after observed merge",
 					"branch", pr.PRBranch, "pr_id", pr.PRID, "error", delErr)
@@ -476,7 +537,23 @@ func (t *Tracker) handleTerminal(ctx context.Context, gp GitProvider, prID int, 
 		if t.onMergeFn != nil {
 			t.onMergeFn(pr)
 		}
-	} else {
+	case pr.Gone:
+		// The PR vanished from the provider (deleted, or the repo was
+		// recreated). It is handled as closed. Result is "failure": the
+		// tracked operation never reached its end state (V2-cleanup-85.2).
+		log.Info("[prtracker] PR no longer exists on provider — handling it as closed",
+			"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
+		t.auditFn(audit.Entry{
+			Level:     "warn",
+			Event:     "pr_gone",
+			User:      pr.User,
+			Action:    pr.Operation,
+			Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+			Source:    "prtracker",
+			Result:    "failure",
+			RequestID: logging.RequestID(ctx),
+		})
+	default:
 		log.Info("[prtracker] PR closed without merge", "pr_id", pr.PRID, "cluster", pr.Cluster)
 		t.auditFn(audit.Entry{
 			Level:     "warn",
@@ -492,34 +569,71 @@ func (t *Tracker) handleTerminal(ctx context.Context, gp GitProvider, prID int, 
 	if t.onCompleteFn != nil {
 		t.onCompleteFn(pr, status)
 	}
-	t.runFinish(ctx, pr, status)
-	return &pr, true, nil
 }
 
-// runFinish runs the finish step for a pull request that reached a
-// terminal status, then settles the stored entry: dropped when the step
-// worked (or there is no step), kept with one more attempt counted when it
-// failed, and dropped with a loud error once it has failed
-// maxFinishAttempts times. Two finish runs for the same pull request never
-// overlap.
-func (t *Tracker) runFinish(ctx context.Context, pr PRInfo, status string) {
+// runFinish does what is still owed for a pull request that reached a
+// terminal status. It reads the entry as stored now. If its hooks may not
+// have run (HooksPending: just claimed, or a restart came in between), it
+// runs them and clears the flag. Then, unless a failed try was too recent
+// (NextFinishAt), it runs the finish step and settles the entry: dropped
+// when the step worked (or there is no step), kept with one more attempt
+// and the next try time when it failed, and kept as given up, with one
+// error line and one audit entry, once it has failed maxFinishAttempts
+// times. Two runs for the same pull request never overlap. It returns the
+// entry as it was before the finish step ran, or nil when nothing ran.
+func (t *Tracker) runFinish(ctx context.Context, prID int, status string, fresh bool) *PRInfo {
 	log := logging.LoggerFromContext(ctx)
 
 	t.finishMu.Lock()
 	if t.finishing == nil {
 		t.finishing = make(map[int]bool)
 	}
-	if t.finishing[pr.PRID] {
+	if t.finishing[prID] {
 		t.finishMu.Unlock()
-		return
+		return nil
 	}
-	t.finishing[pr.PRID] = true
+	t.finishing[prID] = true
 	t.finishMu.Unlock()
 	defer func() {
 		t.finishMu.Lock()
-		delete(t.finishing, pr.PRID)
+		delete(t.finishing, prID)
 		t.finishMu.Unlock()
 	}()
+
+	cur, err := t.GetPR(ctx, prID)
+	if err != nil {
+		log.Error("[prtracker] failed to read state", "pr_id", prID, "error", err)
+		return nil
+	}
+	if cur == nil || cur.LastStatus != status || cur.GaveUp {
+		return nil
+	}
+	pr := *cur
+	if pr.HooksPending {
+		if !fresh {
+			log.Info("[prtracker] running the merge or close steps again: Sharko stopped before they were done",
+				"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
+		}
+		t.runHooks(ctx, pr, status)
+		pr.HooksPending = false
+		if err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+			prs := t.extractPRs(data)
+			key := strconv.Itoa(prID)
+			p, ok := prs[key]
+			if !ok {
+				return nil
+			}
+			p.HooksPending = false
+			prs[key] = p
+			return t.encodePRs(data, prs)
+		}); err != nil {
+			log.Error("[prtracker] failed to write state", "pr_id", prID, "error", err)
+		}
+	}
+	now := t.clock()
+	if now.Before(pr.NextFinishAt) {
+		return &pr
+	}
 
 	var finishErr error
 	if t.finishFn != nil {
@@ -532,10 +646,10 @@ func (t *Tracker) runFinish(ctx context.Context, pr PRInfo, status string) {
 	}
 	var attempts int
 	var gaveUp, kept bool
-	err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+	err = t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
 		prs := t.extractPRs(data)
-		key := strconv.Itoa(pr.PRID)
-		cur, ok := prs[key]
+		key := strconv.Itoa(prID)
+		p, ok := prs[key]
 		attempts, gaveUp, kept = 0, false, false
 		if !ok {
 			return nil
@@ -544,24 +658,27 @@ func (t *Tracker) runFinish(ctx context.Context, pr PRInfo, status string) {
 			delete(prs, key)
 			return t.encodePRs(data, prs)
 		}
-		cur.FinishAttempts++
-		attempts = cur.FinishAttempts
+		p.FinishAttempts++
+		attempts = p.FinishAttempts
 		if attempts >= maxTries {
 			gaveUp = true
-			delete(prs, key)
+			p.GaveUp = true
+			p.GaveUpAt = now
+			p.NextFinishAt = time.Time{}
 		} else {
 			kept = true
-			prs[key] = cur
+			p.NextFinishAt = now.Add(FinishRetryGap)
 		}
+		prs[key] = p
 		return t.encodePRs(data, prs)
 	})
 	if err != nil {
-		log.Error("[prtracker] failed to write state", "pr_id", pr.PRID, "error", err)
-		return
+		log.Error("[prtracker] failed to write state", "pr_id", prID, "error", err)
+		return &pr
 	}
 	switch {
 	case gaveUp:
-		log.Error("[prtracker] GAVE UP finishing a pull request after every try failed. The mark that protects the cluster's connection stays on it, so nothing gets deleted. Look at the connection and finish it by hand.",
+		log.Error(GaveUpLogMessage,
 			"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation,
 			"status", status, "attempts", attempts, "error", finishErr)
 		t.auditFn(audit.Entry{
@@ -579,6 +696,7 @@ func (t *Tracker) runFinish(ctx context.Context, pr PRInfo, status string) {
 			"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation,
 			"status", status, "attempt", attempts, "max_attempts", maxTries, "error", finishErr)
 	}
+	return &pr
 }
 
 // The sentinels below let callers (internal/api/prs.go's handleRefreshPR)
@@ -605,59 +723,26 @@ var (
 
 // PollSinglePR polls a single PR by ID and updates its status.
 func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
-	log := logging.LoggerFromContext(ctx)
 	gp := t.gitProvider()
 	if gp == nil {
 		return nil, fmt.Errorf("%w", ErrGitProviderUnavailable)
 	}
 
+	gone := false
 	status, err := gp.GetPullRequestStatus(ctx, prID)
 	if err != nil {
 		// Definitive not-found (HTTP 404): the PR is gone from the provider
-		// (deleted, or repo recreated). Drop the stale entry and audit it,
-		// mirroring how merged/closed entries are removed below. Every other
+		// (deleted, or repo recreated). It is handled as closed, so its
+		// finish step still runs (EP3 dry run round S, S10). Every other
 		// error stays transient — surface it so the caller retries later.
-		if errors.Is(err, gitprovider.ErrPullRequestNotFound) {
-			var gonePR *PRInfo
-			rmErr := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
-				prs := t.extractPRs(data)
-				key := strconv.Itoa(prID)
-				pr, ok := prs[key]
-				if !ok || isTerminal(pr.LastStatus) {
-					// Already merged or closed and waiting for its
-					// finish step: leave it for the poll loop.
-					return nil
-				}
-				gonePR = &pr
-				delete(prs, key)
-				return t.encodePRs(data, prs)
-			})
-			if rmErr != nil {
-				return nil, rmErr
-			}
-			if gonePR != nil {
-				log.Info("[prtracker] PR no longer exists on provider — dropping stale entry",
-					"pr_id", prID, "cluster", gonePR.Cluster, "operation", gonePR.Operation)
-				t.auditFn(audit.Entry{
-					Level:     "warn",
-					Event:     "pr_gone",
-					User:      gonePR.User,
-					Action:    gonePR.Operation,
-					Resource:  fmt.Sprintf("pr:%d cluster:%s", prID, gonePR.Cluster),
-					Source:    "prtracker",
-					Result:    "warn",
-					RequestID: logging.RequestID(ctx),
-				})
-			}
-			// The PR is gone; it is no longer tracked. Return no PR and no
-			// error — this is a clean, expected terminal state, not a failure.
-			return nil, nil
+		if !errors.Is(err, gitprovider.ErrPullRequestNotFound) {
+			return nil, fmt.Errorf("poll PR #%d: %w: %w", prID, ErrPRPollUpstream, err)
 		}
-		return nil, fmt.Errorf("poll PR #%d: %w: %w", prID, ErrPRPollUpstream, err)
+		status, gone = "closed", true
 	}
 
 	if isTerminal(status) {
-		claimedPR, found, err := t.handleTerminal(ctx, gp, prID, status)
+		claimedPR, found, err := t.handleTerminal(ctx, prID, status, gone)
 		if err != nil {
 			return nil, err
 		}
@@ -665,6 +750,10 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 			return claimedPR, nil
 		}
 		if !found {
+			if gone {
+				// Not tracked and gone: nothing to do and nothing to report.
+				return nil, nil
+			}
 			return nil, fmt.Errorf("PR #%d not tracked: %w", prID, ErrPRNotTracked)
 		}
 		// Someone else already saw it finish; it is waiting for its

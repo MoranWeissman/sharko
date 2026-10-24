@@ -720,8 +720,9 @@ func TestPollSinglePR_Gone_Dropped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PollSinglePR returned error for gone PR, want nil: %v", err)
 	}
-	if pr != nil {
-		t.Errorf("expected nil PRInfo for gone PR, got %+v", pr)
+	// It is handled as closed (EP3 dry run round S, S10).
+	if pr == nil || pr.LastStatus != "closed" || !pr.Gone {
+		t.Errorf("expected the gone PR handled as closed, got %+v", pr)
 	}
 
 	// Entry dropped from state.
