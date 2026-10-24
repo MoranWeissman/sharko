@@ -15,13 +15,15 @@ const adminAuth = {
 
 const mockGetClusters = vi.fn();
 const mockGetAvailable = vi.fn();
+const mockTest = vi.fn();
+const mockAdopt = vi.fn();
 
 vi.mock('@/services/api', async () => {
   const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api');
   return {
     ...actual,
-    testClusterConnection: vi.fn(),
-    adoptClusters: vi.fn(),
+    testClusterConnection: (...a: unknown[]) => mockTest(...a),
+    adoptClusters: (...a: unknown[]) => mockAdopt(...a),
     // The Take ownership window waits on its checks for the whole test.
     takeoverPreflight: () => new Promise(() => {}),
     api: {
@@ -208,5 +210,26 @@ describe('ClustersOverview - round S', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a reload that fails after an adopt, with no rows on the page, keeps the Adopt window and its result', async () => {
+    const empty = { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 };
+    mockGetClusters.mockResolvedValueOnce(response({ clusters: [], health_stats: empty }));
+    mockGetAvailable.mockResolvedValue([{ name: 'stage-1', server_url: 'https://stage-1:6443' }]);
+    mockTest.mockResolvedValue({ success: true, stage: 'connectivity', duration_ms: 5, reachable: true, server_version: '1.29.0' });
+    mockAdopt.mockResolvedValue({
+      results: [{ name: 'stage-1', status: 'success', merged: false, git: { pr_url: 'https://github.com/o/r/pull/9' } }],
+    });
+    renderView();
+    await waitFor(() => expect(hint()).not.toBeNull());
+    await openAddClusterAsUser();
+    fireEvent.click(await screen.findByRole('button', { name: 'Adopt stage-1' }));
+    const confirm = await screen.findByRole('button', { name: /Confirm Adoption/i });
+    mockGetClusters.mockRejectedValue(new Error('ArgoCD is not answering'));
+    fireEvent.click(confirm);
+    expect(await screen.findByRole('link', { name: /view pull request/i })).toBeInTheDocument();
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.getByRole('link', { name: /view pull request/i })).toBeInTheDocument();
+    expect(screen.queryByText('ArgoCD is not answering')).toBeNull();
   });
 });
