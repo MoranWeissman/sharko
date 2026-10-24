@@ -712,7 +712,23 @@ describe('AdoptClustersDialog', () => {
       vi.mocked(api.adoptClusters).mockRejectedValueOnce(
         new api.ApiError(
           409,
-          { error: 'needs acknowledgement', results: [{ name: 'prod-cluster', warnings: [{ id: 'owner', message: 'Another tool owns this connection today.' }] }] },
+          // The real 409 body (adoptNeedsAcknowledgementBody): code, the ids
+          // still missing a tick, every warning once, and each named cluster
+          // with its full list.
+          {
+            error: 'Sharko did not adopt anything. Read each warning and acknowledge it first — not acknowledged yet: owner',
+            code: 'unacknowledged_findings',
+            unacknowledged_findings: ['owner'],
+            warnings: [{ id: 'owner', message: 'Another tool owns this connection today.' }],
+            results: [
+              {
+                name: 'prod-cluster',
+                status: 'skipped',
+                warnings: [{ id: 'owner', message: 'Another tool owns this connection today.' }],
+                unacknowledged_findings: ['owner'],
+              },
+            ],
+          },
           'Conflict',
         ),
       )
@@ -908,6 +924,9 @@ describe('AdoptClustersDialog', () => {
       expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeEnabled()
     })
 
+    // The server no longer sends two warnings with one id (each foreign
+    // owner gets foreign-owner-<8 hex>, round S S17). This stays as a guard
+    // in case an old server answers.
     it('two warnings with the same id each need their own tick', async () => {
       reachable()
       vi.mocked(api.adoptClusters).mockResolvedValueOnce({
@@ -934,6 +953,41 @@ describe('AdoptClustersDialog', () => {
       expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeDisabled()
       await user.click(boxes[1])
       expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeEnabled()
+    })
+
+    it('two foreign owners with the real ids (foreign-owner-<8 hex>) each need a tick, and both ids are sent', async () => {
+      reachable()
+      vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+        results: [
+          {
+            name: 'prod-cluster',
+            status: 'success',
+            warnings: [
+              { id: 'foreign-owner-1a2b3c4d', message: 'The Application "a" renders this connection.' },
+              { id: 'foreign-owner-5e6f7a8b', message: 'The Application "b" renders this connection.' },
+            ],
+            dry_run: preview,
+          },
+        ],
+      } as never)
+      const user = userEvent.setup()
+      openWith([mockCluster1])
+      await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+      const confirm = screen.getByRole('button', { name: /confirm adoption/i })
+      await user.click(await screen.findByTestId('adopt-warning-foreign-owner-1a2b3c4d'))
+      expect(confirm).toBeDisabled()
+      await user.click(screen.getByTestId('adopt-warning-foreign-owner-5e6f7a8b'))
+      expect(confirm).toBeEnabled()
+      vi.mocked(api.adoptClusters).mockResolvedValue({
+        results: [{ name: 'prod-cluster', status: 'success', git: { pr_url: 'https://git/pr/3' } }],
+      } as never)
+      await user.click(confirm)
+      await waitFor(() =>
+        expect(api.adoptClusters).toHaveBeenLastCalledWith({
+          clusters: ['prod-cluster'],
+          acknowledged_findings: ['foreign-owner-1a2b3c4d', 'foreign-owner-5e6f7a8b'],
+        }),
+      )
     })
 
     it('a new clusters array with the same names does not reset the ticks', async () => {

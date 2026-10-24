@@ -227,6 +227,51 @@ describe('PRLifecycleProgress', () => {
     vi.useRealTimers()
   })
 
+  // Round S join: the real refresh bodies (PRItem in internal/api/prs.go).
+  const refreshBody = (over: Record<string, unknown>) => ({
+    pr_id: 7, pr_url: 'https://gh/pull/7', pr_branch: 'sharko/x', pr_title: 't', pr_base: 'main',
+    operation: 'adopt-cluster', user: 'admin', source: 'ui', created_at: '2026-10-24T10:00:00Z',
+    last_polled_at: '2026-10-24T10:01:00Z', ...over,
+  })
+
+  it('a merged pull request Sharko is still finishing (status "finishing") is not shown as done', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue(refreshBody({ last_status: 'merged', status: 'finishing' }))
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/7', pr_id: 7, merged: false }}
+        autoMergeExpected={true}
+        mergedLabel="All merged!"
+        openLabel="Open"
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(7001))
+    expect(mockRefreshPR).toHaveBeenCalledWith(7)
+    expect(screen.queryByText('All merged!')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('an untracked pull request (finish already ran) answers with empty fields and shows merged without crashing', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({
+      pr_id: 7, pr_url: '', pr_branch: '', pr_title: '', pr_base: '', operation: '', user: '', source: '',
+      created_at: '0001-01-01T00:00:00Z', last_status: 'merged', status: 'merged', last_polled_at: '2026-10-24T10:01:00Z',
+    })
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/7', pr_id: 7, merged: false }}
+        autoMergeExpected={true}
+        mergedLabel="All merged!"
+        openLabel="Open"
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(7001))
+    expect(screen.getByText('All merged!')).toBeInTheDocument()
+    // The link still points at the pull request the write gave back.
+    expect(screen.getByRole('link', { name: /View PR #7/i })).toHaveAttribute('href', 'https://gh/pull/7')
+    vi.useRealTimers()
+  })
+
   it('stops polling immediately when status=closed (PR closed without merge)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockRefreshPR.mockResolvedValue({ status: 'closed' })

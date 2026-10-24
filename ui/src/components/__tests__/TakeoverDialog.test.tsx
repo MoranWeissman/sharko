@@ -302,6 +302,8 @@ describe('TakeoverDialog', () => {
     waiting_for_merge: true,
     pr_number: 12,
     pr_url: 'https://github.com/example/fleet/pull/12',
+    // The real 207 also carries git (clusters_takeover.go sets resp.Git).
+    git: { pr_url: 'https://github.com/example/fleet/pull/12', pr_id: 12, branch: 'sharko/takeover-prod-eu', merged: false },
     merge_error:
       'Sharko could not merge the pull request on its own. Nothing on the connection has changed. Merge the pull request yourself to finish the take over, or close it to leave things as they are.',
     message:
@@ -328,9 +330,12 @@ describe('TakeoverDialog', () => {
 
   it('round S: a waiting answer with no pull request number never says #0', async () => {
     mockPreflight.mockResolvedValue(okReport);
-    const { pr_number: _n, ...noNumber } = mergeFailedResponse;
+    // With no number the server leaves out pr_number and git.pr_id both.
+    const { pr_number: _n, git, ...rest } = mergeFailedResponse;
     void _n;
-    mockTakeover.mockResolvedValue(noNumber);
+    const { pr_id: _id, ...gitNoNumber } = git;
+    void _id;
+    mockTakeover.mockResolvedValue({ ...rest, git: gitNoNumber });
     render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
     await userEvent.click(screen.getByTestId('takeover-confirm'));
