@@ -375,9 +375,16 @@ connection stays), or "none" (only the fleet-record entry).`,
 			// The server would refuse anyway (it requires "yes": true) — but
 			// with instructions instead of a bare 400: point at the
 			// consequences read first, then the confirmed rerun.
+			// The confirmed command keeps every flag that was typed. Dropping
+			// --cleanup git here would turn "keep the connection" into
+			// "remove the connection too".
+			rerun := "sharko remove-cluster " + name + " -y"
+			if c, _ := cmd.Flags().GetString("cleanup"); c != "" {
+				rerun += " --cleanup " + c
+			}
 			return fmt.Errorf(
-				"removing a cluster needs an explicit confirmation.\nFirst see what it would do:  sharko unregister-consequences %s\nThen run:                    sharko remove-cluster %s -y",
-				name, name)
+				"removing a cluster needs an explicit confirmation.\nFirst see what it would do:  sharko unregister-consequences %s\nThen run:                    %s",
+				name, rerun)
 		}
 		cleanup, _ := cmd.Flags().GetString("cleanup")
 		body := map[string]interface{}{"yes": true}

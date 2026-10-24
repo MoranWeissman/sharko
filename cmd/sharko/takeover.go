@@ -413,6 +413,12 @@ func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun b
 		v, _ := cmd.Flags().GetBool("auto-merge")
 		rerun = append(rerun, "--auto-merge="+fmt.Sprint(v))
 	}
+	// Dropping this one would flip what the user chose about the old owner's
+	// labels, so it rides along whenever it was typed.
+	if cmd.Flags().Changed("preserve-legacy-labels") {
+		v, _ := cmd.Flags().GetBool("preserve-legacy-labels")
+		rerun = append(rerun, "--preserve-legacy-labels="+fmt.Sprint(v))
+	}
 	fmt.Printf("Rerun with: %s\n", strings.Join(rerun, " "))
 	return fmt.Errorf("%s", takeoverAckSentence(b.UnacknowledgedFindings))
 }
