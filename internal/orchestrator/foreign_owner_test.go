@@ -69,6 +69,20 @@ func (m *mockArgoSecretManagerWithTracking) GetTrackingOwner(_ context.Context, 
 
 // ---------- AdoptClusters ----------
 
+// idsToAcknowledge asks once with nothing acknowledged and returns the ids
+// the refusal names — what a person reads before they tick. The ids come
+// from each warning's own words (EP3 dry run round S, S17), so a test does
+// not spell them.
+func idsToAcknowledge(t *testing.T, orch *Orchestrator, clusters ...string) []string {
+	t.Helper()
+	_, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{Clusters: clusters})
+	var needsAck *AdoptNeedsAcknowledgementError
+	if !errors.As(err, &needsAck) || len(needsAck.Missing) == 0 {
+		t.Fatalf("want a refusal that names the warnings, got %v", err)
+	}
+	return needsAck.Missing
+}
+
 func TestAdoptClusters_ForeignOwnerWarning_Hard(t *testing.T) {
 	argocd := newMockArgocd()
 	argocd.existingClusters = []models.ArgocdCluster{
@@ -84,7 +98,7 @@ func TestAdoptClusters_ForeignOwnerWarning_Hard(t *testing.T) {
 	orch.SetArgoSecretManager(asm, "")
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		AcknowledgedFindings: []string{"foreign-owner"},
+		AcknowledgedFindings: idsToAcknowledge(t, orch, "cluster-a"),
 		Clusters:             []string{"cluster-a"},
 	})
 	if err != nil {
@@ -130,7 +144,7 @@ func TestAdoptClusters_ForeignOwnerWarning_Soft(t *testing.T) {
 	orch.SetArgoSecretManager(asm, "")
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		AcknowledgedFindings: []string{"foreign-owner"},
+		AcknowledgedFindings: idsToAcknowledge(t, orch, "cluster-a"),
 		Clusters:             []string{"cluster-a"},
 	})
 	if err != nil {
@@ -353,8 +367,16 @@ func TestAdoptClusters_ForeignOwnerWarning_NeedsAcknowledgement(t *testing.T) {
 
 	_, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{Clusters: []string{"cluster-a"}})
 	var needsAck *AdoptNeedsAcknowledgementError
-	if !errors.As(err, &needsAck) || len(needsAck.Missing) != 1 || needsAck.Missing[0] != AdoptFindingForeignOwner {
-		t.Fatalf("want a refusal naming %s, got %v", AdoptFindingForeignOwner, err)
+	if !errors.As(err, &needsAck) || len(needsAck.Missing) != 1 || !strings.HasPrefix(needsAck.Missing[0], AdoptFindingForeignOwner+"-") {
+		t.Fatalf("want a refusal naming %s-<hash>, got %v", AdoptFindingForeignOwner, err)
+	}
+	// A plain "foreign-owner" tick does not cover it: the id comes from what
+	// the warning says (EP3 dry run round S, S17).
+	_, err = orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"}, AcknowledgedFindings: []string{AdoptFindingForeignOwner},
+	})
+	if !errors.As(err, &needsAck) {
+		t.Fatalf("a tick on the bare kind covered a warning: %v", err)
 	}
 	if string(git.files["configuration/managed-clusters.yaml"]) != "clusters:\n" {
 		t.Error("an unacknowledged adoption must not write anything")

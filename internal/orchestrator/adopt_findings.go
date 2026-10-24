@@ -11,6 +11,8 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -62,35 +64,69 @@ func adoptWarningsFromReport(report takeover.Report) []AdoptWarning {
 	return uniqueAdoptWarningIDs(out)
 }
 
-// uniqueAdoptWarningIDs makes every warning id on one cluster different. A
-// second warning with the same id gets "-2", the third "-3", and so on, so
-// ticking one warning never ticks another one too (EP3 dry run round R,
-// R11). The first keeps its plain id, so ids people already send still
-// work.
+// adoptWarningContentKey is everything a warning says, in one string. Two
+// warnings with the same key are the same warning.
+func adoptWarningContentKey(w AdoptWarning) string {
+	sets := append([]string(nil), w.ApplicationSets...)
+	apps := append([]string(nil), w.Applications...)
+	sort.Strings(sets)
+	sort.Strings(apps)
+	return strings.Join([]string{
+		w.Message, w.Title, w.WhatItMeans, w.WhatToDo,
+		strings.Join(sets, "\x01"), strings.Join(apps, "\x01"),
+	}, "\x00")
+}
+
+// contentWarningID is kind plus a short hash of what the warning says. The
+// same warning gets the same id on every call and in any order, and a
+// different warning gets a different one (EP3 dry run round S, S17).
+func contentWarningID(kind string, w AdoptWarning) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + adoptWarningContentKey(w)))
+	return kind + "-" + hex.EncodeToString(sum[:4])
+}
+
+// uniqueAdoptWarningIDs makes every warning id on one cluster different,
+// from the warnings' own words, never from their order. An exact copy of a
+// warning is dropped. When two different warnings share an id, each of them
+// gets its id plus a short hash of what it says. Before this, the second one
+// got "-2" by its place in the list, so a new warning could take the id of
+// one already ticked (EP3 dry run round S, S17; round R, R11).
 func uniqueAdoptWarningIDs(ws []AdoptWarning) []AdoptWarning {
-	seen := make(map[string]int, len(ws))
-	for _, w := range ws {
-		seen[w.ID] = 0
+	type entry struct {
+		w   AdoptWarning
+		key string
 	}
-	used := make(map[string]bool, len(ws))
-	for i := range ws {
-		id := ws[i].ID
-		if !used[id] {
-			used[id] = true
+	byID := map[string][]entry{}
+	var order []string
+	for _, w := range ws {
+		key := adoptWarningContentKey(w)
+		list := byID[w.ID]
+		dup := false
+		for _, e := range list {
+			if e.key == key {
+				dup = true
+				break
+			}
+		}
+		if dup {
 			continue
 		}
-		n := seen[id]
-		if n < 2 {
-			n = 2
+		if len(list) == 0 {
+			order = append(order, w.ID)
 		}
-		for used[fmt.Sprintf("%s-%d", id, n)] {
-			n++
-		}
-		seen[id] = n + 1
-		ws[i].ID = fmt.Sprintf("%s-%d", id, n)
-		used[ws[i].ID] = true
+		byID[w.ID] = append(list, entry{w: w, key: key})
 	}
-	return ws
+	out := make([]AdoptWarning, 0, len(ws))
+	for _, id := range order {
+		list := byID[id]
+		for _, e := range list {
+			if len(list) > 1 {
+				e.w.ID = contentWarningID(id, e.w)
+			}
+			out = append(out, e.w)
+		}
+	}
+	return out
 }
 
 // adoptBlockersFromReport returns every blocked check in a preflight report,
@@ -111,10 +147,16 @@ func adoptBlockersFromReport(report takeover.Report) []AdoptBlocker {
 }
 
 // foreignOwnerAdoptWarnings gives the old foreign-owner sentences an id.
+// There can be more than one, so each id carries a hash of its own
+// sentence, even when there is only one: a tick on one foreign owner then
+// never covers a different one that shows up later (EP3 dry run round S,
+// S17).
 func foreignOwnerAdoptWarnings(sentences []string) []AdoptWarning {
 	out := make([]AdoptWarning, 0, len(sentences))
 	for _, s := range sentences {
-		out = append(out, AdoptWarning{ID: AdoptFindingForeignOwner, Message: s})
+		w := AdoptWarning{Message: s}
+		w.ID = contentWarningID(AdoptFindingForeignOwner, w)
+		out = append(out, w)
 	}
 	return uniqueAdoptWarningIDs(out)
 }
