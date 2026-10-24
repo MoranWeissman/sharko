@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ClustersOverview, AVAILABLE_CHECK_FAILED, availableFailureKind } from '@/views/ClustersOverview';
+import { ClustersOverview, AVAILABLE_CHECK_FAILED, availableFailureKind, notePageRunServerTime } from '@/views/ClustersOverview';
 import { ApiError } from '@/services/api';
 import { AuthContext } from '@/hooks/useAuth';
 
@@ -231,5 +231,44 @@ describe('ClustersOverview - round S', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
     expect(screen.getByRole('link', { name: /view pull request/i })).toBeInTheDocument();
     expect(screen.queryByText('ArgoCD is not answering')).toBeNull();
+  });
+
+  // S35: the page's own test is told from a newer server test by the
+  // server's clock only. The browser clock here is years ahead of the server.
+  it('a newer server test wins even when the browser clock is far ahead', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+    try {
+      const row = (at: string, failing: boolean) =>
+        response({ clusters: [{ ...managed, sharko_status: 'Connected', last_test_at: at, test_failing: failing, test_error_code: failing ? 'ERR_NETWORK' : undefined }] });
+      mockGetClusters.mockResolvedValue(row('2026-10-23T09:00:00Z', false));
+      mockTest.mockResolvedValue({ success: true, stage: 'connectivity', duration_ms: 5, reachable: true });
+      renderView();
+      await screen.findByText('sharko-managed');
+      fireEvent.click(screen.getAllByRole('button', { name: 'Test connection' })[0]);
+      await waitFor(() => expect(mockTest).toHaveBeenCalled());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      const pill = () => screen.getAllByTestId('cluster-status-pill')[0];
+      expect(pill()).toHaveTextContent('Connected');
+      // Reload 1: the server now shows the page's own run (its own time).
+      mockGetClusters.mockResolvedValue(row('2026-10-23T10:00:00Z', false));
+      fireEvent.click(screen.getByTitle('Refresh'));
+      await waitFor(() => expect(mockGetClusters.mock.calls.length).toBeGreaterThanOrEqual(2));
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      // Reload 2: a test from somewhere else, later on the server's clock, failed.
+      mockGetClusters.mockResolvedValue(row('2026-10-23T10:05:00Z', true));
+      fireEvent.click(screen.getByTitle('Refresh'));
+      await waitFor(() => expect(pill()).toHaveTextContent('Test failing'));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('S35: the first new server time after a page run is that run\'s own time', () => {
+    expect(notePageRunServerTime(undefined, 'x')).toBeUndefined();
+    expect(notePageRunServerTime({ before: 'a' }, 'a')).toEqual({ before: 'a' });
+    expect(notePageRunServerTime({ before: 'a' }, undefined)).toEqual({ before: 'a' });
+    expect(notePageRunServerTime({ before: 'a' }, 'b')).toEqual({ before: 'a', own: 'b' });
+    expect(notePageRunServerTime({ before: 'a', own: 'b' }, 'c')).toEqual({ before: 'a', own: 'b' });
   });
 });

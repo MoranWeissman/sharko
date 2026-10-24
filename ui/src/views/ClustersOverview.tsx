@@ -270,6 +270,26 @@ const REGISTER_PR_NO_LINK =
 
 // The popover's Sharko line reads the test the user just ran on this page.
 // A test that is still running, or could not run at all, says nothing yet.
+// A test run on this page, told apart from a newer one the server remembers
+// by the SERVER's clock only. The browser clock and the server clock can be
+// minutes apart, so they are never compared.
+//
+// `before` is the server's last test time when the page's run came back.
+// The server records that same run too, so the first different server time
+// seen after it is this run's own server time (`own`). A server time later
+// than `own` is a newer test: another tab, the CLI, a background check.
+export interface PageRunServerTimes {
+  before: string;
+  own?: string;
+}
+export function notePageRunServerTime(
+  rec: PageRunServerTimes | undefined,
+  serverLastTestAt: string | undefined,
+): PageRunServerTimes | undefined {
+  if (!rec || rec.own || !serverLastTestAt || serverLastTestAt === rec.before) return rec;
+  return { ...rec, own: serverLastTestAt };
+}
+
 export function latestTestOf(r: unknown, at?: string): ClusterLatestTest | undefined {
   const t = latestTestResultOf(r);
   return t && at ? { ...t, at } : t;
@@ -455,9 +475,20 @@ export function ClustersOverview() {
   } | null>(() => location.state?.removalPR ?? null);
 
   // Test connection state per cluster
-  // When each test on this page finished, by cluster name. The popover
-  // uses it to tell this run from a newer one the server remembers.
-  const testAtRef = useRef<Record<string, string>>({});
+  // Each test run on this page, by cluster name, with the server's own times
+  // (see PageRunServerTimes). The popover uses it to tell this run from a
+  // newer one the server remembers.
+  const pageRunRef = useRef<Record<string, PageRunServerTimes>>({});
+  const notePageRun = useCallback((name: string) => {
+    const c = allClustersRef.current.find((x) => x.name === name);
+    pageRunRef.current[name] = { before: c?.last_test_at ?? '' };
+  }, []);
+  const noteServerTimes = useCallback((list: Cluster[]) => {
+    for (const c of list) {
+      const next = notePageRunServerTime(pageRunRef.current[c.name], c.last_test_at);
+      if (next) pageRunRef.current[c.name] = next;
+    }
+  }, []);
   const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | 'testing'>>({});
 
   // Expanded test steps per cluster
@@ -634,6 +665,7 @@ export function ClustersOverview() {
         /* no available list: the page uses what /clusters listed */
         setAvailableStatus('ok');
       }
+      noteServerTimes(response.clusters);
       setAllClusters(response.clusters);
       // A fresh load — any earlier "Load more" progress no longer applies.
       setClusterTotal(null);
@@ -710,6 +742,7 @@ export function ClustersOverview() {
       const loadedSoFar = allClustersRef.current.length;
       const nextPage = Math.floor(loadedSoFar / CLUSTERS_PAGE_SIZE) + 1;
       const { data, total } = await api.getClustersPage(nextPage, CLUSTERS_PAGE_SIZE);
+      noteServerTimes(data.clusters);
       setAllClusters((prev) => [...prev, ...data.clusters]);
       // total == null means the server didn't send X-Total-Count (should
       // never happen against the real API, but degrade safely): treat
@@ -1012,11 +1045,11 @@ export function ClustersOverview() {
         void fetchData().then(() => {
           testClusterConnection(clusterName)
             .then((testResult) => {
-              testAtRef.current[clusterName] = new Date().toISOString();
+              notePageRun(clusterName);
               setTestResults((prev) => ({ ...prev, [clusterName]: testResult }));
             })
             .catch((err) => {
-              testAtRef.current[clusterName] = new Date().toISOString();
+              notePageRun(clusterName);
               setTestResults((prev) => ({
                 ...prev,
                 [clusterName]: {
@@ -1057,10 +1090,10 @@ export function ClustersOverview() {
     setTestResults((prev) => ({ ...prev, [name]: 'testing' }));
     try {
       const result = await testClusterConnection(name);
-      testAtRef.current[name] = new Date().toISOString();
+      notePageRun(name);
       setTestResults((prev) => ({ ...prev, [name]: result }));
     } catch (err) {
-      testAtRef.current[name] = new Date().toISOString();
+      notePageRun(name);
       setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
     }
   }, []);
@@ -2776,7 +2809,7 @@ export function ClustersOverview() {
                           testErrorCode={cluster.test_error_code}
                           connectionManagedBy={cluster.connection_managed_by}
                           enabledAddonCount={rowAddonCount}
-                          latestTest={latestTestOf(testResults[cluster.name], testAtRef.current[cluster.name])}
+                          latestTest={latestTestOf(testResults[cluster.name], pageRunRef.current[cluster.name]?.own)}
                         />
                       </td>
                       <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -2895,7 +2928,7 @@ export function ClustersOverview() {
                       testErrorCode={cluster.test_error_code}
                       connectionManagedBy={cluster.connection_managed_by}
                       enabledAddonCount={addonCount}
-                      latestTest={latestTestOf(testResults[cluster.name], testAtRef.current[cluster.name])}
+                      latestTest={latestTestOf(testResults[cluster.name], pageRunRef.current[cluster.name]?.own)}
                     />
                   </div>
                   <p className="mb-2 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
