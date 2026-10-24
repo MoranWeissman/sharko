@@ -29,11 +29,13 @@ func TestRemoveCluster_WaitingPRSaysWaitingNotRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a waiting pull request is not an error: %v", err)
 	}
-	if !strings.Contains(out, "PR opened, waiting for merge: "+waitPR+"\n") {
-		t.Errorf("missing the waiting line: %q", out)
-	}
-	if !strings.Contains(out, "Nothing has changed on cluster legacy-1 yet. Sharko finishes the removal after the pull request is merged.") {
-		t.Errorf("missing the nothing-changed sentence: %q", out)
+	// The whole text, exactly. A waiting pull request exits 0 (err is nil
+	// above): the docs say so, and this is the test that holds them to it.
+	want := "Removing cluster legacy-1... waiting for merge\n" +
+		"PR opened, waiting for merge: " + waitPR + "\n" +
+		"  Nothing has changed on cluster legacy-1 yet. Sharko finishes the removal after the pull request is merged.\n"
+	if out != want {
+		t.Errorf("remove-cluster output:\n got %q\nwant %q", out, want)
 	}
 	for _, banned := range []string{"removed.", "... done"} {
 		if strings.Contains(out, banned) {
@@ -55,8 +57,8 @@ func TestRemoveCluster_MergedPRSaysRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Cluster legacy-1 removed.") || strings.Contains(out, "waiting for merge") {
-		t.Errorf("a merged removal is done: %q", out)
+	if want := "Removing cluster legacy-1... done\nCluster legacy-1 removed.\n"; out != want {
+		t.Errorf("a merged removal is done:\n got %q\nwant %q", out, want)
 	}
 }
 
@@ -73,8 +75,13 @@ func TestUnadopt_WaitingPRSaysWaitingNotUnadopted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "PR opened, waiting for merge: "+waitPR+"\n") {
-		t.Errorf("missing the waiting line: %q", out)
+	// The whole text, exactly, including the "Nothing has changed" sentence.
+	// err is nil above: a waiting pull request exits 0, as the docs say.
+	want := "Un-adopting cluster legacy-1... waiting for merge\n\n" +
+		"PR opened, waiting for merge: " + waitPR + "\n" +
+		"  Nothing has changed on cluster legacy-1 yet. Sharko finishes the un-adopt after the pull request is merged.\n"
+	if out != want {
+		t.Errorf("unadopt-cluster output:\n got %q\nwant %q", out, want)
 	}
 	if strings.Contains(out, "un-adopted.") || strings.Contains(out, "... done") {
 		t.Errorf("old wording must not appear: %q", out)
@@ -96,11 +103,12 @@ func TestAdopt_WaitingPRSaysWaitingNotAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "legacy-1: PR opened, waiting for merge: "+waitPR+"\n") {
-		t.Errorf("missing the waiting line: %q", out)
-	}
-	if !strings.Contains(out, "Nothing is adopted yet: 1 cluster waits for the pull request to be merged.") {
-		t.Errorf("missing the summary: %q", out)
+	want := "Adopting 1 cluster(s)... waiting for merge\n\n" +
+		"Nothing is adopted yet: 1 cluster waits for the pull request to be merged.\n\n" +
+		"  legacy-1: PR opened, waiting for merge: " + waitPR + "\n" +
+		"    PR:     " + waitPR + " (waiting for merge)\n"
+	if out != want {
+		t.Errorf("adopt output:\n got %q\nwant %q", out, want)
 	}
 	for _, banned := range []string{"legacy-1: adopted", "finished for every cluster", "open — merge manually"} {
 		if strings.Contains(out, banned) {
@@ -120,9 +128,16 @@ func TestAdopt_MergedPRSaysAdopted(t *testing.T) {
 	})
 	resetFlags(adoptCmd)
 	setFlags(t, adoptCmd, map[string]string{"yes": "true"})
-	out, _ := captureStdoutT(t, func() error { return adoptCmd.RunE(adoptCmd, []string{"legacy-1"}) })
-	if !strings.Contains(out, "legacy-1: adopted") {
-		t.Errorf("a merged adoption is adopted: %q", out)
+	out, err := captureStdoutT(t, func() error { return adoptCmd.RunE(adoptCmd, []string{"legacy-1"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Adopting 1 cluster(s)... done\n\n" +
+		"Adoption finished for every cluster: 1 fully completed, 0 partly completed, 0 failed (of 1).\n\n" +
+		"  legacy-1: adopted\n" +
+		"    PR:     " + waitPR + " (merged)\n"
+	if out != want {
+		t.Errorf("a merged adoption is adopted:\n got %q\nwant %q", out, want)
 	}
 }
 
@@ -160,8 +175,8 @@ func TestTakeover_UnreadWarning_PrintsChecksOnceWithCLIWords(t *testing.T) {
 	if strings.Contains(out, want) {
 		t.Errorf("the command must not print the error itself, Execute does: %q", out)
 	}
-	if !strings.Contains(out, "Rerun with: sharko takeover legacy-1 -y --acknowledge appset-deletion-safety\n") {
-		t.Errorf("Rerun line lost: %q", out)
+	if !strings.HasSuffix(out, "Rerun with: sharko takeover legacy-1 -y --acknowledge appset-deletion-safety\n") {
+		t.Errorf("Rerun line lost or not last: %q", out)
 	}
 	for _, banned := range []string{"acknowledged_findings", "checks below", "send its id back"} {
 		if strings.Contains(out, banned) || strings.Contains(err.Error(), banned) {
@@ -211,7 +226,32 @@ func TestHelp_Wording(t *testing.T) {
 	if strings.Contains(testClusterCmd.Long, "credentials stored in the secrets") {
 		t.Errorf("test-cluster help is untrue for ArgoCD-held connections: %q", testClusterCmd.Long)
 	}
-	if !strings.Contains(strings.Join(strings.Fields(testClusterCmd.Long), " "), "the one stored in ArgoCD") {
+	if !strings.Contains(strings.Join(strings.Fields(testClusterCmd.Long), " "), "the one stored in ArgoCD") { // a phrase inside a long help text
 		t.Errorf("test-cluster help must cover ArgoCD-held connections: %q", testClusterCmd.Long)
+	}
+}
+
+// The two help texts that were wrong before, pinned in full.
+func TestHelp_ExactTexts(t *testing.T) {
+	wantTest := "Check that Sharko can reach the cluster's Kubernetes API.\n\n" +
+		"Sharko uses the connection it has for that cluster. That is the one in your\n" +
+		"secrets provider, or, for a cluster whose connection ArgoCD holds, the one\n" +
+		"stored in ArgoCD. It makes a small test secret on the cluster, reads it back\n" +
+		"and deletes it."
+	if testClusterCmd.Long != wantTest {
+		t.Errorf("test-cluster help:\n got %q\nwant %q", testClusterCmd.Long, wantTest)
+	}
+	wantAdopt := "Adopt one or more existing ArgoCD clusters. Sharko adds each cluster to\n" +
+		"managed-clusters.yaml in your Git repo through a pull request. The clusters\n" +
+		"are already in ArgoCD but not yet managed by Sharko. When the pull request is\n" +
+		"merged, Sharko takes over the ArgoCD connection and marks it as adopted. If\n" +
+		"the pull request is closed without a merge, nothing changes on the cluster.\n\n" +
+		"Sharko checks each cluster first, the same way take over does. If it finds\n" +
+		"something you should read (for example an ApplicationSet that could delete\n" +
+		"what it installed), it stops and prints each warning with an id. Read them,\n" +
+		"then run again with --acknowledge <id,id,...>. --yes only skips the \"Continue?\"\n" +
+		"question; it does not skip warnings. --dry-run prints the warnings too."
+	if adoptCmd.Long != wantAdopt {
+		t.Errorf("adopt help:\n got %q\nwant %q", adoptCmd.Long, wantAdopt)
 	}
 }

@@ -17,7 +17,7 @@ This page shows you how to register clusters with Sharko, enable addons on them,
 
 ---
 
-Clusters are the units of deployment in Sharko. Each registered cluster gets its own values directory in the addons repo, and ArgoCD manages addon deployments for it via the ApplicationSet.
+Clusters are the units of deployment in Sharko. Each registered cluster gets a line in `managed-clusters.yaml` and its own addon file, `cluster-addons/<name>.yaml`, in the addons repo. ArgoCD manages addon deployments for it via the ApplicationSet.
 
 ![Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.](../assets/screenshots/cluster-detail.png){ loading=lazy }
 <figcaption>Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.</figcaption>
@@ -31,8 +31,8 @@ Sharko distinguishes between two types of clusters:
 
 | Type | Description |
 |------|-------------|
-| **Managed** | Registered via Sharko — has a values file in Git. Full lifecycle management: addons, upgrades, secrets reconciliation. |
-| **Discovered** | Found in ArgoCD but not registered via Sharko — no values file in Git. Sharko surfaces these as read-only and offers an **Adopt** path. |
+| **Managed** | Listed in `managed-clusters.yaml` in your Git repo. Full lifecycle management: addons, upgrades, secrets reconciliation. |
+| **Discovered** | Found in ArgoCD but not listed in `managed-clusters.yaml`. Sharko shows these as read-only and offers **Adopt** and **Take ownership**. |
 
 In the API, every cluster entry includes a `"managed": true/false` field. In the UI, the Clusters page shows managed clusters as the main list; Discovered clusters are collapsed into a single line under the page title, for example "3 clusters ArgoCD already knows that Sharko doesn't manage yet." If you are an admin, the count is a link. Click it to open **Add Cluster** with **Connection managed by** set to **Manage a cluster ArgoCD already connects to**. Other users see the same line, but as plain text. When you open a discovered cluster, its page says **Sharko doesn't manage this cluster yet**, with an **Adopt** button and a **Take ownership** button.
 
@@ -74,13 +74,15 @@ Under the hood, this uses the API's `dry_run: true` request option, which return
 
 ## Discovering Available Clusters
 
-Before registering, you can see which clusters your secrets provider knows about:
+To see which clusters your secrets provider knows about, without registering anything, ask the API:
 
 ```bash
-sharko add-clusters --from-provider
+curl -H "Authorization: Bearer <token>" https://sharko.your-domain.com/api/v1/providers/clusters
 ```
 
-This reads the list from `GET /api/v1/providers/clusters`. The older `GET /api/v1/clusters/available` now answers a different question: it lists the clusters ArgoCD already knows that Sharko does not manage yet.
+Do not use `sharko add-clusters --from-provider` just to look. It asks to register every cluster it finds.
+
+The older `GET /api/v1/clusters/available` answers a different question: it lists the clusters ArgoCD already knows that Sharko does not manage yet. It reads them from ArgoCD, not from your secrets provider.
 
 ## Adding a Cluster
 
@@ -203,13 +205,15 @@ sharko remove-cluster my-cluster -y
 
 This opens a pull request that removes the cluster from the addons repo. **Nothing changes until that pull request is merged.** While it is open, the command says "PR opened, waiting for merge" and gives the link, and the cluster stays exactly as it was. After the merge, Sharko finishes the removal, and then ArgoCD removes the cluster's ApplicationSet entries. The command says "Cluster my-cluster removed." only when that has really happened. If you close the pull request without merging, nothing changes.
 
+The command exits with code 0 while the pull request is waiting. Waiting is not an error. A script that runs `sharko remove-cluster x && next-step` will go on to the next step even though the cluster is not removed yet. Wait for the merge first (for example with `sharko pr wait <PR number>`).
+
 ### Un-adopting a cluster
 
 ```bash
 sharko unadopt-cluster my-cluster -y
 ```
 
-This works the same way. It opens a pull request, and nothing changes until it is merged. After the merge, Sharko stops managing the cluster but leaves the ArgoCD connection in place.
+This works the same way. It opens a pull request, and nothing changes until it is merged. After the merge, Sharko stops managing the cluster but leaves the ArgoCD connection in place. The exit code is 0 while the pull request is waiting.
 
 !!! warning
     Removing a cluster from Sharko does not uninstall addons from that cluster. ArgoCD will stop managing them, but the Helm releases remain in place. Uninstall addons manually if needed.
@@ -222,39 +226,39 @@ If you adopt a cluster that already runs ArgoCD Applications the user deployed t
 
 ## Adopting an Existing ArgoCD Cluster
 
-If a cluster is already registered in ArgoCD but was not registered through Sharko (e.g., it was added manually or by another tool), you can adopt it:
+If a cluster is already in ArgoCD but was not registered through Sharko (for example, it was added by hand or by another tool), you can adopt it. Adopting does not turn on any addon. It only puts the cluster under Sharko.
+
+To see which clusters you can adopt, look at the line under the title on the **Clusters** page, or ask the API:
 
 ```bash
-sharko adopt-cluster my-cluster --addons cert-manager,metrics-server
+curl -H "Authorization: Bearer <token>" https://sharko.your-domain.com/api/v1/clusters/available
 ```
 
-Or via API:
+Then adopt it from the command line:
 
 ```bash
-curl -X POST https://sharko.your-domain.com/api/v1/clusters/my-cluster/adopt \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"addons": ["cert-manager", "metrics-server"]}'
+sharko adopt my-cluster
 ```
 
-If you omit the `--addons` flag (CLI) or `addons` field (API), Sharko applies the [default addons](addons.md#default-addons) from `configuration/default-addons.yaml`, just like when registering a new cluster.
+`sharko adopt-cluster` is the same command. You can give more than one name. The flags are `--yes` (skip the "Continue?" question), `--dry-run`, `--acknowledge <id,id,...>` and `--auto-merge`. There is no `--addons` flag: adopting never turns on an addon. Turn addons on afterwards, in a pull request of their own.
 
 What the adopt command does:
 
 1. Checks that the cluster is in ArgoCD, and that Sharko does not manage it already.
-2. Reads the cluster's labels from ArgoCD and writes them into a new values file.
-3. Looks for things you should read first, the same way take over does. For example, an ApplicationSet that could delete what it installed. If there are any, nothing is adopted. Sharko prints each warning with an id. Read them, then run the command again with `--acknowledge <id>`. `--yes` does not skip warnings. `--dry-run` prints them too, and says "would adopt" for each cluster that is ready.
-4. Opens a pull request that adds the cluster to `managed-clusters.yaml`. The command says "PR opened, waiting for merge" and gives the link.
-5. While the pull request is open, nothing is adopted. Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later.
-6. When the pull request is merged, Sharko takes over the ArgoCD connection (the old labels stay) and marks the cluster as adopted. If the pull request is closed without a merge, Sharko takes its mark off and changes nothing else.
+2. Looks for things you should read first, the same way take over does. For example, an ApplicationSet that could delete what it installed. If there are any, nothing is adopted. Sharko prints each warning with an id. Read them, then run the command again with `--acknowledge <id>`. `--yes` does not skip warnings. `--dry-run` prints them too, and says "would adopt" for each cluster that is ready.
+3. Opens a pull request that adds the cluster to `managed-clusters.yaml` and creates an empty `cluster-addons/<name>.yaml` for it. The command says "PR opened, waiting for merge" and gives the link.
+4. While the pull request is open, nothing is adopted. Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later.
+5. When the pull request is merged, Sharko takes over the ArgoCD connection (the old labels stay) and marks the cluster as adopted. If the pull request is closed without a merge, Sharko takes its mark off and changes nothing else.
+
+The command exits with code 0 when the pull request is left waiting. Waiting is not an error. If a script must wait until the cluster is really adopted, wait for the merge first, for example with `sharko pr wait <PR number>`. The command exits with an error code only when something went wrong.
 
 The cluster does **not** need to be in your secrets provider. It is already in ArgoCD, so Sharko does not need a kubeconfig to adopt it.
 
 ### Adopting in the UI
 
 1. Go to **Clusters**. Click the line that says how many clusters ArgoCD already knows that Sharko doesn't manage yet. This opens **Add Cluster**, with **Connection managed by** set to **Manage a cluster ArgoCD already connects to**.
-2. Under **Discovered clusters**, find your cluster. The list can be filtered, and it says "Showing X of Y". If there is nothing to pick, it says "Sharko checked ArgoCD — no other clusters there to adopt."
-3. Click **Adopt <name>**. The **Adopt Clusters** window opens.
+2. Under **Discovered clusters**, pick your cluster with its round button. The list can be filtered, and it says "Showing X of Y". If there is nothing to pick, it says "Sharko checked ArgoCD — no other clusters there to adopt."
+3. Click **Adopt <name>** (it sits under the list, not next to each cluster). The **Adopt Clusters** window opens.
 4. Click **Preview changes**. Sharko shows the files the pull request would add.
     - Under **Fix these first** are things that stop the adopt. Fix them, then preview again.
     - Under **Read each of these and tick it to go ahead** are the warnings. Read each one and tick it.

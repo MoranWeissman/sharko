@@ -70,7 +70,9 @@ test results — they can differ from ArgoCD's connection above.
 
 ## Deploy check (test workload through ArgoCD)
 
-Shown inside the status pill popover and on Cluster Detail.
+Shown inside the status pill popover. The Cluster Detail page does not show a **Passed** word. Its header shows a green **Connectivity verified ✓** badge instead.
+
+The popover says **Passed** only when a test app was really deployed through ArgoCD. If the cluster is verified only because ArgoCD itself connected to it, the badge on Cluster Detail is green, but the popover line says **Not run**, because no test app was deployed.
 
 | Name | Color | Meaning |
 |------|-------|---------|

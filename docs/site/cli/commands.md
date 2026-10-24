@@ -219,9 +219,16 @@ do first with `sharko unregister-consequences <name>`.
 
 Nothing changes on the cluster until the pull request is merged. When the
 pull request is still open, the command says `PR opened, waiting for merge:`
-and gives the link, and it ends with an error code so a script does not think
-the cluster is gone. It prints `Cluster <name> removed.` only when the removal
+and gives the link. It prints `Cluster <name> removed.` only when the removal
 really happened.
+
+**Exit code:** the command exits `0` when the pull request is left waiting.
+Waiting is not an error, and the command did what it can do now. This means
+`sharko remove-cluster x -y && next-step` runs `next-step` while the cluster
+is still there. If your script needs the cluster gone, wait for the merge
+first, for example with `sharko pr wait <PR number>`. The exit code is not `0`
+only when something went wrong. `sharko unadopt-cluster` and `sharko adopt`
+work the same way.
 
 ```bash
 sharko unregister-consequences <name>   # read this first
@@ -267,7 +274,7 @@ If the cluster is unreachable, the error message from the provider or the Kubern
 
 ### `sharko adopt`
 
-Adopt one or more existing ArgoCD clusters into Sharko management. Opens a pull request that adds each cluster to `managed-clusters.yaml`. The clusters are already in ArgoCD but not yet managed by Sharko. Nothing is adopted until the pull request is merged. The command says `PR opened, waiting for merge:` with the link. When the pull request is merged, Sharko takes over the ArgoCD connection and marks it adopted. If it is closed without a merge, nothing changes on the cluster.
+Adopt one or more existing ArgoCD clusters into Sharko management. Opens a pull request that adds each cluster to `managed-clusters.yaml`. The clusters are already in ArgoCD but not yet managed by Sharko. Nothing is adopted until the pull request is merged. The command says `PR opened, waiting for merge:` with the link, and exits `0` while it waits. When the pull request is merged, Sharko takes over the ArgoCD connection and marks it adopted. If it is closed without a merge, nothing changes on the cluster.
 
 ```bash
 sharko adopt <cluster1> [cluster2] ... [flags]
@@ -282,7 +289,7 @@ sharko adopt <cluster1> [cluster2] ... [flags]
 
 ### `sharko unadopt-cluster`
 
-Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact. Nothing changes until the pull request is merged. While it is open the command says `PR opened, waiting for merge:`, and it prints that the cluster is un-adopted only when that is really done. The cluster must carry the `sharko.dev/adopted` annotation, which Sharko puts on a cluster when you adopt it.
+Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact. Nothing changes until the pull request is merged. While it is open the command says `PR opened, waiting for merge:` and exits `0`. It prints that the cluster is un-adopted only when that is really done. The cluster must carry the `sharko.dev/adopted` annotation, which Sharko puts on a cluster when you adopt it.
 
 ```bash
 sharko unadopt-cluster <name>
@@ -527,10 +534,12 @@ Rerun with: sharko takeover prod-eu -y --acknowledge appset-deletion-safety
 
 The checks print once, and the usage help does not print after an error.
 
-Take over swaps the ownership of the ArgoCD connection at once, then opens a pull request for the fleet record. If you run it again while that pull request is open, Sharko says the take over is already waiting and gives the link. It does not open a second one.
+Take over opens the pull request first, the same as adopt. When you run it, Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later. Nothing about the owner of the connection changes yet. When the pull request is merged, Sharko takes over the connection. If the pull request is closed without a merge, Sharko takes the mark off and changes nothing else. The command says `PR opened, waiting for merge:` with the link and exits `0` while it waits.
 
-A partial outcome (the pull request opened but the ArgoCD ownership swap failed) is reported
-honestly — nothing is deleted, and the takeover is safe to run again.
+If you run it again while that pull request is open, Sharko says the take over is already waiting and gives the link. It does not open a second one.
+
+If something goes wrong after the merge (the ownership swap fails), Sharko says so, nothing is
+deleted, and the takeover is safe to run again.
 
 ### `sharko drop-legacy-labels`
 

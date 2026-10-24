@@ -69,8 +69,19 @@ func TestUnregisterConsequences_ConfirmationNamesTheCLICommand(t *testing.T) {
 		t.Errorf("confirmation_api:\n got %q\nwant %q", resp.ConfirmationAPI, want)
 	}
 	c := consequenceByID(resp, "argocd-connection")
-	if c == nil || c.Detail != unregisterSharkoConnectionDetail || c.WhatItMeans != unregisterSharkoConnectionMeans {
-		t.Fatalf("argocd-connection consequence: %+v", c)
+	// The exact sentences, written out here. Comparing to the constants let
+	// a changed constant pass; this does not.
+	wantDetail := "Sharko owns this cluster's connection, so a full removal deletes it from ArgoCD once the pull request is merged. Nothing changes on the connection before that."
+	wantMeans := "ArgoCD stops being able to reach the cluster. Anything ArgoCD is deploying there goes to an unknown state, and other tools that rely on that same connection lose it too. " +
+		"If you only want the cluster out of Sharko, keep the connection (in the CLI: --cleanup=git). ArgoCD keeps it, and Sharko only takes its own label off it."
+	if c == nil {
+		t.Fatal("no argocd-connection consequence")
+	}
+	if c.Detail != wantDetail {
+		t.Errorf("argocd-connection detail:\n got %q\nwant %q", c.Detail, wantDetail)
+	}
+	if c.WhatItMeans != wantMeans {
+		t.Errorf("argocd-connection what_it_means:\n got %q\nwant %q", c.WhatItMeans, wantMeans)
 	}
 	assertNoBannedUnregisterWording(t, body)
 }

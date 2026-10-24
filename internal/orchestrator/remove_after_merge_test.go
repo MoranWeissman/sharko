@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -189,7 +188,11 @@ func TestRemoveCluster_MergeFails_NothingChanged(t *testing.T) {
 	if result.Status != "partial" || len(argocd.deletedServers) != 0 || len(mgr.stripped) != 0 {
 		t.Fatalf("a failed merge must change nothing on the connection; status %q deleted %v stripped %v", result.Status, argocd.deletedServers, mgr.stripped)
 	}
-	if !strings.Contains(result.Message, "Nothing on the cluster's ArgoCD connection was changed") {
-		t.Fatalf("message must say nothing was changed, got %q", result.Message)
+	if result.Git == nil {
+		t.Fatal("the reply must carry the pull request")
+	}
+	wantMsg := "PR created but merge failed: " + result.Git.PRUrl + ". Nothing on the cluster's ArgoCD connection was changed — Sharko finishes the removal after the PR is merged."
+	if result.Message != wantMsg {
+		t.Fatalf("message:\n got %q\nwant %q", result.Message, wantMsg)
 	}
 }
