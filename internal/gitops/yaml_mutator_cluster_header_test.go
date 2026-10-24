@@ -64,3 +64,21 @@ func TestAddClusterEntry_DuplicateLeavesTheBytesAlone(t *testing.T) {
 		t.Fatalf("bytes changed:\nbefore:\n%s\nafter:\n%s", start, out)
 	}
 }
+
+// EP3 dry run round R, R13: a file that opens with an older schema line
+// gets one schema line after a rewrite, the current one.
+func TestClusterMutators_OlderSchemaLine_NeverTwo(t *testing.T) {
+	const older = "# yaml-language-server: $schema=https://example.test/old/managed-clusters.json"
+	start := append([]byte(older+"\n"+testFileHeader), headedFile(t, "a")[len(testFileHeader):]...)
+	out, err := AddClusterEntry(start, ClusterEntryInput{Name: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if n := strings.Count(text, "yaml-language-server:"); n != 1 {
+		t.Fatalf("the file has %d schema lines:\n%s", n, text)
+	}
+	if strings.Contains(text, older) || !strings.HasPrefix(text, testFileHeader+models.ManagedClustersSchemaHeader+"\n") {
+		t.Fatalf("top of the file:\n%s", text)
+	}
+}

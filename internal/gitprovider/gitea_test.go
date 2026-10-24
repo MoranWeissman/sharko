@@ -1475,6 +1475,9 @@ func TestGiteaProviderGetFileContent_EmptyListIsNotFound(t *testing.T) {
 		{"missing path in a repo with commits", false, 404, `{"message":"not found"}`, true},
 		{"path is a directory", false, 200, `[{"name":"x","path":"a/x","type":"file"}]`, true},
 		{"a real file that holds only []", false, 200, `{"name":"f.json","path":"f.json","type":"file"}`, false},
+		// EP3 dry run round R, R13: a check that fails is an error, never
+		// "not found", so a real file holding [] is not taken for missing.
+		{"the check fails", false, 503, `{"message":"busy"}`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1485,6 +1488,12 @@ func TestGiteaProviderGetFileContent_EmptyListIsNotFound(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := p.GetFileContent(context.Background(), "f.json", "main")
+			if tc.contentsStatus == 503 {
+				if err == nil || errors.Is(err, ErrFileNotFound) {
+					t.Fatalf("a failed check must be an error that is not ErrFileNotFound, got content %q err %v", got, err)
+				}
+				return
+			}
 			if tc.wantNotFound {
 				if !errors.Is(err, ErrFileNotFound) {
 					t.Fatalf("want ErrFileNotFound, got content %q err %v", got, err)
@@ -1495,5 +1504,21 @@ func TestGiteaProviderGetFileContent_EmptyListIsNotFound(t *testing.T) {
 				t.Fatalf("a real file holding [] must come back as it is, got %q err %v", got, err)
 			}
 		})
+	}
+}
+
+// EP3 dry run round R, R13: the check stops when the request is cancelled.
+func TestGiteaProviderGetFileContent_EmptyList_CancelledCheckIsAnError(t *testing.T) {
+	srv := giteaEmptyListFake(t, false, 200, `{"name":"f.json","path":"f.json","type":"file"}`)
+	defer srv.Close()
+	p, err := NewGiteaProvider(srv.URL, "o", "r", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	got, err := p.GetFileContent(ctx, "f.json", "main")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got content %q err %v", got, err)
 	}
 }
