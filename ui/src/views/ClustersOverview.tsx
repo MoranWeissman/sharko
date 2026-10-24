@@ -343,6 +343,12 @@ export function ClustersOverview() {
   // allClusters in fetchData's dep array (which would cause the fetch effect
   // to re-fire on every state update).
   const allClustersRef = useRef<Cluster[]>([]);
+  // True while the Adopt or Take ownership window is open on this page. The
+  // error screen takes the whole page, and with it the open window, so a
+  // quiet reload that fails while a window is open must not bring it up
+  // (EP3 round S, S34). The reload runs again when the window closes.
+  const actionDialogOpenRef = useRef(false);
+  const reloadFailedWhileDialogOpenRef = useRef(false);
   // True once a load has worked. From then on every reload is quiet: the page
   // stays on screen and any open dialog (like the Adopt success screen with
   // its PR link) is not thrown away by a full-page loading swap.
@@ -672,7 +678,10 @@ export function ClustersOverview() {
         // next refresh try to recover. Read the prior length via the ref
         // (NOT inside a state updater, which would violate purity in
         // StrictMode).
-        if (allClustersRef.current.length === 0) {
+        if (actionDialogOpenRef.current) {
+          // Keep the page, and the open window, as it is. Try again on close.
+          reloadFailedWhileDialogOpenRef.current = true;
+        } else if (allClustersRef.current.length === 0) {
           setError(message);
           setHealthStats(null);
           // Nothing to keep on screen: let the retry show the loading state.
@@ -800,13 +809,21 @@ export function ClustersOverview() {
     };
   }, [addClusterOpen]);
 
-  // Auto-refresh every 30s
+  // Auto-refresh every 30s, but not while the Adopt or Take ownership window
+  // is open (S34): the same rule as the cluster page.
+  const actionDialogOpen = adoptDialogOpen || takeoverTarget !== null;
   useEffect(() => {
+    actionDialogOpenRef.current = actionDialogOpen;
+    if (actionDialogOpen) return;
+    if (reloadFailedWhileDialogOpenRef.current) {
+      reloadFailedWhileDialogOpenRef.current = false;
+      void fetchData(true);
+    }
     const interval = setInterval(() => {
       void fetchData(true);
     }, 30_000);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [fetchData, actionDialogOpen]);
 
   // `presetOwnership` (V2-cleanup-89.3): the collapsed Discovered-clusters
   // hint opens this same dialog pre-set to "I do", since that's the only

@@ -22,6 +22,8 @@ vi.mock('@/services/api', async () => {
     ...actual,
     testClusterConnection: vi.fn(),
     adoptClusters: vi.fn(),
+    // The Take ownership window waits on its checks for the whole test.
+    takeoverPreflight: () => new Promise(() => {}),
     api: {
       getClusters: (...a: unknown[]) => mockGetClusters(...a),
       getAddonCatalog: () => Promise.resolve({ addons: [] }),
@@ -181,5 +183,30 @@ describe('ClustersOverview - round S', () => {
     expect(await screen.findByTestId('discovered-empty')).toHaveTextContent(
       'Sharko checked ArgoCD — no other clusters there to adopt.',
     );
+  });
+
+  // S34
+  it('no 30 s reload while Take ownership is open, and the window stays on screen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockGetClusters.mockResolvedValue(response({ clusters: [], health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 } }));
+      mockGetAvailable.mockResolvedValue([{ name: 'stage-1', server_url: 'https://stage-1:6443' }]);
+      renderView();
+      await waitFor(() => expect(hint()).not.toBeNull());
+      await openAddClusterAsUser();
+      fireEvent.click(await screen.findByRole('button', { name: 'Take ownership of stage-1' }));
+      expect(await screen.findByText('Take ownership of this cluster')).toBeInTheDocument();
+      // Any reload from now on fails. With no rows on the page, a failed
+      // reload used to bring up the error screen and take the window away.
+      mockGetClusters.mockRejectedValue(new Error('ArgoCD is not answering'));
+      const before = mockGetClusters.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(65_000);
+      });
+      expect(mockGetClusters.mock.calls.length).toBe(before);
+      expect(screen.getByText('Take ownership of this cluster')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
