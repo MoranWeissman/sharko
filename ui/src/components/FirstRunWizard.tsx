@@ -1835,7 +1835,17 @@ export function FirstRunWizard({
           d.provider === 'github' || d.provider === 'gitea' ? d.provider : ''
         const touched = touchedFieldsRef.current
         setForm((prev) => {
-          const gitUrl = touched.has('git_url') ? prev.git_url : prev.git_url || d.repo_url || ''
+          // The provider the default address belongs to: read from the
+          // address when the host says it, else the default provider.
+          const defaultURL = d.repo_url || ''
+          const defaultURLProvider = detectGitProvider(defaultURL) ?? (provider || undefined)
+          // The user already picked a provider the default address does not
+          // belong to (Gitea, with a github.com default): leave the address
+          // empty for them to type, never a mismatched pair.
+          const urlFitsUserProvider =
+            prev.git_provider === '' || defaultURLProvider === undefined || defaultURLProvider === prev.git_provider
+          const gitUrl =
+            touched.has('git_url') || prev.git_url || !urlFitsUserProvider ? prev.git_url : defaultURL
           // Never put a provider on an address it does not match, such as
           // Gitea on a github.com address.
           const detected = detectGitProvider(gitUrl)
