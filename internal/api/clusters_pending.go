@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -100,12 +101,30 @@ func resolvePendingRegistrations(
 				Branch:      prs[i].SourceBranch,
 				OpenedAt:    prs[i].CreatedAt,
 				Operation:   h.operation,
-				PRNumber:    prs[i].ID,
+				PRNumber:    pendingPRNumber(prs[i]),
 			})
 			break
 		}
 	}
 	return out
+}
+
+// pendingPRNumber is the pull request's number. A provider that left the
+// number out gets it from the end of the pull request's address
+// (".../pull/12"). When neither has it, it is 0 and pr_number is left out
+// of the answer, so no screen ever shows "PR #0" (EP3 dry run round R, R7).
+func pendingPRNumber(pr gitprovider.PullRequest) int {
+	if pr.ID > 0 {
+		return pr.ID
+	}
+	tail := strings.TrimRight(pr.URL, "/")
+	if i := strings.LastIndex(tail, "/"); i >= 0 {
+		tail = tail[i+1:]
+	}
+	if n, err := strconv.Atoi(tail); err == nil && n > 0 {
+		return n
+	}
+	return 0
 }
 
 // dropPendingForManagedClusters is the LW-18 (Part 2) filter: a register

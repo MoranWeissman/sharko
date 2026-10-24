@@ -268,7 +268,7 @@ func TestFix_NoMadeUpGroup(t *testing.T) {
 			t.Errorf("%s: placeholder missing:\n%s", perm, unknown.YAML)
 		}
 		known := generateFix(perm, "x", "system:serviceaccount:sharko:sharko")
-		if !strings.Contains(known.YAML, "name: system:serviceaccount:sharko:sharko") || strings.Contains(known.YAML, unknownSubjectName) {
+		if !strings.Contains(known.YAML, `name: "system:serviceaccount:sharko:sharko"`) || strings.Contains(known.YAML, unknownSubjectName) {
 			t.Errorf("%s: real account not used:\n%s", perm, known.YAML)
 		}
 	}
@@ -284,7 +284,7 @@ func TestDiagnose_FixNamesTheRealAccount(t *testing.T) {
 		return true, nil, errors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "", nil)
 	})
 	report := DiagnoseCluster(context.Background(), client, "sharko-test", "spoke-1", "N/A")
-	if len(report.SuggestedFixes) == 0 || !strings.Contains(report.SuggestedFixes[0].YAML, "name: sharko-bot") {
+	if len(report.SuggestedFixes) == 0 || !strings.Contains(report.SuggestedFixes[0].YAML, `name: "sharko-bot"`) {
 		t.Fatalf("fix should name sharko-bot: %+v", report.SuggestedFixes)
 	}
 }

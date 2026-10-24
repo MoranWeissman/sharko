@@ -307,6 +307,16 @@ func isTerminating(ns *corev1.Namespace) bool {
 	return ns != nil && ns.Status.Phase == corev1.NamespaceTerminating
 }
 
+// NamespaceIsTerminating and WaitForNamespaceGone are the same wait, for
+// Check permissions (internal/diagnose), so both checks treat a namespace
+// still being deleted the same way (EP3 dry run round R, R12).
+func NamespaceIsTerminating(ns *corev1.Namespace) bool { return isTerminating(ns) }
+
+// WaitForNamespaceGone: see waitForNamespaceGone.
+func WaitForNamespaceGone(ctx context.Context, client kubernetes.Interface, namespace string) bool {
+	return waitForNamespaceGone(ctx, client, namespace)
+}
+
 // waitForNamespaceGone waits until a namespace that is being deleted is
 // really gone. It returns true when it is gone, false when it is still there
 // after the wait limit (or the context ended), in which case Stage 1 carries

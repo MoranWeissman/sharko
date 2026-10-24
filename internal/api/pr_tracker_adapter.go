@@ -64,11 +64,13 @@ func followUpToTracker(f *orchestrator.ClusterFollowUp) *prtracker.ClusterFollow
 		return nil
 	}
 	return &prtracker.ClusterFollowUp{
-		Cleanup:           f.Cleanup,
-		KeepConnection:    f.KeepConnection,
-		CredentialKey:     f.CredentialKey,
-		CredentialsSource: f.CredentialsSource,
-		CredentialRoleARN: f.CredentialRoleARN,
+		Cleanup:              f.Cleanup,
+		KeepConnection:       f.KeepConnection,
+		CredentialKey:        f.CredentialKey,
+		CredentialsSource:    f.CredentialsSource,
+		CredentialRoleARN:    f.CredentialRoleARN,
+		Finish:               f.Finish,
+		PreserveLegacyLabels: f.PreserveLegacyLabels,
 	}
 }
 
@@ -79,11 +81,13 @@ func followUpFromTracker(f *prtracker.ClusterFollowUp) *orchestrator.ClusterFoll
 		return nil
 	}
 	return &orchestrator.ClusterFollowUp{
-		Cleanup:           f.Cleanup,
-		KeepConnection:    f.KeepConnection,
-		CredentialKey:     f.CredentialKey,
-		CredentialsSource: f.CredentialsSource,
-		CredentialRoleARN: f.CredentialRoleARN,
+		Cleanup:              f.Cleanup,
+		KeepConnection:       f.KeepConnection,
+		CredentialKey:        f.CredentialKey,
+		CredentialsSource:    f.CredentialsSource,
+		CredentialRoleARN:    f.CredentialRoleARN,
+		Finish:               f.Finish,
+		PreserveLegacyLabels: f.PreserveLegacyLabels,
 	}
 }
 

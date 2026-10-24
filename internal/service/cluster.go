@@ -395,6 +395,10 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 			if argoCluster.Name != clusterName {
 				continue
 			}
+			// The cluster page reads these two marks from the detail and
+			// the comparison calls, same as the list (EP3 dry run round R,
+			// R10).
+			cluster.Adopted, cluster.TakenOver = argocdOwnershipMarks(argoCluster)
 			if argoCluster.Name == "in-cluster" || strings.HasPrefix(argoCluster.Server, "https://kubernetes.default") {
 				break
 			}
@@ -481,6 +485,10 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			if argoCluster.Name != clusterName {
 				continue
 			}
+			// The cluster page reads these two marks from the detail and
+			// the comparison calls, same as the list (EP3 dry run round R,
+			// R10).
+			cluster.Adopted, cluster.TakenOver = argocdOwnershipMarks(argoCluster)
 			if argoCluster.Name == "in-cluster" || strings.HasPrefix(argoCluster.Server, "https://kubernetes.default") {
 				break
 			}

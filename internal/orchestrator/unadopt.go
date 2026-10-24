@@ -2,13 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
-	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // UnadoptCluster reverses a cluster adoption:
@@ -170,13 +170,38 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		if updatedClusterAddons != nil {
 			files = map[string][]byte{clusterAddonsPath: updatedClusterAddons}
 		}
-		deletePaths = append(deletePaths, valuesPath)
+		if _, exists := o.readFileIfExists(ctx, valuesPath); exists {
+			deletePaths = append(deletePaths, valuesPath)
+		}
+	}
+
+	// Nothing left in Git: an earlier un-adopt's pull request already
+	// merged, and only its ArgoCD side is left (it failed then). Do that
+	// now instead of opening an empty pull request (EP3 dry run round R,
+	// R13).
+	if len(files) == 0 && len(deletePaths) == 0 {
+		if err := o.finishUnadopt(ctx, name, followUp); err != nil {
+			result.Status = "partial"
+			result.Error = err.Error()
+			result.Message = fmt.Sprintf("The pull request was merged, but Sharko could not take its marks off the ArgoCD cluster Secret for %s: %s", name, err.Error())
+			return result, nil
+		}
+		result.Status = "success"
+		result.Message = UnadoptNothingInGitMessage(name)
+		return result, nil
 	}
 
 	meta := o.prMeta(req.AutoMerge, "unadopt-cluster", fmt.Sprintf("Unadopt cluster %s", name), name, "")
 	fu := followUp
 	meta.FollowUp = &fu
 	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("unadopt cluster %s", name), meta)
+	if gitErr != nil && gitResult != nil && errors.Is(gitErr, ErrPRNotRecorded) {
+		result.Status = "partial"
+		result.Error = gitErr.Error()
+		result.Message = PRNotRecordedMessage("un-adopt", gitResult.PRUrl)
+		result.Git = gitResult
+		return result, nil
+	}
 	if gitErr != nil {
 		if gitResult != nil {
 			result.Status = "partial"
@@ -218,6 +243,13 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 // could not be opened. Nothing was changed anywhere at that point.
 const UnadoptGitFailedMessage = "Git commit failed during unadoption — nothing was changed on the cluster's ArgoCD connection"
 
+// UnadoptNothingInGitMessage is the answer when the cluster is already gone
+// from Git, so un-adopt only had its ArgoCD side left to do. Exported so
+// tests pin it by exact text.
+func UnadoptNothingInGitMessage(name string) string {
+	return fmt.Sprintf("Cluster %s was already gone from Git, so no pull request was needed. Sharko took its marks off the ArgoCD cluster Secret.", name)
+}
+
 // UnadoptWaitingForMergeMessage is the message an un-adopt answers with
 // while its pull request waits to be merged. Exported so tests pin it by
 // exact text.
@@ -246,18 +278,8 @@ func (o *Orchestrator) finishUnadopt(ctx context.Context, name string, followUp 
 		log.Info("ArgoCD secret unadopted — labels removed", "cluster", name)
 	}
 
-	if o.credProvider != nil {
-		lookupKey := followUp.CredentialKey
-		if lookupKey == "" {
-			lookupKey = name
-		}
-		var creds *providers.Kubeconfig
-		var credErr error
-		if o.credsRouter != nil {
-			creds, credErr = o.credsRouter.Fetch(name, lookupKey, followUp.CredentialsSource, followUp.CredentialRoleARN)
-		} else {
-			creds, credErr = providers.GetCredentialsWithOptionalRole(o.credProvider, lookupKey, followUp.CredentialRoleARN)
-		}
+	if o.credProvider != nil || o.credsRouter != nil {
+		creds, credErr := o.followUpCredentials(name, followUp)
 		if credErr == nil && creds != nil {
 			o.deleteAllAddonSecrets(ctx, name, creds.Raw) // best-effort
 		} else {

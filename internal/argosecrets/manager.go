@@ -1557,7 +1557,18 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			name, LabelManagedBy, ManagedByValue)
 	}
 
-	if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, existing.Name, metav1.DeleteOptions{}); err != nil {
+	// Delete exactly the Secret that was checked: if it was replaced or
+	// changed since the read, the API server refuses and nothing is
+	// deleted (EP3 dry run round R, R8).
+	uid, rv := existing.UID, existing.ResourceVersion
+	opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{}}
+	if uid != "" {
+		opts.Preconditions.UID = &uid
+	}
+	if rv != "" {
+		opts.Preconditions.ResourceVersion = &rv
+	}
+	if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, existing.Name, opts); err != nil {
 		return fmt.Errorf("deleting secret %q in namespace %q: %w", existing.Name, m.namespace, err)
 	}
 
@@ -1594,6 +1605,82 @@ func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) er
 // Secret before the merge. Kept in lockstep with
 // internal/orchestrator.AnnotationAdoptPendingPR.
 const AnnotationAdoptPendingPR = "sharko.dev/adopt-pending-pr"
+
+// AnnotationRemoveKeepPendingPR is put on a connection a removal (or an
+// un-adopt) keeps, before its pull request opens. It holds the pull
+// request's number ("pending" for the moment before the number is known).
+// While it is on the Secret, the orphan sweep and the leftovers list never
+// touch it, even after the pull request merged and the tracker dropped it.
+// The finish step takes it off together with Sharko's label (EP3 dry run
+// round R, R1). Kept in lockstep with
+// internal/orchestrator.AnnotationRemoveKeepPendingPR.
+const AnnotationRemoveKeepPendingPR = "sharko.dev/remove-keep-pending-pr"
+
+// AnnotationTakeoverPendingPR holds the number of the take over pull
+// request that is still waiting to be merged. Like the adopt mark, it is
+// the only thing a take over puts on the Secret before the merge (R5).
+// Kept in lockstep with internal/orchestrator.AnnotationTakeoverPendingPR.
+const AnnotationTakeoverPendingPR = "sharko.dev/takeover-pending-pr"
+
+// PendingPRMarks are the marks that say "a pull request is still waiting
+// to change this connection". The pass that finishes waiting marks
+// (FinishWaitingClusterMarks in internal/api) looks for each of them.
+var PendingPRMarks = []string{AnnotationAdoptPendingPR, AnnotationTakeoverPendingPR, AnnotationRemoveKeepPendingPR}
+
+// RemoveAnnotationIfValue takes one annotation off the named cluster Secret
+// only when it holds exactly value, so a mark that a newer pull request
+// wrote is never taken off by an older one. A missing Secret, a missing
+// annotation or a different value is (false, nil) and writes nothing.
+func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	if cur, ok := existing.Annotations[key]; !ok || cur != value {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	delete(updated.Annotations, key)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("removing annotation %q from secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation removed from cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
+// ReleaseKeptConnection is the end of a removal or un-adopt that keeps the
+// connection: in one write it takes Sharko's ownership label off the
+// Secret and takes the remove-keep mark off. Nothing else changes. A
+// missing Secret is (false, nil). A Secret with neither is (false, nil)
+// and writes nothing.
+func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	_, marked := existing.Annotations[AnnotationRemoveKeepPendingPR]
+	labelled := existing.Labels[LabelManagedBy] == ManagedByValue
+	if !marked && !labelled {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	if labelled {
+		delete(updated.Labels, LabelManagedBy)
+	}
+	delete(updated.Annotations, AnnotationRemoveKeepPendingPR)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("handing back the kept connection in secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] kept connection handed back — Sharko's label and its keep mark taken off",
+		"cluster", name, "namespace", m.namespace)
+	return true, nil
+}
 
 // RemoveAnnotation takes one annotation off the named cluster Secret.
 // Returns (false, nil) when the annotation was not there; nothing is

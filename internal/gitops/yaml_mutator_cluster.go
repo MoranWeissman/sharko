@@ -303,19 +303,29 @@ func saveKeepingHeader(data []byte, spec models.ManagedClustersSpec) ([]byte, er
 }
 
 // keepLeadingComments returns updated with the leading "#" lines of before
-// that updated does not already open with put back in front, in order.
+// that updated does not already open with put back in front, in order. An
+// older schema line from before is dropped when updated opens with its own,
+// so the file never carries two schema lines that disagree (EP3 dry run
+// round R, R13).
 func keepLeadingComments(before, updated []byte) []byte {
 	oldLead := leadingCommentLines(before)
 	if len(oldLead) == 0 {
 		return updated
 	}
 	have := map[string]struct{}{}
+	newHasSchema := false
 	for _, l := range leadingCommentLines(updated) {
 		have[l] = struct{}{}
+		if isSchemaLine(l) {
+			newHasSchema = true
+		}
 	}
 	var head strings.Builder
 	for _, l := range oldLead {
 		if _, dup := have[l]; dup {
+			continue
+		}
+		if newHasSchema && isSchemaLine(l) {
 			continue
 		}
 		head.WriteString(l)
@@ -325,6 +335,12 @@ func keepLeadingComments(before, updated []byte) []byte {
 		return updated
 	}
 	return append([]byte(head.String()), updated...)
+}
+
+// isSchemaLine reports whether a comment line is a yaml-language-server
+// schema line.
+func isSchemaLine(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#")), "yaml-language-server:")
 }
 
 // leadingCommentLines returns the lines at the top of data that start with

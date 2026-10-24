@@ -37,6 +37,10 @@ type GitRepoConfig struct {
 	PAT          string `json:"pat,omitempty" yaml:"pat,omitempty"`
 }
 
+// UnreadableRepoAddressSentence is what Sharko says about a Git repository
+// address it cannot read. It never repeats the address.
+const UnreadableRepoAddressSentence = "Sharko cannot read the Git repository address. Check that it looks like https://host/owner/repo."
+
 // ParseRepoURL populates provider, owner/repo (or org/project/repo) from a Git URL.
 // Supports:
 //   - https://github.com/owner/repo
@@ -60,7 +64,10 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 
 	u, err := url.Parse(strings.TrimSuffix(g.RepoURL, ".git"))
 	if err != nil {
-		return fmt.Errorf("invalid git URL: %w", err)
+		// Never the parser's own text: it repeats the whole address, and a
+		// token written into it would come back to the browser (EP3 dry
+		// run round R, R9).
+		return errors.New(UnreadableRepoAddressSentence)
 	}
 
 	host := strings.ToLower(u.Hostname())

@@ -279,3 +279,24 @@ func TestPendingRegistration_JSONHasOperationAndPRNumber(t *testing.T) {
 		t.Fatalf("json: %s", b)
 	}
 }
+
+// R7: pr_number is never 0. A provider that left the number out gets it
+// from the pull request's address; with neither, pr_number is left out.
+func TestResolvePendingRegistrations_PRNumberIsNeverZero(t *testing.T) {
+	gp := &fakeGP{prs: []gitprovider.PullRequest{
+		{Title: "sharko: register cluster a", URL: "https://github.com/org/repo/pull/31"},
+		{Title: "sharko: register cluster b", URL: "https://gitea.example.invalid/org/repo/pulls/32/"},
+		{Title: "sharko: register cluster c", URL: ""},
+	}}
+	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	if len(got) != 3 || got[0].PRNumber != 31 || got[1].PRNumber != 32 || got[2].PRNumber != 0 {
+		t.Fatalf("pr numbers: %+v", got)
+	}
+	b, err := json.Marshal(got[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "pr_number") {
+		t.Fatalf("a pull request with no known number must leave pr_number out, got %s", b)
+	}
+}

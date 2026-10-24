@@ -2,6 +2,7 @@ package diagnose
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	authv1 "k8s.io/api/authentication/v1"
@@ -9,6 +10,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
 // DiagnosticReport contains the results of a cluster permission diagnostic.
@@ -34,6 +37,11 @@ type Fix struct {
 
 const testSecretName = "sharko-diagnose-test"
 
+// namespaceStillDeletingFmt is what Check permissions says when the test
+// namespace is still being deleted after the wait. It is not a missing
+// right, so it comes with no fix.
+const namespaceStillDeletingFmt = "The test namespace %s is still being deleted, from an earlier check. Wait a minute, then check again."
+
 // DiagnoseCluster runs a series of permission checks against a remote cluster
 // and returns a report with pass/fail results and suggested fixes for failures.
 //
@@ -52,28 +60,50 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 	}
 
 	subject := discoverSubject(ctx, client)
-	seen := map[string]bool{}
 	record := func(name string, err error) bool {
 		check := PermCheck{Permission: name, Passed: err == nil}
 		if err != nil {
 			check.Error = err.Error()
-			fix := generateFix(name, namespace, subject)
-			if !seen[fix.YAML] {
-				seen[fix.YAML] = true
-				report.SuggestedFixes = append(report.SuggestedFixes, fix)
-			}
+			report.SuggestedFixes = addFix(report.SuggestedFixes, generateFix(name, namespace, subject))
 		}
 		report.NamespaceAccess = append(report.NamespaceAccess, check)
 		return err == nil
 	}
+
+	// The cleanup is deferred, so whatever happens below, a namespace this
+	// run made is removed again (EP3 dry run round R, R12).
+	createdNamespace := false
+	defer func() {
+		if !createdNamespace {
+			return
+		}
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := client.CoreV1().Namespaces().Delete(cctx, namespace, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			record("remove namespace "+namespace, err)
+		}
+	}()
 
 	// 1. list namespaces
 	_, err := client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{Limit: 1})
 	record("list namespaces", err)
 
 	// 2. get namespace. "Not there yet" is fine: it means Sharko may look,
-	// and the next step makes it.
-	_, err = client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	// and the next step makes it. A namespace an earlier check is still
+	// deleting is waited out first, like Test connection does: it refuses
+	// new Secrets, which would read as a missing right.
+	existing, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if err == nil && verify.NamespaceIsTerminating(existing) {
+		if !verify.WaitForNamespaceGone(ctx, client, namespace) {
+			record("get namespace "+namespace, nil)
+			report.NamespaceAccess = append(report.NamespaceAccess, PermCheck{
+				Permission: "namespace " + namespace + " ready",
+				Error:      fmt.Sprintf(namespaceStillDeletingFmt, namespace),
+			})
+			return report
+		}
+		err = apierrors.NewNotFound(corev1.Resource("namespaces"), namespace)
+	}
 	missing := apierrors.IsNotFound(err)
 	if missing {
 		err = nil
@@ -81,7 +111,6 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 	record("get namespace "+namespace, err)
 
 	// 3. create the namespace when it is missing.
-	createdNamespace := false
 	nsUsable := true
 	if missing {
 		_, err = client.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
@@ -98,13 +127,19 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 		nsUsable = record("create namespace "+namespace, err)
 	}
 
-	// 4. secrets, only when there is a namespace to put them in.
+	// 4. secrets, only when there is a namespace to put them in. A test
+	// Secret left over from an earlier run (its delete failed) counts as
+	// "can create": the create right is plainly there, and the get and
+	// delete below then clean it up instead of failing every run after.
 	if nsUsable {
 		createOK := record("create secret in "+namespace, func() error {
 			_, err := client.CoreV1().Secrets(namespace).Create(ctx, &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{Name: testSecretName, Namespace: namespace},
 				StringData: map[string]string{"test": "diagnose"},
 			}, metav1.CreateOptions{})
+			if apierrors.IsAlreadyExists(err) {
+				return nil
+			}
 			return err
 		}())
 		if createOK {
@@ -117,15 +152,7 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 		}
 	}
 
-	// 5. leave the cluster as we found it.
-	if createdNamespace {
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		defer cancel()
-		if err := client.CoreV1().Namespaces().Delete(cctx, namespace, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			record("remove namespace "+namespace, err)
-		}
-	}
-
+	// 5. the deferred cleanup above leaves the cluster as we found it.
 	return report
 }
 

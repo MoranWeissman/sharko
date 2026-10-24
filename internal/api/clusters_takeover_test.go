@@ -428,8 +428,13 @@ func TestTakeover_400_WhenTheConfirmationIsMissing(t *testing.T) {
 	}
 }
 
+// TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner — the pull
+// request merges at once (auto-merge), so the swap happens on this call.
+// Without auto-merge the take over waits; see
+// TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark.
 func TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner(t *testing.T) {
 	gp := newTakeoverFakeGP()
+	autoMerge := true
 	_, router, k8s := takeoverTestServer(t, gp,
 		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
 		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
@@ -440,7 +445,7 @@ func TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner(t *testing.T) {
 	// NOT be acknowledgeable; that case is pinned as a 409 below.
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
+		TakeoverRequest{Yes: true, AutoMerge: &autoMerge, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("acked takeover: got %d, want 200 (body=%s)", w.Code, w.Body.String())
@@ -857,8 +862,8 @@ func TestTakeover_Twice_OpensOnePullRequestAndSaysItIsWaiting(t *testing.T) {
 	}
 	var r1 TakeoverResponse
 	_ = json.Unmarshal(first.Body.Bytes(), &r1)
-	if !strings.HasSuffix(r1.Message, " The pull request that adds it to the fleet record in Git is open: #1, https://example.invalid/pr/1. Merge it to finish.") {
-		t.Fatalf("first message = %q", r1.Message)
+	if r1.Message != takeoverWaitingWant || !r1.WaitingForMerge || r1.SecretSwapped {
+		t.Fatalf("first take over: %s", first.Body.String())
 	}
 
 	second := httptest.NewRecorder()
@@ -876,13 +881,99 @@ func TestTakeover_Twice_OpensOnePullRequestAndSaysItIsWaiting(t *testing.T) {
 	if !r2.AlreadyWaiting || r2.Git == nil || r2.Git.PRID != 1 {
 		t.Fatalf("second take over does not point at pull request #1: %s", second.Body.String())
 	}
-	want := "Sharko already owned prod-eu's connection, so nothing about it changed. Taking over prod-eu is already waiting in pull request #1: https://example.invalid/pr/1. Sharko did not open a second one. Merge it to finish."
-	if r2.Message != want {
+	want := "Taking over prod-eu is already waiting in pull request #1: https://example.invalid/pr/1. Sharko did not open a second one. Merge it to finish."
+	if r2.Message != want || !r2.WaitingForMerge || r2.SecretSwapped {
 		t.Fatalf("second message:\n%s\nwant:\n%s", r2.Message, want)
 	}
 	for _, m := range []string{r1.Message, r2.Message} {
+		if strings.Contains(m, "Sharko now owns") || strings.Contains(m, "already owned") {
+			t.Fatalf("a take over that is still waiting says Sharko owns the connection: %q", m)
+		}
 		if strings.Contains(m, "Its fleet record is up to date") {
 			t.Fatalf("the old untrue sentence is back: %q", m)
 		}
+	}
+}
+
+// takeoverWaitingWant is what a take over says while its pull request waits.
+const takeoverWaitingWant = "Pull request #1 is open: https://example.invalid/pr/1. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection and keeps the previous owner's labels on it (env). If it is closed without merging, Sharko changes nothing on the connection."
+
+// TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark — EP3 dry run round
+// R, R5. While the pull request is open, the connection keeps its owner and
+// its labels. Only the waiting mark with the pull request number goes on.
+func TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	_, router, k8s := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
+		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var resp TakeoverResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Status != "success" || !resp.WaitingForMerge || resp.SecretSwapped {
+		t.Fatalf("status %q waiting %v swapped %v, want success/true/false", resp.Status, resp.WaitingForMerge, resp.SecretSwapped)
+	}
+	if resp.Message != takeoverWaitingWant {
+		t.Fatalf("message:\n got %q\nwant %q", resp.Message, takeoverWaitingWant)
+	}
+	for _, banned := range []string{"Sharko now owns", "Merge it to finish", "is open: #1"} {
+		if strings.Contains(resp.Message, banned) {
+			t.Fatalf("the old wording %q is back: %q", banned, resp.Message)
+		}
+	}
+
+	secret, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "prod-eu", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret.Labels[argosecrets.LabelManagedBy] != "" {
+		t.Fatalf("the owner changed before the merge: %v", secret.Labels)
+	}
+	if secret.Labels["env"] != "prod" {
+		t.Fatalf("the previous owner's label changed before the merge: %v", secret.Labels)
+	}
+	if got := secret.Annotations[argosecrets.AnnotationTakeoverPendingPR]; got != "1" {
+		t.Fatalf("waiting mark = %q, want the pull request number 1", got)
+	}
+}
+
+// The words say the labels go when the person asked to drop them.
+func TestTakeoverWaitingMessage_DropLabels(t *testing.T) {
+	got := takeoverWaitingMessage("prod-eu", 4, "https://example.invalid/pr/4", false, map[string]string{"env": "prod", "team": "a"})
+	want := "Pull request #4 is open: https://example.invalid/pr/4. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection and takes the previous owner's labels off it (env and team). If it is closed without merging, Sharko changes nothing on the connection."
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	if none := takeoverWaitingMessage("prod-eu", 4, "u", true, nil); none != "Pull request #4 is open: u. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection. If it is closed without merging, Sharko changes nothing on the connection." {
+		t.Fatalf("no labels: %q", none)
+	}
+}
+
+// R7: a register pull request still open for the cluster is a 409 with the
+// plain words, and no second pull request opens.
+func TestTakeover_OpenRegisterPR_Is409(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	gp.open = append(gp.open, gitprovider.PullRequest{ID: 12, Title: "sharko: register cluster prod-eu", URL: "https://example.invalid/pr/12"})
+	_, router, _ := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", nil, nil)}, fakeAppSetReader{})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingSecretOwner}}))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	want := "Cluster prod-eu is already waiting in PR #12: https://example.invalid/pr/12. That pull request registers it. Merge it or close it first, then try again."
+	if got, _ := decodeMap(t, w)["error"].(string); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+	if gp.prs != 0 {
+		t.Fatalf("a pull request was opened: %d", gp.prs)
 	}
 }

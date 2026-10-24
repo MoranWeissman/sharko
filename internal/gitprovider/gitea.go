@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path"
 	"time"
 
@@ -128,22 +129,53 @@ func (g *GiteaProvider) GetFileContent(ctx context.Context, filePath, ref string
 	// empty repo look like a repo with a file in it, and the caller never
 	// saw "file not found". A real file can also hold just `[]`, so ask the
 	// JSON contents API what is at the path before deciding.
-	if bytes.Equal(bytes.TrimSpace(content), []byte("[]")) && !g.isRealFile(filePath, ref) {
-		return nil, fmt.Errorf("get file content: path %q at ref %q: %w", filePath, ref, ErrFileNotFound)
+	if bytes.Equal(bytes.TrimSpace(content), []byte("[]")) {
+		real, checkErr := g.isRealFile(ctx, filePath, ref)
+		if checkErr != nil {
+			return nil, fmt.Errorf("get file content: path %q at ref %q: could not check what is there: %w", filePath, ref, checkErr)
+		}
+		if !real {
+			return nil, fmt.Errorf("get file content: path %q at ref %q: %w", filePath, ref, ErrFileNotFound)
+		}
 	}
 	slog.Info("gitea file fetched", "path", filePath, "ref", ref, "size", len(content))
 	return content, nil
 }
 
 // isRealFile reports whether filePath at ref is a file Gitea can describe.
-// An empty repo, a missing path, a directory and a failed lookup all answer
-// false: the caller only asks after Gitea returned the suspicious `[]` body.
-func (g *GiteaProvider) isRealFile(filePath, ref string) bool {
-	if repo, _, err := g.client.GetRepo(g.owner, g.repo); err == nil && repo != nil && repo.Empty {
-		return false
+// An empty repo, a missing path and a directory answer false. A check that
+// fails for another reason (network, rate limit) is an error, never "not
+// there": the caller could otherwise create the file again over a real
+// one that holds `[]` (EP3 dry run round R, R13). The Gitea SDK takes no
+// context, so ctx is checked before each call.
+func (g *GiteaProvider) isRealFile(ctx context.Context, filePath, ref string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
-	cr, _, err := g.client.GetContents(g.owner, g.repo, ref, filePath)
-	return err == nil && cr != nil && cr.Type == "file"
+	repo, _, err := g.client.GetRepo(g.owner, g.repo)
+	if err != nil {
+		return false, fmt.Errorf("read the repo: %w", err)
+	}
+	if repo != nil && repo.Empty {
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	cr, resp, err := g.client.GetContents(g.owner, g.repo, ref, filePath)
+	if err != nil {
+		switch {
+		case resp != nil && resp.StatusCode == http.StatusNotFound:
+			return false, nil
+		case resp != nil && resp.StatusCode == http.StatusOK:
+			// A 200 the SDK cannot read as one file is a directory
+			// listing: the path is a directory.
+			return false, nil
+		default:
+			return false, fmt.Errorf("read what is at the path: %w", err)
+		}
+	}
+	return cr != nil && cr.Type == "file", nil
 }
 
 // ListDirectory returns the names of entries in a directory at the given ref.

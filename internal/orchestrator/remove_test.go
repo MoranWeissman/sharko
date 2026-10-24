@@ -346,9 +346,11 @@ func TestRemoveCluster_SelfManaged_StripsOwnershipLabelAtRemoval(t *testing.T) {
 	}
 }
 
-// The strip is best-effort: a strip failure must be loud in logs but never
-// block the removal itself.
-func TestRemoveCluster_SelfManaged_StripFailureDoesNotBlockRemoval(t *testing.T) {
+// A strip failure never deletes the Secret, and it is no longer silent: the
+// result is "partial" so the after-merge step is tried again (EP3 dry run
+// round R, R1). Before, it was logged only and the PR tracker dropped the
+// pull request, so nothing ever tried again.
+func TestRemoveCluster_SelfManaged_StripFailureIsPartialAndKeepsTheSecret(t *testing.T) {
 	argocd := newMockArgocd()
 	argocd.existingClusters = []models.ArgocdCluster{
 		{Name: "byo-conn", Server: "https://byo.example.com"},
@@ -369,8 +371,12 @@ func TestRemoveCluster_SelfManaged_StripFailureDoesNotBlockRemoval(t *testing.T)
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if result.Status != "success" {
-		t.Fatalf("strip failure must not block removal, got status %s (error: %s)", result.Status, result.Error)
+	if result.Status != "partial" || result.FailedStep != "strip_sharko_ownership_label" {
+		t.Fatalf("a strip failure must make the result partial so it is tried again, got status %s step %q (error: %s)", result.Status, result.FailedStep, result.Error)
+	}
+	want := "Cluster byo-conn was removed from Git, but Sharko could not yet hand its ArgoCD connection back. The connection is kept and nothing deletes it. Sharko tries again by itself."
+	if result.Message != want {
+		t.Fatalf("message:\n got %q\nwant %q", result.Message, want)
 	}
 	if len(argocd.deletedServers) != 0 {
 		t.Fatalf("self-managed Secret must never be deleted; deleted %v", argocd.deletedServers)

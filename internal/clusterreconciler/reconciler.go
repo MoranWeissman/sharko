@@ -334,6 +334,12 @@ type Deps struct {
 	// means no pull request keeps anything.
 	KeptConnectionsFn func(ctx context.Context) (map[string]bool, error)
 
+	// WaitingMarksFn, when non-nil, runs once per pass, before the diff.
+	// It finishes the waiting marks (adopt, take over, kept connection)
+	// whose pull request the PR tracker no longer has
+	// (api.Server.FinishWaitingClusterMarks, EP3 dry run round R, R4).
+	WaitingMarksFn func(ctx context.Context)
+
 	// EventRecorder (V3 E1) emits Kubernetes events for reconciler-detected
 	// conditions an operator should see via `kubectl get events` — currently
 	// just the label-fight warning (see recordFightCheck). nil means "no
@@ -662,6 +668,9 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// completed (or even attempted) pass, the same distinction
 	// secrets.Reconciler's "no Git connection" branch already draws for its
 	// own engine.
+	if r.deps.WaitingMarksFn != nil {
+		r.deps.WaitingMarksFn(ctx)
+	}
 	start := r.now()
 
 	// Fetch the branch head SHA ONCE for this pass (P2-C1), best effort —
@@ -967,7 +976,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 	}
 
 	// List the actual set (in-argocd, sharko-labeled only).
-	existing, err := r.listManagedSecrets(ctx)
+	existing, duplicateNames, err := r.listManagedSecretsWithDuplicates(ctx)
 	if err != nil {
 		logging.LoggerFromContext(ctx).Error("[clusterreconciler] listing managed cluster Secrets failed — aborting tick",
 			"namespace", r.namespace, "error", err,
@@ -1141,6 +1150,26 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 
 		secret := existing[name]
 
+		// Two Sharko Secrets show this name: Sharko cannot tell which one
+		// is meant, so it deletes neither (R13).
+		if duplicateNames[name] {
+			stats.SkippedKept++
+			continue
+		}
+
+		// The Secret's own Kubernetes name is a cluster in Git, but the
+		// name ArgoCD shows was changed (someone renamed the cluster
+		// inside ArgoCD). It is still that cluster's connection, so it is
+		// never an orphan (EP3 dry run round R, R6).
+		if _, inGit := desired[secret.Name]; inGit && secret.Name != name {
+			stats.SkippedKept++
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] not deleting a connection whose Secret name is a cluster in Git — the cluster name inside it was changed in ArgoCD",
+				"cluster", secret.Name, "shown_name", name, "namespace", r.namespace,
+			)
+			continue
+		}
+
 		// V2-cleanup-28: adopted secrets are delete-proof from the automatic
 		// sweep. They can only be removed via an explicit Unadopt call.
 		// The full corev1.Secret is already cached in existing[name] — no
@@ -1188,6 +1217,20 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 		if keptNow.keeps(name, secret) {
 			stats.SkippedKept++
 			r.releaseKeptConnection(ctx, name, stats)
+			continue
+		}
+
+		// A waiting mark says a pull request still has to finish changing
+		// this connection (a removal that keeps it, a take over, an
+		// adopt). Even when the tracker no longer has that pull request,
+		// the sweep never deletes it: the mark stays until the finish step
+		// takes it off (EP3 dry run round R, R1).
+		if mark := pendingPRMarkOn(secret); mark != "" {
+			stats.SkippedKept++
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] not deleting a connection that left Git — it carries a mark saying a pull request still has to finish with it",
+				"cluster", name, "namespace", r.namespace, "mark", mark, "pr", secret.Annotations[mark],
+			)
 			continue
 		}
 
@@ -1271,8 +1314,14 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 	// Create missing Secrets (in-git ∖ in-argocd). This reconciler is the
 	// SOLE writer of managed-cluster addon labels; register-time bootstrap
 	// (orchestrator Ensure) is a separate, unaffected path.
+	// A create that finds the Secret already there means a live Secret
+	// carries that Kubernetes name. Nothing is deleted under that name in
+	// this tick (EP3 dry run round R, R6).
+	createdOverLive := map[string]bool{}
 	for _, entry := range toCreate {
-		r.createOne(ctx, entry, v4.labelsFor(entry.Name), stats)
+		if r.createOne(ctx, entry, v4.labelsFor(entry.Name), stats) == createFoundExisting {
+			createdOverLive[entry.Name] = true
+		}
 	}
 
 	// Orphan-sweep sanity guard (H2 forward guard, V2-cleanup-60.2): when
@@ -1312,6 +1361,14 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 	// values so we can re-verify the ownership label as a defensive last check.
 	for _, name := range toDelete {
 		secret := existing[name]
+		if createdOverLive[secret.Name] || createdOverLive[name] {
+			stats.SkippedKept++
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] not deleting a connection that Sharko just tried to create under the same name — the create found it already there",
+				"cluster", name, "secret", secret.Name, "namespace", r.namespace,
+			)
+			continue
+		}
 		r.deleteOne(ctx, name, secret, stats)
 	}
 
@@ -2230,18 +2287,66 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 // invisible to the reconciler — the cornerstone of the ownership model
 // (design doc §9: "without sharko label → never touched").
 func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1.Secret, error) {
+	out, _, err := r.listManagedSecretsWithDuplicates(ctx)
+	return out, err
+}
+
+// listManagedSecretsWithDuplicates is listManagedSecrets plus the cluster
+// names that two or more Sharko Secrets share. Only one of them can sit in
+// the map, so the sweep must never delete any Secret under such a name: it
+// cannot tell which one is meant. Each one is logged as a warning (EP3 dry
+// run round R, R13).
+func (r *Reconciler) listManagedSecretsWithDuplicates(ctx context.Context) (map[string]*corev1.Secret, map[string]bool, error) {
 	list, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: LabelManagedBy + "=" + LabelValueSharko,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing secrets in namespace %q: %w", r.namespace, err)
+		return nil, nil, fmt.Errorf("listing secrets in namespace %q: %w", r.namespace, err)
 	}
 	out := make(map[string]*corev1.Secret, len(list.Items))
+	var dup map[string]bool
 	for i := range list.Items {
 		s := &list.Items[i]
-		out[argosecrets.ClusterNameOf(s)] = s
+		name := argosecrets.ClusterNameOf(s)
+		if first, seen := out[name]; seen {
+			if dup == nil {
+				dup = map[string]bool{}
+			}
+			dup[name] = true
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] two Sharko cluster Secrets show the same cluster name — Sharko deletes neither and changes neither until one is renamed or removed",
+				"cluster", name, "namespace", r.namespace, "secret", first.Name, "other_secret", s.Name,
+			)
+			// Keep the first one, in list order, so the map does not
+			// change between ticks for the same list.
+			continue
+		}
+		out[name] = s
 	}
-	return out, nil
+	return out, dup, nil
+}
+
+// createOutcome says how createOne ended, so the sweep knows when a create
+// found a live Secret under the same Kubernetes name.
+type createOutcome int
+
+const (
+	createSkipped createOutcome = iota
+	createDone
+	createFoundExisting
+)
+
+// pendingPRMarkOn returns the first waiting mark on the Secret, or "".
+func pendingPRMarkOn(secret *corev1.Secret) string {
+	if secret == nil {
+		return ""
+	}
+	for _, key := range argosecrets.PendingPRMarks {
+		if _, ok := secret.Annotations[key]; ok {
+			return key
+		}
+	}
+	return ""
 }
 
 // createOne builds and writes a single ArgoCD cluster Secret. Per-cluster
@@ -2251,7 +2356,7 @@ func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1
 // The "skip if same-name unlabeled Secret exists" branch implements
 // design doc §9: an unlabeled Secret is Adopt territory; this
 // reconciler must not silently overwrite it.
-func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, v4AddonLabels map[string]string, stats *reconcileStats) {
+func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, v4AddonLabels map[string]string, stats *reconcileStats) createOutcome {
 	log := logging.LoggerFromContext(ctx)
 	// Defensive: a same-name Secret may already exist without our label
 	// (operator-created, or adopted-by-another-tool). The list step
@@ -2276,7 +2381,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't check whether an ArgoCD cluster secret already exists for this cluster: "+getErr.Error(), nil)
-		return
+		return createSkipped
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
 		// R3-10: Notice if this connection lost its ownership label. The Get
@@ -2318,7 +2423,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		})
 		r.recordReconcile(entry.Name, OutcomeSkipped,
 			"An ArgoCD cluster secret already exists for this cluster without Sharko's ownership label — Sharko will not overwrite it. Use Adopt to bring it under Sharko's management.", nil)
-		return
+		return createSkipped
 	}
 
 	// Resolve credentials, through the ONE route a write takes — the same
@@ -2364,7 +2469,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		// classifyFailureReason still buckets the metric the same way.
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't fetch this cluster's credentials from the secrets backend. "+credsafe.Message, nil)
-		return
+		return createSkipped
 	}
 
 	// Build the Secret. We reuse argosecrets.ClusterSecretSpec + the
@@ -2438,7 +2543,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't build the ArgoCD cluster secret for this cluster: "+buildErr.Error(), nil)
-		return
+		return createSkipped
 	}
 
 	// Defense-in-depth: re-apply the label even though the canonical builder
@@ -2460,6 +2565,10 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	}
 
 	if _, createErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{}); createErr != nil {
+		outcome := createSkipped
+		if apierrors.IsAlreadyExists(createErr) {
+			outcome = createFoundExisting
+		}
 		stats.Errors++
 		log.Error("[clusterreconciler] Secret Create failed — skipping cluster",
 			"cluster", entry.Name, "namespace", r.namespace, "error", createErr,
@@ -2478,7 +2587,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		})
 		r.recordReconcile(entry.Name, OutcomeFailed,
 			"Sharko couldn't create the ArgoCD cluster secret for this cluster: "+createErr.Error(), nil)
-		return
+		return outcome
 	}
 
 	stats.Created++
@@ -2503,6 +2612,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// it rather than needing a second pass to catch up.
 	r.stampAppliedRevision(entry.Name)
 	r.recordReconcile(entry.Name, OutcomeSucceeded, "", nil)
+	return createDone
 }
 
 // deleteOne removes a single orphan ArgoCD cluster Secret. The list step
@@ -2751,7 +2861,7 @@ func (k *keptConnections) keeps(clusterName string, secret *corev1.Secret) bool 
 // anything else. A failure is logged and counted; the Secret stays.
 func (r *Reconciler) releaseKeptConnection(ctx context.Context, name string, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
-	stripped, err := argosecrets.NewManager(r.deps.ArgoClient, r.namespace).StripOwnershipLabel(ctx, name)
+	stripped, err := argosecrets.NewManager(r.deps.ArgoClient, r.namespace).ReleaseKeptConnection(ctx, name)
 	if err != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] could not take Sharko's ownership label off a connection a removal keeps — left in place, will retry next tick",

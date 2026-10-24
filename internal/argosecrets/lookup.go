@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"sort"
 	"strings"
 
@@ -49,11 +50,22 @@ func ClusterNameOf(s *corev1.Secret) string {
 	return s.Name
 }
 
+// isNotAClusterSecret reports a Secret that ArgoCD's type label marks as
+// something other than a cluster.
+func isNotAClusterSecret(s *corev1.Secret) bool {
+	v, ok := s.Labels[LabelSecretType]
+	return ok && v != "cluster"
+}
+
 // GetClusterSecret finds the ArgoCD cluster Secret for clusterName in
 // namespace.
 //
 // A Secret matches when the `name` inside it equals clusterName, or when its
 // Kubernetes name equals clusterName and it has no different `name` inside.
+// A Secret found by its Kubernetes name whose ArgoCD type label says it is
+// something else (a repository, repo-creds, ...) never matches. One with no
+// type label at all still matches: a cluster Secret whose labels were all
+// wiped must still be found, or the reconciler could not see or fix it.
 // No match returns a Kubernetes NotFound error, so callers can keep using
 // apierrors.IsNotFound. Two or more matches return an error wrapping
 // ErrAmbiguousClusterSecret that names each Secret.
@@ -64,6 +76,12 @@ func GetClusterSecret(ctx context.Context, client kubernetes.Interface, namespac
 	direct, err := secrets.Get(ctx, clusterName, metav1.GetOptions{})
 	switch {
 	case err == nil:
+		// A repository Secret or any other typed ArgoCD Secret that happens
+		// to have this Kubernetes name is not a cluster's connection (EP3
+		// dry run round R, R13).
+		if isNotAClusterSecret(direct) {
+			break
+		}
 		if ClusterNameOf(direct) == clusterName {
 			matches = append(matches, direct)
 		}
@@ -125,14 +143,28 @@ func (m *Manager) GetClusterSecret(ctx context.Context, clusterName string) (*co
 // Kubernetes name of its Secret. A cluster name that two Secrets share is
 // left out, because Sharko will not guess which one is meant.
 func (m *Manager) ClusterSecretNames(ctx context.Context) (map[string]string, error) {
+	names, _, err := m.ClusterSecretIndex(ctx)
+	return names, err
+}
+
+// ClusterSecretIndex reads ArgoCD's cluster Secrets once. names is what
+// ClusterSecretNames returns. registering holds the cluster names (as
+// ArgoCD shows them) whose Secret carries the registration-pending mark:
+// a register whose pull request has not merged yet (EP3 dry run round R,
+// R7).
+func (m *Manager) ClusterSecretIndex(ctx context.Context) (names map[string]string, registering map[string]bool, err error) {
 	list, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{LabelSelector: LabelSecretType + "=cluster"})
 	if err != nil {
-		return nil, fmt.Errorf("listing ArgoCD cluster Secrets in namespace %q: %w", m.namespace, err)
+		return nil, nil, fmt.Errorf("listing ArgoCD cluster Secrets in namespace %q: %w", m.namespace, err)
 	}
 	out := make(map[string]string, len(list.Items))
+	registering = map[string]bool{}
 	shared := map[string]bool{}
 	for i := range list.Items {
 		name := ClusterNameOf(&list.Items[i])
+		if _, pending := models.RegistrationPendingValue(list.Items[i].Annotations); pending {
+			registering[name] = true
+		}
 		if _, seen := out[name]; seen {
 			shared[name] = true
 			continue
@@ -142,5 +174,5 @@ func (m *Manager) ClusterSecretNames(ctx context.Context) (map[string]string, er
 	for name := range shared {
 		delete(out, name)
 	}
-	return out, nil
+	return out, registering, nil
 }

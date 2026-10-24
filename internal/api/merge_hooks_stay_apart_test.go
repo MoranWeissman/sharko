@@ -34,13 +34,15 @@ func TestMergeHooks_EachIgnoresTheOtherOperation(t *testing.T) {
 	// An adopt pull request, merged, sent to A's hook. It carries a
 	// follow-up asking to drop the connection, so only the operation check
 	// keeps A's hook from acting.
-	srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
+	if err := srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
 		PRID: prID, Cluster: addedClusterName, Operation: prtracker.OpAdoptCluster,
 		FollowUp: &prtracker.ClusterFollowUp{Cleanup: "all"},
-	})
+	}); err != nil {
+		t.Fatalf("the remove hook returned an error for an adopt pull request: %v", err)
+	}
 
 	// A remove pull request, merged, sent to B's hook.
-	got := srv.FinishAdoptOnPRComplete(context.Background(), prtracker.PRInfo{
+	got, _ := srv.FinishAdoptOnPRComplete(context.Background(), prtracker.PRInfo{
 		PRID: prID, Cluster: addedClusterName, Operation: prtracker.OpRemoveCluster,
 		FollowUp: &prtracker.ClusterFollowUp{Cleanup: "all"},
 	}, "merged")

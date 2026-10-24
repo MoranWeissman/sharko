@@ -128,6 +128,8 @@ const (
 	leftoverOK leftoverReason = iota
 	// leftoverAdopted: the Secret is or was adopted or taken over.
 	leftoverAdopted
+	// leftoverWaitingPR: a pull request still has to finish with it.
+	leftoverWaitingPR
 	// leftoverNotARegistration: no registration-pending mark, so it is not
 	// a register that never merged (for example a connection a removal
 	// chose to keep).
@@ -150,10 +152,49 @@ func leftoverRegistrationRefusal(sec *corev1.Secret) leftoverReason {
 	if _, takenOver := annotations[argosecrets.AnnotationTakenOverAt]; takenOver {
 		return leftoverAdopted
 	}
+	// A waiting mark says a pull request still has to finish with this
+	// connection (a removal that keeps it, a take over, an adopt). It is
+	// never a leftover, even after a remove and a new register (EP3 dry
+	// run round R, R1).
+	for _, key := range argosecrets.PendingPRMarks {
+		if _, waiting := annotations[key]; waiting {
+			return leftoverWaitingPR
+		}
+	}
 	if _, marked := models.RegistrationPendingValue(annotations); !marked {
 		return leftoverNotARegistration
 	}
 	return leftoverOK
+}
+
+// deleteCheckedSecret deletes exactly the Secret the caller checked: by
+// its Kubernetes name, and only while its UID and resource version are the
+// ones the checks saw. A Secret changed or replaced in between is a
+// Conflict, and nothing is deleted.
+func (s *Server) deleteCheckedSecret(ctx context.Context, sec *corev1.Secret) error {
+	k8sClient, namespace, ok := s.k8sClientAndNamespace()
+	if !ok {
+		return errNoK8sClient
+	}
+	uid, rv := sec.UID, sec.ResourceVersion
+	pre := &metav1.Preconditions{}
+	if uid != "" {
+		pre.UID = &uid
+	}
+	if rv != "" {
+		pre.ResourceVersion = &rv
+	}
+	return k8sClient.CoreV1().Secrets(namespace).Delete(ctx, sec.Name, metav1.DeleteOptions{Preconditions: pre})
+}
+
+// orphanDiscardWaitingPRMessage and orphanDiscardChangedMessage are the
+// other two 409 answers Discard gives. Pinned by exact text in tests.
+func orphanDiscardWaitingPRMessage(name string) string {
+	return fmt.Sprintf("Sharko will not delete the ArgoCD connection for cluster %q: a pull request still has to finish with it. It stays as it is.", name)
+}
+
+func orphanDiscardChangedMessage(name string) string {
+	return fmt.Sprintf("Sharko did not delete the ArgoCD connection for cluster %q: it changed while Sharko was checking it. Nothing was deleted. Look at it again, then try again.", name)
 }
 
 // orphanDiscardAdoptedMessage and orphanDiscardNotARegistrationMessage are

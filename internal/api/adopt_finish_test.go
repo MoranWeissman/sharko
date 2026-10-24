@@ -56,8 +56,8 @@ func adoptPR(id int) prtracker.PRInfo {
 
 func TestFinishAdopt_MergedTakesOwnershipAndMarksAdopted(t *testing.T) {
 	srv, client := adoptFinishServer(adoptWaitingSecret("12"))
-	if got := srv.FinishAdoptOnPRComplete(context.Background(), adoptPR(12), "merged"); got != adoptFinishAdopted {
-		t.Fatalf("outcome = %q, want %q", got, adoptFinishAdopted)
+	if got, err := srv.FinishAdoptOnPRComplete(context.Background(), adoptPR(12), "merged"); err != nil || got != adoptFinishAdopted {
+		t.Fatalf("outcome = %q (%v), want %q", got, err, adoptFinishAdopted)
 	}
 	live := liveAdoptSecret(t, client)
 	if live.Labels[argosecrets.LabelManagedBy] != argosecrets.ManagedByValue {
@@ -77,8 +77,8 @@ func TestFinishAdopt_MergedTakesOwnershipAndMarksAdopted(t *testing.T) {
 func TestFinishAdopt_ClosedTakesOnlyTheMarkOff(t *testing.T) {
 	before := adoptWaitingSecret("12")
 	srv, client := adoptFinishServer(before.DeepCopy())
-	if got := srv.FinishAdoptOnPRComplete(context.Background(), adoptPR(12), "closed"); got != adoptFinishReleased {
-		t.Fatalf("outcome = %q, want %q", got, adoptFinishReleased)
+	if got, err := srv.FinishAdoptOnPRComplete(context.Background(), adoptPR(12), "closed"); err != nil || got != adoptFinishReleased {
+		t.Fatalf("outcome = %q (%v), want %q", got, err, adoptFinishReleased)
 	}
 	live := liveAdoptSecret(t, client)
 	if len(live.Annotations) != 0 {
@@ -97,14 +97,14 @@ func TestFinishAdopt_IgnoresPullRequestsThatAreNotTheWaitingOne(t *testing.T) {
 		mark string
 		pr   prtracker.PRInfo
 	}{
-		"other pull request number":                                    {"12", adoptPR(13)},
-		"no mark (a take over pull request shares the operation code)": {"", adoptPR(12)},
-		"other operation":                                              {"12", prtracker.PRInfo{PRID: 12, Cluster: "prod-eu", Operation: prtracker.OpRegisterCluster}},
+		"other pull request number": {"12", adoptPR(13)},
+		"no mark and no finish kind (an old take over pull request shares the operation code)": {"", adoptPR(12)},
+		"other operation": {"12", prtracker.PRInfo{PRID: 12, Cluster: "prod-eu", Operation: prtracker.OpRegisterCluster}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			srv, client := adoptFinishServer(adoptWaitingSecret(tc.mark))
-			if got := srv.FinishAdoptOnPRComplete(context.Background(), tc.pr, "merged"); got != adoptFinishIgnored {
+			if got, err := srv.FinishAdoptOnPRComplete(context.Background(), tc.pr, "merged"); err != nil || got != adoptFinishIgnored {
 				t.Fatalf("outcome = %q, want ignored", got)
 			}
 			live := liveAdoptSecret(t, client)

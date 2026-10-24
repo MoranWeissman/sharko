@@ -555,14 +555,15 @@ type ClusterHealthStats struct {
 //
 // Operation says what the open pull request does to the cluster:
 // "register", "adopt", "takeover" or "remove" (EP3-DRYRUN-FIXES API
-// contract). PRNumber is the pull request's number on the Git host.
+// contract). PRNumber is the pull request's number on the Git host; it is
+// left out (never 0) when the Git host gave no number.
 type PendingRegistration struct {
 	ClusterName string `json:"cluster_name"`
 	PRURL       string `json:"pr_url"`
 	Branch      string `json:"branch"`
 	OpenedAt    string `json:"opened_at"`
 	Operation   string `json:"operation" enums:"register,adopt,takeover,remove"`
-	PRNumber    int    `json:"pr_number"`
+	PRNumber    int    `json:"pr_number,omitempty"`
 }
 
 // Values of PendingRegistration.Operation.

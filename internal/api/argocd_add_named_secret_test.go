@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -110,10 +110,12 @@ func TestRemoveAfterMerge_KeepConnection_ArgocdAddNamedSecret(t *testing.T) {
 	argo := newStubArgoSrv(t, []map[string]interface{}{{"name": addedClusterName, "server": addedServer}}, http.StatusOK)
 	srv, k8s := followUpTestServer(t, newTakeoverFakeGP(), argo.URL, argocdAddedSecret(nil))
 
-	srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
+	if err := srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
 		PRID: 12, Cluster: addedClusterName, Operation: prtracker.OpRemoveCluster,
 		FollowUp: &prtracker.ClusterFollowUp{Cleanup: "git", KeepConnection: true},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	sec := getAddedSecret(t, k8s)
 	if _, still := sec.Labels[argosecrets.LabelManagedBy]; still {
@@ -125,21 +127,25 @@ func TestRemoveAfterMerge_KeepConnection_ArgocdAddNamedSecret(t *testing.T) {
 }
 
 // Remove, delete the connection, merged later: Sharko confirms its label
-// on the cluster-<host>-<hash> Secret and deletes the cluster from ArgoCD.
+// on the cluster-<host>-<hash> Secret and deletes that Secret by its own
+// name. It does not delete through ArgoCD by server address, because two
+// connections can share an address (EP3 dry run round R, R8).
 func TestRemoveAfterMerge_DeleteConnection_ArgocdAddNamedSecret(t *testing.T) {
 	argo := newStubArgoSrv(t, []map[string]interface{}{{"name": addedClusterName, "server": addedServer}}, http.StatusOK)
-	srv, _ := followUpTestServer(t, newTakeoverFakeGP(), argo.URL, argocdAddedSecret(nil))
+	srv, k8s := followUpTestServer(t, newTakeoverFakeGP(), argo.URL, argocdAddedSecret(nil))
 
-	srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
+	if err := srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
 		PRID: 13, Cluster: addedClusterName, Operation: prtracker.OpRemoveCluster,
 		FollowUp: &prtracker.ClusterFollowUp{Cleanup: "all"},
-	})
-
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Fatalf("want 1 ArgoCD DELETE for %s, got %d", addedClusterName, got)
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if last := argo.deleteCallURL.Load().(string); !strings.Contains(last, "10.0.0.5:6443") {
-		t.Fatalf("DELETE went to %q, want the cluster's server", last)
+
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Fatalf("deleted through ArgoCD by server address (%d DELETE calls)", got)
+	}
+	if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), addedSecretName, metav1.GetOptions{}); err == nil {
+		t.Fatalf("the Secret %s should be deleted", addedSecretName)
 	}
 }
 
@@ -153,10 +159,12 @@ func TestUnadoptAfterMerge_ArgocdAddNamedSecret(t *testing.T) {
 		argosecrets.AnnotationTakeoverPreservedLabels: `{"team":"a"}`,
 	}))
 
-	srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
+	if err := srv.FinishClusterFollowUpOnMerge(context.Background(), prtracker.PRInfo{
 		PRID: 14, Cluster: addedClusterName, Operation: prtracker.OpUnadoptCluster,
 		FollowUp: &prtracker.ClusterFollowUp{},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	sec := getAddedSecret(t, k8s)
 	if _, still := sec.Labels[argosecrets.LabelManagedBy]; still {
@@ -187,8 +195,13 @@ func TestDiscardOrphan_ArgocdAddNamedSecret(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Fatalf("want 1 ArgoCD DELETE, got %d", got)
+	// R8: the delete goes by the Secret's own name, never through ArgoCD
+	// by server address.
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Fatalf("deleted through ArgoCD by server address (%d calls)", got)
+	}
+	if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), addedSecretName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Secret %s is still there: %v", addedSecretName, err)
 	}
 }
 

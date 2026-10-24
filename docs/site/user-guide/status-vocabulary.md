@@ -28,7 +28,7 @@ name below, so you do not need to hover over anything.
 | **Connecting…** | Neutral | Waiting for ArgoCD's first connection result — normal for about a minute after registering. |
 | **Not checked yet** | Neutral | ArgoCD only checks a cluster once something is deployed to it, and nothing is deployed here yet. Enable an addon and ArgoCD will check the connection. |
 | **Not connected** | Amber | ArgoCD has no connection for this cluster at all. It may be unreachable from the hub (common for local or kind clusters), or its registration didn't finish. Check the cluster is reachable, then re-run Test connection. |
-| **Available to manage** | Indigo | In ArgoCD but not in Sharko's Git catalog — adopt it to let Sharko manage its addons. It has its own color because it is an offer, not a fault. |
+| **Available to manage** | Indigo | ArgoCD connects to it, but Sharko does not manage it yet. Adopt it or take ownership of it to let Sharko manage its addons. It has its own color because it is an offer, not a fault. |
 | **Disconnected** | Red | ArgoCD tried to reach this cluster and failed. |
 
 "Not connected" and "Connecting…" look similar but mean different things:

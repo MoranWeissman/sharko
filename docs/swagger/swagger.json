@@ -2675,7 +2675,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git and ArgoCD's own in-cluster entry.\nEach one can be adopted or taken over. reachable is ArgoCD's own connection state and is left out when ArgoCD has not checked yet.",
+                "description": "Reads the clusters ArgoCD already connects to and leaves out the ones in Sharko's fleet record in Git, ArgoCD's own in-cluster entry, and the ones being registered (an open register pull request, or a connection with the registration-pending mark).\nEach one can be adopted or taken over. reachable is ArgoCD's own connection state and is left out when ArgoCD has not checked yet.",
                 "produces": [
                     "application/json"
                 ],
@@ -3764,10 +3764,9 @@
                         }
                     },
                     "404": {
-                        "description": "Cluster not found",
+                        "description": "Cluster not found. code is not_managed and argocd_known is true when ArgoCD connects to it but Sharko does not manage it",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.clusterNotManagedResponse"
                         }
                     },
                     "500": {
@@ -4212,7 +4211,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open pull request. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open pull request to register, adopt, take over or remove it), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark.",
+                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open pull request. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open pull request to register, adopt, take over or remove it), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark, or one with a mark saying a pull request still has to finish with it. The delete goes by the Secret's own Kubernetes name, and only if it is still the same Secret, unchanged since the checks.",
                 "produces": [
                     "application/json"
                 ],
@@ -4262,7 +4261,7 @@
                         }
                     },
                     "409": {
-                        "description": "The Secret is not a leftover from a registration that never finished: it is or was adopted or taken over, or it has no registration-pending mark (for example a connection a removal kept)",
+                        "description": "The Secret is not a leftover from a registration that never finished: it is or was adopted or taken over, it has no registration-pending mark (for example a connection a removal kept), a pull request still has to finish with it, or it changed while Sharko was checking it",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4806,7 +4805,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. Adds the cluster to Sharko's fleet through a pull request and creates an empty addon file for it; no addon is turned on.\nNothing is written without \"yes\": true in the body. The checks are re-run on this call, and every warning they raise has to be named in \"acknowledged_findings\" by its finding id — a warning that appeared since you last looked comes back as a 409 naming it. Send \"dry_run\": true to see the plan and change nothing.",
+                "description": "Opens a pull request that adds the cluster to Sharko's fleet and creates an empty addon file for it; no addon is turned on. When that pull request is merged, Sharko becomes the owner of the cluster's existing ArgoCD connection, keeping the same name, the same API address and — by default — every label the previous owner left on it. If the pull request merges at once (auto-merge), that happens on this call. Until the merge only a waiting mark goes on the connection; if the pull request is closed without merging, Sharko takes that mark off and changes nothing else.\nNothing is written without \"yes\": true in the body. The checks are re-run on this call, and every warning they raise has to be named in \"acknowledged_findings\" by its finding id — a warning that appeared since you last looked comes back as a 409 naming it. Send \"dry_run\": true to see the plan and change nothing.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4837,7 +4836,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Cluster taken over (or the plan, on a dry run)",
+                        "description": "Pull request open and waiting for the merge (waiting_for_merge), cluster taken over, or the plan on a dry run",
                         "schema": {
                             "$ref": "#/definitions/internal_api.TakeoverResponse"
                         }
@@ -4870,7 +4869,7 @@
                         }
                     },
                     "409": {
-                        "description": "The preflight is blocking, or a warning was not named in acknowledged_findings, or the repo has not been migrated",
+                        "description": "The preflight is blocking, or a warning was not named in acknowledged_findings, or a register pull request for the cluster is still open, or the repo has not been migrated",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -11629,6 +11628,10 @@
                 "git": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                 },
+                "merged": {
+                    "description": "Merged is true only when the pull request merged AND the adopt\nreally finished on this call (Sharko owns the connection and marked\nit adopted). An open pull request, a partial result and a dry run\nare all false (EP3 dry run round R, R11).",
+                    "type": "boolean"
+                },
                 "message": {
                     "type": "string"
                 },
@@ -13421,6 +13424,10 @@
                 "status": {
                     "description": "Status is \"success\", \"partial\" or \"planned\" (a dry run).",
                     "type": "string"
+                },
+                "waiting_for_merge": {
+                    "description": "WaitingForMerge is true when the pull request is open and nothing on\nthe connection has changed yet. Sharko becomes the owner when it is\nmerged; if it is closed without merging, nothing changes (EP3 dry run\nround R, R5).",
+                    "type": "boolean"
                 },
                 "warnings": {
                     "type": "array",

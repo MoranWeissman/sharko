@@ -59,7 +59,38 @@ func adoptWarningsFromReport(report takeover.Report) []AdoptWarning {
 			out = append(out, adoptWarningFromFinding(f))
 		}
 	}
-	return out
+	return uniqueAdoptWarningIDs(out)
+}
+
+// uniqueAdoptWarningIDs makes every warning id on one cluster different. A
+// second warning with the same id gets "-2", the third "-3", and so on, so
+// ticking one warning never ticks another one too (EP3 dry run round R,
+// R11). The first keeps its plain id, so ids people already send still
+// work.
+func uniqueAdoptWarningIDs(ws []AdoptWarning) []AdoptWarning {
+	seen := make(map[string]int, len(ws))
+	for _, w := range ws {
+		seen[w.ID] = 0
+	}
+	used := make(map[string]bool, len(ws))
+	for i := range ws {
+		id := ws[i].ID
+		if !used[id] {
+			used[id] = true
+			continue
+		}
+		n := seen[id]
+		if n < 2 {
+			n = 2
+		}
+		for used[fmt.Sprintf("%s-%d", id, n)] {
+			n++
+		}
+		seen[id] = n + 1
+		ws[i].ID = fmt.Sprintf("%s-%d", id, n)
+		used[ws[i].ID] = true
+	}
+	return ws
 }
 
 // adoptBlockersFromReport returns every blocked check in a preflight report,
@@ -85,7 +116,7 @@ func foreignOwnerAdoptWarnings(sentences []string) []AdoptWarning {
 	for _, s := range sentences {
 		out = append(out, AdoptWarning{ID: AdoptFindingForeignOwner, Message: s})
 	}
-	return out
+	return uniqueAdoptWarningIDs(out)
 }
 
 // missingAcknowledgements returns the ids in warnings that are not in
