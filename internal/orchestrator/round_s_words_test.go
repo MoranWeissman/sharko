@@ -63,7 +63,10 @@ func TestAdopt_PullRequestOpen_PlainWords(t *testing.T) {
 func TestAdoptV4_MergedButMarkFails_SaysAdoptAgain(t *testing.T) {
 	orch, _, asm := adoptPendingSetup(t)
 	orch.gitops = autoMergeGitOps()
+	// Only the adopted mark fails. Since round S the waiting mark goes on
+	// before the merge, and it must work here so the merge happens.
 	asm.annotationErr = errors.New("update refused")
+	asm.annotationErrKey = AnnotationAdopted
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
 		AcknowledgedFindings: []string{"secret-owner"}, Clusters: []string{"prod-eu"},
 	})

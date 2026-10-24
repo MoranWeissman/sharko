@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // EP3 dry run round S, S14: no answer ever says "PR #0". A provider that
@@ -110,7 +111,7 @@ func TestAdoptV4_ProviderWithoutNumbers_NeverSaysPR0(t *testing.T) {
 	if cr.Message != want || cr.Git == nil || cr.Git.PRID != 1 {
 		t.Fatalf("message %q git %+v, want %q and number 1", cr.Message, cr.Git, want)
 	}
-	if v := asm.annotations["prod-eu"][AnnotationAdoptPendingPR]; v != "1" {
+	if v := asm.annotations["prod-eu"][AnnotationAdoptPendingPR]; !models.PendingPRMarkNames(v, 1) {
 		t.Fatalf("waiting mark = %q, want the number read from the address", v)
 	}
 
@@ -131,7 +132,7 @@ func TestAdoptV4_OpenPRWithoutNumber_AlreadyWaitingUsesTheAddress(t *testing.T) 
 	if again.Results[0].Message != wantAgain || again.Results[0].Git == nil || again.Results[0].Git.PRID != 7 {
 		t.Fatalf("result %+v, want %q", again.Results[0], wantAgain)
 	}
-	if v := asm.annotations["prod-eu"][AnnotationAdoptPendingPR]; v != "7" {
+	if v := asm.annotations["prod-eu"][AnnotationAdoptPendingPR]; !models.PendingPRMarkNames(v, 7) {
 		t.Fatalf("waiting mark = %q, want 7", v)
 	}
 }

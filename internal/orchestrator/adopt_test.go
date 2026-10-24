@@ -28,9 +28,12 @@ type mockArgoSecretManager struct {
 	unadopted      []string
 	ensured        []ArgoSecretSpec // specs captured by Ensure, in call order
 	annotationErr  error
-	labelErr       error
-	unadoptErr     error
-	ensureErr      error
+	// annotationErrKey, when set, makes annotationErr hit only
+	// SetAnnotation for that one key (reads and other keys work).
+	annotationErrKey string
+	labelErr         error
+	unadoptErr       error
+	ensureErr        error
 
 	// secretDetails / secretDetailErr / takeOverResults / takeOverErr back
 	// GetClusterSecretDetail / TakeOverClusterSecret — the v4 adopt/takeover
@@ -52,7 +55,7 @@ func newMockArgoSecretManager() *mockArgoSecretManager {
 }
 
 func (m *mockArgoSecretManager) SetAnnotation(_ context.Context, name, key, value string) error {
-	if m.annotationErr != nil {
+	if m.annotationErr != nil && (m.annotationErrKey == "" || m.annotationErrKey == key) {
 		return m.annotationErr
 	}
 	if m.annotations[name] == nil {
@@ -63,7 +66,7 @@ func (m *mockArgoSecretManager) SetAnnotation(_ context.Context, name, key, valu
 }
 
 func (m *mockArgoSecretManager) GetAnnotation(_ context.Context, name, key string) (string, error) {
-	if m.annotationErr != nil {
+	if m.annotationErr != nil && m.annotationErrKey == "" {
 		return "", m.annotationErr
 	}
 	if m.annotations[name] == nil {
