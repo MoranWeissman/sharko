@@ -49,6 +49,10 @@ export const ADOPT_NEW_WARNINGS =
   'There is something new to read. Tick each warning below, then confirm again.'
 // The server answered, but named no cluster at all. Nothing was opened, so
 // the dialog must not say a pull request is waiting.
+// Shown when Sharko could not test a cluster before adopting it. It says only
+// what happened. The server's own detail goes in the tooltip.
+export const ADOPT_NOT_TESTED_LINE =
+  'Not tested. Sharko could not test the connection to this cluster, so it did not check it. You can still adopt it.'
 export const ADOPT_NO_RESULTS = 'Nothing was adopted. Sharko sent back no answer for any cluster. Try again.'
 // Used when a 409 other_pr_open answer carries no sentence of its own.
 export const ADOPT_OTHER_PR_OPEN_FALLBACK = 'A pull request for this cluster is already open. Merge or close it first.'
@@ -717,11 +721,12 @@ export function AdoptClustersDialog({
                       <tr key={`${v.cluster.name}-error`} className={v.selected ? '' : 'opacity-50'}>
                         <td colSpan={clusters.length > 1 && (phase === 'review' || phase === 'adopting') ? 4 : 3} className="px-4 py-2 bg-[#e8f4ff] dark:bg-gray-900">
                           <div className="space-y-1">
-                            <p className={`text-xs ${v.state === 'failed' ? 'text-red-500 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-400'}`}>
-                              {v.state === 'not-verified'
-                                ? `Not verified — connectivity will be checked when a secret-bearing addon needs it. (${v.result.error_message})`
-                                : v.result.error_message
-                              }
+                            <p
+                              className={`text-xs ${v.state === 'failed' ? 'text-red-500 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-400'}`}
+                              title={v.state === 'not-verified' ? v.result.error_message : undefined}
+                              data-testid={v.state === 'not-verified' ? 'adopt-not-tested' : undefined}
+                            >
+                              {v.state === 'not-verified' ? ADOPT_NOT_TESTED_LINE : v.result.error_message}
                             </p>
                             {v.state === 'failed' && (
                               <button

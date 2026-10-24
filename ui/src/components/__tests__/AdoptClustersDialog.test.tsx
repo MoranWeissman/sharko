@@ -400,7 +400,14 @@ describe('AdoptClustersDialog', () => {
       })
 
       // Should show informational message
-      expect(screen.getByText(/not verified — connectivity will be checked when a secret-bearing addon needs it/i)).toBeInTheDocument()
+      // Round S (episode 3 open question 3): plain words, no promise, and
+      // the server's raw detail only in the tooltip.
+      const line = screen.getByTestId('adopt-not-tested')
+      expect(line).toHaveTextContent(/^Not tested\. Sharko could not test the connection to this cluster, so it did not check it\. You can still adopt it\.$/)
+      expect(line).toHaveAttribute('title', 'Test feature not configured')
+      expect(document.body.textContent).not.toMatch(/connectivity will be checked/i)
+      expect(document.body.textContent).not.toMatch(/secret-bearing/i)
+      expect(document.body.textContent).not.toContain('Test feature not configured')
     })
   })
 
