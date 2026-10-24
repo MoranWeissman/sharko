@@ -30,7 +30,7 @@ func init() {
 	dropLegacyLabelsCmd.Flags().StringArray("label", nil, "Label key to remove (repeatable; empty means every carried-over label)")
 	dropLegacyLabelsCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	dropLegacyLabelsCmd.Flags().Bool("dry-run", false, "Preview what would be removed without making changes")
-	dropLegacyLabelsCmd.Flags().StringArray("acknowledge", nil, "Warning id to acknowledge (repeatable)")
+	dropLegacyLabelsCmd.Flags().StringArray("acknowledge", nil, "Warning id to acknowledge (repeat it, or give several ids split by commas)")
 	rootCmd.AddCommand(dropLegacyLabelsCmd)
 
 	rootCmd.AddCommand(unregisterConsequencesCmd)
@@ -510,6 +510,7 @@ removal runs; run with --dry-run first to see the exact ids.`,
 		yes, _ := cmd.Flags().GetBool("yes")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		acks, _ := cmd.Flags().GetStringArray("acknowledge")
+		acks = splitAcknowledgeIDs(acks)
 
 		if !dryRun && !yes {
 			fmt.Printf("Remove the legacy labels from %q's connection? [y/N]: ", name)
