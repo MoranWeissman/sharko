@@ -17,7 +17,7 @@ func TestArtifactHub_LoginInTheAddress_NotSentAndNotInTheError(t *testing.T) {
 	var asked string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked = r.URL.RawQuery
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`{"repositories":[]}`))
 	}))
 	defer srv.Close()
 	orig := artifactHubBaseURL
@@ -26,8 +26,9 @@ func TestArtifactHub_LoginInTheAddress_NotSentAndNotInTheError(t *testing.T) {
 
 	src := newArtifactHubSource(srv.Client())
 	_, err := src.Get(context.Background(), "https://sharko:"+token+"@charts.example.com/stable", "nginx")
-	if err == nil {
-		t.Fatal("want an error: no repository was found")
+	const want = `artifacthub: resolving repo name for "https://charts.example.com/stable": no ArtifactHub repository found for URL "https://charts.example.com/stable"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
 	}
 	if strings.Contains(asked, token) || !strings.Contains(asked, "charts.example.com") {
 		t.Fatalf("search query = %q", asked)
