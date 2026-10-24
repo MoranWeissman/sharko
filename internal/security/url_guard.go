@@ -38,6 +38,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 // SSRFError is the typed error returned when a URL fails the SSRF guard.
@@ -55,7 +57,13 @@ type SSRFError struct {
 // Error implements error. The message is short, no stack trace, safe for
 // the API response body.
 func (e *SSRFError) Error() string {
-	return fmt.Sprintf("URL %q blocked by SSRF guard: %s", e.URL, e.Reason)
+	// Only the part of the address credsafe can vouch for: a login written
+	// into it must not travel in the error (EP3 dry run round S, S15).
+	shown := credsafe.SafeRepoURL(e.URL)
+	if shown == "" {
+		return "the address was blocked by SSRF guard: " + e.Reason
+	}
+	return fmt.Sprintf("URL %q blocked by SSRF guard: %s", shown, e.Reason)
 }
 
 // IsSSRFError reports whether err (or anything it wraps) is an *SSRFError.
@@ -111,7 +119,7 @@ func ValidateExternalURL(rawURL string) error {
 
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return &SSRFError{URL: rawURL, Reason: "malformed: " + err.Error()}
+		return &SSRFError{URL: rawURL, Reason: "malformed"}
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return &SSRFError{URL: rawURL, Reason: "scheme must be http or https (got " + u.Scheme + ")"}
