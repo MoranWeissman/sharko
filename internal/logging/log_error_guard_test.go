@@ -354,7 +354,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/secrets.go", fn: "deleteAddonSecrets", msg: "failed to delete secret", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/orchestrator/secrets.go", fn: "deleteAllAddonSecrets", msg: "failed to delete secret", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/orchestrator/unadopt.go", fn: "finishUnadopt", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},
-	{file: "internal/orchestrator/unadopt.go", fn: "UnadoptCluster", msg: "failed to remove cluster entry from managed-clusters.yaml", carriers: "ident:removeErr", verdict: "sink"},
+	{file: "internal/orchestrator/unadopt.go", fn: "UnadoptCluster", msg: "could not write the pull request number on the un-adopt keep mark; the mark stays on as it is", carriers: "ident:setErr", verdict: "sink"},
 	{file: "internal/providers/aws_sm.go", fn: "getCredentialsWithRoleARN", msg: "[provider] GetCredentials failed", carriers: "ident:tried", verdict: "safe", reason: "tried holds the Secrets Manager secret NAMES this lookup attempted, built from the cluster name and the operator’s own configured prefix. They are addresses the operator wrote, never secret values, and an operator who cannot see which names were tried cannot fix the path."},
 	{file: "internal/prtracker/tracker.go", fn: "runHooks", msg: "[prtracker] failed to delete branch after observed merge", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "handleTerminal", msg: "[prtracker] failed to write state", carriers: "ident:err", verdict: "sink"},

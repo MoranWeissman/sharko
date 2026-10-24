@@ -446,6 +446,12 @@ func RemoveKeepMarkFailedMessage(name string) string {
 // the leftovers list only ever touch Sharko-labelled Secrets. Returns
 // whether it put the mark on.
 func (o *Orchestrator) markKeptConnection(ctx context.Context, name string, followUp ClusterFollowUp) (bool, error) {
+	return o.markKeptConnectionFor(ctx, name, followUp, models.PendingMarkOpRemove)
+}
+
+// markKeptConnectionFor is markKeptConnection for a removal or an un-adopt
+// (op is models.PendingMarkOpRemove or PendingMarkOpUnadopt).
+func (o *Orchestrator) markKeptConnectionFor(ctx context.Context, name string, followUp ClusterFollowUp, op string) (bool, error) {
 	if !followUp.KeepConnection || o.argoSecretManager == nil {
 		return false, nil
 	}
@@ -466,7 +472,7 @@ func (o *Orchestrator) markKeptConnection(ctx context.Context, name string, foll
 		other, _ := models.ParsePendingPRMark(cur)
 		return false, &OtherRemovalWaitingError{Cluster: name, PRID: other.PR}
 	}
-	if err := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationRemoveKeepPendingPR, keepMarkValue(models.PendingMarkOpRemove, 0, "")); err != nil {
+	if err := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationRemoveKeepPendingPR, keepMarkValue(op, 0, "")); err != nil {
 		return false, fmt.Errorf("marking the ArgoCD connection of cluster %q as kept: %w", name, err)
 	}
 	return true, nil
