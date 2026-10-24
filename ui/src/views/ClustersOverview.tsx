@@ -25,6 +25,7 @@ import {
   ExternalLink,
   Shield,
 } from 'lucide-react';
+import { isCredentialLookupFailure } from '@/lib/verifyStage';
 import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, getSystemCapabilities, type PRWriteResult } from '@/services/api';
 import { PRLifecycleProgress, extractPR, writeFailureMessage } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
@@ -269,18 +270,36 @@ const REGISTER_PR_NO_LINK =
 
 // The popover's Sharko line reads the test the user just ran on this page.
 // A test that is still running, or could not run at all, says nothing yet.
-function latestTestOf(r: unknown): ClusterLatestTest | undefined {
+export function latestTestOf(r: unknown, at?: string): ClusterLatestTest | undefined {
+  const t = latestTestResultOf(r);
+  return t && at ? { ...t, at } : t;
+}
+function latestTestResultOf(r: unknown): ClusterLatestTest | undefined {
   if (!r || r === 'testing' || typeof r !== 'object') return undefined;
   if (isTestClusterUnavailable(r as never)) return undefined;
+  // Sharko could not read the cluster's sign-in details: nothing was
+  // tested. The Adopt dialog calls the same answer "Not verified", so this
+  // page says so too, not "Test failing".
+  if (isCredentialLookupFailure(r as never)) return { success: false, notVerified: true };
   const t = r as { reachable?: boolean; success?: boolean; steps?: VerifyStep[] };
   const steps = t.steps ?? [];
   return {
-    success: t.reachable !== false && t.success !== false,
+    // A pass only when the answer says so. A missing field is not a pass.
+    success: t.success === true || (t.success === undefined && t.reachable === true),
     passed: steps.length > 0 ? steps.filter((x) => x.status === 'pass').length : undefined,
     total: steps.length > 0 ? steps.length : undefined,
     failedStep: steps.find((x) => x.status === 'fail')?.name,
   };
 }
+
+// Shown when Sharko could not ask ArgoCD which other clusters it knows.
+// Pinned by exact text in ClustersOverview.roundr.test.tsx.
+export const AVAILABLE_CHECK_FAILED =
+  "Sharko could not check which other clusters ArgoCD knows. Refresh to try again.";
+
+// The button that lets go of a picked cluster, so the fields for a cluster
+// typed by hand show again.
+export const PICKER_ENTER_BY_HAND = 'Enter a different cluster by hand';
 
 // What an open pull request in the pending table is for.
 const PENDING_OPERATION_LABEL: Record<string, string> = {
@@ -289,6 +308,8 @@ const PENDING_OPERATION_LABEL: Record<string, string> = {
   takeover: 'Take ownership',
   remove: 'Remove',
 };
+// An operation this page does not know yet (a newer server).
+const PENDING_OPERATION_OTHER = 'Change';
 
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
@@ -403,6 +424,9 @@ export function ClustersOverview() {
   } | null>(() => location.state?.removalPR ?? null);
 
   // Test connection state per cluster
+  // When each test on this page finished, by cluster name. The popover
+  // uses it to tell this run from a newer one the server remembers.
+  const testAtRef = useRef<Record<string, string>>({});
   const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | 'testing'>>({});
 
   // Expanded test steps per cluster
@@ -418,6 +442,12 @@ export function ClustersOverview() {
   // GET /clusters/available. Empty until the server answers (or when it
   // cannot): the page then falls back to what /clusters itself lists.
   const [availableClusters, setAvailableClusters] = useState<AvailableCluster[]>([]);
+  // True when the last /clusters/available call failed. The page keeps the
+  // last good list and says, in one line, that it could not check.
+  const [availableFailed, setAvailableFailed] = useState(false);
+  // Each call gets a number. Only the answer to the newest call is used, so
+  // a slow, older answer never replaces a newer one.
+  const availableSeqRef = useRef(0);
   // The cluster the Take ownership dialog is open for, from the Clusters page.
   const [takeoverTarget, setTakeoverTarget] = useState<string | null>(null);
   // V2-cleanup-89.3: which discovered (ArgoCD-only) cluster is picked in the
@@ -425,6 +455,9 @@ export function ClustersOverview() {
   // name. Single-select — adopting is a one-cluster-at-a-time decision made
   // from inside the dialog now, not a standing bulk-select list.
   const [pickedDiscovered, setPickedDiscovered] = useState<string | null>(null);
+  // True once the user let go of the picked cluster to type one by hand.
+  // Stops the one-cluster auto-pick from picking it again.
+  const userLetGoOfPickRef = useRef(false);
   // V2-cleanup-92.1 (F13): search filter for discovered-clusters picker.
   const [discoveredFilter, setDiscoveredFilter] = useState('');
 
@@ -546,10 +579,18 @@ export function ClustersOverview() {
       // Best effort: the hint line and the picker only gain from this.
       // Wrapped because a test's partial API mock has no such function, and
       // a failed answer must never break the page.
+      const seq = ++availableSeqRef.current;
       try {
         Promise.resolve(api.getAvailableClusters())
-          .then((list) => setAvailableClusters(Array.isArray(list) ? list : []))
-          .catch(() => {});
+          .then((list) => {
+            if (seq !== availableSeqRef.current) return;
+            setAvailableClusters(Array.isArray(list) ? list : []);
+            setAvailableFailed(false);
+          })
+          .catch(() => {
+            if (seq !== availableSeqRef.current) return;
+            setAvailableFailed(true);
+          });
       } catch {
         /* no available list: the page uses what /clusters listed */
       }
@@ -751,6 +792,7 @@ export function ClustersOverview() {
     setCredsSource('');
     setConnManagedBy(presetOwnership ?? 'sharko');
     setPickedDiscovered(null);
+    userLetGoOfPickRef.current = false;
     setDiscoveredFilter('');
     // V2-cleanup-91.2 (F2): reset optional-creds toggle when dialog reopens.
     setShowOptionalCreds(false);
@@ -919,9 +961,11 @@ export function ClustersOverview() {
         void fetchData().then(() => {
           testClusterConnection(clusterName)
             .then((testResult) => {
+              testAtRef.current[clusterName] = new Date().toISOString();
               setTestResults((prev) => ({ ...prev, [clusterName]: testResult }));
             })
             .catch((err) => {
+              testAtRef.current[clusterName] = new Date().toISOString();
               setTestResults((prev) => ({
                 ...prev,
                 [clusterName]: {
@@ -962,8 +1006,10 @@ export function ClustersOverview() {
     setTestResults((prev) => ({ ...prev, [name]: 'testing' }));
     try {
       const result = await testClusterConnection(name);
+      testAtRef.current[name] = new Date().toISOString();
       setTestResults((prev) => ({ ...prev, [name]: result }));
     } catch (err) {
+      testAtRef.current[name] = new Date().toISOString();
       setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
     }
   }, []);
@@ -1139,46 +1185,57 @@ export function ClustersOverview() {
     return Array.from(types).sort();
   }, [allClusters]);
 
+  // The status filter, the search box and the version and connection
+  // filters, as one test. The clusters that only /clusters/available lists
+  // go through it too, so a filter hides them like any other row.
+  const passesFilters = useCallback(
+    (cluster: Cluster): boolean => {
+      if (statusFilter !== 'all') {
+        const cs = cluster.connection_status?.toLowerCase() ?? '';
+        let statusMatch: boolean;
+        switch (statusFilter) {
+          case 'connected':
+            statusMatch = cs === 'connected' || cs === 'successful';
+            break;
+          case 'disconnected':
+            // Failed or missing ONLY — same definition the Dashboard
+            // uses for its red "disconnected clusters" count. Pending
+            // ("" / Unknown) and discovered / not_in_git clusters are
+            // NOT counted here; they aren't a problem.
+            statusMatch = cs === 'failed' || cs === 'missing';
+            break;
+          case 'failed':
+            statusMatch = cs === 'failed';
+            break;
+          case 'missing_from_argocd':
+            statusMatch = cs === 'missing';
+            break;
+          case 'not_in_git':
+            statusMatch = cs === 'not_in_git';
+            break;
+          default:
+            statusMatch = true;
+        }
+        if (!statusMatch) return false;
+      }
+      const nameMatch = cluster.name
+        .toLowerCase()
+        .includes(filters.name.toLowerCase());
+      const versionMatch =
+        filters.versions.length === 0 ||
+        (!!cluster.server_version &&
+          filters.versions.includes(cluster.server_version));
+      const connectionMatch =
+        filters.connectionTypes.length === 0 ||
+        (!!cluster.connection_status &&
+          filters.connectionTypes.includes(cluster.connection_status));
+      return nameMatch && versionMatch && connectionMatch;
+    },
+    [statusFilter, filters],
+  );
   const filteredClusters = useMemo(
-    () =>
-      allClusters
-        .filter((cluster) => {
-          if (statusFilter === 'all') return true;
-          const cs = cluster.connection_status?.toLowerCase() ?? '';
-          switch (statusFilter) {
-            case 'connected':
-              return cs === 'connected' || cs === 'successful';
-            case 'disconnected':
-              // Failed or missing ONLY — same definition the Dashboard
-              // uses for its red "disconnected clusters" count. Pending
-              // ("" / Unknown) and discovered / not_in_git clusters are
-              // NOT counted here; they aren't a problem.
-              return cs === 'failed' || cs === 'missing';
-            case 'failed':
-              return cs === 'failed';
-            case 'missing_from_argocd':
-              return cs === 'missing';
-            case 'not_in_git':
-              return cs === 'not_in_git';
-            default:
-              return true;
-          }
-        })
-        .filter((cluster) => {
-          const nameMatch = cluster.name
-            .toLowerCase()
-            .includes(filters.name.toLowerCase());
-          const versionMatch =
-            filters.versions.length === 0 ||
-            (cluster.server_version &&
-              filters.versions.includes(cluster.server_version));
-          const connectionMatch =
-            filters.connectionTypes.length === 0 ||
-            (cluster.connection_status &&
-              filters.connectionTypes.includes(cluster.connection_status));
-          return nameMatch && versionMatch && connectionMatch;
-        }),
-    [allClusters, statusFilter, filters],
+    () => allClusters.filter(passesFilters),
+    [allClusters, passesFilters],
   );
 
   // Cluster names that have an open registration PR but whose values-file
@@ -1249,24 +1306,28 @@ export function ClustersOverview() {
   // plus what /clusters/available adds. One list for the hint line and the
   // picker, so the count and the rows always agree.
   const discoveredClusters = useMemo(() => {
-    const have = new Set(discoveredFromList.map((c) => c.name));
-    const managed = new Set(
-      allClusters
-        .filter((c) => c.managed !== false && c.connection_status !== 'not_in_git')
-        .map((c) => c.name),
-    );
+    // Any name /clusters already lists is handled there: shown, or hidden
+    // by a filter. It never comes back as an extra.
+    const listed = new Set(allClusters.map((c) => c.name));
     const extra = availableClusters
       .filter(
         (a) =>
           a.name &&
-          !have.has(a.name) &&
-          !managed.has(a.name) &&
+          !listed.has(a.name) &&
           !anyPendingNames.has(a.name) &&
           !orphanNames.has(a.name),
       )
-      .map((a): Cluster => ({ name: a.name, labels: {}, server_url: a.server_url, managed: false }));
+      .map((a): Cluster => ({
+        name: a.name,
+        labels: {},
+        server_url: a.server_url,
+        managed: false,
+        // For the status filter: ArgoCD knows it, Sharko does not manage it.
+        connection_status: 'not_in_git',
+      }))
+      .filter(passesFilters);
     return [...discoveredFromList, ...extra];
-  }, [discoveredFromList, availableClusters, allClusters, anyPendingNames, orphanNames]);
+  }, [discoveredFromList, availableClusters, allClusters, anyPendingNames, orphanNames, passesFilters]);
 
   // S1: sort, THEN paginate — filters/search already ran above in
   // filteredClusters/managedClusters. Sorted via a decorate-sort-undecorate
@@ -1355,12 +1416,16 @@ export function ClustersOverview() {
   }, [discoveredClusters, pickedDiscovered]);
 
   // Only one cluster to pick from: pick it, so Adopt is not greyed until the
-  // user clicks a radio button that has no other choice.
+  // user clicks a radio button that has no other choice. Picking hides the
+  // fields for a cluster typed by hand, so the user can let go of it
+  // ("Enter a different cluster by hand"), and then it is not picked again
+  // until the dialog opens again.
   useEffect(() => {
     if (
       addClusterOpen &&
       connManagedBy === 'user' &&
       pickedDiscovered === null &&
+      !userLetGoOfPickRef.current &&
       discoveredClusters.length === 1
     ) {
       setPickedDiscovered(discoveredClusters[0].name);
@@ -1547,6 +1612,11 @@ export function ClustersOverview() {
               <span> that Sharko doesn&apos;t manage yet.</span>
             </p>
           )}
+          {availableFailed && (
+            <p data-testid="argocd-known-failed" className="mt-1 text-sm text-amber-700 dark:text-amber-400">
+              {AVAILABLE_CHECK_FAILED}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -1657,6 +1727,7 @@ export function ClustersOverview() {
                 onChange={(e) => {
                   setConnManagedBy(e.target.value as ConnOwnership);
                   setPickedDiscovered(null);
+                  userLetGoOfPickRef.current = false;
                   setDiscoveredFilter('');
                 }}
                 className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
@@ -1764,6 +1835,19 @@ export function ClustersOverview() {
                 <p className="mt-2 text-sm text-[#2a5a7a] dark:text-gray-500">
                   Or enter details manually below for a cluster ArgoCD doesn't have yet.
                 </p>
+                {pickedDiscovered && (
+                  <button
+                    type="button"
+                    data-testid="picker-clear"
+                    onClick={() => {
+                      userLetGoOfPickRef.current = true;
+                      setPickedDiscovered(null);
+                    }}
+                    className="mt-1 text-sm font-medium text-teal-700 underline hover:text-teal-800 dark:text-teal-300"
+                  >
+                    {PICKER_ENTER_BY_HAND}
+                  </button>
+                )}
               </div>
               );
             })()}
@@ -2405,7 +2489,7 @@ export function ClustersOverview() {
                     </td>
                     {!pendingOnlyRegisters && (
                       <td className="px-6 py-3 text-sm text-[#2a5a7a] dark:text-gray-400">
-                        {PENDING_OPERATION_LABEL[p.operation ?? 'register']}
+                        {PENDING_OPERATION_LABEL[p.operation ?? 'register'] ?? PENDING_OPERATION_OTHER}
                       </td>
                     )}
                     <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -2423,7 +2507,7 @@ export function ClustersOverview() {
                           className="inline-flex items-center gap-1 rounded border border-blue-300 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/20"
                         >
                           <Eye className="h-3 w-3" />
-                          View PR{typeof p.pr_number === 'number' ? ` #${p.pr_number}` : ''}
+                          View PR{typeof p.pr_number === 'number' && p.pr_number > 0 ? ` #${p.pr_number}` : ''}
                         </a>
                       ) : (
                         <span className="text-sm text-[#3a6a8a] dark:text-gray-500">PR URL unavailable</span>
@@ -2628,7 +2712,7 @@ export function ClustersOverview() {
                           testErrorCode={cluster.test_error_code}
                           connectionManagedBy={cluster.connection_managed_by}
                           enabledAddonCount={rowAddonCount}
-                          latestTest={latestTestOf(testResults[cluster.name])}
+                          latestTest={latestTestOf(testResults[cluster.name], testAtRef.current[cluster.name])}
                         />
                       </td>
                       <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -2747,7 +2831,7 @@ export function ClustersOverview() {
                       testErrorCode={cluster.test_error_code}
                       connectionManagedBy={cluster.connection_managed_by}
                       enabledAddonCount={addonCount}
-                      latestTest={latestTestOf(testResults[cluster.name])}
+                      latestTest={latestTestOf(testResults[cluster.name], testAtRef.current[cluster.name])}
                     />
                   </div>
                   <p className="mb-2 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">

@@ -316,7 +316,7 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
 
     // Same Git-PR banner adopt shows today.
     await waitFor(() => {
-      const link = screen.getByRole('link', { name: /PR/i }) as HTMLAnchorElement;
+      const link = screen.getByRole('link', { name: /view pull request/i }) as HTMLAnchorElement;
       expect(link.href).toBe('https://github.com/org/repo/pull/99');
     });
 

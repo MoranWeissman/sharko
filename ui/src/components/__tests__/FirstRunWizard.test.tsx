@@ -2436,6 +2436,64 @@ describe('FirstRunWizard - Git provider for Gitea and self-hosted servers', () =
     expect(urlInput().value).toBe('https://github.com/me/mine')
   })
 
+  // Round R (R19): a late chart default never replaces what the user did.
+  const lateDefaults = () => {
+    let release: (v: { provider: string; repo_url: string }) => void = () => {}
+    api.gitDefaults.mockReturnValue(new Promise((r) => { release = r }))
+    return (v: { provider: string; repo_url: string }) => act(async () => { release(v) })
+  }
+
+  it('a late default does not replace "Work it out from the address" when the user picked it', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(providerSelect(), { target: { value: 'gitea' } })
+    fireEvent.change(providerSelect(), { target: { value: '' } })
+    await release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    expect(providerSelect().value).toBe('')
+  })
+
+  it('a late Gitea default is not put on a github.com address', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(urlInput(), { target: { value: 'https://github.com/me/mine' } })
+    await release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    expect(urlInput().value).toBe('https://github.com/me/mine')
+    expect(providerSelect().value).toBe('')
+  })
+
+  it('a late default does not fill in an address the user cleared', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(urlInput(), { target: { value: 'x' } })
+    fireEvent.change(urlInput(), { target: { value: '' } })
+    await release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    expect(urlInput().value).toBe('')
+  })
+
+  it('a late default does nothing when a saved connection exists', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    // The saved connection loads after the defaults call started. A change
+    // to another field makes the wizard render again and see it.
+    mockState.connections = [resumeConnection]
+    fireEvent.change(providerSelect(), { target: { value: 'gitea' } })
+    await release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    expect(urlInput().value).toBe('')
+  })
+
+  it('when setup is resumed, a saved GitHub choice stays GitHub', async () => {
+    mockState.connections = [{ ...resumeConnection, git_provider: 'github' }]
+    renderWizard(4)
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Save & Continue/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => expect(providerSelect().value).toBe('github'))
+  })
+
   it('explains the provider choice in the user\'s words', async () => {
     renderWizard()
     fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))

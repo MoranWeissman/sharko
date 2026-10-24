@@ -41,7 +41,7 @@ import { PRResultBanner, extractPR, writeFailureMessage } from '@/components/PRF
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
 import { V4EnableAddonDialog } from '@/components/V4EnableAddonDialog';
-import type { ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, VerifyStep, DryRunResult } from '@/services/models';
+import type { Cluster, ClusterChange, ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, VerifyStep, DryRunResult } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
@@ -249,6 +249,13 @@ export const SECRET_PATH_FAILED_FALLBACK =
 export const TOGGLE_NO_PR_ERROR =
   'Sharko could not open a pull request for these addon changes. Nothing was changed.';
 
+// What the page says for a cluster ArgoCD knows and Sharko does not manage.
+// Pinned by exact text in ClusterDetail.notmanaged.test.tsx.
+export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
+export function notManagedDescription(name: string): string {
+  return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;
+}
+
 export function ClusterDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -284,6 +291,14 @@ export function ClusterDetail() {
   // by the code in the body, never by the sentence.
   const [notManaged, setNotManaged] = useState(false);
   const [notManagedAdoptOpen, setNotManagedAdoptOpen] = useState(false);
+  // The address ArgoCD has for a cluster Sharko does not manage, from
+  // /clusters/available. Shown in the Adopt dialog. Empty when unknown.
+  const [notManagedServerURL, setNotManagedServerURL] = useState<string | undefined>(undefined);
+  // Set when an adopt or take ownership finished while its dialog was open.
+  // The page reloads when the dialog closes, not before: a reload that finds
+  // the cluster managed now would swap the page and take the open dialog
+  // (and its result) off the screen.
+  const reloadOnDialogCloseRef = useRef(false);
   // S2 (walk day 5 ride-along): manual refresh in the page header, on top
   // of the 30s auto-poll below. A separate flag from `loading` — fetchData
   // runs in background mode here (no full-page loading state), so the
@@ -568,10 +583,10 @@ export function ClusterDetail() {
     try {
       if (!background) {
         setLoading(true);
+        setError(null);
+        setErrorStatus(null);
+        setNotManaged(false);
       }
-      setError(null);
-      setErrorStatus(null);
-      setNotManaged(false);
       // Fetch cluster-scoped open PRs alongside the comparison so the
       // addons table can render per-row pending-PR badges. The .catch
       // keeps the page rendering when the PR-tracker is disabled.
@@ -581,6 +596,12 @@ export function ClusterDetail() {
         fetchTrackedPRs({ status: 'open', cluster: name }).catch(() => null),
       ]);
       setData(result);
+      // Clear an earlier error only once there is fresh data to show. A
+      // background reload that fails keeps whatever is on screen (the
+      // error page, the not-managed page, or the last good data).
+      setError(null);
+      setErrorStatus(null);
+      setNotManaged(false);
 
       // Bucket pending PRs by addon so ComparisonRow can look up its own
       // row in O(1). PRs without an `addon` field (cluster register/
@@ -1067,13 +1088,51 @@ export function ClusterDetail() {
     );
   }, [data]);
 
+  // No background reload while the Adopt or Take ownership dialog is open.
+  // On the not-managed page those dialogs live inside the error screen, and
+  // a reload that finds the cluster managed would take them off the screen
+  // in the middle of the flow. The page reloads when the dialog closes.
+  const actionDialogOpen = notManagedAdoptOpen || takeoverOpen;
   useEffect(() => {
+    if (actionDialogOpen) return;
     const intervalMs = hasActiveAddon ? 10_000 : 30_000;
     const interval = setInterval(() => {
       void fetchData(true);
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [fetchData, hasActiveAddon]);
+  }, [fetchData, hasActiveAddon, actionDialogOpen]);
+
+  // The not-managed page: find the address ArgoCD has for this cluster, so
+  // the Adopt dialog can show it. Best effort; no address shows "--".
+  useEffect(() => {
+    if (!notManaged || !name) return;
+    let cancelled = false;
+    Promise.resolve(api.getAvailableClusters?.())
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return;
+        const hit = list.find((c) => c.name === name);
+        if (hit?.server_url) setNotManagedServerURL(hit.server_url);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [notManaged, name]);
+
+  // One array for the life of the page, so the Adopt dialog does not start
+  // over every time this page renders.
+  const notManagedClusters = useMemo<Cluster[]>(
+    () => (name ? [{ name, labels: {}, managed: false, server_url: notManagedServerURL }] : []),
+    [name, notManagedServerURL],
+  );
+
+  const closeNotManagedDialog = useCallback((close: () => void) => {
+    close();
+    if (reloadOnDialogCloseRef.current) {
+      reloadOnDialogCloseRef.current = false;
+      void fetchData(true);
+    }
+  }, [fetchData]);
 
   useEffect(() => {
     if (activeSection === 'config' && !configFetched && name) {
@@ -1167,8 +1226,8 @@ export function ClusterDetail() {
       return (
         <>
           <EmptyState
-            title="Sharko doesn't manage this cluster yet"
-            description={`ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`}
+            title={NOT_MANAGED_TITLE}
+            description={notManagedDescription(name)}
             action={
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <RoleGuard adminOnly>
@@ -1202,16 +1261,20 @@ export function ClusterDetail() {
           />
           <AdoptClustersDialog
             open={notManagedAdoptOpen}
-            onClose={() => setNotManagedAdoptOpen(false)}
-            clusters={[{ name, labels: {}, managed: false }]}
-            onSuccess={() => {}}
+            onClose={() => closeNotManagedDialog(() => setNotManagedAdoptOpen(false))}
+            clusters={notManagedClusters}
+            onSuccess={() => {
+              reloadOnDialogCloseRef.current = true;
+            }}
             onDiagnose={() => navigate('/clusters')}
           />
           <TakeoverDialog
             clusterName={name}
             open={takeoverOpen}
-            onClose={() => setTakeoverOpen(false)}
-            onDone={() => void fetchData(true)}
+            onClose={() => closeNotManagedDialog(() => setTakeoverOpen(false))}
+            onDone={() => {
+              reloadOnDialogCloseRef.current = true;
+            }}
           />
         </>
       );
