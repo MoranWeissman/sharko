@@ -122,7 +122,7 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	// Check #2: cluster must NOT have an open pull request of any kind
 	// (register, adopt, take over or remove). The message names what the
 	// pull request really waits to do.
-	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
+	pending := resolvePendingRegistrations(r.Context(), nil, gp, s.gitopsConfig().CommitPrefix)
 	for _, p := range pending {
 		if p.ClusterName == name {
 			writeError(w, http.StatusBadRequest,

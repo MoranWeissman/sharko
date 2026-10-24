@@ -21,7 +21,7 @@ func TestResolvePendingRegistrations_AdoptPRsShowWithOperation(t *testing.T) {
 		{ID: 21, Title: "sharko: adopt cluster legacy-1", URL: "https://github.com/org/repo/pull/21", SourceBranch: "sharko/adopt-cluster-legacy-1-ab12"},
 		{ID: 22, Title: "sharko: unadopt cluster legacy-2", URL: "https://github.com/org/repo/pull/22"},
 	}}
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if len(got) != 1 {
 		t.Fatalf("want only the adopt row, got %+v", got)
 	}
@@ -44,7 +44,7 @@ func TestResolvePendingRegistrations_TakeoverPRsShowWithOperation(t *testing.T) 
 	gp := &fakeGP{prs: []gitprovider.PullRequest{
 		{ID: 31, Title: "sharko: take over cluster legacy-3", URL: "https://github.com/org/repo/pull/31", SourceBranch: "sharko/take-over-cluster-legacy-3-cd34"},
 	}}
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if len(got) != 1 {
 		t.Fatalf("want the take over row, got %+v", got)
 	}
