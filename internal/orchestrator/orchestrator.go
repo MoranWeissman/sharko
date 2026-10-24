@@ -240,6 +240,14 @@ type PRMetadata struct {
 	// unadopt-cluster only). Copied onto the tracked PR so the merge hook
 	// can finish the job when a person merges the PR later.
 	FollowUp *ClusterFollowUp
+
+	// BeforeTrack runs once the pull request exists and before it is
+	// recorded in the PR tracker. Adopt and take over put their waiting
+	// mark on here, so a crash between the two leaves a mark that names the
+	// pull request (EP3 dry run round S, S7). An error does not stop the
+	// tracking; it stops the auto-merge and comes back as
+	// ErrMarkNotWritten.
+	BeforeTrack func(ctx context.Context, res *GitResult) error
 }
 
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,

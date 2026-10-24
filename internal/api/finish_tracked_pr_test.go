@@ -248,8 +248,11 @@ func TestTakeover_PRNotRecorded_Is207AndChangesNothing(t *testing.T) {
 	if resp.Status != "partial" || resp.Message != want || resp.SecretSwapped || resp.WaitingForMerge {
 		t.Fatalf("got %s\nwant message %q", w.Body.String(), want)
 	}
+	// Only the waiting mark is on (it goes on before tracking, round S,
+	// S7), so the waiting-marks pass can still find this pull request.
 	live := liveSecret(t, k8s, "prod-eu")
-	if live.Labels[argosecrets.LabelManagedBy] != "" || live.Annotations[argosecrets.AnnotationTakeoverPendingPR] != "" {
+	if live.Labels[argosecrets.LabelManagedBy] != "" || live.Labels["env"] != "prod" ||
+		!models.PendingPRMarkNames(live.Annotations[argosecrets.AnnotationTakeoverPendingPR], 1) || len(live.Annotations) != 1 {
 		t.Fatalf("the connection changed: labels %v annotations %v", live.Labels, live.Annotations)
 	}
 }

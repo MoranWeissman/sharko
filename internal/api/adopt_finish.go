@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -153,6 +154,24 @@ func (s *Server) FinishAdoptOnPRComplete(ctx context.Context, pr prtracker.PRInf
 	}
 	s.recordAdoptFinish(name, pr.PRID, kind, event, "success")
 	return outcome, nil
+}
+
+// CodeOtherPROpen is the code of the 409 that adopt and take over answer
+// when a pull request of the other kind is already open for the cluster
+// (EP3 dry run round S, S5).
+const CodeOtherPROpen = "other_pr_open"
+
+// writeOtherPROpen answers 409 other_pr_open. pr_number and pr_url go out
+// only when known; pr_number is never 0.
+func writeOtherPROpen(w http.ResponseWriter, e *orchestrator.OtherJoinPRError) {
+	extra := map[string]interface{}{}
+	if e.PRID > 0 {
+		extra["pr_number"] = e.PRID
+	}
+	if e.PRUrl != "" {
+		extra["pr_url"] = e.PRUrl
+	}
+	writeCodedError(w, http.StatusConflict, CodeOtherPROpen, e.Error(), extra)
 }
 
 // recordAdoptFinish writes an audit entry for the background finish step.

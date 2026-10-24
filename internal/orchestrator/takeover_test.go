@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"strings"
 	"testing"
@@ -256,7 +257,7 @@ func TestFindOpenPRForCluster_NameMustEndThere(t *testing.T) {
 // still shows the files, and says which pull request is already waiting.
 func TestTakeoverClusterGit_DryRunSaysAPullRequestIsAlreadyOpen(t *testing.T) {
 	git := v4Git()
-	git.prs = append(git.prs, &gitprovider.PullRequest{ID: 9, Title: "sharko: adopt cluster prod-eu", URL: "u9"})
+	git.prs = append(git.prs, &gitprovider.PullRequest{ID: 9, Title: "sharko: take over cluster prod-eu", URL: "u9"})
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 	res, err := orch.TakeoverClusterGit(context.Background(), TakeoverClusterRequest{Name: "prod-eu", DryRun: true})
 	if err != nil {
@@ -265,4 +266,89 @@ func TestTakeoverClusterGit_DryRunSaysAPullRequestIsAlreadyOpen(t *testing.T) {
 	if !res.AlreadyWaiting || res.Git == nil || res.Git.PRID != 9 || res.DryRun == nil {
 		t.Fatalf("dry run = %+v", res)
 	}
+}
+
+// Round S, S5: an open adopt pull request would finish as an adopt, so a
+// take over (real or dry run) refuses with the plain sentence and opens
+// nothing. (Before, it took the adopt pull request as its own.)
+func TestTakeoverClusterGit_OpenAdoptPR_IsRefused_RoundS(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		git := v4Git()
+		git.prs = append(git.prs, &gitprovider.PullRequest{ID: 9, Title: "sharko: adopt cluster prod-eu", URL: "https://github.com/example/repo/pull/9"})
+		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+		_, err := orch.TakeoverClusterGit(context.Background(), TakeoverClusterRequest{Name: "prod-eu", DryRun: dry, Yes: true})
+		var other *OtherJoinPRError
+		if !errors.As(err, &other) || other.PRID != 9 || other.Kind != "adopt" || other.PRUrl != "https://github.com/example/repo/pull/9" {
+			t.Fatalf("dry=%v: err = %v", dry, err)
+		}
+		if want := "A pull request to adopt prod-eu is already open. Merge or close it first."; err.Error() != want {
+			t.Fatalf("dry=%v: message %q", dry, err.Error())
+		}
+		if len(git.prs) != 1 {
+			t.Fatalf("dry=%v: a second pull request was opened", dry)
+		}
+	}
+}
+
+// Round S, S7: the take over mark goes on before the pull request is
+// tracked, with the label choice; a re-run that finds its own open pull
+// request puts a lost mark back; a mark that cannot go on is
+// ErrMarkNotWritten and the pull request is not merged.
+func TestTakeoverClusterGit_WaitingMark_RoundS(t *testing.T) {
+	newOrch := func() (*Orchestrator, *mockGitProvider, *mockArgoSecretManager) {
+		git := v4Git()
+		asm := newMockArgoSecretManager()
+		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+		orch.SetArgoSecretManager(asm, "")
+		return orch, git, asm
+	}
+
+	t.Run("on before tracking", func(t *testing.T) {
+		orch, _, asm := newOrch()
+		seen := ""
+		orch.SetPRTracker(prTrackerFunc(func(_ context.Context, p TrackedPR) error {
+			seen = asm.annotations["prod-eu"][AnnotationTakeoverPendingPR]
+			return nil
+		}))
+		if _, err := orch.TakeoverClusterGit(context.Background(), TakeoverClusterRequest{Name: "prod-eu", Yes: true}); err != nil {
+			t.Fatal(err)
+		}
+		m, ok := models.ParsePendingPRMark(seen)
+		if !ok || m.PR == 0 || m.KeepOldLabels == nil || *m.KeepOldLabels || m.At == "" {
+			t.Fatalf("mark when the pull request was tracked = %q", seen)
+		}
+	})
+
+	t.Run("re-run puts it back", func(t *testing.T) {
+		orch, git, asm := newOrch()
+		git.prs = append(git.prs, &gitprovider.PullRequest{ID: 4, Title: "sharko: take over cluster prod-eu", URL: "https://github.com/example/repo/pull/4"})
+		res, err := orch.TakeoverClusterGit(context.Background(), TakeoverClusterRequest{Name: "prod-eu", Yes: true, PreserveLegacyLabels: true})
+		if err != nil || !res.AlreadyWaiting {
+			t.Fatalf("res %+v err %v", res, err)
+		}
+		m, ok := models.ParsePendingPRMark(asm.annotations["prod-eu"][AnnotationTakeoverPendingPR])
+		if !ok || m.PR != 4 || m.Repo != "example/repo" || m.KeepOldLabels == nil || !*m.KeepOldLabels {
+			t.Fatalf("mark = %q", asm.annotations["prod-eu"][AnnotationTakeoverPendingPR])
+		}
+	})
+
+	t.Run("cannot go on", func(t *testing.T) {
+		orch, git, asm := newOrch()
+		gitops := defaultGitOps()
+		gitops.PRAutoMerge = true
+		orch.gitops = gitops
+		tracker := &stubPRTracker{}
+		orch.SetPRTracker(tracker)
+		asm.annotationErr = errors.New("secret update refused")
+		res, err := orch.TakeoverClusterGit(context.Background(), TakeoverClusterRequest{Name: "prod-eu", Yes: true})
+		if !errors.Is(err, ErrMarkNotWritten) || res == nil || res.Git == nil || res.Git.Merged {
+			t.Fatalf("res %+v err %v", res, err)
+		}
+		if git.mergeCalls != 0 {
+			t.Fatalf("merged %d times; it must wait for the mark", git.mergeCalls)
+		}
+		if len(tracker.snapshot()) != 1 {
+			t.Fatal("the pull request must still be tracked")
+		}
+	})
 }

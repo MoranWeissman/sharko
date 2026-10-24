@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -216,12 +215,27 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 		return cr
 	}
 	if existingPR != nil {
+		if existingOp != joinOpAdopt {
+			// An open take over pull request would finish as a take over,
+			// not as this adopt (EP3 dry run round S, S5).
+			other := &OtherJoinPRError{Cluster: name, Kind: existingOp, PRID: existingPR.ID, PRUrl: existingPR.URL}
+			cr.Status = "failed"
+			cr.Error = other.Error()
+			cr.Message = other.Error()
+			cr.OtherPR = other
+			return cr
+		}
 		log.Info("Found existing open PR for v4 cluster adoption — skipping",
 			"cluster", name, "pr", existingPR.URL)
 		cr.Git = &GitResult{PRUrl: existingPR.URL, PRID: existingPR.ID, Branch: existingPR.SourceBranch}
-		if existingOp == "adopt" {
-			// Put the waiting mark back in case the first try could not.
-			o.markAdoptPending(ctx, name, existingPR.ID)
+		// Put the waiting mark back in case the first try could not (S7).
+		if markErr := o.putJoinMark(ctx, AnnotationAdoptPendingPR, name, existingPR.ID, existingPR.URL, nil); markErr != nil {
+			log.Warn("could not put the adopt waiting mark back on the cluster's ArgoCD connection",
+				"cluster", name, "pr", existingPR.ID, "error", markErr)
+			cr.Status = "partial"
+			cr.Error = markErr.Error()
+			cr.Message = MarkNotWrittenMessage("adopt", name, existingPR.URL)
+			return cr
 		}
 		cr.Status = "success"
 		cr.Message = adoptAlreadyWaitingMessage(name, existingPR.ID, existingPR.URL)
@@ -234,6 +248,10 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 	// finishes the adopt even when the waiting mark is not on the Secret
 	// (round R, R4).
 	meta.FollowUp = &ClusterFollowUp{Finish: FinishAdopt}
+	// The waiting mark goes on before the pull request is tracked (S7).
+	meta.BeforeTrack = func(ctx context.Context, res *GitResult) error {
+		return o.putJoinMark(ctx, AnnotationAdoptPendingPR, name, res.PRID, res.PRUrl, nil)
+	}
 	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name), meta)
 	if gitErr != nil {
 		switch {
@@ -241,6 +259,11 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 			cr.Status = "partial"
 			cr.Error = gitErr.Error()
 			cr.Message = PRNotRecordedMessage("adopt", gitResult.PRUrl)
+			cr.Git = gitResult
+		case errors.Is(gitErr, ErrMarkNotWritten) && gitResult != nil:
+			cr.Status = "partial"
+			cr.Error = gitErr.Error()
+			cr.Message = MarkNotWrittenMessage("adopt", name, gitResult.PRUrl)
 			cr.Git = gitResult
 		case gitResult != nil:
 			cr.Status = "partial"
@@ -289,10 +312,9 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 	}
 
 	if !gitResult.Merged {
-		// Nothing about the connection changes until the merge. Only the
-		// waiting mark goes on. The tracked pull request is what finishes
-		// the adopt, so a mark that cannot be written is only logged.
-		o.markAdoptPending(ctx, name, gitResult.PRID)
+		// Nothing about the connection changes until the merge. The
+		// waiting mark went on before the pull request was tracked, and
+		// the tracked pull request finishes the adopt.
 		cr.Status = "success"
 		cr.Message = adoptWaitingForMergeMessage(gitResult.PRID, gitResult.PRUrl)
 		return cr
@@ -316,18 +338,4 @@ func adoptWaitingForMergeMessage(prID int, prURL string) string {
 	return fmt.Sprintf(
 		"Pull request #%d is open: %s. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection.",
 		prID, prURL)
-}
-
-// markAdoptPending puts the waiting mark (the pull request number) on the
-// cluster's ArgoCD Secret. No-op without a Secret manager. The mark only
-// shows that the adopt waits; the tracked pull request finishes it, so a
-// failure is logged and nothing else.
-func (o *Orchestrator) markAdoptPending(ctx context.Context, name string, prID int) {
-	if o.argoSecretManager == nil {
-		return
-	}
-	if err := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationAdoptPendingPR, strconv.Itoa(prID)); err != nil {
-		logging.LoggerFromContext(ctx).Warn("could not put the adopt waiting mark on the cluster's ArgoCD connection; the merge still finishes the adopt",
-			"cluster", name, "pr", prID, "error", err)
-	}
 }

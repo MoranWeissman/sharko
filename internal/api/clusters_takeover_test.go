@@ -939,8 +939,8 @@ func TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark(t *testing.T) {
 	if secret.Labels["env"] != "prod" {
 		t.Fatalf("the previous owner's label changed before the merge: %v", secret.Labels)
 	}
-	if got := secret.Annotations[argosecrets.AnnotationTakeoverPendingPR]; got != "1" {
-		t.Fatalf("waiting mark = %q, want the pull request number 1", got)
+	if got := secret.Annotations[argosecrets.AnnotationTakeoverPendingPR]; !models.PendingPRMarkNames(got, 1) {
+		t.Fatalf("waiting mark = %q, want one that names pull request 1", got)
 	}
 }
 

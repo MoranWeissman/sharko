@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -128,7 +129,10 @@ func TestAdoptV4_OpenPRsUnreadable_Stops(t *testing.T) {
 	}
 }
 
-func TestAdoptV4_OpenTakeoverPR_CountsAsAlreadyWaiting(t *testing.T) {
+// Round S, S5: an open take over pull request would finish as a take
+// over, so the adopt refuses, in plain words, and changes nothing.
+// (Round R counted it as this adopt's own pull request.)
+func TestAdoptV4_OpenTakeoverPR_IsRefused_RoundS(t *testing.T) {
 	orch, git, asm := adoptPendingSetup(t)
 	git.prs = append(git.prs, &gitprovider.PullRequest{
 		ID: 9, Title: "sharko: take over cluster prod-eu", URL: "https://github.com/example/repo/pull/9",
@@ -140,9 +144,15 @@ func TestAdoptV4_OpenTakeoverPR_CountsAsAlreadyWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	cr := result.Results[0]
-	want := "Adopting prod-eu is already waiting in pull request #9: https://github.com/example/repo/pull/9. Sharko did not open a second one. Merge it to finish."
-	if cr.Status != "success" || cr.Merged || cr.Message != want {
+	want := "A pull request to take over prod-eu is already open. Merge or close it first."
+	if cr.Status != "failed" || cr.Merged || cr.Message != want || cr.Error != want {
 		t.Fatalf("status %q merged %v message %q", cr.Status, cr.Merged, cr.Message)
+	}
+	if cr.OtherPR == nil || cr.OtherPR.PRID != 9 || cr.OtherPR.PRUrl != "https://github.com/example/repo/pull/9" || cr.OtherPR.Kind != "take over" {
+		t.Fatalf("other pull request = %+v", cr.OtherPR)
+	}
+	if strings.Contains(cr.Message, "Adopting prod-eu is already waiting") {
+		t.Fatal("the take over pull request is called this adopt's own again")
 	}
 	if len(git.prs) != 1 {
 		t.Fatalf("a second pull request was opened: %d", len(git.prs))
