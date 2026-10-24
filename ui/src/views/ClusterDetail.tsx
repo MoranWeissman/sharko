@@ -251,6 +251,15 @@ export const TOGGLE_NO_PR_ERROR =
 
 // What the page says for a cluster ArgoCD knows and Sharko does not manage.
 // Pinned by exact text in ClusterDetail.notmanaged.test.tsx.
+// The 404 page for a cluster nobody knows. The Clusters page calls its table
+// of open pull requests "Pending Registrations" when every row is a register,
+// and "Pending Changes" otherwise, so both names are given (EP3 round S, S38).
+// Pinned by exact text in ClusterDetail.notmanaged.test.tsx.
+export const CLUSTER_NOT_FOUND_DESCRIPTION =
+  'This cluster is not in your list of managed clusters. ' +
+  'It may have been registered via a pending PR that has not yet merged. ' +
+  'Open the Clusters page and look for an open PR under "Pending Registrations" or "Pending Changes".';
+
 export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
 export function notManagedDescription(name: string): string {
   return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;
@@ -1284,9 +1293,7 @@ export function ClusterDetail() {
         <EmptyState
           title={`Cluster "${name}" not found`}
           description={
-            'This cluster is not in your list of managed clusters. ' +
-            'It may have been registered via a pending PR that has not yet merged. ' +
-            'Open the Clusters page and look under "Pending Registrations" for an open PR.'
+CLUSTER_NOT_FOUND_DESCRIPTION
           }
           action={
             <button

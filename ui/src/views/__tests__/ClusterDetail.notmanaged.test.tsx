@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { ClusterDetail, NOT_MANAGED_TITLE, notManagedDescription } from '@/views/ClusterDetail';
+import { ClusterDetail, NOT_MANAGED_TITLE, notManagedDescription, CLUSTER_NOT_FOUND_DESCRIPTION } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
 
 // Round R (R15): the page for a cluster ArgoCD knows and Sharko does not
@@ -212,6 +212,20 @@ describe('ClusterDetail — not managed, against the real comparison answer', ()
     renderPage();
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
     expect(screen.queryByText(NOT_MANAGED_TITLE)).not.toBeInTheDocument();
+  });
+
+  // S38: the table of open pull requests is "Pending Registrations" only when
+  // every row is a register; otherwise it is "Pending Changes". Name both.
+  it('the not-found page names the pending table by both of its real names', async () => {
+    comparison = () => jsonResponse(404, { error: 'cluster not found' });
+    renderPage();
+    const want =
+      'This cluster is not in your list of managed clusters. ' +
+      'It may have been registered via a pending PR that has not yet merged. ' +
+      'Open the Clusters page and look for an open PR under "Pending Registrations" or "Pending Changes".';
+    expect(await screen.findByText(want)).toBeInTheDocument();
+    expect(CLUSTER_NOT_FOUND_DESCRIPTION).toBe(want);
+    expect(document.body.textContent).not.toContain('look under "Pending Registrations" for an open PR');
   });
 });
 
