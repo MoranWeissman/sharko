@@ -50,6 +50,12 @@ export const TAKEOVER_LABEL = 'Take ownership'
 // label above (walk day 4 locks, S3) — the button says what you're about to
 // do, the dialog title says what you're about to do it to.
 export const TAKEOVER_DIALOG_TITLE = 'Take ownership of this cluster'
+// TAKEOVER_WAITING_FOR_MERGE heads the result while the take over's pull
+// request is still open. Nothing has changed on the connection yet, so the
+// window must not say the cluster is taken over (same words as Adopt).
+export const TAKEOVER_WAITING_FOR_MERGE = 'Pull request opened, waiting for merge'
+export const TAKEOVER_VIEW_PR = 'View pull request'
+
 export const TAKEOVER_HINT =
   "Bring this cluster under Sharko's management. It keeps the same name, the same address and — unless you say otherwise — every label already on it. Nothing is deleted, and no addon is turned on."
 
@@ -278,40 +284,61 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
           </div>
         )}
 
-        {result && (
-          <div className="space-y-3" data-testid="takeover-result">
-            {/* v4.0.4 review fix: "partial" means the swap did not happen —
-                do not show it in the green success box. */}
-            <div
-              data-testid="takeover-result-message"
-              role={result.status === 'partial' ? 'alert' : undefined}
-              className={
-                result.status === 'partial'
-                  ? 'rounded-md bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
-                  : 'rounded-md bg-green-50 p-4 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-300'
-              }
-            >
-              {result.message}
-            </div>
-            {result.git?.pr_url && (
-              <a
-                href={result.git.pr_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2a5a7a] hover:underline dark:text-blue-400"
+        {result && (() => {
+          // waiting_for_merge: the pull request is open and nothing on the
+          // connection has changed. Say that plainly, in amber, with the
+          // link — never a green "done".
+          const waiting = result.waiting_for_merge === true
+          const partial = result.status === 'partial'
+          return (
+            <div className="space-y-3" data-testid="takeover-result" data-waiting={waiting ? 'true' : undefined}>
+              {waiting && (
+                <div
+                  data-testid="takeover-waiting"
+                  className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-300"
+                >
+                  <Loader2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {TAKEOVER_WAITING_FOR_MERGE}
+                </div>
+              )}
+              {/* v4.0.4 review fix: "partial" means the swap did not happen —
+                  do not show it in the green success box. */}
+              <div
+                data-testid="takeover-result-message"
+                role={partial ? 'alert' : undefined}
+                className={
+                  partial || waiting
+                    ? 'rounded-md bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
+                    : 'rounded-md bg-green-50 p-4 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-300'
+                }
               >
-                Open the pull request <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md bg-[#2a5a7a] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a4a6a]"
-            >
-              Done
-            </button>
-          </div>
-        )}
+                {result.message}
+              </div>
+              {result.git?.pr_url && (
+                <a
+                  href={result.git.pr_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  data-testid="takeover-pr-link"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2a5a7a] hover:underline dark:text-blue-400"
+                >
+                  {waiting
+                    ? `${TAKEOVER_VIEW_PR}${typeof result.git.pr_id === 'number' && result.git.pr_id > 0 ? ` #${result.git.pr_id}` : ''}`
+                    : 'Open the pull request'}{' '}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                data-testid="takeover-close"
+                className="rounded-md bg-[#2a5a7a] px-4 py-2 text-sm font-medium text-white hover:bg-[#1a4a6a]"
+              >
+                {waiting || partial ? 'Close' : 'Done'}
+              </button>
+            </div>
+          )
+        })()}
 
         {report && !loading && !result && (
           <div className="space-y-4">

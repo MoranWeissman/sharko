@@ -241,6 +241,11 @@ ArgoCD connection only if Sharko owns it; a connection owned by another tool
 or by you is always left alone), `git` (repo files only), or `none` (only the
 fleet-record entry).
 
+When the removal keeps the ArgoCD connection, the connection gets a
+`sharko.dev/remove-keep-pending-pr` mark while the pull request waits, so
+nothing deletes it in the meantime. See
+[A removal that keeps the connection](../operator/cluster-reconciler.md#a-removal-that-keeps-the-connection).
+
 ### `sharko update-cluster`
 
 Update the addon assignments for a cluster.
@@ -510,7 +515,7 @@ sharko takeover <cluster> [flags]
 |------|-------------|
 | `--dry-run` | Preview the plan (files, diffs) without making changes |
 | `-y`, `--yes` | Skip confirmation prompt |
-| `--acknowledge <id>` | Finding id to acknowledge (repeatable) |
+| `--acknowledge <id>` | Finding id to acknowledge. Repeat the flag, or give several ids split by commas (`--acknowledge a,b`) |
 | `--preserve-legacy-labels` | Carry the previous owner's labels over (only sent when you set this flag) |
 | `--region <region>` | Region to record on the fleet entry |
 | `--auto-merge` | Auto-merge the takeover PR (overrides the server default; only sent when you set this flag) |

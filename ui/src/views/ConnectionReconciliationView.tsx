@@ -26,7 +26,7 @@
 // hints at the value. No secret value, hash, length, fragment or encoding
 // exists anywhere in the response, so there is nothing here to leak.
 
-import { useContext, useEffect, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -458,6 +458,11 @@ export function ConnectionReconciliationView({
   const [showRepairConfirm, setShowRepairConfirm] = useState(false)
   const [repairInProgress, setRepairInProgress] = useState(false)
   const [takeoverOpen, setTakeoverOpen] = useState(false)
+  // takeoverChanged is set when the take over call came back. The page is
+  // reloaded only when the window closes, so the user gets to read the
+  // answer first (EP3 dry run round R: a take over now waits for its pull
+  // request, and reloading straight away hid the "waiting for merge" view).
+  const takeoverChanged = useRef(false)
 
   useEffect(() => {
     if (!canRead) return
@@ -1070,11 +1075,16 @@ export function ConnectionReconciliationView({
         <TakeoverDialog
           clusterName={cluster}
           open={takeoverOpen}
-          onClose={() => setTakeoverOpen(false)}
-          onDone={() => {
+          onClose={() => {
             setTakeoverOpen(false)
-            recheck()
-            onChanged()
+            if (takeoverChanged.current) {
+              takeoverChanged.current = false
+              recheck()
+              onChanged()
+            }
+          }}
+          onDone={() => {
+            takeoverChanged.current = true
           }}
         />
       )}

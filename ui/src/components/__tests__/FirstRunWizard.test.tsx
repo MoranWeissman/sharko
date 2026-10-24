@@ -2426,6 +2426,18 @@ describe('FirstRunWizard - Git provider for Gitea and self-hosted servers', () =
     expect(document.body.textContent).not.toContain("can't reach your Git host")
   })
 
+  it('an address the server cannot read shows the server sentence as is, and the old "can\'t reach" words never appear', async () => {
+    // internal/service UnreadableGitHostSentence, sent back as git.message.
+    const sentence = 'Sharko cannot read the Git host in the address. Check that it looks like https://host/owner/repo, then test again.'
+    api.testCredentials.mockResolvedValue({ git: { status: 'error', message: sentence }, argocd: { status: 'not_tested' } })
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(urlInput(), { target: { value: 'https:///acme/platform' } })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    expect(await screen.findByText(sentence)).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain("can't reach your Git host")
+  })
+
   it('does not overwrite an address the user already typed with the chart default', async () => {
     let release: (v: { provider: string; repo_url: string }) => void = () => {}
     api.gitDefaults.mockReturnValue(new Promise((r) => { release = r }))

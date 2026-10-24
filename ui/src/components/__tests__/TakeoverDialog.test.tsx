@@ -239,6 +239,76 @@ describe('TakeoverDialog', () => {
     expect(box).toHaveTextContent('could not take ownership');
   });
 
+  // EP3 dry run round R: take over now opens a pull request and waits for
+  // it. While it is open, nothing on the connection has changed, so the
+  // window must say a pull request is waiting — never "done" or "taken
+  // over". This is the server's real answer shape (clusters_takeover.go,
+  // takeoverWaitingMessage).
+  const waitingResponse = {
+    cluster: 'prod-eu',
+    status: 'success',
+    secret_swapped: false,
+    waiting_for_merge: true,
+    git: { pr_url: 'https://github.com/example/fleet/pull/12', pr_id: 12, branch: 'sharko/takeover-prod-eu', merged: false },
+    message:
+      "Pull request #12 is open: https://github.com/example/fleet/pull/12. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection. If it is closed without merging, Sharko changes nothing on the connection.",
+  };
+
+  it('while the pull request is open, says it is waiting for the merge, with the link, and never says done', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue(waitingResponse);
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    expect(await screen.findByTestId('takeover-waiting')).toHaveTextContent(/^Pull request opened, waiting for merge$/);
+    const box = screen.getByTestId('takeover-result-message');
+    expect(box.className).not.toMatch(/green/);
+    expect(box).toHaveTextContent(waitingResponse.message);
+    const link = screen.getByTestId('takeover-pr-link');
+    expect(link).toHaveAttribute('href', 'https://github.com/example/fleet/pull/12');
+    expect(link).toHaveTextContent(/^View pull request #12$/);
+    const result = screen.getByTestId('takeover-result');
+    expect(result).not.toHaveTextContent(/taken over/i);
+    expect(result).not.toHaveTextContent(/Sharko now owns/i);
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+    expect(screen.getByTestId('takeover-close')).toHaveTextContent(/^Close$/);
+  });
+
+  it('a second take over that finds the pull request already open still says it is waiting', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue({
+      ...waitingResponse,
+      already_waiting: true,
+      message:
+        'Taking over prod-eu is already waiting in pull request #12: https://github.com/example/fleet/pull/12. Sharko did not open a second one. Merge it to finish.',
+    });
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    expect(await screen.findByTestId('takeover-waiting')).toHaveTextContent('Pull request opened, waiting for merge');
+    expect(screen.getByTestId('takeover-result-message').className).not.toMatch(/green/);
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+  });
+
+  it('a finished take over (pull request merged) still shows green and Done', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue({
+      cluster: 'prod-eu', status: 'success', secret_swapped: true,
+      git: { pr_url: 'https://github.com/example/fleet/pull/12', pr_id: 12, merged: true },
+      message: "Sharko now owns prod-eu's ArgoCD connection. It kept the same name and the same address, and nothing was deleted.",
+    });
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    await screen.findByTestId('takeover-result');
+    expect(screen.queryByTestId('takeover-waiting')).toBeNull();
+    expect(screen.getByTestId('takeover-result-message').className).toMatch(/green/);
+    expect(screen.getByTestId('takeover-close')).toHaveTextContent(/^Done$/);
+  });
+
   it('never calls the takeover just by being opened', async () => {
     mockPreflight.mockResolvedValue(okReport);
     render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);

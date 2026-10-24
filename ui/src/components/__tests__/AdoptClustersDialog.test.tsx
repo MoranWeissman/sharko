@@ -808,10 +808,12 @@ describe('AdoptClustersDialog', () => {
 
     it('a partial adopt shows what the server said, not a green "Adopted"', async () => {
       reachable()
-      const partialMsg =
-        "The pull request is open, but Sharko could not mark prod-cluster's ArgoCD connection as waiting for it, so merging it would not finish the adopt. Run adopt again before you merge it — it finds the open pull request and tries the mark again."
+      // A sentence the server really sends (internal/orchestrator/adopt_v4.go,
+      // the merge-failed partial). The old fixture used a sentence the server
+      // stopped sending in round R. merged is always on the wire.
+      const partialMsg = 'PR created but merge failed for cluster prod-cluster: https://git/pr/9'
       vi.mocked(api.adoptClusters).mockResolvedValue({
-        results: [{ name: 'prod-cluster', status: 'partial', message: partialMsg, git: { pr_url: 'https://git/pr/9' } }],
+        results: [{ name: 'prod-cluster', status: 'partial', merged: false, message: partialMsg, git: { pr_url: 'https://git/pr/9', merged: false } }],
       } as never)
       const user = userEvent.setup()
       openWith([mockCluster1])

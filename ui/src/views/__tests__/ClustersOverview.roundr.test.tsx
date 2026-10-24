@@ -190,6 +190,23 @@ describe('ClustersOverview - round R', () => {
   });
 });
 
+describe('pending table, real server shape: pr_number is left out when Sharko does not know it', () => {
+  it('a takeover row with no pr_number field shows "View PR" and no number at all', async () => {
+    // The server sends pr_number with omitempty, so an unknown number is
+    // simply missing from the JSON — not 0, not null.
+    mockGetClusters.mockResolvedValue(response({
+      pending_registrations: [
+        { cluster_name: 'taking-one', branch: 'b', pr_url: 'https://x/pull/new', operation: 'takeover' },
+      ],
+    }));
+    renderView();
+    expect(await screen.findByText('View PR')).toBeInTheDocument();
+    expect(screen.queryByText(/#undefined/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/#NaN/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/#\d/)).not.toBeInTheDocument();
+  });
+});
+
 describe('latestTestOf - what the list says about a test run on this page', () => {
   it('a failed sign-in lookup is "not verified", not a failure', () => {
     expect(latestTestOf({ success: false, stage: 'credentials', error_message: 'x' })).toEqual({

@@ -567,6 +567,12 @@ export interface TakeoverResponse {
   secret_swapped: boolean
   already_owned?: boolean
   protection_repaired?: boolean
+  // waiting_for_merge is true while the take over's pull request is still
+  // open. Nothing on the connection has changed yet; the merge does the
+  // swap. already_waiting says the pull request was opened by an earlier
+  // call, so no second one was opened.
+  waiting_for_merge?: boolean
+  already_waiting?: boolean
   git?: {
     pr_url?: string
     pr_id?: number

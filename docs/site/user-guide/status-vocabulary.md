@@ -72,14 +72,16 @@ test results — they can differ from ArgoCD's connection above.
 
 Shown inside the status pill popover. The Cluster Detail page does not show a **Passed** word. Its header shows a green **Connectivity verified ✓** badge instead.
 
-The popover says **Passed** only when a test app was really deployed through ArgoCD. If the cluster is verified only because ArgoCD itself connected to it, the badge on Cluster Detail is green, but the popover line says **Not run**, because no test app was deployed.
+The popover says **Passed** only when a test app was really deployed through ArgoCD. If the cluster is verified only because ArgoCD itself connected to it, the badge on Cluster Detail is green, and the popover line says **Not needed**, because ArgoCD already confirms it can reach the cluster and no test app had to be deployed.
 
 | Name | Color | Meaning |
 |------|-------|---------|
 | **Passed** | Green | A small test app was deployed to this cluster and it worked. The deploy path works. |
 | **Running…** | Neutral/blue | The check is still rolling out — usually under a minute. |
 | **Failed** | Amber | The test workload could not be deployed to this cluster. |
+| **Not needed** | Neutral | ArgoCD already confirms it can reach this cluster, so no deploy check was needed. |
 | **Not run** | Neutral | No deploy check has run for this cluster. |
+| **Not known** | Neutral | Sharko got a deploy check result this page does not know how to show. This can happen when the server is newer than the page. |
 
 ## Addon deployment coverage (Addons page)
 

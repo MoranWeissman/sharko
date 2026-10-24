@@ -99,6 +99,19 @@ History shows `cluster_orphan_delete_rejected`). The Secret now counts as
 managed outside Sharko, and you can adopt it if you want Sharko to manage
 it again.
 
+### A removal that keeps the connection
+
+Some removals keep the ArgoCD connection: `sharko remove-cluster <name> -y
+--cleanup git`, and un-adopt. Before Sharko opens the pull request, it puts
+the `sharko.dev/remove-keep-pending-pr` annotation on the Secret. It holds the
+pull request number (or `pending` for the short moment before the number is
+known). While the annotation is on the Secret, the reconciler never deletes
+the Secret and never lists it as left over, even after the cluster is gone
+from `managed-clusters.yaml`. When the pull request is merged, Sharko takes
+off its label and this annotation together, and the Secret stays in ArgoCD.
+If the pull request is closed without merging, Sharko takes off only the
+annotation and changes nothing else.
+
 ### What happens if someone adds the label to a Secret Sharko didn't create
 
 On its next check, Sharko sees a Secret with its label but no matching
