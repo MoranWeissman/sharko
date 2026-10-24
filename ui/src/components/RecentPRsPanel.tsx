@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, ExternalLink, GitMerge, Loader2, RefreshCw } from 'lucide-react'
 import type { RecentPRsResponse } from '@/services/models'
 import { useGitHost } from '@/hooks/useGitHost'
+import { prNumberPrefix } from '@/lib/prRef'
 
 /**
  * Small "Recent changes (last 5)" card rendered beneath a ValuesEditor.
@@ -123,7 +124,7 @@ export function RecentPRsPanel({ load, title = 'Recent changes', refreshKey = 0 
                 className="flex-1 truncate font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
                 title={pr.title}
               >
-                #{pr.pr_id} {pr.title}
+                {prNumberPrefix(pr.pr_id)}{pr.title}
               </a>
               <span className="shrink-0 text-[#3a6a8a] dark:text-gray-500" title={pr.merged_at}>
                 {pr.author || '—'} · {formatMergedAt(pr.merged_at)}

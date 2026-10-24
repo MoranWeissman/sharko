@@ -14,6 +14,7 @@ import { ErrorState } from '@/components/ErrorState'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { AddonCatalogItem, DryRunResult } from '@/services/models'
 import { buildConnectionUpdatePayload } from './connectionUpdate'
+import { prRef } from '@/lib/prRef'
 
 // Story G2: what the switch really does. Sharko merges right after it opens
 // the pull request (it does not wait for checks), and the switch covers the
@@ -350,7 +351,7 @@ export function GitOpsSection() {
                     rel="noopener noreferrer"
                     className="underline hover:text-green-700 dark:hover:text-green-300"
                   >
-                    PR #{defaultsPRResult.pr_id}
+                    {prRef(defaultsPRResult.pr_id, 'View pull request')}
                   </a>
                 </p>
               )}

@@ -89,6 +89,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { prettyOperation } from '@/lib/utils';
 import type { StatusSeverity } from '@/lib/clusterStatus';
 import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
+import { prRef } from '@/lib/prRef'
 
 type StatusFilter =
   | 'all'
@@ -2520,7 +2521,7 @@ CLUSTER_NOT_FOUND_DESCRIPTION
             <ClusterChangesSection
               clusterName={name!}
               onMergeDetected={(pr: TrackedPR) => {
-                showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
+                showToast(`Merged ${prRef(pr.pr_id)}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
                 void fetchData()
               }}
             />
@@ -2904,11 +2905,11 @@ function ComparisonRow({ addon, clusterName, argocdBaseURL, highlighted, pending
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
               data-testid="addon-pending-pr-badge"
-              title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
+              title={`Open ${prRef(pr.pr_id, 'the pull request')} — ${pr.pr_title}`}
               className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
             >
               <GitPullRequest className="h-3 w-3" />
-              PR #{pr.pr_id}
+              {prRef(pr.pr_id, 'PR')}
               {pr.operation && (
                 <span className="rounded bg-amber-200/70 px-1 py-px text-xs capitalize text-amber-900 dark:bg-amber-800/50 dark:text-amber-200">
                   {pr.operation.replace(/^addon-/, '')}
@@ -3058,7 +3059,7 @@ function PendingAddonRow({ addonName, prs }: { addonName: string; prs: TrackedPR
     prs.length > 1
       ? `${prs.length} pull requests open — merge to approve`
       : primary
-        ? `PR #${primary.pr_id} open — merge to approve${primary.operation ? ` (${primary.operation.replace(/^addon-/, '')})` : ''}`
+        ? `${prRef(primary.pr_id, 'Pull request')} open — merge to approve${primary.operation ? ` (${primary.operation.replace(/^addon-/, '')})` : ''}`
         : 'Pull request open — merge to approve';
 
   return (
@@ -3081,11 +3082,11 @@ function PendingAddonRow({ addonName, prs }: { addonName: string; prs: TrackedPR
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
                 data-testid="addon-pending-pr-badge"
-                title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
+                title={`Open ${prRef(pr.pr_id, 'the pull request')} — ${pr.pr_title}`}
                 className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
               >
                 <GitPullRequest className="h-3 w-3" />
-                PR #{pr.pr_id}
+                {prRef(pr.pr_id, 'PR')}
                 <ExternalLink className="h-3 w-3" />
               </a>
             ))}

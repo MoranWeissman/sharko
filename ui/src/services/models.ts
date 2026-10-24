@@ -2133,6 +2133,10 @@ export interface TrackedPR {
   created_at: string
   last_status: string
   last_polled_at: string
+  // EP3 round S shared contract: a merged pull request whose finish has not
+  // run yet comes back with status "finishing". The UI shows it as a plain
+  // "Finishing" label.
+  status?: string
 }
 
 export interface TrackedPRsResponse {
