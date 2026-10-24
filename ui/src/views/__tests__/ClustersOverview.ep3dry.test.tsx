@@ -159,8 +159,9 @@ describe('ClustersOverview - episode 3 dry run (story D)', () => {
     await screen.findByText('Register New Cluster');
     fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'user' } });
     expect(await screen.findByRole('button', { name: 'Adopt argo-known' })).not.toBeDisabled();
-    expect(screen.queryByText(/You can add the connection details later/)).toBeInTheDocument();
+    expect(screen.queryByText(/You can add the connection details later/)).not.toBeInTheDocument();
     expect(screen.queryByText('Connection source')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('identity-strip')).not.toBeInTheDocument();
   });
 
   it('finding 7: Take ownership in the picker opens the take-ownership dialog for the picked cluster', async () => {

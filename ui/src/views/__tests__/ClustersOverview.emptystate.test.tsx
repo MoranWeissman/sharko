@@ -107,11 +107,9 @@ describe('Register New Cluster dialog text (F4)', () => {
     expect(
       screen.getByText('Required — choose one of the options in the list before registering.'),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        'You can add the connection details later, when an addon needs secrets on this cluster.',
-      ),
-    ).toBeInTheDocument();
+    // Round S (S37): the "add the connection details later" line said the
+    // opposite of "Required" right under it. It is gone.
+    expect(screen.queryByText(/You can add the connection details later/)).not.toBeInTheDocument();
     expect(screen.queryByText(/The connection details are optional/)).not.toBeInTheDocument();
     // The old wording is gone.
     expect(screen.queryByText(/three options/)).not.toBeInTheDocument();

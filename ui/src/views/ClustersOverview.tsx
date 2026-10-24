@@ -1785,21 +1785,11 @@ export function ClustersOverview() {
               * asking them to know it. The full explainer (ARN, method,
               * "how it works") now lives on the System page — this dialog
               * only needs the one-line summary + a link there. */}
-            {/* Sharko's own AWS identity only matters when Sharko makes the
-              * connection. With a cluster ArgoCD already connects to, it is
-              * noise (and on a laptop cluster it points at EKS). */}
-            {(connManagedBy !== 'user' || showOptionalCreds) && (
-              <ClusterIdentityStrip capabilities={capabilities} loading={capabilitiesLoading} />
-            )}
-
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-                Cluster location
-              </p>
-              <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
-                You can add the connection details later, when an addon needs secrets on this cluster.
-              </p>
-            </div>
+            {/* Round S (S37, finding 23): Sharko's own AWS identity line now
+              * sits inside the Amazon EKS choice below, the only place it is
+              * used. On a kind or other non-EKS set-up it never shows. The old
+              * "add the connection details later" line is gone: it sat right
+              * above "Required — choose one", which said the opposite. */}
 
             {/* Connection ownership — WHO manages the ArgoCD cluster secret
               * (V2-cleanup-57.2). Asked before the credentials question
@@ -1814,6 +1804,15 @@ export function ClustersOverview() {
                 value={connManagedBy}
                 onChange={(e) => {
                   setConnManagedBy(e.target.value as ConnOwnership);
+                  // A new owner starts the connection fields over, so a
+                  // choice made for the other owner is never shown (or sent)
+                  // under this one.
+                  setCredsSource('');
+                  setShowOptionalCreds(false);
+                  setAddClusterKubeconfig('');
+                  setAddClusterSecretPath('');
+                  setAddClusterRegion('');
+                  setAddClusterRoleArn('');
                   setPickedDiscovered(null);
                   userLetGoOfPickRef.current = false;
                   setDiscoveredFilter('');
@@ -2132,7 +2131,9 @@ export function ClustersOverview() {
             {credsSource === 'eks-token' && (
               <>
                 {/* Amazon EKS — generate a token from cloud identity
-                  * (IRSA / role assumption). The AWS-shaped fields. */}
+                  * (IRSA / role assumption). The AWS-shaped fields. Sharko's
+                  * own AWS identity is used only here, so its line is here. */}
+                <ClusterIdentityStrip capabilities={capabilities} loading={capabilitiesLoading} />
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                     Region (optional)
