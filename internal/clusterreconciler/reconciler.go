@@ -1331,12 +1331,19 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 	// fleet-wide removal. Withhold every deletion this tick and scream. The
 	// per-candidate classification above (adopted / pending skips) already
 	// ran, so those operator signals still fire; only the destructive step
-	// is held. Fresh installs (file missing, or genuinely empty body) never
-	// trip this — fileNonEmpty is false there.
-	if len(toDelete) > 0 && orphanSweepHeld(len(desired), fileNonEmpty, len(existing)) {
+	// is held. A fresh install with no Secrets and a genuinely empty body never
+	// trips this.
+	//
+	// A file that is not there at all (spec == nil: absent at both paths, or
+	// an empty Gitea repo) counts the same as a non-empty file here. Live
+	// labeled Secrets with no file in Git look like a moved file or a repo
+	// that cannot be read, not like an empty fleet. Removing the last
+	// cluster through Sharko deletes its Secret itself, so holding costs
+	// nothing on a normal path.
+	if len(toDelete) > 0 && orphanSweepHeld(len(desired), fileNonEmpty || spec == nil, len(existing)) {
 		stats.Errors++
 		logging.LoggerFromContext(ctx).Error(
-			"[clusterreconciler] orphan sweep HELD — managed-clusters.yaml is non-empty but parsed to zero clusters while sharko-labeled cluster Secrets exist; refusing to delete anything this tick. Check for a Sharko version/format mismatch on this repo (see operator guide: upgrade & rollback safety)",
+			"[clusterreconciler] orphan sweep HELD — managed-clusters.yaml is non-empty or missing and wants zero clusters while sharko-labeled cluster Secrets exist; refusing to delete anything this tick. Check for a Sharko version/format mismatch on this repo (see operator guide: upgrade & rollback safety)",
 			"namespace", r.namespace,
 			"path", r.managedClustersPath,
 			"branch", r.branch,
@@ -1351,7 +1358,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 			Resource:  fmt.Sprintf("namespace:%s held_deletions:%d observed_managed:%d", r.namespace, len(toDelete), len(existing)),
 			Source:    "reconciler",
 			Result:    "partial",
-			Detail:    "desired state parsed to zero clusters while the managed-clusters file exists non-empty and sharko-labeled cluster Secrets are live — orphan sweep withheld this tick; investigate a version/format mismatch before any Secret is deleted",
+			Detail:    "desired state is zero clusters while the managed-clusters file is non-empty or missing and sharko-labeled cluster Secrets are live — orphan sweep withheld this tick; investigate a version/format mismatch or a moved file before any Secret is deleted",
 			RequestID: logging.RequestID(ctx),
 		})
 		toDelete = nil

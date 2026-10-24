@@ -12,8 +12,8 @@ import (
 // parses to ZERO clusters while managed-clusters.yaml exists non-empty in
 // git AND at least one sharko-labeled cluster Secret is live, the sweep is
 // withheld for the tick (Error log + orphan_sweep_held audit event) instead
-// of deleting the whole fleet. Fresh installs — file missing, or a
-// genuinely empty file — keep sweeping as before. These tests pin all
+// of deleting the whole fleet. A file that is missing is held too. A
+// genuinely empty file keeps sweeping as before. These tests pin all
 // three cases plus the guard's truth table and the end-to-end
 // unknown-apiVersion abort.
 
@@ -79,9 +79,12 @@ func TestPollOnce_ZeroDesiredNonEmptyFile_LiveSecrets_SweepHeld(t *testing.T) {
 	}
 }
 
-// Case 2 — fresh install, file MISSING from git: the sweep proceeds as
-// before (an orphaned labeled Secret is still cleaned up; no held event).
-func TestPollOnce_FileMissing_SweepProceeds(t *testing.T) {
+// Case 2 — file MISSING from git while a labeled Secret is live: Sharko
+// cannot tell a moved file or an unreadable repo from an empty fleet, so
+// the sweep is HELD (before EP3 round R later-items it swept). Removing the
+// last cluster through Sharko deletes its Secret itself, so a normal path
+// never needs this sweep.
+func TestPollOnce_FileMissing_LiveSecrets_SweepHeld(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
@@ -93,15 +96,24 @@ func TestPollOnce_FileMissing_SweepProceeds(t *testing.T) {
 	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, nil)
 	r.pollOnce(ctx)
 
-	if _, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, orphan.Name, metav1.GetOptions{}); err == nil {
-		t.Fatal("missing file is a normal fresh-install state — the orphan Secret should have been swept, but it survived")
+	if _, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, orphan.Name, metav1.GetOptions{}); err != nil {
+		t.Fatalf("a missing file with live Secrets must hold the sweep — the Secret was deleted: %v", err)
 	}
-	entries := audits.Snapshot()
-	if hasEvent(entries, "orphan_sweep_held", "partial") {
-		t.Fatalf("orphan_sweep_held must NOT fire when the file is missing; got %v", entries)
+	if !hasEvent(audits.Snapshot(), "orphan_sweep_held", "partial") {
+		t.Fatalf("expected an orphan_sweep_held audit entry; got %v", audits.Snapshot())
 	}
-	if !hasEventForResource(entries, "cluster_secret_delete", "cluster:"+orphan.Name) {
-		t.Fatalf("expected a delete audit for the orphan; got %v", entries)
+}
+
+// Case 2b — file missing and NO live Secrets: nothing to hold, nothing to
+// delete, no held event (a real fresh install).
+func TestPollOnce_FileMissing_NoSecrets_NoHeldEvent(t *testing.T) {
+	t.Parallel()
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, nil)
+	r.pollOnce(context.Background())
+	if hasEvent(audits.Snapshot(), "orphan_sweep_held", "partial") {
+		t.Fatalf("orphan_sweep_held must not fire on a fresh install; got %v", audits.Snapshot())
 	}
 }
 
