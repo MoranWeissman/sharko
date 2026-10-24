@@ -182,6 +182,7 @@ var connectionGateSites = []connectionGateSite{
 	{file: "internal/api/migration.go", fn: "migrationOrchestrator", lookups: "argocd", notRouted: "swallowed"},
 	{file: "internal/api/observability.go", fn: "handleGetObservabilityOverview", lookups: "argocd,git", routed: "argocd"},
 	{file: "internal/api/prs.go", fn: "handleListMergedPRs", lookups: "git", routed: "git"},
+	{file: "internal/api/prs.go", fn: "finishedUntrackedPR", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/repo_status.go", fn: "handleRepoStatus", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/repo_status.go", fn: "probeBootstrapSynced", lookups: "argocd", notRouted: "swallowed"},
 	{file: "internal/api/system.go", fn: "handleGetConfig", lookups: "argocd", notRouted: "swallowed"},
