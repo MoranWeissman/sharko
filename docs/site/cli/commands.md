@@ -226,7 +226,7 @@ really happened.
 Waiting is not an error, and the command did what it can do now. This means
 `sharko remove-cluster x -y && next-step` runs `next-step` while the cluster
 is still there. If your script needs the cluster gone, wait for the merge
-first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. The exit code is not `0`
+first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. If the pull request already merged, `sharko pr wait` says so at once and exits 0. The exit code is not `0`
 only when something went wrong. `sharko unadopt-cluster` and `sharko adopt`
 work the same way.
 
@@ -561,7 +561,7 @@ sharko drop-legacy-labels <cluster> [flags]
 | `--label <key>` | Label key to remove (repeatable; omit for every carried-over label) |
 | `-y`, `--yes` | Skip confirmation prompt |
 | `--dry-run` | Preview what would be removed without making changes |
-| `--acknowledge <id>` | Warning id to acknowledge (repeatable) |
+| `--acknowledge <id>` | Warning id to acknowledge. Repeat the flag, or give several ids split by commas (`--acknowledge a,b`) |
 
 Same acknowledge-then-rerun pattern as `takeover`: every warning must be named in
 `--acknowledge`, and an unacknowledged warning gets you the exact rerun command back.

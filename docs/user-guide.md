@@ -137,7 +137,7 @@ sharko add-cluster prod-eu \
   --region eu-west-1
 ```
 
-The server fetches cluster credentials from the configured secrets provider, verifies connectivity (Stage 1 test), registers the cluster in ArgoCD, creates a values file, and commits to Git as a pull request.
+The server fetches cluster credentials from the configured secrets provider, verifies connectivity (Stage 1 test), registers the cluster in ArgoCD, adds it to `managed-clusters.yaml`, and commits to Git as a pull request.
 
 ### Cluster Discovery and Adoption
 
@@ -219,9 +219,9 @@ Cluster removal supports three cleanup scopes:
 
 | Scope | What it does |
 |-------|-------------|
-| `all` (default) | Removes from `managed-clusters.yaml`, deletes values file via PR, deletes addon secrets from remote cluster, deletes ArgoCD cluster secret. |
+| `all` (default) | Removes from `managed-clusters.yaml`, deletes the cluster's files (`cluster-addons/<cluster>.yaml` and `values/clusters/<cluster>/`) via PR, deletes addon secrets from remote cluster, deletes ArgoCD cluster secret. |
 | `git` | Same Git changes as `all`, but skips remote addon secret deletion and ArgoCD secret deletion. |
-| `none` | Only removes the `managed-clusters.yaml` entry. Values file and ArgoCD secret are kept. |
+| `none` | Only removes the `managed-clusters.yaml` entry. The cluster's other files and its ArgoCD secret are kept. |
 
 Via the API, pass `cleanup` in the request body:
 
@@ -233,21 +233,20 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Disable an Addon on a Cluster
 
-Remove a specific addon from a single cluster without removing it from the catalog:
+Turn an addon off on one cluster without removing it from the catalog:
 
 ```bash
+sharko disable-addon prod-eu monitoring --yes
+
+# Via API
 curl -H "Authorization: Bearer $TOKEN" \
-  -X DELETE https://sharko.your-cluster.com/api/v1/clusters/prod-eu/addons/monitoring \
-  -d '{"yes": true, "cleanup": "all"}'
+  -X DELETE https://sharko.your-cluster.com/api/v1/v4/clusters/prod-eu/addons/monitoring \
+  -d '{"yes": true}'
 ```
 
-Cleanup scopes for addon disable:
-
-| Scope | What it does |
-|-------|-------------|
-| `all` (default) | Updates values file, updates `managed-clusters.yaml` labels, deletes addon secrets from remote cluster. |
-| `labels` | Updates values file and `managed-clusters.yaml` labels only. |
-| `none` | Updates the values file only. |
+This opens a pull request that sets the addon to `enabled: false` in `cluster-addons/prod-eu.yaml`.
+The entry, its version and its settings stay, so turning it back on is a one-word change. Add
+`--remove` (or `"remove": true`) to delete the entry instead.
 
 ### Update Cluster Addons
 
@@ -312,6 +311,7 @@ sharko pr wait 42 --timeout 10m
 ```
 
 This is useful in CI/CD pipelines where you need to wait for a Sharko-created PR to be merged before proceeding.
+If the pull request already merged (for example with auto-merge), `sharko pr wait` says so at once and exits 0.
 
 ### Cluster Status Overview
 
@@ -693,7 +693,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Per-Cluster Upgrade
 
-Updates the version in the cluster's values file only. The cluster will have a different version from the global catalog.
+Changes the addon's version only in that cluster's `cluster-addons/<cluster>.yaml`. Other clusters keep their own version.
 
 ```bash
 # Via CLI
