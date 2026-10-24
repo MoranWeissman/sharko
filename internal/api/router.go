@@ -450,9 +450,9 @@ type Server struct {
 	// prTracker tracks PRs created by Sharko operations (optional — set via SetPRTracker).
 	prTracker *prtracker.Tracker
 
-	// waitingMarks counts failed tries of the waiting-marks pass
-	// (waiting_marks.go).
-	waitingMarks waitingMarkTries
+	// waitingMarks remembers when the waiting-marks pass first saw a keep
+	// mark with no pull request number (waiting_marks.go).
+	waitingMarks waitingMarkSeen
 
 	// reconcilerTrigger nudges the cluster Secret reconciler after the
 	// orchestrator commits a managed-clusters.yaml change. Optional —

@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // EP3-DRYRUN-FIXES call 1: the after-merge choices of a remove or un-adopt
@@ -33,19 +35,25 @@ func TestTrackPR_FollowUpSurvivesTheRoundTrip(t *testing.T) {
 	}
 }
 
+// EP3 dry run round S, S1 and S3: only a MERGED removal that keeps the
+// connection hands it back; an open one only holds it (it may still be
+// closed). Every unfinished remove or un-adopt, cleanup=all too, holds the
+// connection so the sweep leaves the finish its credentials. Closed pull
+// requests hold nothing.
 func TestKeptConnections_OnlyRemoveAndUnadoptThatKeep(t *testing.T) {
 	tracker, _ := newTestTracker(&mockGitProvider{})
 	ctx := context.Background()
 	now := time.Now()
 	prs := []PRInfo{
-		{PRID: 1, Cluster: "keep-git", Operation: OpRemoveCluster, FollowUp: &ClusterFollowUp{Cleanup: "git", KeepConnection: true}},
-		{PRID: 2, Cluster: "delete-all", Operation: OpRemoveCluster, FollowUp: &ClusterFollowUp{Cleanup: "all"}},
-		{PRID: 3, Cluster: "unadopt-me", Operation: OpUnadoptCluster, FollowUp: &ClusterFollowUp{KeepConnection: true}},
-		{PRID: 4, Cluster: "register-me", Operation: "register", FollowUp: &ClusterFollowUp{KeepConnection: true}},
-		{PRID: 5, Cluster: "old-remove", Operation: OpRemoveCluster},
+		{PRID: 1, Cluster: "keep-git-open", Operation: OpRemoveCluster, LastStatus: "open", FollowUp: &ClusterFollowUp{Cleanup: "git", KeepConnection: true}},
+		{PRID: 2, Cluster: "delete-all-merged", Operation: OpRemoveCluster, LastStatus: "merged", FollowUp: &ClusterFollowUp{Cleanup: "all"}},
+		{PRID: 3, Cluster: "unadopt-merged", Operation: OpUnadoptCluster, LastStatus: "merged", FollowUp: &ClusterFollowUp{KeepConnection: true}},
+		{PRID: 4, Cluster: "register-me", Operation: "register", LastStatus: "open", FollowUp: &ClusterFollowUp{KeepConnection: true}},
+		{PRID: 5, Cluster: "keep-git-merged", Operation: OpRemoveCluster, LastStatus: "merged", FollowUp: &ClusterFollowUp{Cleanup: "git", KeepConnection: true}},
+		{PRID: 6, Cluster: "keep-closed", Operation: OpRemoveCluster, LastStatus: "closed", FollowUp: &ClusterFollowUp{Cleanup: "git", KeepConnection: true}},
 	}
 	for _, pr := range prs {
-		pr.CreatedAt, pr.LastStatus = now, "open"
+		pr.CreatedAt = now
 		if err := tracker.TrackPR(ctx, pr); err != nil {
 			t.Fatalf("TrackPR %d: %v", pr.PRID, err)
 		}
@@ -54,8 +62,13 @@ func TestKeptConnections_OnlyRemoveAndUnadoptThatKeep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("KeptConnections: %v", err)
 	}
-	want := map[string]bool{"keep-git": true, "unadopt-me": true}
+	want := map[string]models.ConnectionHold{
+		"keep-git-open":     {Hold: true},
+		"delete-all-merged": {Hold: true},
+		"unadopt-merged":    {Hold: true, ReleasePR: 3},
+		"keep-git-merged":   {Hold: true, ReleasePR: 5},
+	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("kept connections: got %v want %v", got, want)
+		t.Fatalf("kept connections:\n got %v\nwant %v", got, want)
 	}
 }

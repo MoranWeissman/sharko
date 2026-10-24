@@ -78,6 +78,23 @@ type PRInfo struct {
 	// closed. While it is above zero the entry is kept with its terminal
 	// LastStatus so the next poll tries again.
 	FinishAttempts int `json:"finish_attempts,omitempty"`
+
+	// HooksPending says the merged or closed status is saved, but the
+	// audit entry and the merge and complete hooks may not have run yet.
+	// It is cleared once they ran. A restart in between runs them again,
+	// so they are never skipped (EP3 dry run round S, S12).
+	HooksPending bool `json:"hooks_pending,omitempty"`
+	// Gone says Git answered "not found" for this pull request. It is
+	// handled as closed: nothing was merged that Sharko knows of (S10).
+	Gone bool `json:"gone,omitempty"`
+	// NextFinishAt is the earliest time the finish step runs again after
+	// a failed try (S10). Zero means now.
+	NextFinishAt time.Time `json:"next_finish_at,omitempty"`
+	// GaveUp says every try of the finish step failed. The entry is kept,
+	// so nothing starts the same tries again, and is dropped after
+	// GaveUpKeepFor. It is not listed as a pull request still finishing.
+	GaveUp   bool      `json:"gave_up,omitempty"`
+	GaveUpAt time.Time `json:"gave_up_at,omitempty"`
 }
 
 // ClusterFollowUp is the after-merge work a remove or un-adopt pull request

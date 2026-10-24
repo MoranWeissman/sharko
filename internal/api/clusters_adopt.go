@@ -115,6 +115,20 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An open take over pull request stopped every cluster: answer 409
+	// other_pr_open, the same answer take over gives for an open adopt
+	// pull request (EP3 dry run round S, S5).
+	if other := adoptOtherPROpen(result); other != nil {
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    lifecycleevents.ClusterAdopted,
+			Resource: "cluster:" + other.Cluster,
+			Result:   "failure",
+			Changes:  audit.ChangesNone,
+		})
+		writeOtherPROpen(w, other)
+		return
+	}
+
 	// Trigger canonical reconciler after adoption.
 	if !req.DryRun && s.clusterRecon != nil {
 		s.clusterRecon.Trigger()
@@ -134,6 +148,20 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, adoptHTTPStatus(result), result)
+}
+
+// adoptOtherPROpen returns the open pull request of the other kind when it
+// is what stopped every cluster in the request, else nil.
+func adoptOtherPROpen(result *orchestrator.AdoptClustersResult) *orchestrator.OtherJoinPRError {
+	if result == nil || len(result.Results) == 0 {
+		return nil
+	}
+	for _, cr := range result.Results {
+		if cr.OtherPR == nil {
+			return nil
+		}
+	}
+	return result.Results[0].OtherPR
 }
 
 // adoptAuditOutcome says what the adoption really did, for the audit trail.

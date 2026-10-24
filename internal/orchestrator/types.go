@@ -399,6 +399,11 @@ type AdoptClusterResult struct {
 	// not in the request's acknowledged_findings, when that is why this
 	// cluster was not adopted.
 	UnacknowledgedFindings []string `json:"unacknowledged_findings,omitempty"`
+
+	// OtherPR is set when an open take over pull request stops this adopt
+	// (EP3 dry run round S, S5). The handler answers 409 other_pr_open
+	// from it. Not sent as is.
+	OtherPR *OtherJoinPRError `json:"-"`
 }
 
 // AdoptClustersResult is the aggregate response from adopting multiple clusters.

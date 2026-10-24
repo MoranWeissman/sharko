@@ -14,12 +14,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/lifecycleevents"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 
@@ -76,7 +78,7 @@ func (s *Server) FinishAdoptOnPRComplete(ctx context.Context, pr prtracker.PRInf
 			slog.Warn("adopt finish: could not read the cluster's ArgoCD connection", "cluster", name, "pr", pr.PRID, "error", err)
 			return adoptFinishFailed, err
 		}
-		if mark == "" || mark != prID {
+		if !models.PendingPRMarkNames(mark, pr.PRID) {
 			return adoptFinishIgnored, nil
 		}
 		kind = prtracker.FinishAdopt
@@ -113,6 +115,12 @@ func (s *Server) FinishAdoptOnPRComplete(ctx context.Context, pr prtracker.PRInf
 		return adoptFinishGone, nil
 	}
 
+	// Whether this pull request's waiting mark was on before this run. A
+	// finish that runs twice writes one audit entry (EP3 dry run round S,
+	// S8): the run that takes the mark off writes it, or, when there was
+	// no mark, the run that changed the connection.
+	markWasOn := models.PendingPRMarkNames(detail.Annotations[markKey], pr.PRID)
+
 	preserve := true
 	if kind == prtracker.FinishTakeover {
 		preserve = pr.FollowUp.PreserveLegacyLabels
@@ -123,22 +131,22 @@ func (s *Server) FinishAdoptOnPRComplete(ctx context.Context, pr prtracker.PRInf
 		err = errors.New("the connection disappeared before the swap")
 	}
 	if err != nil {
-		// The mark stays and the tracker tries again.
+		// The mark stays and the tracker tries again. No audit entry per
+		// try: the tracker writes one when it gives up.
 		slog.Error("adopt finish: pull request merged, but Sharko could not take ownership of the ArgoCD connection — Sharko tries again",
 			"cluster", name, "pr", pr.PRID, "kind", what, "error", err)
-		s.recordAdoptFinish(name, pr.PRID, kind, "cluster_"+kind+"_finish_failed", "failure")
 		return adoptFinishFailed, err
 	}
 	outcome := adoptFinishTakenOver
 	if kind == prtracker.FinishAdopt {
 		if err := s.argoSecretManager.SetAnnotation(ctx, name, orchestrator.AnnotationAdopted, "true"); err != nil {
 			slog.Error("adopt finish: took ownership, but could not mark the connection adopted", "cluster", name, "pr", pr.PRID, "error", err)
-			s.recordAdoptFinish(name, pr.PRID, kind, "cluster_adopt_finish_failed", "failure")
 			return adoptFinishFailed, err
 		}
 		outcome = adoptFinishAdopted
 	}
-	if _, err := s.argoSecretManager.RemoveAnnotationIfValue(ctx, name, markKey, prID); err != nil {
+	markRemoved, err := s.argoSecretManager.RemoveAnnotationIfValue(ctx, name, markKey, prID)
+	if err != nil {
 		// Harmless: ownership is done. The waiting-marks pass takes it off
 		// later, because this pull request is merged.
 		slog.Warn("adopt finish: adopted, but the waiting mark could not be taken off", "cluster", name, "pr", pr.PRID, "kind", what, "error", err)
@@ -151,8 +159,28 @@ func (s *Server) FinishAdoptOnPRComplete(ctx context.Context, pr prtracker.PRInf
 	if kind == prtracker.FinishTakeover {
 		event = lifecycleevents.ClusterTakenOver
 	}
-	s.recordAdoptFinish(name, pr.PRID, kind, event, "success")
+	if (markWasOn && markRemoved) || (!markWasOn && swap.Changed) {
+		s.recordAdoptFinish(name, pr.PRID, kind, event, "success")
+	}
 	return outcome, nil
+}
+
+// CodeOtherPROpen is the code of the 409 that adopt and take over answer
+// when a pull request of the other kind is already open for the cluster
+// (EP3 dry run round S, S5).
+const CodeOtherPROpen = "other_pr_open"
+
+// writeOtherPROpen answers 409 other_pr_open. pr_number and pr_url go out
+// only when known; pr_number is never 0.
+func writeOtherPROpen(w http.ResponseWriter, e *orchestrator.OtherJoinPRError) {
+	extra := map[string]interface{}{}
+	if e.PRID > 0 {
+		extra["pr_number"] = e.PRID
+	}
+	if e.PRUrl != "" {
+		extra["pr_url"] = e.PRUrl
+	}
+	writeCodedError(w, http.StatusConflict, CodeOtherPROpen, e.Error(), extra)
 }
 
 // recordAdoptFinish writes an audit entry for the background finish step.

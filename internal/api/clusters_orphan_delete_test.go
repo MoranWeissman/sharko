@@ -140,8 +140,9 @@ func newStubArgoSrv(t *testing.T, clusters []map[string]interface{}, deleteStatu
 func orphanK8sSecret(name string, labeled bool) *corev1.Secret {
 	s := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "argocd",
+			Name:            name,
+			Namespace:       "argocd",
+			ResourceVersion: "1",
 		},
 		Type: corev1.SecretTypeOpaque,
 	}
@@ -727,5 +728,32 @@ func TestOrphanDiscardMessages_ExactText(t *testing.T) {
 	}
 	if got, want := orphanDiscardNotARegistrationMessage("prod"), `Sharko will not delete the ArgoCD connection for cluster "prod": it is not a leftover from a registration that never finished, so Sharko cannot be sure nobody needs it. It stays as it is. If you no longer want ArgoCD connected to this cluster, delete it in ArgoCD yourself.`; got != want {
 		t.Fatalf("not-a-registration message:\n got %q\nwant %q", got, want)
+	}
+}
+
+// EP3 dry run round S (S19): Discard never sends a delete with no checks.
+// A Secret with no UID and no version is refused and stays.
+func TestHandleDeleteOrphan_NoUIDNoVersion_NotDeleted_RoundS(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	sec := orphanK8sSecret("kind-orphan", true)
+	sec.UID, sec.ResourceVersion = "", ""
+	k8s := orphanK8sClient(sec).(*fake.Clientset)
+	deletes := 0
+	k8s.PrependReactor("delete", "secrets", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		deletes++
+		return false, nil, nil
+	})
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+	if w.Code >= 200 && w.Code < 300 {
+		t.Fatalf("got %d, want a refusal (body=%s)", w.Code, w.Body.String())
+	}
+	if deletes != 0 {
+		t.Fatalf("%d delete(s) sent with nothing to check them against", deletes)
 	}
 }

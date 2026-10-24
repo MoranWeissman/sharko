@@ -1000,8 +1000,9 @@ func TestList_EmptyNamespace(t *testing.T) {
 func TestDelete_ManagedSecret(t *testing.T) {
 	managed := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cluster-a",
-			Namespace: testNamespace,
+			Name:            "cluster-a",
+			Namespace:       testNamespace,
+			ResourceVersion: "1",
 			Labels: map[string]string{
 				LabelSecretType: "cluster",
 				LabelManagedBy:  ManagedByValue,
@@ -1325,5 +1326,24 @@ func TestSyncLabelsOnly_NormalizesLegacyAddonValues_BothCallerConventions(t *tes
 				t.Fatal("second call must be a no-op — labels already converged to canonical values")
 			}
 		})
+	}
+}
+
+// EP3 dry run round S (S19): a Secret with no UID and no resource version
+// gives nothing to pin the delete to, so Delete refuses and sends no
+// delete at all.
+func TestDelete_NoUIDNoVersion_Refuses_RoundS(t *testing.T) {
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: "cluster-z", Namespace: testNamespace,
+		Labels: map[string]string{LabelSecretType: "cluster", LabelManagedBy: ManagedByValue},
+	}}
+	client := fake.NewSimpleClientset(sec)
+	if err := NewManager(client, testNamespace).Delete(context.Background(), "cluster-z"); err == nil {
+		t.Fatal("Delete with no UID and no version should refuse")
+	}
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "delete" {
+			t.Fatal("a delete was sent with nothing to check it against")
+		}
 	}
 }

@@ -7642,7 +7642,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by status (open, merged, closed)",
+                        "description": "Filter by status (open, merged, closed, finishing). Empty = open ones plus merged or closed ones Sharko is still finishing.",
                         "name": "status",
                         "in": "query"
                     },
@@ -13255,6 +13255,16 @@ const docTemplate = `{
                 },
                 "source": {
                     "type": "string"
+                },
+                "status": {
+                    "description": "Status is what the list shows: \"finishing\" for a pull request that\nmerged or closed while Sharko still has to finish its work on the\ncluster (EP3 dry run round S, S21); otherwise the same as\nlast_status.",
+                    "type": "string",
+                    "enum": [
+                        "open",
+                        "merged",
+                        "closed",
+                        "finishing"
+                    ]
                 },
                 "user": {
                     "type": "string"

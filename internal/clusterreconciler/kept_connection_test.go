@@ -8,6 +8,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // EP3-DRYRUN-FIXES call 1 + 4: a removal that keeps the ArgoCD connection
@@ -50,8 +52,8 @@ func TestPollOnce_KeptConnection_LabelStrippedNotDeleted(t *testing.T) {
 			k8sClient := fake.NewSimpleClientset(keptOrphanSecret(tc.k8sName, tc.shownName), keeperSecret())
 			audits := &auditCollector{}
 			r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, envelopedManagedClusters("keeper"))
-			r.deps.KeptConnectionsFn = func(context.Context) (map[string]bool, error) {
-				return map[string]bool{tc.kept: true}, nil
+			r.deps.KeptConnectionsFn = func(context.Context) (map[string]models.ConnectionHold, error) {
+				return map[string]models.ConnectionHold{tc.kept: {ReleasePR: 1, Hold: true}}, nil
 			}
 			r.pollOnce(ctx)
 
@@ -74,7 +76,7 @@ func TestPollOnce_KeptConnectionsUnreadable_KeepsTheSecret(t *testing.T) {
 	ctx := context.Background()
 	k8sClient := fake.NewSimpleClientset(keptOrphanSecret("maybe-kept", ""), keeperSecret())
 	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, &auditCollector{}, envelopedManagedClusters("keeper"))
-	r.deps.KeptConnectionsFn = func(context.Context) (map[string]bool, error) {
+	r.deps.KeptConnectionsFn = func(context.Context) (map[string]models.ConnectionHold, error) {
 		return nil, errors.New("the PR tracker ConfigMap could not be read")
 	}
 	r.pollOnce(ctx)

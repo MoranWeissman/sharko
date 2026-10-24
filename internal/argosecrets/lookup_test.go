@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -20,7 +21,7 @@ func argoAddedSecret(k8sName, clusterName string, labels map[string]string) *cor
 		l[k] = v
 	}
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: k8sName, Namespace: testNamespace, Labels: l},
+		ObjectMeta: metav1.ObjectMeta{Name: k8sName, Namespace: testNamespace, Labels: l, UID: "uid-" + types.UID(k8sName), ResourceVersion: "1"},
 		Data: map[string][]byte{
 			"name":   []byte(clusterName),
 			"server": []byte("https://10.0.0.5:6443"),

@@ -31,7 +31,12 @@ var errFinishNoGit = errors.New("no usable Git connection to check the cluster l
 func (s *Server) FinishTrackedPR(ctx context.Context, pr prtracker.PRInfo, status string) error {
 	switch pr.Operation {
 	case prtracker.OpRemoveCluster, prtracker.OpUnadoptCluster:
-		if status == "merged" {
+		// A pull request Git says is gone may have merged before it went.
+		// The merged finish first checks the cluster is really gone from
+		// Git: when it is still there, that finish only takes the keep
+		// mark off, which is what a closed one does (EP3 dry run round S,
+		// S10).
+		if status == "merged" || pr.Gone {
 			return s.FinishClusterFollowUpOnMerge(ctx, pr)
 		}
 		return s.dropKeepMark(ctx, pr)
@@ -68,6 +73,9 @@ func (s *Server) FinishClusterFollowUpOnMerge(ctx context.Context, pr prtracker.
 		return nil
 	}
 	followUp := followUpFromTracker(pr.FollowUp)
+	// The finish only takes off this pull request's own keep mark (EP3
+	// dry run round S, S4).
+	followUp.PRID = pr.PRID
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil || git == nil {
@@ -140,7 +148,11 @@ func (s *Server) FinishClusterFollowUpOnMerge(ctx context.Context, pr prtracker.
 				"cluster", pr.Cluster, "pr_id", pr.PRID)
 		}
 	}
-	if s.clusterRecon != nil {
+	// Only a finish that worked wakes the reconciler. A failed one is
+	// tried again by the tracker after its gap; waking the reconciler on
+	// every failure used to burn the tries in seconds (EP3 dry run round
+	// S, S10).
+	if finishErr == nil && s.clusterRecon != nil {
 		s.clusterRecon.Trigger()
 	}
 	return finishErr
@@ -176,7 +188,7 @@ func (s *Server) newRegistrationWaiting(ctx context.Context, cluster string) (bo
 // dropKeepMark takes this pull request's remove-keep mark off the
 // cluster's Secret. A mark with another value (a newer removal) stays.
 func (s *Server) dropKeepMark(ctx context.Context, pr prtracker.PRInfo) error {
-	if s.argoSecretManager == nil || pr.Operation != prtracker.OpRemoveCluster || pr.Cluster == "" {
+	if s.argoSecretManager == nil || (pr.Operation != prtracker.OpRemoveCluster && pr.Operation != prtracker.OpUnadoptCluster) || pr.Cluster == "" {
 		return nil
 	}
 	if _, err := s.argoSecretManager.RemoveAnnotationIfValue(ctx, pr.Cluster,

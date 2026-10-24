@@ -196,6 +196,18 @@ func PRNotRecordedMessage(action, prURL string) string {
 	return fmt.Sprintf("Sharko opened pull request %s but could not record it, so it could not finish the %s after the merge. Nothing has changed on the cluster's ArgoCD connection. Close that pull request without merging it, then try again.", prURL, action)
 }
 
+// ErrMarkNotWritten means Sharko opened an adopt or take over pull request
+// but could not put the waiting mark on the cluster's ArgoCD connection.
+// The pull request is still recorded and was not merged (EP3 dry run round
+// S, S7). The GitResult that comes with it names the pull request.
+var ErrMarkNotWritten = errors.New("the waiting mark could not be put on the cluster's ArgoCD connection")
+
+// MarkNotWrittenMessage is the answer when ErrMarkNotWritten comes back.
+// action is "adopt" or "take over". Exported so tests pin it by exact text.
+func MarkNotWrittenMessage(action, cluster, prURL string) string {
+	return fmt.Sprintf("Sharko opened pull request %s, but could not mark %s's ArgoCD connection as waiting for it. Nothing has changed on the connection. Run the %s again to put the mark on, then merge the pull request.", prURL, cluster, action)
+}
+
 // commitChanges creates a PR for the given file changes WITHOUT tracking it
 // in the prtracker. Use commitChangesWithMeta when the call site has the
 // canonical operation code, cluster, and addon (the default). Kept as a
@@ -277,6 +289,15 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 	// merges right here the caller gets ErrPRNotRecorded (EP3 dry run round
 	// R, R1). nil tracker (test seam) and empty OperationCode (legacy
 	// commitChanges path) are silent skips.
+	// The waiting mark goes on before the pull request is tracked (S7).
+	var markErr error
+	if meta.BeforeTrack != nil {
+		if markErr = meta.BeforeTrack(ctx, result); markErr != nil {
+			logging.LoggerFromContext(ctx).Warn("could not put the waiting mark on the cluster's ArgoCD connection",
+				"pr_id", pr.ID, "operation", meta.OperationCode, "cluster", meta.Cluster, "error", markErr)
+		}
+	}
+
 	var trackErr error
 	if o.prTracker != nil && meta.OperationCode != "" {
 		title := meta.Title
@@ -319,6 +340,14 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 	}
 	if !autoMerge && notRecorded {
 		return result, fmt.Errorf("%w: %v", ErrPRNotRecorded, trackErr)
+	}
+	if markErr != nil {
+		// No auto-merge: the pull request waits until a re-run puts the
+		// mark on.
+		if notRecorded {
+			return result, fmt.Errorf("%w: %v (and %v: %v)", ErrPRNotRecorded, trackErr, ErrMarkNotWritten, markErr)
+		}
+		return result, fmt.Errorf("%w: %v", ErrMarkNotWritten, markErr)
 	}
 	if autoMerge {
 		if mergeErr := o.git.MergePullRequest(ctx, pr.ID); mergeErr != nil {

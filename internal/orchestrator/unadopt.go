@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // UnadoptCluster reverses a cluster adoption:
@@ -76,6 +78,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	// ─── v3: compute what the Git write removes, layout-specific ──────────
 	var valuesPath, clusterAddonsPath string
 	var clusterAddonsData, updatedClusterAddons []byte
+	var v3ValuesExists bool
 
 	if v4Repo {
 		var planErr error
@@ -90,22 +93,38 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 			clusterAddonsPath = "configuration/managed-clusters.yaml"
 		}
 
-		// Generate file content (shared between dry-run and real path).
-		var err error
-		clusterAddonsData, err = o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
-		if err != nil && !req.DryRun {
-			log.Warn("managed-clusters.yaml not found — skipping removal", "cluster", name)
+		// Generate file content (shared between dry-run and real path). A
+		// failed read is an error, never "the cluster is gone from Git":
+		// that answer makes un-adopt change the connection at once with no
+		// pull request (EP3 dry run round S, S6). Only a missing file, or a
+		// list without the cluster, means nothing is left to remove.
+		data, exists, readErr := o.readFileForRewrite(ctx, clusterAddonsPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("Sharko stopped before un-adopting cluster %s: %w", name, readErr)
 		}
-
-		if clusterAddonsData != nil {
-			var removeErr error
-			updatedClusterAddons, removeErr = gitops.RemoveClusterEntry(clusterAddonsData, name)
-			if removeErr != nil && !req.DryRun {
-				log.Warn("failed to remove cluster entry from managed-clusters.yaml",
-					"cluster", name, "error", removeErr)
-				updatedClusterAddons = nil
+		if exists && len(data) > 0 {
+			clusterAddonsData = data
+			spec, parseErr := models.LoadManagedClusters(data)
+			if parseErr != nil {
+				return nil, fmt.Errorf("Sharko stopped before un-adopting cluster %s: could not read the cluster list in %s: %w", name, clusterAddonsPath, parseErr)
+			}
+			for _, c := range spec.Clusters {
+				if c.Name != name {
+					continue
+				}
+				var removeErr error
+				updatedClusterAddons, removeErr = gitops.RemoveClusterEntry(data, name)
+				if removeErr != nil {
+					return nil, fmt.Errorf("Sharko stopped before un-adopting cluster %s: could not take it out of %s: %w", name, clusterAddonsPath, removeErr)
+				}
+				break
 			}
 		}
+		_, valuesExists, valuesErr := o.readFileForRewrite(ctx, valuesPath)
+		if valuesErr != nil {
+			return nil, fmt.Errorf("Sharko stopped before un-adopting cluster %s: %w", name, valuesErr)
+		}
+		v3ValuesExists = valuesExists
 	}
 
 	// Dry-run exit point.
@@ -170,7 +189,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		if updatedClusterAddons != nil {
 			files = map[string][]byte{clusterAddonsPath: updatedClusterAddons}
 		}
-		if _, exists := o.readFileIfExists(ctx, valuesPath); exists {
+		if v3ValuesExists {
 			deletePaths = append(deletePaths, valuesPath)
 		}
 	}
@@ -191,10 +210,38 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		return result, nil
 	}
 
+	// The connection gets a keep mark BEFORE the pull request opens (EP3
+	// dry run round S, S6). It names the pull request once there is one.
+	// If the tracker loses the pull request, the waiting-marks pass tracks
+	// it again from this mark, so the un-adopt still finishes; and while
+	// the mark is on, nothing deletes the connection.
+	markedKeep, markErr := o.markKeptConnectionFor(ctx, name, followUp, models.PendingMarkOpUnadopt)
+	if markErr != nil {
+		result.Status = "failed"
+		result.Error = markErr.Error()
+		result.Message = UnadoptKeepMarkFailedMessage(name)
+		var other *OtherRemovalWaitingError
+		if errors.As(markErr, &other) {
+			result.Message = other.Error()
+		}
+		return result, nil
+	}
+
 	meta := o.prMeta(req.AutoMerge, "unadopt-cluster", fmt.Sprintf("Unadopt cluster %s", name), name, "")
 	fu := followUp
 	meta.FollowUp = &fu
 	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("unadopt cluster %s", name), meta)
+	if markedKeep {
+		if gitResult == nil {
+			// No pull request: take the mark back off.
+			o.removeMarkIfValue(ctx, name, AnnotationRemoveKeepPendingPR, pendingMarkValue)
+		} else if setErr := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationRemoveKeepPendingPR, keepMarkValue(models.PendingMarkOpUnadopt, gitResult.PRID, gitResult.PRUrl)); setErr != nil {
+			// The "pending" mark still protects the connection, and the
+			// waiting-marks pass settles it later.
+			log.Warn("could not write the pull request number on the un-adopt keep mark; the mark stays on as it is",
+				"cluster", name, "pr_id", gitResult.PRID, "error", setErr)
+		}
+	}
 	if gitErr != nil && gitResult != nil && errors.Is(gitErr, ErrPRNotRecorded) {
 		result.Status = "partial"
 		result.Error = gitErr.Error()
@@ -229,6 +276,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		return result, nil
 	}
 
+	followUp.PRID = gitResult.PRID
 	if err := o.finishUnadopt(ctx, name, followUp); err != nil {
 		result.Status = "partial"
 		result.Error = err.Error()
@@ -237,6 +285,13 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	}
 	result.Status = "success"
 	return result, nil
+}
+
+// UnadoptKeepMarkFailedMessage is the answer when Sharko could not put the
+// keep mark on the connection before the un-adopt pull request. Exported
+// so tests pin it by exact text.
+func UnadoptKeepMarkFailedMessage(name string) string {
+	return fmt.Sprintf("Sharko did not un-adopt cluster %s. Before it opens the pull request, it puts a mark on the cluster's ArgoCD connection so Sharko can finish the un-adopt after the merge, and that step failed. Nothing has changed. Try again.", name)
 }
 
 // UnadoptGitFailedMessage is the message when the un-adopt pull request
@@ -276,6 +331,17 @@ func (o *Orchestrator) finishUnadopt(ctx context.Context, name string, followUp 
 			return fmt.Errorf("removing managed-by label from ArgoCD secret for cluster %q: %w", name, err)
 		}
 		log.Info("ArgoCD secret unadopted — labels removed", "cluster", name)
+		// This pull request's keep mark comes off last. Left on, it would
+		// make the waiting-marks pass track the merged pull request again
+		// and again (EP3 dry run round S, S6). A mark of another pull
+		// request stays. A failure is an error, so the tracker tries again.
+		if followUp.PRID > 0 {
+			if remover, ok := o.argoSecretManager.(annotationValueRemover); ok {
+				if _, err := remover.RemoveAnnotationIfValue(ctx, name, AnnotationRemoveKeepPendingPR, strconv.Itoa(followUp.PRID)); err != nil {
+					return fmt.Errorf("taking the un-adopt keep mark off the ArgoCD secret for cluster %q: %w", name, err)
+				}
+			}
+		}
 	}
 
 	if o.credProvider != nil || o.credsRouter != nil {

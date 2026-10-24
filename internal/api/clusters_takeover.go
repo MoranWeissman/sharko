@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -437,6 +436,9 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsConfig(), s.repoPaths, nil)
 	s.attachPRTracker(orch)
+	// The take over puts its waiting mark on before the pull request is
+	// tracked (round S, S7), so the orchestrator needs the Secret manager.
+	orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, "")
 
 	gitResult, gitErr := orch.TakeoverClusterGit(ctx, orchestrator.TakeoverClusterRequest{
 		Name:                 name,
@@ -448,9 +450,21 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	})
 	if gitErr != nil {
 		var waitingErr *orchestrator.ClusterPRWaitingError
+		var otherErr *orchestrator.OtherJoinPRError
 		switch {
+		case errors.As(gitErr, &otherErr):
+			writeOtherPROpen(w, otherErr)
 		case gitErr == orchestrator.ErrTakeoverNeedsV4Repo, errors.As(gitErr, &waitingErr):
 			writeError(w, http.StatusConflict, gitErr.Error())
+		case errors.Is(gitErr, orchestrator.ErrMarkNotWritten) && gitResult != nil && gitResult.Git != nil:
+			// The pull request is open and tracked, but not merged, and the
+			// connection is not changed (round S, S7).
+			resp.Status = "partial"
+			resp.Git = gitResult.Git
+			resp.AlreadyWaiting = gitResult.AlreadyWaiting
+			resp.Message = orchestrator.MarkNotWrittenMessage("take over", name, gitResult.Git.PRUrl)
+			audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_partial", Resource: "cluster:" + name})
+			writeJSON(w, http.StatusMultiStatus, resp)
 		case errors.Is(gitErr, orchestrator.ErrPRNotRecorded) && gitResult != nil && gitResult.Git != nil:
 			// Nothing would finish the take over after the merge, so the
 			// connection is left alone and the person is told to close it.
@@ -500,10 +514,8 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		if gitResult.AlreadyWaiting {
 			resp.Message = takeoverGitSentence(name, gitResult)
 		} else {
-			if markErr := s.argoSecretManager.SetAnnotation(ctx, name, argosecrets.AnnotationTakeoverPendingPR, strconv.Itoa(gitResult.Git.PRID)); markErr != nil {
-				slog.Warn("take over: could not put the waiting mark on the cluster's ArgoCD connection; the merge still finishes the take over",
-					"cluster", name, "pr", gitResult.Git.PRID, "error", markErr)
-			}
+			// The waiting mark is already on: the orchestrator put it on
+			// before the pull request was tracked (round S, S7).
 			resp.Message = takeoverWaitingMessage(name, gitResult.Git.PRID, gitResult.Git.PRUrl, preserve, report.LegacyLabels)
 		}
 		audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_waiting", Resource: "cluster:" + name})

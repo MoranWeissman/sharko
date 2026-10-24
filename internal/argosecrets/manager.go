@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1561,6 +1562,12 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 	// changed since the read, the API server refuses and nothing is
 	// deleted (EP3 dry run round R, R8).
 	uid, rv := existing.UID, existing.ResourceVersion
+	if uid == "" && rv == "" {
+		// Nothing to check the delete against, so a Secret put back in
+		// its place could be deleted unseen. Refuse (EP3 dry run round
+		// S, S19).
+		return fmt.Errorf("secret %q has no UID and no resource version, so Sharko cannot make sure it deletes exactly the Secret it checked; not deleting it", existing.Name)
+	}
 	opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{}}
 	if uid != "" {
 		opts.Preconditions.UID = &uid
@@ -1639,7 +1646,9 @@ func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value 
 	if err != nil {
 		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
-	if cur, ok := existing.Annotations[key]; !ok || cur != value {
+	// A waiting mark matches when it names the same pull request, in
+	// whichever form it was written (EP3 dry run round S, S4).
+	if cur, ok := existing.Annotations[key]; !ok || !models.PendingPRMarkMatches(cur, value) {
 		return false, nil
 	}
 	updated := existing.DeepCopy()
@@ -1651,12 +1660,13 @@ func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value 
 	return true, nil
 }
 
-// ReleaseKeptConnection is the end of a removal or un-adopt that keeps the
-// connection: in one write it takes Sharko's ownership label off the
-// Secret and takes the remove-keep mark off. Nothing else changes. A
-// missing Secret is (false, nil). A Secret with neither is (false, nil)
-// and writes nothing.
-func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string) (bool, error) {
+// ReplaceAnnotationIfValue sets one annotation on the named cluster Secret
+// to value only when it now holds a value that matches old (the same pull
+// request, see models.PendingPRMarkMatches). The write carries the version
+// it read, so a change made in between makes it fail rather than be
+// overwritten. A missing Secret, a missing annotation or another value is
+// (false, nil) and writes nothing.
+func (m *Manager) ReplaceAnnotationIfValue(ctx context.Context, name, key, old, value string) (bool, error) {
 	existing, err := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return false, nil
@@ -1664,16 +1674,52 @@ func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string) (bool,
 	if err != nil {
 		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
-	_, marked := existing.Annotations[AnnotationRemoveKeepPendingPR]
+	if cur, ok := existing.Annotations[key]; !ok || !models.PendingPRMarkMatches(cur, old) {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	updated.Annotations[key] = value
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("updating annotation %q on secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation updated on cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
+// ReleaseKeptConnection is the end of a removal or un-adopt that keeps the
+// connection: in one write it takes Sharko's ownership label off the
+// Secret and takes the remove-keep mark off. Nothing else changes. A
+// missing Secret is (false, nil). A Secret with neither is (false, nil)
+// and writes nothing.
+//
+// It only takes off a keep mark that names pull request prID (or a mark
+// with no number yet when prID is 0). A keep mark another pull request put
+// on stays, so that pull request still finishes with it (EP3 dry run round
+// S, S4).
+func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string, prID int) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	cur, marked := existing.Annotations[AnnotationRemoveKeepPendingPR]
+	ownMark := marked && models.PendingPRMarkMatches(cur, strconv.Itoa(prID))
+	if marked && prID == 0 {
+		ownMark = models.PendingPRMarkMatches(cur, "pending")
+	}
 	labelled := existing.Labels[LabelManagedBy] == ManagedByValue
-	if !marked && !labelled {
+	if !ownMark && !labelled {
 		return false, nil
 	}
 	updated := existing.DeepCopy()
 	if labelled {
 		delete(updated.Labels, LabelManagedBy)
 	}
-	delete(updated.Annotations, AnnotationRemoveKeepPendingPR)
+	if ownMark {
+		delete(updated.Annotations, AnnotationRemoveKeepPendingPR)
+	}
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return false, fmt.Errorf("handing back the kept connection in secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}

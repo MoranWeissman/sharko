@@ -84,3 +84,58 @@ func TestRegistrationPendingTimestamp_RFC3339UTC(t *testing.T) {
 		t.Fatalf("round-trip mismatch: emitted %q parsed to %v, want instant %v", got, parsed, in)
 	}
 }
+
+// EP3 dry run round S (S8, S11): a waiting mark carries its own pull
+// request number and repository, and older values still read.
+func TestParsePendingPRMark_RoundS(t *testing.T) {
+	keep := true
+	m := PendingPRMark{PR: 12, Repo: "acme/gitops", KeepOldLabels: &keep, At: "2026-10-24T10:00:00Z"}
+	got, ok := ParsePendingPRMark(m.String())
+	if !ok || got.PR != 12 || got.Repo != "acme/gitops" || got.KeepOldLabels == nil || !*got.KeepOldLabels {
+		t.Fatalf("round trip lost data: %+v ok=%v", got, ok)
+	}
+	if at, ok := got.WrittenAt(); !ok || at.Year() != 2026 {
+		t.Fatalf("WrittenAt = %v %v", at, ok)
+	}
+	if got, ok := ParsePendingPRMark("12"); !ok || got.PR != 12 || got.Repo != "" {
+		t.Fatalf("old number form: %+v %v", got, ok)
+	}
+	if got, ok := ParsePendingPRMark("pending"); !ok || got.PR != 0 {
+		t.Fatalf("old pending form: %+v %v", got, ok)
+	}
+	for _, bad := range []string{"", "0", "-3", "abc", "{bad"} {
+		if _, ok := ParsePendingPRMark(bad); ok {
+			t.Errorf("%q should not read as a mark", bad)
+		}
+	}
+	if !PendingPRMarkNames(m.String(), 12) || PendingPRMarkNames(m.String(), 13) || PendingPRMarkNames("pending", 0) {
+		t.Error("PendingPRMarkNames is wrong")
+	}
+}
+
+func TestRepoKeyFromPRURL_RoundS(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/Acme/GitOps/pull/12":                 "acme/gitops",
+		"http://gitea.local:3000/acme/gitops/pulls/7":            "acme/gitops",
+		"https://dev.azure.com/org/proj/_git/repo/pullrequest/4": "org/proj/repo",
+		"https://git.example.com/sub/acme/gitops/pull/3":         "acme/gitops",
+		"https://github.com/acme/gitops":                         "",
+		"":                                                       "",
+	}
+	for in, want := range cases {
+		if got := RepoKeyFromPRURL(in); got != want {
+			t.Errorf("RepoKeyFromPRURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	gh := GitRepoConfig{RepoURL: "https://github.com/Acme/GitOps.git"}
+	if got := gh.RepoKey(); got != "acme/gitops" {
+		t.Errorf("github RepoKey = %q", got)
+	}
+	az := GitRepoConfig{RepoURL: "https://dev.azure.com/org/proj/_git/repo"}
+	if got := az.RepoKey(); got != "org/proj/repo" {
+		t.Errorf("azure RepoKey = %q", got)
+	}
+	if !RepoKeysMatch("acme/gitops", "ACME/gitops") || RepoKeysMatch("acme/gitops", "acme/other") || RepoKeysMatch("", "") {
+		t.Error("RepoKeysMatch is wrong")
+	}
+}

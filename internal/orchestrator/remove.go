@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"strconv"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
@@ -37,7 +37,7 @@ type ownershipLabelStripper interface {
 // argosecrets.Manager.ReleaseKeptConnection. Without it, finishRemove falls
 // back to ownershipLabelStripper.
 type keptConnectionReleaser interface {
-	ReleaseKeptConnection(ctx context.Context, name string) (bool, error)
+	ReleaseKeptConnection(ctx context.Context, name string, prID int) (bool, error)
 }
 
 // clusterSecretDeleter is the OPTIONAL capability that deletes the ArgoCD
@@ -338,6 +338,11 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 			result.FailedStep = "protect_kept_connection"
 			result.Error = markErr.Error()
 			result.Message = RemoveKeepMarkFailedMessage(req.Name)
+			var other *OtherRemovalWaitingError
+			if errors.As(markErr, &other) {
+				result.FailedStep = "other_pr_open"
+				result.Message = other.Error()
+			}
 			return result, nil
 		}
 
@@ -349,7 +354,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 			if gitResult == nil {
 				// No pull request: take the mark back off.
 				o.removeMarkIfValue(ctx, req.Name, AnnotationRemoveKeepPendingPR, pendingMarkValue)
-			} else if setErr := o.argoSecretManager.SetAnnotation(ctx, req.Name, AnnotationRemoveKeepPendingPR, strconv.Itoa(gitResult.PRID)); setErr != nil {
+			} else if setErr := o.argoSecretManager.SetAnnotation(ctx, req.Name, AnnotationRemoveKeepPendingPR, keepMarkValue(models.PendingMarkOpRemove, gitResult.PRID, gitResult.PRUrl)); setErr != nil {
 				// The "pending" mark still protects the connection.
 				log.Warn("could not write the pull request number on the kept connection's mark; the mark stays on as it is",
 					"cluster", req.Name, "pr_id", gitResult.PRID, "error", setErr)
@@ -410,6 +415,9 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 
 	// The PR merged at once (or there was nothing left in Git to remove):
 	// finish now, exactly as the merge hook would.
+	if result.Git != nil {
+		followUp.PRID = result.Git.PRID
+	}
 	o.finishRemove(ctx, req.Name, followUp, result, &steps)
 	if result.Status == "" {
 		result.Status = "success"
@@ -438,6 +446,12 @@ func RemoveKeepMarkFailedMessage(name string) string {
 // the leftovers list only ever touch Sharko-labelled Secrets. Returns
 // whether it put the mark on.
 func (o *Orchestrator) markKeptConnection(ctx context.Context, name string, followUp ClusterFollowUp) (bool, error) {
+	return o.markKeptConnectionFor(ctx, name, followUp, models.PendingMarkOpRemove)
+}
+
+// markKeptConnectionFor is markKeptConnection for a removal or an un-adopt
+// (op is models.PendingMarkOpRemove or PendingMarkOpUnadopt).
+func (o *Orchestrator) markKeptConnectionFor(ctx context.Context, name string, followUp ClusterFollowUp, op string) (bool, error) {
 	if !followUp.KeepConnection || o.argoSecretManager == nil {
 		return false, nil
 	}
@@ -448,10 +462,50 @@ func (o *Orchestrator) markKeptConnection(ctx context.Context, name string, foll
 	if !detail.Found || detail.ManagedBy != sharkoManagedByValue {
 		return false, nil
 	}
-	if err := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationRemoveKeepPendingPR, pendingMarkValue); err != nil {
+	// Another removal's keep mark is never written over: that pull
+	// request still has to finish with it (EP3 dry run round S, S4).
+	cur, err := o.argoSecretManager.GetAnnotation(ctx, name, AnnotationRemoveKeepPendingPR)
+	if err != nil {
+		return false, fmt.Errorf("reading the keep mark on the ArgoCD connection of cluster %q: %w", name, err)
+	}
+	if cur != "" {
+		other, _ := models.ParsePendingPRMark(cur)
+		return false, &OtherRemovalWaitingError{Cluster: name, PRID: other.PR}
+	}
+	if err := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationRemoveKeepPendingPR, keepMarkValue(op, 0, "")); err != nil {
 		return false, fmt.Errorf("marking the ArgoCD connection of cluster %q as kept: %w", name, err)
 	}
 	return true, nil
+}
+
+// keepMarkValue is the keep mark for a removal or un-adopt (op is
+// models.PendingMarkOpRemove or PendingMarkOpUnadopt) and pull request
+// prID; 0 before the pull request exists.
+func keepMarkValue(op string, prID int, prURL string) string {
+	return models.PendingPRMark{PR: prID, Repo: models.RepoKeyFromPRURL(prURL), Op: op, At: time.Now().UTC().Format(time.RFC3339)}.String()
+}
+
+// OtherRemovalWaitingError is returned when another removal (or un-adopt)
+// of the same cluster still waits in its pull request. Its text is the
+// answer the person sees.
+type OtherRemovalWaitingError struct {
+	Cluster string
+	PRID    int
+}
+
+func (e *OtherRemovalWaitingError) Error() string {
+	return OtherRemovalWaitingMessage(e.Cluster, e.PRID)
+}
+
+// OtherRemovalWaitingMessage is the answer when another removal or
+// un-adopt of the cluster still waits in its pull request. It never says
+// "#0". Exported so tests pin it by exact text.
+func OtherRemovalWaitingMessage(name string, prID int) string {
+	pr := "a pull request"
+	if prID > 0 {
+		pr = fmt.Sprintf("pull request #%d", prID)
+	}
+	return fmt.Sprintf("Sharko did not change cluster %s: another removal or un-adopt of it is still waiting in %s. Merge or close that pull request first, then try again.", name, pr)
 }
 
 // removeMarkIfValue takes a mark off when it still holds value. Best-effort:
@@ -507,16 +561,31 @@ func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp C
 	// (best-effort). The credentials come through the same router the
 	// request path uses, so a cluster whose connection is kept only in
 	// ArgoCD is reached too (R13).
-	if cleanup == "all" && (o.credProvider != nil || o.credsRouter != nil) {
+	//
+	// A failure here is a failure, not a success: the result turns
+	// partial so the finish tries again, and the ArgoCD connection is NOT
+	// deleted yet, so the next try can still reach the cluster (EP3 dry
+	// run round S, S1).
+	if cleanup == "all" && (o.credProvider != nil || o.credsRouter != nil) && o.remoteClientFn != nil && len(o.secretDefs) > 0 {
 		creds, credErr := o.followUpCredentials(name, followUp)
-		if credErr == nil && creds != nil {
-			deleted, _ := o.deleteAllAddonSecrets(ctx, name, creds.Raw)
-			if len(deleted) > 0 {
-				*steps = append(*steps, "delete_remote_secrets")
+		if credErr != nil || creds == nil {
+			if credErr == nil {
+				credErr = errors.New("no credentials found")
 			}
-		} else {
 			log.Warn("could not fetch credentials for remote secret cleanup",
 				"cluster", name, "error", credErr)
+			removeAddonSecretsFailed(name, credErr, result)
+			return
+		}
+		deleted, delErr := o.deleteAllAddonSecrets(ctx, name, creds.Raw)
+		if len(deleted) > 0 {
+			*steps = append(*steps, "delete_remote_secrets")
+		}
+		if delErr != nil {
+			log.Warn("could not remove every addon secret from the cluster; Sharko tries again",
+				"cluster", name, "error", delErr)
+			removeAddonSecretsFailed(name, delErr, result)
+			return
 		}
 	}
 
@@ -540,7 +609,7 @@ func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp C
 		var released bool
 		var releaseErr error
 		if releaser, ok := o.argoSecretManager.(keptConnectionReleaser); ok {
-			released, releaseErr = releaser.ReleaseKeptConnection(ctx, name)
+			released, releaseErr = releaser.ReleaseKeptConnection(ctx, name, followUp.PRID)
 		} else if stripper, ok := o.argoSecretManager.(ownershipLabelStripper); ok {
 			released, releaseErr = stripper.StripOwnershipLabel(ctx, name)
 		}
@@ -610,6 +679,9 @@ func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp C
 					break
 				}
 
+				if !o.noWaitingMarkOn(ctx, name, result, steps) {
+					break
+				}
 				if delErr := o.argocd.DeleteCluster(ctx, c.Server); delErr != nil {
 					log.Error("failed to delete ArgoCD cluster during removal",
 						"cluster", name, "error", delErr)
@@ -624,6 +696,22 @@ func (o *Orchestrator) finishRemove(ctx context.Context, name string, followUp C
 			}
 		}
 	}
+}
+
+// removeAddonSecretsFailed turns the result partial when the addon secrets
+// Sharko put on the cluster could not all be removed yet.
+func removeAddonSecretsFailed(name string, err error, result *RemoveClusterResult) {
+	result.Status = "partial"
+	result.FailedStep = "delete_remote_secrets"
+	result.Error = err.Error()
+	result.Message = RemoveAddonSecretsNotYetMessage(name)
+}
+
+// RemoveAddonSecretsNotYetMessage is the answer when a cleanup=all removal
+// merged but Sharko could not yet remove the addon secrets it put on the
+// cluster. Exported so tests pin it by exact text.
+func RemoveAddonSecretsNotYetMessage(name string) string {
+	return fmt.Sprintf("Cluster %s was removed from Git, but Sharko could not yet remove the addon secrets it put on the cluster. Its ArgoCD connection stays until that is done. Sharko tries again by itself.", name)
 }
 
 // notSharkoLabelledMessage is the answer when cleanup=all finds a
@@ -659,6 +747,9 @@ func (o *Orchestrator) deleteOwnedClusterSecret(ctx context.Context, deleter clu
 		result.Message = notSharkoLabelledMessage(name)
 		return
 	}
+	if !o.noWaitingMarkOn(ctx, name, result, steps) {
+		return
+	}
 	if delErr := deleter.DeleteClusterSecret(ctx, name); delErr != nil {
 		log.Error("failed to delete ArgoCD cluster during removal",
 			"cluster", name, "error", delErr)
@@ -669,6 +760,47 @@ func (o *Orchestrator) deleteOwnedClusterSecret(ctx context.Context, deleter clu
 		return
 	}
 	*steps = append(*steps, "delete_argocd_cluster")
+}
+
+// waitingMarks are the marks that say another pull request still has to
+// finish with a connection. Kept in lockstep with
+// argosecrets.PendingPRMarks.
+var waitingMarks = []string{AnnotationAdoptPendingPR, AnnotationTakeoverPendingPR, AnnotationRemoveKeepPendingPR}
+
+// noWaitingMarkOn says whether the connection carries none of the waiting
+// marks, so a cleanup=all removal may delete it. A connection another
+// removal keeps, or an adopt or take over still waits on, is left in place
+// (EP3 dry run round S, S4). A failed read is not a "no": the result turns
+// partial and the finish tries again.
+func (o *Orchestrator) noWaitingMarkOn(ctx context.Context, name string, result *RemoveClusterResult, steps *[]string) bool {
+	log := logging.LoggerFromContext(ctx)
+	for _, key := range waitingMarks {
+		v, err := o.argoSecretManager.GetAnnotation(ctx, name, key)
+		if err != nil {
+			log.Error("could not read the waiting marks on the ArgoCD cluster Secret during removal; not deleting it, Sharko tries again",
+				"cluster", name, "annotation", key, "error", err)
+			result.Status = "partial"
+			result.FailedStep = "delete_argocd_cluster"
+			result.Error = err.Error()
+			result.Message = "Git changes committed but ArgoCD cluster deletion failed"
+			return false
+		}
+		if v != "" {
+			log.Info("another pull request still has to finish with this ArgoCD cluster Secret — leaving it in place",
+				"cluster", name, "annotation", key, "pr", v)
+			*steps = append(*steps, "skip_argocd_secret_waiting_pr")
+			result.Message = RemoveLeftWaitingConnectionMessage(name)
+			return false
+		}
+	}
+	return true
+}
+
+// RemoveLeftWaitingConnectionMessage is the answer when a cleanup=all
+// removal leaves the connection because another pull request still has to
+// finish with it. Exported so tests pin it by exact text.
+func RemoveLeftWaitingConnectionMessage(name string) string {
+	return fmt.Sprintf("Cluster %s was removed from Sharko, but its ArgoCD connection was left in place: another pull request still has to finish with it. Delete it yourself later if you no longer want ArgoCD connected to this cluster.", name)
 }
 
 // followUpCredentials fetches a cluster's credentials for the after-merge
