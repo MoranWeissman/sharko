@@ -101,8 +101,9 @@ it again.
 
 ### A removal that keeps the connection
 
-Some removals keep the ArgoCD connection: `sharko remove-cluster <name> -y
---cleanup git`, and un-adopt. Before Sharko opens the pull request, it puts
+Some removals keep the ArgoCD connection:
+`sharko remove-cluster <name> -y --cleanup git`, and un-adopt. Before Sharko
+opens the pull request, it puts
 the `sharko.dev/remove-keep-pending-pr` annotation on the Secret. It holds the
 pull request number (or `pending` for the short moment before the number is
 known). While the annotation is on the Secret, the reconciler never deletes

@@ -226,7 +226,7 @@ really happened.
 Waiting is not an error, and the command did what it can do now. This means
 `sharko remove-cluster x -y && next-step` runs `next-step` while the cluster
 is still there. If your script needs the cluster gone, wait for the merge
-first, for example with `sharko pr wait <PR number>`. The exit code is not `0`
+first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. The exit code is not `0`
 only when something went wrong. `sharko unadopt-cluster` and `sharko adopt`
 work the same way.
 
