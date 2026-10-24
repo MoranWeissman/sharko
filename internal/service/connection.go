@@ -47,9 +47,20 @@ var ErrArgocdNotTested = errors.New("the ArgoCD connection was not tested")
 // guessed "GitHub" for every unknown host, asked the GitHub API on a Gitea
 // server, and reported "Sharko can't reach your Git host" — which was not the
 // real reason. Error() is the finished sentence the user reads.
+//
+// Host is the host name read out of the address. It is empty when the
+// address could not be read; the sentence then says "the address" and
+// never repeats it.
 type UnrecognisedGitHostError struct{ Host string }
 
+// UnreadableGitHostSentence is the sentence for an address whose host
+// Sharko cannot read.
+const UnreadableGitHostSentence = "Sharko cannot read the Git host in the address. Check that it looks like https://host/owner/repo, then test again."
+
 func (e *UnrecognisedGitHostError) Error() string {
+	if e.Host == "" {
+		return UnreadableGitHostSentence
+	}
 	return fmt.Sprintf("Sharko does not recognise the Git host %q. Choose the Git provider (GitHub or Gitea) next to the address, then test again.", e.Host)
 }
 
@@ -363,7 +374,9 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 func deriveProviderFromURL(repoURL string) (string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" {
-		return "", newValidationError("cannot parse git repo URL %q", repoURL)
+		// Never repeat the address: a token written into it would come
+		// back in the answer (EP3 dry run round R, R9).
+		return "", newValidationError("cannot parse git repo URL: %s", models.UnreadableRepoAddressSentence)
 	}
 	host := strings.ToLower(u.Host)
 	switch {
@@ -737,9 +750,12 @@ func (s *ConnectionService) TestCredentials(ctx context.Context, conn *models.Co
 	// A given provider (github, gitea) works with any self-hosted address.
 	if conn.Git.Provider == "" && conn.Git.RepoURL != "" {
 		if _, err := deriveProviderFromURL(conn.Git.RepoURL); err != nil {
-			host := conn.Git.RepoURL
-			if u, perr := url.Parse(conn.Git.RepoURL); perr == nil && u.Host != "" {
-				host = strings.ToLower(u.Host)
+			// Only a host name Sharko read out of the address, never the
+			// address itself: one that does not parse can carry a token
+			// (EP3 dry run round R, R9).
+			host := ""
+			if u, perr := url.Parse(conn.Git.RepoURL); perr == nil {
+				host = strings.ToLower(u.Hostname())
 			}
 			return &UnrecognisedGitHostError{Host: host}, ErrArgocdNotTested, auth
 		}
