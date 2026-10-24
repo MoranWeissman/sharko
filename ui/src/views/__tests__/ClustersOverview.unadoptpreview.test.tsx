@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ClustersOverview } from '@/views/ClustersOverview';
+import { ClustersOverview, unadoptDescription } from '@/views/ClustersOverview';
 import { AuthProvider } from '@/hooks/useAuth';
 
 /*
@@ -99,6 +99,21 @@ describe('ClustersOverview — Un-adopt preview (V3-TX-A3, Surface 3)', () => {
     expect(screen.getByText('configuration/managed-clusters.yaml')).toBeInTheDocument();
     // Preview must NOT have fired the real un-adopt (no single-arg call).
     expect(mockUnadoptCluster).not.toHaveBeenCalledWith('prod-eu');
+  });
+
+  // Round S: the window says what the button does, in plain words, and no
+  // longer promises what Sharko will do later.
+  it('the Un-adopt window says what the button does, and not the old promise', async () => {
+    renderView();
+    await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /un-adopt/i }));
+    await waitFor(() => expect(screen.getByText('Un-adopt Cluster')).toBeInTheDocument());
+    expect(unadoptDescription('prod-eu')).toBe(
+      'Un-adopt opens a pull request that takes "prod-eu" off the list of clusters Sharko manages. It does not delete the ArgoCD connection. Click Preview changes to see what the pull request changes.',
+    );
+    expect(screen.getByText(unadoptDescription('prod-eu'))).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Sharko will no longer manage addons/);
+    expect(document.body.textContent).not.toMatch(/from Sharko management/);
   });
 
   // v4.0.4 review fix: the server answers HTTP 200 with status "failed"

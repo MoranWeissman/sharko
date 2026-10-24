@@ -325,6 +325,13 @@ const NO_USABLE_CONNECTION_ERRORS = [
   'Sharko has no usable ArgoCD connection. Open Settings and check the active connection: the ArgoCD server address and the ArgoCD token.',
 ];
 
+// Round S: the Un-adopt window says only what the button does. The old
+// sentence promised what the server would do later, which the browser
+// cannot know (browserAuthoredPromises guard).
+export function unadoptDescription(name: string): string {
+  return `Un-adopt opens a pull request that takes "${name}" off the list of clusters Sharko manages. It does not delete the ArgoCD connection. Click Preview changes to see what the pull request changes.`;
+}
+
 export type AvailableStatus = 'pending' | 'ok' | 'failed' | 'skipped';
 
 /**
@@ -3037,7 +3044,7 @@ export function ClustersOverview() {
         }}
         onConfirm={handleUnadopt}
         title="Un-adopt Cluster"
-        description={`This will remove "${unadoptTarget}" from Sharko management. The ArgoCD connection will remain, but Sharko will no longer manage addons for this cluster.`}
+        description={unadoptDescription(unadoptTarget ?? '')}
         confirmText="Un-adopt"
         typeToConfirm={unadoptTarget ?? ''}
         destructive
