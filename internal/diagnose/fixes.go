@@ -2,6 +2,7 @@ package diagnose
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -15,7 +16,10 @@ func subjectYAML(subject string) string {
 	if subject == "" {
 		return "- kind: User   # use kind: Group if Sharko signs in through a group\n  name: " + unknownSubjectName + "\n  apiGroup: rbac.authorization.k8s.io"
 	}
-	return "- kind: User\n  name: " + subject + "\n  apiGroup: rbac.authorization.k8s.io"
+	// Quoted, so a name with ": " or "#" in it still makes valid YAML
+	// (EP3 dry run round R, R12). A Go quoted string is a valid YAML
+	// double-quoted string.
+	return "- kind: User\n  name: " + strconv.Quote(subject) + "\n  apiGroup: rbac.authorization.k8s.io"
 }
 
 // who names the account in a fix description, in plain words.
@@ -109,4 +113,20 @@ roleRef:
 			YAML:        "# No auto-generated fix available for this permission",
 		}
 	}
+}
+
+// addFix adds fix to fixes. A fix with the same YAML as one already there is
+// not shown twice, but its reason is kept: it is added to the first one's
+// description when it says something different (EP3 dry run round R, R12).
+func addFix(fixes []Fix, fix Fix) []Fix {
+	for i := range fixes {
+		if fixes[i].YAML != fix.YAML {
+			continue
+		}
+		if !strings.Contains(fixes[i].Description, fix.Description) {
+			fixes[i].Description += " " + fix.Description
+		}
+		return fixes
+	}
+	return append(fixes, fix)
 }
