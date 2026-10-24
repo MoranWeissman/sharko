@@ -9,7 +9,7 @@ import (
 
 // EP3 dry run round S, S15: the SSRF guard's error never carries a login
 // written into the address, nor the parser's own text (which repeats it).
-const roundSFakeToken = "ghp_FAKEroundS15token"
+const roundSFakeToken = "FAKEroundS15tokenValue"
 
 func TestSSRFError_TokenNeverInTheErrorOrTheLog(t *testing.T) {
 	for _, raw := range []string{

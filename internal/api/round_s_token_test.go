@@ -11,7 +11,7 @@ import (
 
 // EP3 dry run round S, S15: an address Sharko cannot read never comes back
 // in the error, so a token written into it is not in the answer or the log.
-const roundSFakeToken = "ghp_FAKEroundS15token"
+const roundSFakeToken = "FAKEroundS15tokenValue"
 
 func roundSUnreadable() string {
 	return "https://sharko:" + roundSFakeToken + "@git example.com/o/r"

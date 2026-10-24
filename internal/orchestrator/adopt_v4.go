@@ -283,7 +283,7 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 				"cluster", name, "error", annotErr)
 			cr.Status = "partial"
 			cr.Error = annotErr.Error()
-			cr.Message = "Adoption PR merged but failed to set adopted annotation on ArgoCD secret"
+			cr.Message = AdoptMarkFailedMessage
 			return cr
 		}
 	}

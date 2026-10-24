@@ -179,7 +179,7 @@ In the UI, pick the cluster under **Discovered clusters** in **Add Cluster** and
 Key behaviors:
 - Adoption rejects clusters managed by a different tool (non-`sharko` `managed-by` label).
 - A Stage 1 connectivity test runs before adoption proceeds.
-- If a PR already exists for the cluster (idempotent retry), it returns the existing PR instead of creating a duplicate.
+- If a pull request for the cluster is already open, Sharko returns that one and does not open a second one.
 - After the PR is merged, Sharko sets the `sharko.dev/adopted` annotation on the ArgoCD cluster secret.
 
 #### Un-adopt a Cluster

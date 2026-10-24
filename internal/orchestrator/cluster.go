@@ -649,16 +649,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if existingPRErr == nil && existingPR != nil {
 		log.Info("Found existing open PR for cluster registration — skipping PR creation",
 			"cluster", req.Name, "pr", existingPR.URL)
+		prNum := PRNumber(existingPR.ID, existingPR.URL)
 		gitResult := &GitResult{
 			PRUrl:  existingPR.URL,
-			PRID:   existingPR.ID,
+			PRID:   prNum,
 			Branch: existingPR.SourceBranch,
 			Merged: false,
 		}
 		result.Status = "success"
 		result.CompletedSteps = steps
 		result.Git = gitResult
-		result.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+		result.Message = registerAlreadyWaitingMessage(req.Name, prNum, existingPR.URL)
 		return result, nil
 	}
 
@@ -1225,4 +1226,12 @@ func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name strin
 // so there is no import cycle — the previous duplicate was based on a false assumption.
 func parseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, error) {
 	return config.NewParser().ParseAddonsCatalog(data)
+}
+
+// registerAlreadyWaitingMessage is what a register says when a pull request
+// that registers the cluster is already open (EP3 dry run round S, S23).
+func registerAlreadyWaitingMessage(name string, prID int, prURL string) string {
+	return fmt.Sprintf(
+		"Registering %s is already waiting in %s: %s. Sharko did not open a second one. Merge it to finish.",
+		name, PullRequestPhrase(prID), prURL)
 }

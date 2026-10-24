@@ -13,7 +13,7 @@ import (
 // EP3 dry run round S, S15: a login written into the chart repository
 // address is never sent to ArtifactHub and never comes back in the error.
 func TestArtifactHub_LoginInTheAddress_NotSentAndNotInTheError(t *testing.T) {
-	const token = "ghp_FAKEroundS15token"
+	const token = "FAKEroundS15tokenValue"
 	var asked string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked = r.URL.RawQuery

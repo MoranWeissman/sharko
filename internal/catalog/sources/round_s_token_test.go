@@ -10,7 +10,7 @@ import (
 // EP3 dry run round S, S15: an address that cannot be read never comes back
 // in the error, so a token written into it is not in the error or the log.
 func TestRuntimeSSRFCheck_Unreadable_TokenNeverInTheErrorOrTheLog(t *testing.T) {
-	const token = "ghp_FAKEroundS15token"
+	const token = "FAKEroundS15tokenValue"
 	_, err := runtimeSSRFCheckResolvedIPs("https://sharko:" + token + "@cat alog.example.com/c.yaml")
 	if err == nil || err.Error() != "the catalog source address cannot be read" {
 		t.Fatalf("err = %v", err)
