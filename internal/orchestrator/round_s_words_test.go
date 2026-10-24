@@ -5,7 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // EP3 dry run round S, S23: the adopt answers use plain words, not "adopted
@@ -71,5 +73,26 @@ func TestAdoptV4_MergedButMarkFails_SaysAdoptAgain(t *testing.T) {
 	cr := result.Results[0]
 	if cr.Status != "partial" || cr.Message != wantAdoptMarkFailed {
 		t.Fatalf("status %q message %q, want partial and %q", cr.Status, cr.Message, wantAdoptMarkFailed)
+	}
+}
+
+// A provider that leaves the number out: it comes from the address.
+func TestRegister_AlreadyWaiting_NumberFromTheAddress(t *testing.T) {
+	git := newMockGitProvider()
+	git.prs = []*gitprovider.PullRequest{{
+		Title: "sharko: register cluster prod-eu", SourceBranch: "sharko/register-cluster-prod-eu-abc123",
+		URL: "https://github.com/example/repo/pull/42",
+	}}
+	creds := &mockCredProvider{creds: map[string]*providers.Kubeconfig{
+		"prod-eu": {Server: "https://k8s.example.com:6443", CAData: []byte("fake-ca"), Token: "fake-token"},
+	}}
+	orch := New(nil, creds, newMockArgocd(), git, autoMergeGitOps(), defaultPaths(), nil)
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{Name: "prod-eu", Addons: map[string]bool{"cert-manager": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Registering prod-eu is already waiting in pull request #42: https://github.com/example/repo/pull/42. Sharko did not open a second one. Merge it to finish."
+	if result.Message != want || result.Git == nil || result.Git.PRID != 42 {
+		t.Fatalf("message %q git %+v, want %q and number 42", result.Message, result.Git, want)
 	}
 }
