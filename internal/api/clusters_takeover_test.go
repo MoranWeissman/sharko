@@ -969,7 +969,7 @@ func TestTakeover_OpenRegisterPR_Is409(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
 	}
-	want := "Cluster prod-eu is already waiting in PR #12: https://example.invalid/pr/12. That pull request registers it. Merge it or close it first, then try again."
+	want := "Cluster prod-eu is already waiting in pull request #12: https://example.invalid/pr/12. That pull request registers it. Merge it or close it first, then try again."
 	if got, _ := decodeMap(t, w)["error"].(string); got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}

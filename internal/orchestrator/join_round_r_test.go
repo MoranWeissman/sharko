@@ -27,7 +27,7 @@ func openRegisterPR(git *mockGitProvider) {
 	})
 }
 
-const registerWaitingWant = "Cluster prod-eu is already waiting in PR #12: https://github.com/example/repo/pull/12. That pull request registers it. Merge it or close it first, then try again."
+const registerWaitingWant = "Cluster prod-eu is already waiting in pull request #12: https://github.com/example/repo/pull/12. That pull request registers it. Merge it or close it first, then try again."
 
 const openPRsUnreadableWant = "Sharko could not read the open pull requests, so it cannot tell whether prod-eu is already waiting in one. Nothing has changed. Try again."
 

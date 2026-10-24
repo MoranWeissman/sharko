@@ -479,7 +479,7 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		if gitResult != nil && gitResult.AlreadyWaiting && gitResult.Git != nil {
 			resp.AlreadyWaiting = true
 			resp.Git = gitResult.Git
-			resp.Message += " " + fmt.Sprintf(takeoverPlanAlreadyWaitingFmt, gitResult.Git.PRID, gitResult.Git.PRUrl)
+			resp.Message += " " + takeoverPlanAlreadyWaiting(gitResult.Git.PRID, gitResult.Git.PRUrl)
 		}
 		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 		return
@@ -580,13 +580,28 @@ func takeoverWaitingMessage(name string, prID int, prURL string, preserve bool, 
 		}
 	}
 	return fmt.Sprintf(
-		"Pull request #%d is open: %s. When it is merged, Sharko takes ownership of %s's ArgoCD connection%s. If it is closed without merging, Sharko changes nothing on the connection.",
-		prID, prURL, name, labels)
+		"%s is open: %s. When it is merged, Sharko takes ownership of %s's ArgoCD connection%s. If it is closed without merging, Sharko changes nothing on the connection.",
+		pullRequestPhraseCapital(prID), prURL, name, labels)
 }
 
-// takeoverPlanAlreadyWaitingFmt is added to a dry run's plan when a pull
+// takeoverPlanAlreadyWaiting is added to a dry run's plan when a pull
 // request for this cluster is already open.
-const takeoverPlanAlreadyWaitingFmt = "A pull request for this is already open: #%d, %s. Running the take over for real will not open a second one."
+//
+// It says the number only when it is known: "PR #0" must never show.
+func takeoverPlanAlreadyWaiting(prID int, prURL string) string {
+	number := ""
+	if prID > 0 {
+		number = fmt.Sprintf("#%d, ", prID)
+	}
+	return fmt.Sprintf("A pull request for this is already open: %s%s. Running the take over for real will not open a second one.", number, prURL)
+}
+
+// pullRequestPhraseCapital is orchestrator.PullRequestPhrase at the start
+// of a sentence: "Pull request #12" or "A pull request".
+func pullRequestPhraseCapital(prID int) string {
+	p := orchestrator.PullRequestPhrase(prID)
+	return strings.ToUpper(p[:1]) + p[1:]
+}
 
 // takeoverGitSentence says, truthfully, where the fleet record in Git
 // stands after a take over. It replaces "Its fleet record is up to date",
@@ -597,13 +612,17 @@ func takeoverGitSentence(name string, res *orchestrator.TakeoverGitResult) strin
 	case res == nil || res.NothingToWrite || res.Git == nil:
 		return "The fleet record in Git already has it, so no pull request was needed."
 	case res.AlreadyWaiting:
-		return fmt.Sprintf("Taking over %s is already waiting in pull request #%d: %s. Sharko did not open a second one. Merge it to finish.",
-			name, res.Git.PRID, res.Git.PRUrl)
+		return fmt.Sprintf("Taking over %s is already waiting in %s: %s. Sharko did not open a second one. Merge it to finish.",
+			name, orchestrator.PullRequestPhrase(res.Git.PRID), res.Git.PRUrl)
 	case res.Git.Merged:
 		return fmt.Sprintf("The change that adds it to the fleet record in Git was merged: %s.", res.Git.PRUrl)
 	default:
-		return fmt.Sprintf("The pull request that adds it to the fleet record in Git is open: #%d, %s. Merge it to finish.",
-			res.Git.PRID, res.Git.PRUrl)
+		number := ""
+		if res.Git.PRID > 0 {
+			number = fmt.Sprintf("#%d, ", res.Git.PRID)
+		}
+		return fmt.Sprintf("The pull request that adds it to the fleet record in Git is open: %s%s. Merge it to finish.",
+			number, res.Git.PRUrl)
 	}
 }
 

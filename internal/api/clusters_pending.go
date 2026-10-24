@@ -3,11 +3,11 @@ package api
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // resolvePendingRegistrations queries the Git provider for open pull
@@ -114,17 +114,7 @@ func resolvePendingRegistrations(
 // (".../pull/12"). When neither has it, it is 0 and pr_number is left out
 // of the answer, so no screen ever shows "PR #0" (EP3 dry run round R, R7).
 func pendingPRNumber(pr gitprovider.PullRequest) int {
-	if pr.ID > 0 {
-		return pr.ID
-	}
-	tail := strings.TrimRight(pr.URL, "/")
-	if i := strings.LastIndex(tail, "/"); i >= 0 {
-		tail = tail[i+1:]
-	}
-	if n, err := strconv.Atoi(tail); err == nil && n > 0 {
-		return n
-	}
-	return 0
+	return orchestrator.PRNumber(pr.ID, pr.URL)
 }
 
 // dropPendingForManagedClusters is the LW-18 (Part 2) filter: a register
