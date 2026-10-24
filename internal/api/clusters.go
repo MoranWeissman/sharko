@@ -328,15 +328,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resp == nil {
-		if argocdKnowsCluster(r, ac, name) {
-			writeJSON(w, http.StatusNotFound, clusterNotManagedResponse{
-				Error:       fmt.Sprintf(clusterNotManagedFmt, name),
-				Code:        clusterNotManagedCode,
-				ArgocdKnown: true,
-			})
-			return
-		}
-		writeError(w, http.StatusNotFound, "cluster not found")
+		writeClusterNotFound(w, r, ac, name)
 		return
 	}
 
@@ -456,7 +448,7 @@ func (s *Server) handleGetConfigDiff(w http.ResponseWriter, r *http.Request) {
 // @Param name path string true "Cluster name"
 // @Success 200 {object} map[string]interface{} "Comparison result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
-// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 404 {object} clusterNotManagedResponse "Cluster not found. code is not_managed and argocd_known is true when ArgoCD connects to it but Sharko does not manage it"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /clusters/{name}/comparison [get]
 func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Request) {
@@ -485,7 +477,9 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if resp == nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		// Same 404 as GET /clusters/{name}: the cluster page reads this
+		// call, so it must see not_managed too (EP3 dry run round R, R10).
+		writeClusterNotFound(w, r, ac, name)
 		return
 	}
 
@@ -539,6 +533,21 @@ type clusterNotManagedResponse struct {
 	Error       string `json:"error"`
 	Code        string `json:"code"`
 	ArgocdKnown bool   `json:"argocd_known"`
+}
+
+// writeClusterNotFound writes the 404 for a cluster Sharko does not manage:
+// the not_managed body when ArgoCD connects to it, else the plain one.
+// GET /clusters/{name} and GET /clusters/{name}/comparison both use it.
+func writeClusterNotFound(w http.ResponseWriter, r *http.Request, ac *argocd.Client, name string) {
+	if argocdKnowsCluster(r, ac, name) {
+		writeJSON(w, http.StatusNotFound, clusterNotManagedResponse{
+			Error:       fmt.Sprintf(clusterNotManagedFmt, name),
+			Code:        clusterNotManagedCode,
+			ArgocdKnown: true,
+		})
+		return
+	}
+	writeError(w, http.StatusNotFound, "cluster not found")
 }
 
 // argocdKnowsCluster reports whether ArgoCD has a cluster called name. A
