@@ -725,7 +725,7 @@ export function ClustersOverview() {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [noteServerTimes]);
 
   const handleRefresh = useCallback(() => {
     void fetchData(true);
@@ -754,7 +754,7 @@ export function ClustersOverview() {
     } finally {
       setLoadingMore(false);
     }
-  }, []);
+  }, [noteServerTimes]);
 
   // Keep allClustersRef in sync with allClusters so fetchData's catch
   // block can check "did we have prior data on screen?" without depending
@@ -1083,7 +1083,7 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, buildRegisterPayload, fetchData]);
+  }, [addClusterName, buildRegisterPayload, fetchData, notePageRun]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1096,7 +1096,7 @@ export function ClustersOverview() {
       notePageRun(name);
       setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
     }
-  }, []);
+  }, [notePageRun]);
 
   const toggleTestSteps = useCallback((name: string, e: React.MouseEvent) => {
     e.stopPropagation();
