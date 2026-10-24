@@ -2475,6 +2475,37 @@ describe('FirstRunWizard - Git provider for Gitea and self-hosted servers', () =
     expect(providerSelect().value).toBe('')
   })
 
+  // Round S (S33): the default ADDRESS is not put under a provider the user
+  // picked that the address does not belong to.
+  it('a late github.com default address is not put under Gitea the user picked', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(providerSelect(), { target: { value: 'gitea' } })
+    await release({ provider: 'github', repo_url: 'https://github.com/acme/platform' })
+    expect(providerSelect().value).toBe('gitea')
+    expect(urlInput().value).toBe('')
+  })
+
+  it('a late Gitea default address is not put under GitHub the user picked', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(providerSelect(), { target: { value: 'github' } })
+    await release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    expect(providerSelect().value).toBe('github')
+    expect(urlInput().value).toBe('')
+  })
+
+  it('a late default address still fills in under the same provider the user picked', async () => {
+    const release = lateDefaults()
+    renderWizard()
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+    fireEvent.change(providerSelect(), { target: { value: 'gitea' } })
+    await release({ provider: 'gitea', repo_url: 'http://gitea.dev.svc:3000/acme/platform' })
+    expect(urlInput().value).toBe('http://gitea.dev.svc:3000/acme/platform')
+  })
+
   it('a late default does not fill in an address the user cleared', async () => {
     const release = lateDefaults()
     renderWizard()

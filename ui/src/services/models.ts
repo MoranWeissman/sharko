@@ -573,6 +573,13 @@ export interface TakeoverResponse {
   // call, so no second one was opened.
   waiting_for_merge?: boolean
   already_waiting?: boolean
+  // pr_number and pr_url name the open pull request while the take over
+  // waits for it. pr_number is left out when unknown; it is never 0.
+  pr_number?: number
+  pr_url?: string
+  // merge_error: auto-merge was asked for and did not go through. The
+  // answer is a 207 that still waits for the merge (round S contract).
+  merge_error?: string
   git?: {
     pr_url?: string
     pr_id?: number
@@ -2126,6 +2133,10 @@ export interface TrackedPR {
   created_at: string
   last_status: string
   last_polled_at: string
+  // EP3 round S shared contract: a merged pull request whose finish has not
+  // run yet comes back with status "finishing". The UI shows it as a plain
+  // "Finishing" label.
+  status?: string
 }
 
 export interface TrackedPRsResponse {

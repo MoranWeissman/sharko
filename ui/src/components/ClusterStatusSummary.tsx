@@ -68,7 +68,11 @@ export interface ClusterLatestTest {
    * dialog, never as "Test failing".
    */
   notVerified?: boolean;
-  /** When this test finished (RFC3339). */
+  /**
+   * The SERVER's time for this same test (RFC3339), once the server list
+   * shows it. Compared only with `lastTestAt`, which is also the server's
+   * clock; the browser clock is never used.
+   */
   at?: string;
 }
 
@@ -234,7 +238,8 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
   // page beats what the server remembers, because it is newer.
   const when = props.lastTestAt ? ` Tested ${relativeTime(props.lastTestAt)}.` : '';
   // The run on this page wins, unless the server remembers a test that
-  // finished after it (another tab, the CLI, a background check).
+  // finished after it (another tab, the CLI, a background check). Both times
+  // are the server's clock.
   const serverIsNewer =
     !!props.latestTest?.at &&
     !!props.lastTestAt &&

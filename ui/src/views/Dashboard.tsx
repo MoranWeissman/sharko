@@ -26,6 +26,7 @@ import { splitAddonStates } from '@/components/AttentionSection';
 import { prettyOperation } from '@/lib/utils';
 import type { TrackedPR } from '@/services/models';
 import { useAddonStates } from '@/hooks/useAddonStates';
+import { prRef } from '@/lib/prRef'
 
 // --- Time ago helpers ---
 
@@ -262,7 +263,7 @@ export function Dashboard() {
   }, [fetchData]);
 
   const handlePRMerged = useCallback((pr: TrackedPR) => {
-    showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
+    showToast(`Merged ${prRef(pr.pr_id)}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
     // Refresh dashboard data when a PR merges
     void fetchData(true)
   }, [fetchData])

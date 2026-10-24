@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AdoptClustersDialog } from '../AdoptClustersDialog'
+import { AdoptClustersDialog, ackIdsFor } from '../AdoptClustersDialog'
 import type { Cluster } from '@/services/models'
 import * as api from '@/services/api'
 import type { TestClusterUnavailable } from '@/services/api'
@@ -400,7 +400,14 @@ describe('AdoptClustersDialog', () => {
       })
 
       // Should show informational message
-      expect(screen.getByText(/not verified — connectivity will be checked when a secret-bearing addon needs it/i)).toBeInTheDocument()
+      // Round S (episode 3 open question 3): plain words, no promise, and
+      // the server's raw detail only in the tooltip.
+      const line = screen.getByTestId('adopt-not-tested')
+      expect(line).toHaveTextContent(/^Not tested\. Sharko could not test the connection to this cluster, so it did not check it\. You can still adopt it\.$/)
+      expect(line).toHaveAttribute('title', 'Test feature not configured')
+      expect(document.body.textContent).not.toMatch(/connectivity will be checked/i)
+      expect(document.body.textContent).not.toMatch(/secret-bearing/i)
+      expect(document.body.textContent).not.toContain('Test feature not configured')
     })
   })
 
@@ -841,7 +848,9 @@ describe('AdoptClustersDialog', () => {
       await user.click(await screen.findByTestId('adopt-warning-owner'))
       await user.click(screen.getByTestId('adopt-warning-appsets'))
 
-      // The server finds a new warning on staging only. Its 409 names only staging.
+      // The server finds a new warning on staging only. Its 409 names only
+      // staging, with staging's FULL list (internal/orchestrator/
+      // adopt_findings.go puts every warning of the cluster in its result).
       vi.mocked(api.adoptClusters).mockRejectedValueOnce(
         new api.ApiError(
           409,
@@ -849,8 +858,8 @@ describe('AdoptClustersDialog', () => {
             error: 'needs acknowledgement',
             code: 'unacknowledged_findings',
             unacknowledged_findings: ['new-hook'],
-            warnings: [{ id: 'new-hook', message: 'A new hook watches staging.' }],
-            results: [{ name: 'staging-cluster', warnings: [{ id: 'new-hook', message: 'A new hook watches staging.' }] }],
+            warnings: [{ id: 'appsets', message: 'Two ApplicationSets pick staging.' }, { id: 'new-hook', message: 'A new hook watches staging.' }],
+            results: [{ name: 'staging-cluster', warnings: [{ id: 'appsets', message: 'Two ApplicationSets pick staging.' }, { id: 'new-hook', message: 'A new hook watches staging.' }] }],
           },
           'Conflict',
         ),
@@ -958,5 +967,160 @@ describe('AdoptClustersDialog', () => {
       expect(await screen.findByText('Git is not reachable')).toBeInTheDocument()
       expect(screen.queryByText('ArgoCD has no connection saved for prod.')).not.toBeInTheDocument()
     })
+  })
+})
+
+// Round S (S31, S32 and the shared contract's other_pr_open 409). The 409
+// bodies below follow the round S contract: other_pr_open carries code,
+// pr_number and pr_url when known, and the server's own sentence in `error`.
+describe('AdoptClustersDialog — round S', () => {
+  const onClose = vi.fn()
+  const onSuccess = vi.fn()
+  const onDiagnose = vi.fn()
+  const prod: Cluster = { name: 'prod-cluster', labels: {}, server_url: 'https://prod.example.com', managed: false }
+  const staging: Cluster = { name: 'staging-cluster', labels: {}, server_url: 'https://staging.example.com', managed: false }
+  const preview = { effective_addons: [], files_to_write: [], pr_title: 't', secrets_to_create: [] }
+  const reachable = () => {
+    vi.mocked(api.isTestClusterUnavailable).mockReturnValue(false)
+    vi.mocked(api.testClusterConnection).mockResolvedValue({ success: true, reachable: true, server_version: 'v1.31.0' } as never)
+  }
+  const openWith = (clusters: Cluster[]) =>
+    render(<AdoptClustersDialog open={true} onClose={onClose} clusters={clusters} onSuccess={onSuccess} onDiagnose={onDiagnose} />)
+  const warningOn = (cluster: string, id: string) =>
+    screen.getAllByTestId(`adopt-warning-${id}`).find((el) => el.getAttribute('data-cluster') === cluster)!
+  const conflict = (body: Record<string, unknown>) => new api.ApiError(409, body as never, 'Conflict')
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('S31: a tick on one cluster does not send that warning for a cluster whose warnings were never shown', async () => {
+    reachable()
+    const user = userEvent.setup()
+    openWith([prod, staging])
+    // Preview prod alone: staging is unticked, so the server answers for prod only.
+    await user.click(await screen.findByRole('checkbox', { name: 'Select staging-cluster' }))
+    vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+      results: [{ name: 'prod-cluster', status: 'success', warnings: [{ id: 'appset-team', message: 'The team ApplicationSet picks prod.' }], dry_run: preview }],
+    } as never)
+    await user.click(screen.getByRole('button', { name: /preview changes/i }))
+    await user.click(await screen.findByTestId('adopt-warning-appset-team'))
+    await user.click(screen.getByRole('button', { name: /back/i }))
+    // Now pick staging again and confirm. Staging's warnings were never shown.
+    await user.click(screen.getByRole('checkbox', { name: 'Select staging-cluster' }))
+    vi.mocked(api.adoptClusters).mockRejectedValueOnce(
+      conflict({
+        error: 'needs acknowledgement',
+        code: 'unacknowledged_findings',
+        unacknowledged_findings: ['appset-team'],
+        warnings: [{ id: 'appset-team', message: 'The team ApplicationSet picks prod.' }],
+        results: [
+          { name: 'prod-cluster', status: 'skipped', warnings: [{ id: 'appset-team', message: 'The team ApplicationSet picks prod.' }] },
+          { name: 'staging-cluster', status: 'skipped', warnings: [{ id: 'appset-team', message: 'The team ApplicationSet picks staging.' }] },
+        ],
+      }),
+    )
+    await user.click(screen.getByRole('button', { name: /confirm adoption/i }))
+    expect(api.adoptClusters).toHaveBeenLastCalledWith({ clusters: ['prod-cluster', 'staging-cluster'], acknowledged_findings: [] })
+    // Staging's copy shows, not ticked; prod's tick stays.
+    expect(await screen.findByText('The team ApplicationSet picks staging.')).toBeInTheDocument()
+    expect(warningOn('prod-cluster', 'appset-team')).toBeChecked()
+    expect(warningOn('staging-cluster', 'appset-team')).not.toBeChecked()
+    expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeDisabled()
+    // Tick staging's copy too: now the id goes.
+    await user.click(warningOn('staging-cluster', 'appset-team'))
+    vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+      results: [
+        { name: 'prod-cluster', status: 'success', merged: true },
+        { name: 'staging-cluster', status: 'success', merged: true },
+      ],
+    } as never)
+    await user.click(screen.getByRole('button', { name: /confirm adoption/i }))
+    await waitFor(() =>
+      expect(api.adoptClusters).toHaveBeenLastCalledWith({ clusters: ['prod-cluster', 'staging-cluster'], acknowledged_findings: ['appset-team'] }),
+    )
+  })
+
+  it('S31: ackIdsFor sends an id only when every answered cluster has it ticked', () => {
+    const w = (cluster: string, id: string, message = 'm') => ({ cluster, item: { id, message } })
+    const key = (cluster: string, id: string, message = 'm') => `${cluster}\u0000${id}\u0000${message}`
+    const warnings = [w('a', 'x'), w('b', 'x')]
+    expect(ackIdsFor(['a', 'b'], warnings, new Set([key('a', 'x')]), new Set(['a', 'b']))).toEqual([])
+    expect(ackIdsFor(['a', 'b'], warnings, new Set([key('a', 'x'), key('b', 'x')]), new Set(['a', 'b']))).toEqual(['x'])
+    expect(ackIdsFor(['a', 'b'], [w('a', 'x')], new Set([key('a', 'x')]), new Set(['a']))).toEqual([])
+    expect(ackIdsFor(['a', 'b'], [w('a', 'x')], new Set([key('a', 'x')]), new Set(['a', 'b']))).toEqual(['x'])
+    // A tick on an unselected cluster does not count.
+    expect(ackIdsFor(['a'], [w('a', 'x'), w('b', 'x')], new Set([key('b', 'x')]), new Set(['a', 'b']))).toEqual([])
+  })
+
+  it('S31: a 409 replaces the warnings of the clusters it names, so an old copy with other words goes', async () => {
+    reachable()
+    vi.mocked(api.adoptClusters).mockResolvedValueOnce({
+      results: [
+        { name: 'prod-cluster', status: 'success', warnings: [{ id: 'owner', message: 'Another tool owns prod today.' }], dry_run: preview },
+        { name: 'staging-cluster', status: 'success', warnings: [{ id: 'appsets', message: 'Two ApplicationSets pick staging.' }], dry_run: preview },
+      ],
+    } as never)
+    const user = userEvent.setup()
+    openWith([prod, staging])
+    await user.click(await screen.findByRole('button', { name: /preview changes/i }))
+    await user.click(await screen.findByTestId('adopt-warning-owner'))
+    await user.click(screen.getByTestId('adopt-warning-appsets'))
+    vi.mocked(api.adoptClusters).mockRejectedValueOnce(
+      conflict({
+        error: 'needs acknowledgement',
+        code: 'unacknowledged_findings',
+        unacknowledged_findings: ['appsets'],
+        warnings: [{ id: 'appsets', message: 'Three ApplicationSets pick staging.' }],
+        results: [{ name: 'staging-cluster', status: 'skipped', warnings: [{ id: 'appsets', message: 'Three ApplicationSets pick staging.' }] }],
+      }),
+    )
+    await user.click(screen.getByRole('button', { name: /confirm adoption/i }))
+    expect(await screen.findByText('Three ApplicationSets pick staging.')).toBeInTheDocument()
+    expect(screen.queryByText('Two ApplicationSets pick staging.')).not.toBeInTheDocument()
+    expect(screen.getAllByTestId('adopt-warning-appsets')).toHaveLength(1)
+    expect(warningOn('staging-cluster', 'appsets')).not.toBeChecked()
+    // prod was not named: its warning and its tick stay.
+    expect(warningOn('prod-cluster', 'owner')).toBeChecked()
+  })
+
+  it('S32: an answer with no results says nothing was adopted and stays on review', async () => {
+    reachable()
+    vi.mocked(api.adoptClusters).mockResolvedValue({ results: [] } as never)
+    const user = userEvent.setup()
+    openWith([prod])
+    await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+    expect(await screen.findByText('Nothing was adopted. Sharko sent back no answer for any cluster. Try again.')).toBeInTheDocument()
+    expect(screen.queryByText('Pull request opened, waiting for merge.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Adoption complete.')).not.toBeInTheDocument()
+    expect(onSuccess).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /confirm adoption/i })).toBeInTheDocument()
+  })
+
+  it('other_pr_open: shows the server sentence and a link to the open pull request', async () => {
+    reachable()
+    const sentence = 'A pull request to take over prod-cluster is already open. Merge or close it first.'
+    vi.mocked(api.adoptClusters).mockRejectedValue(
+      conflict({ error: sentence, code: 'other_pr_open', pr_number: 12, pr_url: 'https://git/pr/12' }),
+    )
+    const user = userEvent.setup()
+    openWith([prod])
+    await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+    expect(await screen.findByTestId('adopt-error')).toHaveTextContent(sentence)
+    const link = screen.getByRole('link', { name: /View PR #12/ })
+    expect(link).toHaveAttribute('href', 'https://git/pr/12')
+    expect(screen.queryByText('There is something new to read. Tick each warning below, then confirm again.')).not.toBeInTheDocument()
+  })
+
+  it('other_pr_open: with no number the link never says "PR #0"', async () => {
+    reachable()
+    const sentence = 'A pull request to take over prod-cluster is already open. Merge or close it first.'
+    vi.mocked(api.adoptClusters).mockRejectedValue(conflict({ error: sentence, code: 'other_pr_open', pr_url: 'https://git/pr/x' }))
+    const user = userEvent.setup()
+    openWith([prod])
+    await user.click(await screen.findByRole('button', { name: /confirm adoption/i }))
+    const link = await screen.findByRole('link', { name: /View PR/ })
+    expect(link).toHaveAttribute('href', 'https://git/pr/x')
+    expect(document.body.textContent).not.toMatch(/#0\b/)
   })
 })

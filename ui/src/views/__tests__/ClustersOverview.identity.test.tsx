@@ -68,6 +68,14 @@ function renderView() {
   );
 }
 
+// Round S (S37): Sharko's own AWS identity line shows only under the
+// Amazon EKS choice, the one place it is used.
+function chooseEks() {
+  fireEvent.change(screen.getByDisplayValue(/Choose where this cluster's credentials come from/i), {
+    target: { value: 'eks-token' },
+  });
+}
+
 async function openAddDialog() {
   await waitFor(() => {
     expect(screen.getByText('Clusters')).toBeInTheDocument();
@@ -94,6 +102,7 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
 
     renderView();
     await openAddDialog();
+    chooseEks();
 
     await waitFor(() => {
       expect(screen.getByTestId('identity-strip-detected')).toBeInTheDocument();
@@ -122,6 +131,7 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
 
     renderView();
     await openAddDialog();
+    chooseEks();
 
     await waitFor(() => {
       expect(screen.getByTestId('identity-strip-not-detected')).toBeInTheDocument();
@@ -148,6 +158,7 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
 
     renderView();
     await openAddDialog();
+    chooseEks();
 
     await waitFor(() => {
       expect(screen.getByTestId('identity-strip-detected')).toBeInTheDocument();
@@ -156,7 +167,8 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     expect(screen.queryByText(/Layer 1/)).not.toBeInTheDocument();
     // The "Coordinates" section below also dropped its "Layer 2" header in
     // favor of a terse noun-phrase title (V2-cleanup-89.9: no questions as titles).
-    expect(screen.getByText('Cluster location')).toBeInTheDocument();
+    // Round S (S37): the "Cluster location" heading and its line are gone.
+    expect(screen.queryByText('Cluster location')).not.toBeInTheDocument();
     expect(screen.queryByText(/Layer 2/)).not.toBeInTheDocument();
   });
 
@@ -165,15 +177,14 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
 
     renderView();
     await openAddDialog();
+    chooseEks();
 
     await waitFor(() => {
       expect(screen.getByTestId('identity-strip-not-detected')).toBeInTheDocument();
     });
     // The dialog itself is still usable — the identity fetch failing does
     // not block Layer 2.
-    expect(
-      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
-    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/Amazon EKS/i)).toBeInTheDocument();
   });
 
   it('Layer 2 allows registering with connection-only info (no kubeconfig, no secret path)', async () => {
@@ -216,19 +227,39 @@ describe('ClustersOverview — two-layer registration dialog (V2-cleanup-88.5)',
     });
   });
 
-  it('the optional-details note says the connection details are optional and why you may add them later', async () => {
+  it('S37: no "add the details later" line, and no AWS identity line or EKS hint until Amazon EKS is chosen', async () => {
+    // A kind set-up: no AWS identity.
     mockGetSystemCapabilities.mockResolvedValue({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' });
 
     renderView();
     await openAddDialog();
 
-    expect(
-      screen.getByText(
-        'You can add the connection details later, when an addon needs secrets on this cluster.',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/The connection details are optional/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Advanced settings/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Connection credentials below are\s*optional/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/You can add the connection details later/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Cluster location')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('identity-strip')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Checking Sharko's own identity/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Running on EKS\?/)).not.toBeInTheDocument();
+    // A kubeconfig source (the kind path) shows no AWS line either.
+    fireEvent.change(screen.getByDisplayValue(/Choose where this cluster's credentials come from/i), {
+      target: { value: 'inline-kubeconfig' },
+    });
+    expect(screen.queryByTestId('identity-strip')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Running on EKS\?/)).not.toBeInTheDocument();
+    // Amazon EKS: the line shows, right where its fields are.
+    fireEvent.change(screen.getByDisplayValue(/Paste kubeconfig/i), { target: { value: 'eks-token' } });
+    expect(await screen.findByTestId('identity-strip')).toBeInTheDocument();
+    expect(screen.getByText(/Running on EKS\?/)).toBeInTheDocument();
+  });
+
+  it('S37: switching to "Manage a cluster ArgoCD already connects to" drops the Amazon EKS fields and the identity line', async () => {
+    mockGetSystemCapabilities.mockResolvedValue({ aws: { detected: false, method: 'none' }, hub_platform: 'unknown' });
+    renderView();
+    await openAddDialog();
+    chooseEks();
+    expect(await screen.findByTestId('identity-strip')).toBeInTheDocument();
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'user' } });
+    expect(screen.queryByTestId('identity-strip')).not.toBeInTheDocument();
+    expect(screen.queryByText('Connection source')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('e.g. arn:aws:iam::123456789012:role/sharko-access')).not.toBeInTheDocument();
   });
 });

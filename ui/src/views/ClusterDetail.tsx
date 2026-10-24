@@ -89,6 +89,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { prettyOperation } from '@/lib/utils';
 import type { StatusSeverity } from '@/lib/clusterStatus';
 import type { ConnectionsListResponse, TrackedPR, DiagnosticReport, DoctorClusterResponse } from '@/services/models';
+import { prRef } from '@/lib/prRef'
 
 type StatusFilter =
   | 'all'
@@ -251,6 +252,15 @@ export const TOGGLE_NO_PR_ERROR =
 
 // What the page says for a cluster ArgoCD knows and Sharko does not manage.
 // Pinned by exact text in ClusterDetail.notmanaged.test.tsx.
+// The 404 page for a cluster nobody knows. The Clusters page calls its table
+// of open pull requests "Pending Registrations" when every row is a register,
+// and "Pending Changes" otherwise, so both names are given (EP3 round S, S38).
+// Pinned by exact text in ClusterDetail.notmanaged.test.tsx.
+export const CLUSTER_NOT_FOUND_DESCRIPTION =
+  'This cluster is not in your list of managed clusters. ' +
+  'It may have been registered via a pending PR that has not yet merged. ' +
+  'Open the Clusters page and look for an open PR under "Pending Registrations" or "Pending Changes".';
+
 export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
 export function notManagedDescription(name: string): string {
   return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;
@@ -293,7 +303,11 @@ export function ClusterDetail() {
   const [notManagedAdoptOpen, setNotManagedAdoptOpen] = useState(false);
   // The address ArgoCD has for a cluster Sharko does not manage, from
   // /clusters/available. Shown in the Adopt dialog. Empty when unknown.
-  const [notManagedServerURL, setNotManagedServerURL] = useState<string | undefined>(undefined);
+  // Kept with the cluster name it belongs to. The page stays mounted when
+  // only the name in the address changes, so an address found for one
+  // cluster must never show for the next one (EP3 round S, S30).
+  const [notManagedServer, setNotManagedServer] = useState<{ name: string; url: string } | null>(null);
+  const notManagedServerURL = notManagedServer && notManagedServer.name === name ? notManagedServer.url : undefined;
   // Set when an adopt or take ownership finished while its dialog was open.
   // The page reloads when the dialog closes, not before: a reload that finds
   // the cluster managed now would swap the page and take the open dialog
@@ -578,6 +592,8 @@ export function ClusterDetail() {
     return (argoStatus === '' || argoStatus === 'unknown') && serverUrl === '';
   }, [data]);
 
+  // True once a load has filled the addon on/off map for this cluster.
+  const togglesSeededRef = useRef(false);
   const fetchData = useCallback(async (background = false): Promise<ClusterComparisonResponse | undefined> => {
     if (!name) return undefined;
     try {
@@ -586,6 +602,7 @@ export function ClusterDetail() {
         setError(null);
         setErrorStatus(null);
         setNotManaged(false);
+        togglesSeededRef.current = false;
       }
       // Fetch cluster-scoped open PRs alongside the comparison so the
       // addons table can render per-row pending-PR badges. The .catch
@@ -630,7 +647,13 @@ export function ClusterDetail() {
       // unsaved changes or an open preview — the background poll would silently
       // discard the user's pending toggle edit and strand the preview. Only
       // seed toggles on the foreground/first load (background === false).
-      if (!background) {
+      //
+      // A background reload still seeds them when no load has seeded them
+      // yet: the page was the not-managed page or an error page, and an
+      // adopt or take over just made it a managed cluster. Without this the
+      // page shows an empty addon map (EP3 round S, S28).
+      if (!background || !togglesSeededRef.current) {
+        togglesSeededRef.current = true;
         const toggleMap: Record<string, boolean> = {};
         result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean; git_configured: boolean; status?: string }) => {
           if (!a.git_configured) return;
@@ -1111,7 +1134,7 @@ export function ClusterDetail() {
       .then((list) => {
         if (cancelled || !Array.isArray(list)) return;
         const hit = list.find((c) => c.name === name);
-        if (hit?.server_url) setNotManagedServerURL(hit.server_url);
+        if (hit?.server_url) setNotManagedServer({ name, url: hit.server_url });
       })
       .catch(() => {});
     return () => {
@@ -1284,9 +1307,7 @@ export function ClusterDetail() {
         <EmptyState
           title={`Cluster "${name}" not found`}
           description={
-            'This cluster is not in your list of managed clusters. ' +
-            'It may have been registered via a pending PR that has not yet merged. ' +
-            'Open the Clusters page and look under "Pending Registrations" for an open PR.'
+CLUSTER_NOT_FOUND_DESCRIPTION
           }
           action={
             <button
@@ -2500,7 +2521,7 @@ export function ClusterDetail() {
             <ClusterChangesSection
               clusterName={name!}
               onMergeDetected={(pr: TrackedPR) => {
-                showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
+                showToast(`Merged ${prRef(pr.pr_id)}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
                 void fetchData()
               }}
             />
@@ -2884,11 +2905,11 @@ function ComparisonRow({ addon, clusterName, argocdBaseURL, highlighted, pending
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
               data-testid="addon-pending-pr-badge"
-              title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
+              title={`Open ${prRef(pr.pr_id, 'the pull request')} — ${pr.pr_title}`}
               className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
             >
               <GitPullRequest className="h-3 w-3" />
-              PR #{pr.pr_id}
+              {prRef(pr.pr_id, 'PR')}
               {pr.operation && (
                 <span className="rounded bg-amber-200/70 px-1 py-px text-xs capitalize text-amber-900 dark:bg-amber-800/50 dark:text-amber-200">
                   {pr.operation.replace(/^addon-/, '')}
@@ -3038,7 +3059,7 @@ function PendingAddonRow({ addonName, prs }: { addonName: string; prs: TrackedPR
     prs.length > 1
       ? `${prs.length} pull requests open — merge to approve`
       : primary
-        ? `PR #${primary.pr_id} open — merge to approve${primary.operation ? ` (${primary.operation.replace(/^addon-/, '')})` : ''}`
+        ? `${prRef(primary.pr_id, 'Pull request')} open — merge to approve${primary.operation ? ` (${primary.operation.replace(/^addon-/, '')})` : ''}`
         : 'Pull request open — merge to approve';
 
   return (
@@ -3061,11 +3082,11 @@ function PendingAddonRow({ addonName, prs }: { addonName: string; prs: TrackedPR
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
                 data-testid="addon-pending-pr-badge"
-                title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
+                title={`Open ${prRef(pr.pr_id, 'the pull request')} — ${pr.pr_title}`}
                 className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
               >
                 <GitPullRequest className="h-3 w-3" />
-                PR #{pr.pr_id}
+                {prRef(pr.pr_id, 'PR')}
                 <ExternalLink className="h-3 w-3" />
               </a>
             ))}

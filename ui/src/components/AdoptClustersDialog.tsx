@@ -24,6 +24,7 @@ import { withV } from '@/lib/versionLabel'
 import { CHECK_PERMISSIONS_LABEL } from '@/components/ClusterActionHints'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import { AutoMergeNote } from '@/components/AutoMergeNote'
+import { PRLink } from '@/components/PRFeedback'
 
 interface AdoptClustersDialogProps {
   open: boolean
@@ -46,6 +47,15 @@ export const ADOPT_DONE_NOT_ALL = 'Not every cluster finished. Read each one bel
 export const ADOPT_NOT_FINISHED = 'Not finished yet'
 export const ADOPT_NEW_WARNINGS =
   'There is something new to read. Tick each warning below, then confirm again.'
+// The server answered, but named no cluster at all. Nothing was opened, so
+// the dialog must not say a pull request is waiting.
+// Shown when Sharko could not test a cluster before adopting it. It says only
+// what happened. The server's own detail goes in the tooltip.
+export const ADOPT_NOT_TESTED_LINE =
+  'Not tested. Sharko could not test the connection to this cluster, so it did not check it. You can still adopt it.'
+export const ADOPT_NO_RESULTS = 'Nothing was adopted. Sharko sent back no answer for any cluster. Try again.'
+// Used when a 409 other_pr_open answer carries no sentence of its own.
+export const ADOPT_OTHER_PR_OPEN_FALLBACK = 'A pull request for this cluster is already open. Merge or close it first.'
 export function adoptBlockedText(blockedClusters: string[]): string {
   if (blockedClusters.length === 1) {
     return `"${blockedClusters[0]}" cannot be adopted yet. See the reasons below.`
@@ -58,7 +68,7 @@ export function adoptBlockedText(blockedClusters: string[]): string {
 // part of the key too: two warnings that share an id are still two things
 // to read, and each gets its own tick. An empty cluster means the server did
 // not say which cluster, so it counts for every selected one.
-interface FindingFor<T> {
+export interface FindingFor<T> {
   cluster: string
   item: T
 }
@@ -86,6 +96,33 @@ function mergeFindings<T>(
     out.push(f)
   }
   return out
+}
+
+// The warning ids to send with a real adopt. An id goes only when every
+// selected cluster has been answered by the server and, on each of them, every
+// copy of that warning is ticked (or the cluster does not have it). A warning
+// with no cluster counts for every selected cluster.
+export function ackIdsFor(
+  names: string[],
+  warnings: FindingFor<AdoptWarning>[],
+  ticked: Set<string>,
+  answered: Set<string>,
+): string[] {
+  if (!names.every((n) => answered.has(n))) {
+    // Some cluster's warnings are not known yet: send only ids that no
+    // other cluster could share, which is none. The server answers 409 with
+    // each cluster's list, and the user reads them first.
+    return []
+  }
+  const ids = new Set<string>()
+  for (const w of warnings) {
+    if ((w.cluster === '' || names.includes(w.cluster)) && ticked.has(warningKey(w))) ids.add(w.item.id)
+  }
+  return Array.from(ids).filter((id) =>
+    warnings
+      .filter((w) => w.item.id === id && (w.cluster === '' || names.includes(w.cluster)))
+      .every((w) => ticked.has(warningKey(w))),
+  )
 }
 
 // How one cluster's adopt ended, read from the server's answer. `merged` is
@@ -124,6 +161,14 @@ export function AdoptClustersDialog({
   const [blockers, setBlockers] = useState<FindingFor<AdoptBlocker>[]>([])
   const [warnings, setWarnings] = useState<FindingFor<AdoptWarning>[]>([])
   const [ticked, setTicked] = useState<Set<string>>(new Set())
+  // The clusters the server has given its full list of warnings for. A
+  // warning id is sent only when every selected cluster was answered and has
+  // that warning ticked (or does not have it). The server takes one id for
+  // every cluster in the request, so a tick on one cluster must never accept
+  // the same warning on a cluster whose warnings the user has not seen.
+  const [answeredClusters, setAnsweredClusters] = useState<Set<string>>(new Set())
+  // The link of an open pull request of the other kind (409 other_pr_open).
+  const [adoptErrorPR, setAdoptErrorPR] = useState<{ url: string; id?: number } | null>(null)
   // Bumped every time the dialog opens a fresh verification run. The
   // verification effect below keys off THIS instead of `phase` directly:
   // `phase` starts at 'verifying' (its default), so on the very first
@@ -161,6 +206,8 @@ export function AdoptClustersDialog({
     setBlockers([])
     setWarnings([])
     setTicked(new Set())
+    setAnsweredClusters(new Set())
+    setAdoptErrorPR(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, clustersKey])
 
@@ -316,6 +363,7 @@ export function AdoptClustersDialog({
     const answered = new Set(results.map((r) => r.name))
     setBlockers((prev) => mergeFindings(prev, incomingBlockers, blockerKey, answered))
     setWarnings((prev) => mergeFindings(prev, incomingWarnings, warningKey, answered))
+    setAnsweredClusters((prev) => new Set([...prev, ...answered]))
     return { incomingBlockers, incomingWarnings }
   }, [])
 
@@ -377,26 +425,28 @@ export function AdoptClustersDialog({
     if (names.length === 0) return
     setPhase('adopting')
     setAdoptError(null)
+    setAdoptErrorPR(null)
     try {
       // F15: Let the backend handle credentials-optional adoption. Selected
       // clusters include informational-not-verified ones (F14) — the backend
       // (adopt.go:103-139) skips verification when credentials are unavailable
       // and proceeds with adoption anyway.
-      // Send every warning the user ticked, for every selected cluster. One
-      // id covers that warning on every cluster, so each id goes once. A
-      // list built from only the last answer would drop the ticks of the
-      // other clusters, and the server would ask about them again.
-      const ackIds = Array.from(
-        new Set(
-          warnings
-            .filter((w) => (w.cluster === '' || names.includes(w.cluster)) && ticked.has(warningKey(w)))
-            .map((w) => w.item.id),
-        ),
-      )
+      // Send the warnings the user ticked. One id covers that warning on
+      // every cluster in the request, so an id goes only when it is ticked
+      // on EVERY selected cluster that has it, and every selected cluster
+      // has been answered by the server. Otherwise the id stays out and the
+      // server asks again, naming the clusters still to read.
+      const ackIds = ackIdsFor(names, warnings, ticked, answeredClusters)
       const response = await adoptClusters({
         clusters: names,
         acknowledged_findings: ackIds,
       })
+      if (!Array.isArray(response.results) || response.results.length === 0) {
+        setAdoptResults([])
+        setAdoptError(ADOPT_NO_RESULTS)
+        setPhase('review')
+        return
+      }
       setAdoptResults(response.results)
       const { incomingBlockers: nextBlockers } = takeFindings(response.results)
 
@@ -417,6 +467,22 @@ export function AdoptClustersDialog({
     } catch (err) {
       // 409: the server found a warning the user has not ticked yet. Show it
       // and let them tick it, instead of a bare error.
+      const apiErr = err as { status?: unknown; code?: unknown; body?: unknown } | null
+      if (apiErr && apiErr.status === 409 && apiErr.code === 'other_pr_open') {
+        // A pull request of the other kind (take over) is already open for
+        // this cluster. Show the server's sentence and a link to it.
+        const body = (apiErr.body ?? {}) as { pr_url?: unknown; pr_number?: unknown }
+        const message = err instanceof Error && err.message ? err.message : ADOPT_OTHER_PR_OPEN_FALLBACK
+        setAdoptError(message)
+        if (typeof body.pr_url === 'string' && body.pr_url !== '') {
+          setAdoptErrorPR({
+            url: body.pr_url,
+            id: typeof body.pr_number === 'number' && body.pr_number > 0 ? body.pr_number : undefined,
+          })
+        }
+        setPhase('review')
+        return
+      }
       if (err instanceof ApiError && err.status === 409) {
         const body = err.body as { warnings?: unknown; results?: AdoptResult[] }
         const fromResults = Array.isArray(body.results) ? body.results : []
@@ -427,10 +493,15 @@ export function AdoptClustersDialog({
           for (const w of fromBody) merged.push({ cluster: names.length === 1 ? names[0] : '', item: w })
         }
         if (merged.length > 0) {
-          // Add the new ones to the list. The 409 names only the clusters
-          // still missing a tick, so replacing the list would lose the
-          // others' ticks and send the user round in a loop.
-          setWarnings((prev) => mergeFindings(prev, merged, warningKey))
+          // The 409 names only the clusters still missing a tick, each with
+          // its full list. Those clusters get exactly the new list, so an old
+          // copy of a warning whose words changed does not stay next to the
+          // new one. Every other cluster keeps its warnings and its ticks.
+          const named = new Set(merged.map((w) => w.cluster).filter((c) => c !== ''))
+          setWarnings((prev) => mergeFindings(prev, merged, warningKey, named))
+          // A cluster the 409 does not name had nothing left to tick for
+          // the ids sent, so its warnings are known too.
+          setAnsweredClusters((prev) => new Set([...prev, ...names]))
           setAdoptError(ADOPT_NEW_WARNINGS)
           setPhase('review')
           return
@@ -439,7 +510,7 @@ export function AdoptClustersDialog({
       setAdoptError(err instanceof Error ? err.message : 'Adoption failed')
       setPhase('review')
     }
-  }, [selectedClusters, onSuccess, warnings, ticked, takeFindings])
+  }, [selectedClusters, onSuccess, warnings, ticked, answeredClusters, takeFindings])
 
   // The line under the title on the done screen. "Adoption complete." only
   // when every cluster's pull request merged and the adopt really finished.
@@ -519,6 +590,7 @@ export function AdoptClustersDialog({
                     <input
                       type="checkbox"
                       data-testid={`adopt-warning-${w.item.id}`}
+                      data-cluster={w.cluster}
                       checked={ticked.has(key)}
                       onChange={() => toggleTick(key)}
                       className="mt-1 rounded border-amber-500"
@@ -595,6 +667,7 @@ export function AdoptClustersDialog({
                         <td className="px-4 py-2">
                           <input
                             type="checkbox"
+                            aria-label={`Select ${v.cluster.name}`}
                             checked={v.selected}
                             disabled={phase === 'adopting'}
                             onChange={() => toggleCluster(idx)}
@@ -648,11 +721,12 @@ export function AdoptClustersDialog({
                       <tr key={`${v.cluster.name}-error`} className={v.selected ? '' : 'opacity-50'}>
                         <td colSpan={clusters.length > 1 && (phase === 'review' || phase === 'adopting') ? 4 : 3} className="px-4 py-2 bg-[#e8f4ff] dark:bg-gray-900">
                           <div className="space-y-1">
-                            <p className={`text-xs ${v.state === 'failed' ? 'text-red-500 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-400'}`}>
-                              {v.state === 'not-verified'
-                                ? `Not verified — connectivity will be checked when a secret-bearing addon needs it. (${v.result.error_message})`
-                                : v.result.error_message
-                              }
+                            <p
+                              className={`text-xs ${v.state === 'failed' ? 'text-red-500 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-400'}`}
+                              title={v.state === 'not-verified' ? v.result.error_message : undefined}
+                              data-testid={v.state === 'not-verified' ? 'adopt-not-tested' : undefined}
+                            >
+                              {v.state === 'not-verified' ? ADOPT_NOT_TESTED_LINE : v.result.error_message}
                             </p>
                             {v.state === 'failed' && (
                               <button
@@ -699,7 +773,12 @@ export function AdoptClustersDialog({
 
           {/* Adoption error */}
           {adoptError && (
-            <p className="text-sm text-red-600 dark:text-red-400">{adoptError}</p>
+            <p className="text-sm text-red-600 dark:text-red-400" data-testid="adopt-error">{adoptError}</p>
+          )}
+          {adoptError && adoptErrorPR && (
+            <div data-testid="adopt-error-pr-link">
+              <PRLink url={adoptErrorPR.url} id={adoptErrorPR.id} className="text-red-700 dark:text-red-300" />
+            </div>
           )}
 
           {/* Adoption results — shown in 'done' (all succeeded) or 'review' (some/all failed) */}
