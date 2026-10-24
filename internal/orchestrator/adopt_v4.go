@@ -8,11 +8,9 @@
 // writes (buildTakeoverFiles, takeover.go), gated by the same takeover
 // preflight the brownfield-takeover door runs — a cluster that is not
 // Ready fails outright, one that is Ready-but-warned proceeds and carries
-// the warnings back on the per-cluster result. Unlike the takeover door,
-// there is no acknowledged_findings protocol here: the adopt door's
-// existing confirmation contract (dry_run / not-dry_run) is what gates the
-// write, matching v3 AdoptClusters, which never asked for a separate "yes"
-// either.
+// the warnings back on the per-cluster result, each with an id. Like the
+// takeover door, a real adopt goes ahead only when every warning id is in
+// the request's acknowledged_findings (see adopt_findings.go).
 package orchestrator
 
 import (
@@ -153,26 +151,36 @@ func (o *Orchestrator) gatherAdoptPreflightInputs(ctx context.Context, clusterNa
 // and stamps the v3-style adopted annotation — gated on the adoption PR
 // having actually merged, exactly as adoptSingleCluster gates its Ensure +
 // SetAnnotation calls today.
-func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL string, req AdoptClustersRequest, extraWarnings []string) AdoptClusterResult {
+func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL string, req AdoptClustersRequest) AdoptClusterResult {
 	log := logging.LoggerFromContext(ctx)
 	cr := AdoptClusterResult{Name: name}
-	cr.Warnings = append(cr.Warnings, extraWarnings...)
 
 	in, err := o.gatherAdoptPreflightInputs(ctx, name, serverURL)
 	if err != nil {
 		cr.Status = "failed"
 		cr.Error = err.Error()
+		cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerCannotCheck, Message: cr.Error}}
 		return cr
 	}
 	report := takeover.Preflight(in)
+	// Warnings are listed even when something also blocks, so a person sees
+	// everything there is to read in one go.
+	cr.Warnings = adoptWarningsFromReport(report)
 	if !report.Ready {
 		cr.Status = "failed"
 		cr.Error = report.Summary
+		cr.Blockers = adoptBlockersFromReport(report)
 		return cr
 	}
-	for _, f := range report.Findings {
-		if f.Status == takeover.StatusWarning {
-			cr.Warnings = append(cr.Warnings, fmt.Sprintf("%s: %s", f.Title, f.Detail))
+
+	// A warning can show up between the check AdoptClusters ran first and
+	// this one (a new ApplicationSet, say). It still has to be read.
+	if !req.DryRun {
+		if missing := missingAcknowledgements(cr.Warnings, req.AcknowledgedFindings); len(missing) > 0 {
+			cr.Status = "failed"
+			cr.UnacknowledgedFindings = missing
+			cr.Error = unacknowledgedAdoptWarningsMessage(missing)
+			return cr
 		}
 	}
 
@@ -195,27 +203,74 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 	}
 
 	// Idempotency (mirrors adoptSingleCluster / RegisterCluster): a previous
-	// attempt may have left an open adopt PR for this cluster.
-	existingPR, existingPRErr := o.findOpenPRForCluster(ctx, name, "adopt")
-	if existingPRErr == nil && existingPR != nil {
+	// attempt may have left an open adopt PR for this cluster. An open take
+	// over PR writes the same files, so it counts too. An open register PR
+	// is refused, and a list that cannot be read stops the adopt (EP3 dry
+	// run round R, R7).
+	existingPR, existingOp, existingPRErr := o.findOpenJoinPR(ctx, name)
+	if existingPRErr != nil {
+		cr.Status = "failed"
+		cr.Error = existingPRErr.Error()
+		cr.Message = existingPRErr.Error()
+		return cr
+	}
+	if existingPR != nil {
+		if existingOp != joinOpAdopt {
+			// An open take over pull request would finish as a take over,
+			// not as this adopt (EP3 dry run round S, S5).
+			other := &OtherJoinPRError{Cluster: name, Kind: existingOp, PRID: existingPR.ID, PRUrl: existingPR.URL}
+			cr.Status = "failed"
+			cr.Error = other.Error()
+			cr.Message = other.Error()
+			cr.OtherPR = other
+			return cr
+		}
 		log.Info("Found existing open PR for v4 cluster adoption — skipping",
 			"cluster", name, "pr", existingPR.URL)
-		cr.Status = "success"
 		cr.Git = &GitResult{PRUrl: existingPR.URL, PRID: existingPR.ID, Branch: existingPR.SourceBranch}
-		cr.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+		// Put the waiting mark back in case the first try could not (S7).
+		if markErr := o.putJoinMark(ctx, AnnotationAdoptPendingPR, name, existingPR.ID, existingPR.URL, nil); markErr != nil {
+			log.Warn("could not put the adopt waiting mark back on the cluster's ArgoCD connection",
+				"cluster", name, "pr", existingPR.ID, "error", markErr)
+			cr.Status = "partial"
+			cr.Error = markErr.Error()
+			cr.Message = MarkNotWrittenMessage("adopt", name, existingPR.URL)
+			return cr
+		}
+		cr.Status = "success"
+		cr.Message = adoptAlreadyWaitingMessage(name, existingPR.ID, existingPR.URL)
 		return cr
 	}
 
 	files := build.files()
-	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name),
-		o.prMeta(req.AutoMerge, "adopt-cluster", fmt.Sprintf("Adopt cluster %s", name), name, ""))
+	meta := o.prMeta(req.AutoMerge, "adopt-cluster", fmt.Sprintf("Adopt cluster %s", name), name, "")
+	// The finish kind is saved on the tracked pull request, so the merge
+	// finishes the adopt even when the waiting mark is not on the Secret
+	// (round R, R4).
+	meta.FollowUp = &ClusterFollowUp{Finish: FinishAdopt}
+	// The waiting mark goes on before the pull request is tracked (S7).
+	meta.BeforeTrack = func(ctx context.Context, res *GitResult) error {
+		return o.putJoinMark(ctx, AnnotationAdoptPendingPR, name, res.PRID, res.PRUrl, nil)
+	}
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name), meta)
 	if gitErr != nil {
-		if gitResult != nil {
+		switch {
+		case errors.Is(gitErr, ErrPRNotRecorded) && gitResult != nil:
+			cr.Status = "partial"
+			cr.Error = gitErr.Error()
+			cr.Message = PRNotRecordedMessage("adopt", gitResult.PRUrl)
+			cr.Git = gitResult
+		case errors.Is(gitErr, ErrMarkNotWritten) && gitResult != nil:
+			cr.Status = "partial"
+			cr.Error = gitErr.Error()
+			cr.Message = MarkNotWrittenMessage("adopt", name, gitResult.PRUrl)
+			cr.Git = gitResult
+		case gitResult != nil:
 			cr.Status = "partial"
 			cr.Error = gitErr.Error()
 			cr.Message = fmt.Sprintf("PR created but merge failed for cluster %s: %s", name, gitResult.PRUrl)
 			cr.Git = gitResult
-		} else {
+		default:
 			cr.Status = "failed"
 			cr.Error = gitErr.Error()
 			cr.Message = "Git commit failed during adoption"
@@ -251,14 +306,36 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 				"cluster", name, "error", annotErr)
 			cr.Status = "partial"
 			cr.Error = annotErr.Error()
-			cr.Message = "Adoption PR merged but failed to set adopted annotation on ArgoCD secret"
+			cr.Message = AdoptMarkFailedMessage
 			return cr
 		}
 	}
 
-	cr.Status = "success"
 	if !gitResult.Merged {
-		cr.Message = fmt.Sprintf("PR created — ArgoCD connection ownership and the adopted annotation will be set after the PR is merged: %s", gitResult.PRUrl)
+		// Nothing about the connection changes until the merge. The
+		// waiting mark went on before the pull request was tracked, and
+		// the tracked pull request finishes the adopt.
+		cr.Status = "success"
+		cr.Message = adoptWaitingForMergeMessage(gitResult.PRID, gitResult.PRUrl)
+		return cr
 	}
+	cr.Status = "success"
+	cr.Merged = o.argoSecretManager != nil
 	return cr
+}
+
+// adoptAlreadyWaitingMessage is what an adopt says when a pull request
+// that brings the cluster in is already open.
+func adoptAlreadyWaitingMessage(name string, prID int, prURL string) string {
+	return fmt.Sprintf(
+		"Adopting %s is already waiting in %s: %s. Sharko did not open a second one. Merge it to finish.",
+		name, PullRequestPhrase(prID), prURL)
+}
+
+// adoptWaitingForMergeMessage is what an adopt says while its pull request
+// waits to be merged.
+func adoptWaitingForMergeMessage(prID int, prURL string) string {
+	return fmt.Sprintf(
+		"%s is open: %s. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection.",
+		capitalizeFirst(PullRequestPhrase(prID)), prURL)
 }

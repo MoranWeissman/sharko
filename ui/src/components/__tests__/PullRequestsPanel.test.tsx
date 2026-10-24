@@ -807,3 +807,54 @@ describe('PullRequestsPanel V125-1-6', () => {
     })
   })
 })
+
+// EP3 round S shared contract: "PR #0" never shows, and a merged pull
+// request whose finish has not run yet shows a plain "Finishing" label.
+describe('PullRequestsPanel — round S', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(useConnectionsOptional).mockReturnValue(null)
+  })
+
+  it('a pull request with status "finishing" shows a plain Finishing label with no spinner', async () => {
+    vi.mocked(api.fetchTrackedPRs).mockResolvedValue({
+      prs: [
+        trackedPR({ pr_id: 41, pr_title: 'Adopt prod-eu', last_status: 'merged', status: 'finishing' }),
+        trackedPR({ pr_id: 42, pr_title: 'Add datadog' }),
+      ],
+    })
+    renderPanel()
+    const labels = await screen.findAllByTestId('pr-finishing')
+    expect(labels).toHaveLength(1)
+    expect(labels[0]).toHaveTextContent(/^Finishing$/)
+    expect(labels[0].querySelector('svg')).toBeNull()
+    expect(labels[0].className).not.toMatch(/animate-spin/)
+  })
+
+  it('a pending pull request with no number never says #0', async () => {
+    vi.mocked(api.fetchTrackedPRs).mockResolvedValue({
+      prs: [trackedPR({ pr_id: 0, pr_url: 'https://github.com/test/repo/pulls', pr_title: 'Adopt prod-eu' })],
+    })
+    const { container } = renderPanel()
+    await screen.findByText('Adopt prod-eu')
+    expect(screen.getByLabelText('Open the pull request in browser')).toBeInTheDocument()
+    expect(screen.getByLabelText('Refresh status of the pull request')).toBeInTheDocument()
+    expect(container.innerHTML).not.toContain('#0')
+  })
+
+  it('a merged pull request with no number never says #0', async () => {
+    vi.mocked(api.fetchTrackedPRs).mockResolvedValue({ prs: [] })
+    vi.mocked(api.fetchMergedPRs).mockResolvedValue({
+      prs: [{
+        pr_id: 0, pr_url: 'https://github.com/test/repo/pulls', pr_branch: 'sharko/x',
+        pr_title: 'sharko: adopt prod-eu', merged_at: new Date().toISOString(), author: 'admin',
+      }],
+      limit: 100,
+    })
+    const { container } = renderPanel()
+    const link = await screen.findByText('sharko: adopt prod-eu')
+    expect(link).toHaveTextContent(/^sharko: adopt prod-eu$/)
+    expect(screen.getByLabelText('Open merged pull request in browser')).toBeInTheDocument()
+    expect(container.innerHTML).not.toContain('#0')
+  })
+})

@@ -1077,7 +1077,9 @@ func runtimeSSRFCheck(rawURL string) error {
 func runtimeSSRFCheckResolvedIPs(rawURL string) ([]netip.Addr, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse url: %w", err)
+		// Not the parser's own text, which repeats the whole address
+		// (EP3 dry run round S, S15).
+		return nil, errors.New("the catalog source address cannot be read")
 	}
 	host := u.Hostname()
 	if host == "" {

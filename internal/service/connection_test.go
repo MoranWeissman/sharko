@@ -62,7 +62,7 @@ func TestDeriveProviderFromURL(t *testing.T) {
 			envAllowlist: "",
 			repoURL:      "://not-a-url",
 			wantErr:      true,
-			errContains:  "cannot parse git repo URL",
+			errContains:  "Sharko cannot read the Git repository address. Check that it looks like https://host/owner/repo.",
 		},
 
 		// V125-1-13.x.3 — env-var allowlist cases.
@@ -319,5 +319,18 @@ func TestTestCredentials_UnreadableGitAddressMeansArgoCDNotTested(t *testing.T) 
 	}
 	if !errors.Is(argocdErr, ErrArgocdNotTested) {
 		t.Fatalf("ArgoCD result = %v, want ErrArgocdNotTested", argocdErr)
+	}
+}
+
+// Finding 30: the message for a host Sharko cannot place names the way out
+// (give the provider) instead of only listing two supported hosts.
+func TestDeriveProviderFromURL_UnknownHostSentenceNamesTheWayOut(t *testing.T) {
+	_, err := deriveProviderFromURL("https://gitea.example.test/acme/platform")
+	if err == nil {
+		t.Fatal("want an error for an unknown host")
+	}
+	const want = `unsupported git host "gitea.example.test": Sharko cannot tell which Git product runs there. Set the Git provider (github or gitea), or use a github.com or dev.azure.com address`
+	if err.Error() != want {
+		t.Errorf("got %q\nwant %q", err.Error(), want)
 	}
 }

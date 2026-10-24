@@ -142,3 +142,44 @@ func TestHandleListPRs_DefaultSortNewestFirst(t *testing.T) {
 		}
 	}
 }
+
+// EP3 dry run round S, S21: the default list shows a merged pull request
+// whose finish has not run yet, with status "finishing". A given-up one is
+// not shown by default. ?status=finishing shows only the finishing ones.
+func TestHandleListPRs_ShowsFinishing_RoundS(t *testing.T) {
+	now := time.Now()
+	srv := newPrsFilterTestServer(t, []prtracker.PRInfo{
+		{PRID: 1, Operation: "register-cluster", LastStatus: "open", CreatedAt: now.Add(-3 * time.Minute)},
+		{PRID: 2, Operation: "remove-cluster", Cluster: "c", LastStatus: "merged", FinishAttempts: 1, CreatedAt: now.Add(-2 * time.Minute)},
+		{PRID: 3, Operation: "adopt-cluster", Cluster: "d", LastStatus: "closed", GaveUp: true, CreatedAt: now.Add(-1 * time.Minute)},
+	})
+	list := func(q string) []PRItem {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		srv.handleListPRs(rr, httptest.NewRequest(http.MethodGet, "/api/v1/prs"+q, nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: status %d body=%s", q, rr.Code, rr.Body.String())
+		}
+		var resp PRListResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.PRs
+	}
+	got := list("")
+	if len(got) != 2 || got[0].PRID != 2 || got[1].PRID != 1 {
+		t.Fatalf("default list = %+v, want PR 2 (finishing) and PR 1 (open)", got)
+	}
+	if got[0].Status != "finishing" || got[0].LastStatus != "merged" {
+		t.Fatalf("PR 2 status=%q last_status=%q, want finishing/merged", got[0].Status, got[0].LastStatus)
+	}
+	if got[1].Status != "open" {
+		t.Fatalf("PR 1 status=%q, want open", got[1].Status)
+	}
+	if f := list("?status=finishing"); len(f) != 1 || f[0].PRID != 2 {
+		t.Fatalf("?status=finishing = %+v, want only PR 2", f)
+	}
+	if c := list("?status=closed"); len(c) != 1 || c[0].PRID != 3 || c[0].Status != "closed" {
+		t.Fatalf("?status=closed = %+v, want the given-up PR 3 with status closed", c)
+	}
+}

@@ -14,7 +14,11 @@ export interface Cluster {
   server_url?: string
   connection_status?: string
   managed?: boolean
+  // True when the ArgoCD Secret carries sharko.dev/adopted. Missing means false.
   adopted?: boolean
+  // True when the cluster came in through take over. Optional: an older
+  // server sends neither this nor `adopted`, and both then read as false.
+  taken_over?: boolean
   // Who owns this cluster's ArgoCD cluster secret (V2-cleanup-57.2):
   // absent/'' or 'sharko' = Sharko writes and rotates it (default);
   // 'user' = self-managed — the user created the secret by hand and
@@ -563,6 +567,19 @@ export interface TakeoverResponse {
   secret_swapped: boolean
   already_owned?: boolean
   protection_repaired?: boolean
+  // waiting_for_merge is true while the take over's pull request is still
+  // open. Nothing on the connection has changed yet; the merge does the
+  // swap. already_waiting says the pull request was opened by an earlier
+  // call, so no second one was opened.
+  waiting_for_merge?: boolean
+  already_waiting?: boolean
+  // pr_number and pr_url name the open pull request while the take over
+  // waits for it. pr_number is left out when unknown; it is never 0.
+  pr_number?: number
+  pr_url?: string
+  // merge_error: auto-merge was asked for and did not go through. The
+  // answer is a 207 that still waits for the merge (round S contract).
+  merge_error?: string
   git?: {
     pr_url?: string
     pr_id?: number
@@ -645,11 +662,34 @@ export interface ClusterHealthStats {
   not_in_git: number
 }
 
+// What an open pull request in the pending table is for. An older server
+// sends none of these, and the row then means "register".
+export type PendingOperation = 'register' | 'adopt' | 'takeover' | 'remove'
+
 export interface PendingRegistration {
   cluster_name: string
   pr_url: string
   branch: string
   opened_at: string
+  // Added by the cluster work of the episode 3 fixes. Both are optional so
+  // an older server keeps working: missing operation means "register".
+  operation?: PendingOperation
+  pr_number?: number
+}
+
+// A cluster ArgoCD already knows that Sharko does not manage yet, from
+// GET /clusters/available.
+export interface AvailableCluster {
+  name: string
+  server_url?: string
+  // The name of ArgoCD's own Secret for it, which may differ from `name`.
+  secret_name?: string
+  // Only present when the server knows. Missing means "not known".
+  reachable?: boolean
+}
+
+export interface AvailableClustersResponse {
+  clusters: AvailableCluster[]
 }
 
 // ArgoCD cluster Secret with no managed-clusters.yaml entry AND no open
@@ -2010,6 +2050,26 @@ export interface UpgradeRecommendations {
 
 // --- Cluster Adoption ---
 
+// One reason an adopt cannot go ahead. The server sends every reason, not
+// only a count.
+export interface AdoptBlocker {
+  id: string
+  message: string
+}
+
+// One thing the user must read and tick before an adopt goes ahead. The id
+// is what goes back in `acknowledged_findings`. Same shape as the checks the
+// take over screen shows; every field but id and message is optional.
+export interface AdoptWarning {
+  id: string
+  message: string
+  title?: string
+  what_it_means?: string
+  what_to_do?: string
+  application_sets?: string[]
+  applications?: string[]
+}
+
 export interface AdoptResult {
   name: string
   status: 'success' | 'partial' | 'failed' | 'skipped'
@@ -2023,10 +2083,20 @@ export interface AdoptResult {
     values_file?: string
   }
   verification?: VerifyResult
+  // True only when the pull request merged and the adopt really finished.
+  // Missing means false: the pull request may still be open.
+  merged?: boolean
+  // What the server says happened to this cluster, in plain words (for
+  // example, that the pull request is open and waits for a merge).
+  message?: string
   // Plain-English advisories that do NOT fail the adoption — e.g. this
   // cluster's ArgoCD cluster secret turning out to be rendered by another
   // ArgoCD Application (V2-cleanup-89.5).
-  warnings?: string[]
+  // An older server sends plain sentences; the current one sends objects
+  // with an id (see AdoptWarning). Use adoptWarningsOf() (lib/adoptFindings) to read either.
+  warnings?: Array<string | AdoptWarning>
+  // Every reason this cluster cannot be adopted yet. Missing means none.
+  blockers?: AdoptBlocker[]
   // Preview returned when dry_run is true. The server sends it as
   // `dry_run`; `preview` is kept only for older mocks.
   dry_run?: DryRunResult
@@ -2035,6 +2105,13 @@ export interface AdoptResult {
 
 export interface AdoptClustersResponse {
   results: AdoptResult[]
+}
+
+// What a 404 from GET /clusters/{name} carries for a cluster that ArgoCD
+// knows but Sharko does not manage.
+export interface NotManagedBody {
+  code: 'not_managed'
+  argocd_known: boolean
 }
 
 // --- Tracked PRs ---
@@ -2056,6 +2133,10 @@ export interface TrackedPR {
   created_at: string
   last_status: string
   last_polled_at: string
+  // EP3 round S shared contract: a merged pull request whose finish has not
+  // run yet comes back with status "finishing". The UI shows it as a plain
+  // "Finishing" label.
+  status?: string
 }
 
 export interface TrackedPRsResponse {

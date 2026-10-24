@@ -137,7 +137,28 @@ import (
 // managed-clusters.yaml text a register writes, so the preview and the pull
 // request use the same builder. It makes no log call of any kind and does
 // not search for credential characters.
-const wantSweptGoFiles = 438
+//
+// 443 since the episode 3 dry run fixes added five files. Story B added
+// three: internal/argosecrets/lookup.go finds ArgoCD's connection Secret by
+// the cluster name inside it. internal/orchestrator/adopt_findings.go builds
+// adopt's warnings and blockers. Neither makes a log call of any kind.
+// internal/api/adopt_finish.go finishes an adopt when its pull request
+// merges and logs fixed-text messages with the cluster name, the pull
+// request number and the error. Story A added one:
+// internal/api/cluster_followup_on_merge.go, the pull-request-merge hook
+// that finishes a cluster removal or un-adopt after its pull request is
+// merged. It logs fixed-text messages. None of the four searches for
+// credential characters. Story E added one more, 443 in all:
+// cmd/sharko/waiting.go holds the words the command line uses when a pull
+// request is still waiting. It makes no log call and does not search for
+// credential characters.
+//
+// 444 since round R added internal/api/waiting_marks.go: the pass that
+// finishes a waiting mark whose pull request the tracker no longer has.
+// It logs fixed-text messages with the cluster name, the mark, the pull
+// request number and the error. It does not search for credential
+// characters.
+const wantSweptGoFiles = 444
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -161,10 +182,25 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/ai/memory.go", fn: "load", msg: "failed to parse agent memory", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/ai/memory.go", fn: "save", msg: "failed to marshal agent memory", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/ai/memory.go", fn: "save", msg: "failed to save agent memory", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: adopted, but the waiting mark could not be taken off", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: could not read the cluster's ArgoCD connection", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: pull request closed, but the waiting mark could not be taken off", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: pull request merged, but Sharko could not take ownership of the ArgoCD connection — Sharko tries again", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/adopt_finish.go", fn: "FinishAdoptOnPRComplete", msg: "adopt finish: took ownership, but could not mark the connection adopted", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/clusters.go", fn: "argocdKnowsCluster", msg: "[cluster-get] could not ask ArgoCD whether it knows the cluster", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/clusters_discover.go", fn: "handleDiscoverClusters", msg: "[cluster-discover] could not read ArgoCD's cluster Secrets, sending the list without secret names", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/takeover.go", fn: "findOpenJoinPR", msg: "adopt or take over: could not list open pull requests", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/adopt_v4.go", fn: "adoptSingleClusterV4", msg: "could not put the adopt waiting mark back on the cluster's ArgoCD connection", carriers: "ident:markErr", verdict: "sink"},
+	{file: "internal/orchestrator/git_helpers.go", fn: "commitChangesWithMeta", msg: "could not put the waiting mark on the cluster's ArgoCD connection", carriers: "ident:markErr", verdict: "sink"},
+	{file: "internal/api/clusters_takeover.go", fn: "handleClusterTakeover", msg: "take over: the pull request is open but the auto-merge did not go through", carriers: "ident:gitErr", verdict: "sink"},
 	{file: "internal/api/addon_secret_single.go", fn: "handleRefreshAddonValuesSecret", msg: "[secrets] could not check one addon-values secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addon_secret_single.go", fn: "handleSyncAddonValuesSecret", msg: "[secrets] could not sync one addon-values secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addons_write.go", fn: "handleAddAddon", msg: "smart-values pre-fetch failed; falling back to minimal stub", carriers: "ident:ferr", verdict: "sink"},
 	{file: "internal/api/chart_repo_gate.go", fn: "writeChartRepoError", msg: "outbound fetch failed", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/cluster_followup_on_merge.go", fn: "FinishClusterFollowUpOnMerge", msg: "after-merge cluster step waits: Sharko could not read the cluster list to check the cluster is really gone from Git", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/cluster_followup_on_merge.go", fn: "FinishClusterFollowUpOnMerge", msg: "after-merge cluster step waits: Sharko could not check whether the cluster is being registered again", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/cluster_followup_on_merge.go", fn: "dropKeepMark", msg: "could not take a removal's keep mark off the cluster's ArgoCD connection; Sharko tries again", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/cluster_followup_on_merge.go", fn: "FinishClusterFollowUpOnMerge", msg: "finishing an un-adopt after its pull request merged failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/cluster_secrets.go", fn: "handleListClusterSecrets", msg: "listing secrets in namespace", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/clusters_discover.go", fn: "handleTestCluster", msg: "[cluster-test] SearchSecrets failed", carriers: "call:credsafe.Sentence", verdict: "safe", reason: "internal/credsafe already reduced this to one of Sharko’s own fixed sentences before it reached slog, so there are no provider words left in it."},
 	{file: "internal/api/clusters_discover.go", fn: "handleTestCluster", msg: "[cluster-test] failed", carriers: "call:credsafe.Sentence", verdict: "safe", reason: "internal/credsafe already reduced this to one of Sharko’s own fixed sentences before it reached slog, so there are no provider words left in it."},
@@ -192,6 +228,15 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/api/router.go", fn: "writeJSON", msg: "error encoding response", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/router.go", fn: "writeServerError", msg: "server error", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/secrets_reconcile.go", fn: "handleCheckSecrets", msg: "[secrets] check-all could not run", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "finishWaitingMarks", msg: "waiting marks: could not list the Secrets; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "settlePendingKeepMark", msg: "waiting marks: could not hand back a kept connection; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "settlePendingKeepMark", msg: "waiting marks: could not read the cluster list to settle a keep mark; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "settlePendingKeepMark", msg: "waiting marks: could not read the tracked pull requests; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "settlePendingKeepMark", msg: "waiting marks: could not take an old keep mark off; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "settlePendingKeepMark", msg: "waiting marks: could not write the pull request number into a keep mark; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "trackWaitingMark", msg: "waiting marks: could not ask Git about the mark's pull request; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "trackWaitingMark", msg: "waiting marks: could not read the tracked pull requests; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/api/waiting_marks.go", fn: "trackWaitingMark", msg: "waiting marks: could not track the mark's pull request again; Sharko tries again on the next pass", carriers: "ident:err", verdict: "sink"},
 	// BF8 folded the four per-verb transport lines (doGet, doPost, doPut,
 	// doDelete) into one shared helper, so there is one entry here now
 	// instead of four.
@@ -228,6 +273,8 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/clusterreconciler/connection_drift_notice.go", fn: "noticeConnectionShapeDrift", msg: "[clusterreconciler] this cluster's ArgoCD connection has drifted from the shape Sharko writes — nothing was changed; a repair is a separate, asked-for action", carriers: "ident:problems", verdict: "safe", reason: "problems is a slice of ConnectionShapeProblem, a typed enum this package defines. Every value it can hold is written in source, so nothing on the Secret can reach this line."},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "applyV4AddonLabels", msg: "[clusterreconciler] applying addon labels from the cluster's assignment file — this is the step that makes enable and disable take effect", carriers: "ident:added ident:changed ident:removed", verdict: "safe", reason: "the three slices hold LABEL KEYS — addons.sharko.dev/<addon> — derived from addon names in the cluster's assignment file. Names, never values, and the operator needs to see which addon is being turned on or off."},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "clearRegistrationPending", msg: "[clusterreconciler] clearing registration-pending annotation failed — continuing", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/clusterreconciler/reconciler.go", fn: "reconcileDiff", msg: "[clusterreconciler] keeping a Sharko-labelled connection that left Git — Sharko could not read its tracked pull requests, so it does not know whether a removal asked to keep it", carriers: "ident:keptNow.err", verdict: "sink"},
+	{file: "internal/clusterreconciler/reconciler.go", fn: "releaseKeptConnection", msg: "[clusterreconciler] could not take Sharko's ownership label off a connection a removal keeps — left in place, will retry next tick", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "reconcileDiff", msg: "[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the open pull requests, so it does not know whether one still registers this cluster", carriers: "ident:openPRs.err", verdict: "sink"},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "reconcileDiff", msg: "[clusterreconciler] keeping a registration-pending connection past its grace window — Sharko could not read the cluster list again to check whether its pull request was just merged", carriers: "ident:registryNow.err", verdict: "sink"},
 	{file: "internal/clusterreconciler/reconciler.go", fn: "clearRegistrationPending", msg: "[clusterreconciler] re-reading registration-pending Secret before annotation clear failed — continuing", carriers: "ident:getErr", verdict: "sink"},
@@ -276,7 +323,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/addon_ops.go", fn: "EnableAddon", msg: "could not fetch credentials for remote secret creation", carriers: "ident:credErr", verdict: "sink"},
 	{file: "internal/orchestrator/addon_ops.go", fn: "EnableAddon", msg: "failed to enable addon label in managed-clusters.yaml — aborting before PR (no half-write)", carriers: "ident:labelErr", verdict: "sink"},
 	{file: "internal/orchestrator/adopt.go", fn: "AdoptClusters", msg: "adopt: no credentials available — skipping connectivity verification", carriers: "ident:credErr", verdict: "sink"},
-	{file: "internal/orchestrator/adopt.go", fn: "AdoptClusters", msg: "could not check cluster secret for foreign ArgoCD ownership — proceeding with adoption", carriers: "ident:warnErr", verdict: "sink"},
+	{file: "internal/orchestrator/adopt.go", fn: "AdoptClusters", msg: "could not check cluster secret for foreign ArgoCD ownership — not adopting this cluster", carriers: "ident:warnErr", verdict: "sink"},
 	{file: "internal/orchestrator/adopt.go", fn: "AdoptClusters", msg: "could not read managed-by label — refusing to adopt this cluster", carriers: "ident:labelErr", verdict: "sink"},
 	{file: "internal/orchestrator/adopt.go", fn: "adoptSingleCluster", msg: "failed to add cluster entry", carriers: "ident:addEntryErr", verdict: "sink"},
 	{file: "internal/orchestrator/adopt.go", fn: "adoptSingleCluster", msg: "failed to set adopted annotation on ArgoCD secret — reconciler will retry", carriers: "ident:annotErr", verdict: "sink"},
@@ -292,22 +339,35 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "could not check cluster secret for foreign ArgoCD ownership — proceeding with registration", carriers: "ident:warnErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "failed to add cluster entry to cluster-addons.yaml — continuing with values file only", carriers: "ident:addEntryErr", verdict: "sink"},
 	{file: "internal/orchestrator/git_helpers.go", fn: "commitChangesWithMeta", msg: "failed to delete branch after merge", carriers: "ident:delErr", verdict: "sink"},
-	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "could not confirm Sharko's ownership label on the ArgoCD cluster Secret — refusing to delete it", carriers: "ident:labelErr", verdict: "sink"},
-	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},
-	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "could not strip Sharko's ownership label from the user's ArgoCD cluster Secret during removal — no reconcile tick can do it now that the git entry is gone; remove the app.kubernetes.io/managed-by label by hand or the orphan sweep may delete the Secret", carriers: "ident:stripErr", verdict: "sink"},
-	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "failed to delete ArgoCD cluster during removal", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/orchestrator/git_helpers.go", fn: "commitChangesWithMeta", msg: "could not record a pull request in the PR tracker", carriers: "ident:trackErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not confirm Sharko's ownership label on the ArgoCD cluster Secret — refusing to delete it", carriers: "ident:labelErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not take Sharko's ownership label off a kept ArgoCD cluster Secret during removal; Sharko will try again, and its keep mark protects the Secret meanwhile", carriers: "ident:releaseErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "deleteOwnedClusterSecret", msg: "could not read the ArgoCD cluster Secret during removal", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "deleteOwnedClusterSecret", msg: "failed to delete ArgoCD cluster during removal", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not remove every addon secret from the cluster; Sharko tries again", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "noWaitingMarkOn", msg: "could not read the waiting marks on the ArgoCD cluster Secret during removal; not deleting it, Sharko tries again", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "removeMarkIfValue", msg: "could not take a waiting mark off a cluster's ArgoCD connection; it only keeps the connection safe from deletion", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "could not write the pull request number on the kept connection's mark; the mark stays on as it is", carriers: "ident:setErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "failed to delete ArgoCD cluster during removal", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "failed to remove cluster entry from managed-clusters.yaml", carriers: "ident:removeErr", verdict: "sink"},
 	{file: "internal/orchestrator/secrets.go", fn: "createAddonSecrets", msg: "[secrets] failed to create secret, continuing", carriers: "call:credsafe.Sentence", verdict: "safe", reason: "internal/credsafe already reduced this to one of Sharko’s own fixed sentences before it reached slog, so there are no provider words left in it."},
 	{file: "internal/orchestrator/secrets.go", fn: "deleteAddonSecrets", msg: "failed to delete secret", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/orchestrator/secrets.go", fn: "deleteAllAddonSecrets", msg: "failed to delete secret", carriers: "ident:delErr", verdict: "sink"},
-	{file: "internal/orchestrator/unadopt.go", fn: "UnadoptCluster", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},
-	{file: "internal/orchestrator/unadopt.go", fn: "UnadoptCluster", msg: "failed to remove cluster entry from managed-clusters.yaml", carriers: "ident:removeErr", verdict: "sink"},
+	{file: "internal/orchestrator/unadopt.go", fn: "finishUnadopt", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},
+	{file: "internal/orchestrator/unadopt.go", fn: "UnadoptCluster", msg: "could not write the pull request number on the un-adopt keep mark; the mark stays on as it is", carriers: "ident:setErr", verdict: "sink"},
 	{file: "internal/providers/aws_sm.go", fn: "getCredentialsWithRoleARN", msg: "[provider] GetCredentials failed", carriers: "ident:tried", verdict: "safe", reason: "tried holds the Secrets Manager secret NAMES this lookup attempted, built from the cluster name and the operator’s own configured prefix. They are addresses the operator wrote, never secret values, and an operator who cannot see which names were tried cannot fix the path."},
-	{file: "internal/prtracker/tracker.go", fn: "PollOnce", msg: "[prtracker] failed to delete branch after observed merge", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "runHooks", msg: "[prtracker] failed to delete branch after observed merge", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "handleTerminal", msg: "[prtracker] failed to write state", carriers: "ident:err", verdict: "sink"},
+	// The give-up line's words are the constant prtracker.GaveUpLogMessage
+	// (pinned by its own test), so the walk keys it by its first literal.
+	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "pr_id", carriers: "ident:finishErr", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] failed to read state", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] could not finish a pull request yet; keeping it tracked to try again", carriers: "ident:finishErr", verdict: "sink"},
+	{file: "internal/prtracker/tracker.go", fn: "runFinish", msg: "[prtracker] failed to write state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "PollOnce", msg: "[prtracker] failed to poll PR", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "PollOnce", msg: "[prtracker] failed to read state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "PollOnce", msg: "[prtracker] failed to write state", carriers: "ident:err", verdict: "sink"},
-	{file: "internal/prtracker/tracker.go", fn: "PollSinglePR", msg: "[prtracker] failed to delete branch after observed merge", carriers: "ident:delErr", verdict: "sink"},
 	{file: "internal/prtracker/tracker.go", fn: "extractPRs", msg: "[prtracker] failed to unmarshal PRs from state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/remediation/remediation.go", fn: "OnMerge", msg: "remediation: failed to list ArgoCD applications", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/remediation/remediation.go", fn: "OnMergeRefresh", msg: "remediation: failed to refresh addon app after PR merge", carriers: "ident:err", verdict: "sink"},

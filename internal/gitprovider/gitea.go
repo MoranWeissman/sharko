@@ -1,11 +1,14 @@
 package gitprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"code.gitea.io/sdk/gitea"
@@ -121,8 +124,59 @@ func (g *GiteaProvider) GetFileContent(ctx context.Context, filePath, ref string
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)
 	}
+	// Gitea 1.22 answers 200 with the body `[]` (an empty directory
+	// listing) instead of 404 when the repo has no commits yet, or when the
+	// path is not there. Handing that back as the file's content made an
+	// empty repo look like a repo with a file in it, and the caller never
+	// saw "file not found". A real file can also hold just `[]`, so ask the
+	// JSON contents API what is at the path before deciding.
+	if bytes.Equal(bytes.TrimSpace(content), []byte("[]")) {
+		real, checkErr := g.isRealFile(ctx, filePath, ref)
+		if checkErr != nil {
+			return nil, fmt.Errorf("get file content: path %q at ref %q: could not check what is there: %w", filePath, ref, checkErr)
+		}
+		if !real {
+			return nil, fmt.Errorf("get file content: path %q at ref %q: %w", filePath, ref, ErrFileNotFound)
+		}
+	}
 	slog.Info("gitea file fetched", "path", filePath, "ref", ref, "size", len(content))
 	return content, nil
+}
+
+// isRealFile reports whether filePath at ref is a file Gitea can describe.
+// An empty repo, a missing path and a directory answer false. A check that
+// fails for another reason (network, rate limit) is an error, never "not
+// there": the caller could otherwise create the file again over a real
+// one that holds `[]` (EP3 dry run round R, R13). The Gitea SDK takes no
+// context, so ctx is checked before each call.
+func (g *GiteaProvider) isRealFile(ctx context.Context, filePath, ref string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	repo, _, err := g.client.GetRepo(g.owner, g.repo)
+	if err != nil {
+		return false, fmt.Errorf("read the repo: %w", err)
+	}
+	if repo != nil && repo.Empty {
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	cr, resp, err := g.client.GetContents(g.owner, g.repo, ref, filePath)
+	if err != nil {
+		switch {
+		case resp != nil && resp.StatusCode == http.StatusNotFound:
+			return false, nil
+		case resp != nil && resp.StatusCode == http.StatusOK:
+			// A 200 the SDK cannot read as one file is a directory
+			// listing: the path is a directory.
+			return false, nil
+		default:
+			return false, fmt.Errorf("read what is at the path: %w", err)
+		}
+	}
+	return cr != nil && cr.Type == "file", nil
 }
 
 // ListDirectory returns the names of entries in a directory at the given ref.
@@ -254,13 +308,62 @@ func (g *GiteaProvider) ListPullRequests(ctx context.Context, state string) ([]P
 
 // ---------- Write operations ----------
 
-// CreateBranch creates a new branch from the given ref.
+// isGiteaEmptyRepo reports whether err says the repository exists but has no
+// commit yet. Gitea 1.22 answers branch calls on such a repo with the text
+// "Git Repository is empty." (status 404 on 1.22, 409 on some other versions),
+// and the SDK puts that text in the error. Matching on the text keeps this
+// from firing on a normal missing-branch error.
+func isGiteaEmptyRepo(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "repository is empty")
+}
+
+// initEmptyRepo gives an empty Gitea repository its first commit: a README
+// written through the contents API on the base branch. Gitea creates the
+// branch with that first commit, like the GitHub provider's initEmptyRepo.
+func (g *GiteaProvider) initEmptyRepo(ctx context.Context, branchName string) error {
+	attr := FromContext(ctx)
+	identity := commitIdentityFor(attr)
+	opt := gitea.CreateFileOptions{
+		FileOptions: gitea.FileOptions{
+			Message:    attr.ApplyToMessage("Initial commit"),
+			BranchName: branchName,
+			Author:     identity,
+			Committer:  identity,
+		},
+		Content: base64Encode([]byte("# Sharko Addons Repository\n\nManaged by [Sharko](https://github.com/MoranWeissman/sharko).\n")),
+	}
+	_, resp, err := g.client.CreateFile(g.owner, g.repo, "README.md", opt)
+	if err != nil {
+		return fmt.Errorf("creating initial commit: %w", err)
+	}
+	if resp == nil {
+		return fmt.Errorf("creating initial commit: nil response")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("creating initial commit: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// CreateBranch creates a new branch from the given ref. If the repository is
+// empty (no commit yet), it first writes a README on fromRef, then creates the
+// branch from that commit, so the first-run Set Up works on a brand-new repo.
 func (g *GiteaProvider) CreateBranch(ctx context.Context, branchName, fromRef string) error {
 	opt := gitea.CreateBranchOption{
 		BranchName:    branchName,
 		OldBranchName: fromRef,
 	}
 	_, resp, err := g.client.CreateBranch(g.owner, g.repo, opt)
+	if err != nil && isGiteaEmptyRepo(err) {
+		slog.Info("gitea repo is empty, creating the first commit", "branch", fromRef)
+		if initErr := g.initEmptyRepo(ctx, fromRef); initErr != nil {
+			return fmt.Errorf("create branch: init empty repo: %w", initErr)
+		}
+		_, resp, err = g.client.CreateBranch(g.owner, g.repo, opt)
+	}
 	if err != nil {
 		return fmt.Errorf("create branch: %w", err)
 	}

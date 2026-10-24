@@ -311,12 +311,12 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     fireEvent.click(screen.getByRole('button', { name: /Confirm Adoption/i }));
 
     await waitFor(() => {
-      expect(mockAdoptClusters).toHaveBeenCalledWith({ clusters: ['argo-known-cluster'] });
+      expect(mockAdoptClusters).toHaveBeenCalledWith({ clusters: ['argo-known-cluster'], acknowledged_findings: [] });
     });
 
     // Same Git-PR banner adopt shows today.
     await waitFor(() => {
-      const link = screen.getByRole('link', { name: /PR/i }) as HTMLAnchorElement;
+      const link = screen.getByRole('link', { name: /view pull request/i }) as HTMLAnchorElement;
       expect(link.href).toBe('https://github.com/org/repo/pull/99');
     });
 
@@ -387,11 +387,16 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
       // nothing happened.
       expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
 
-      // The selection resets — the button reverts to its unpicked label
-      // (V2-cleanup-92.1 F1: "Adopt cluster", not "Adopt selected cluster").
+      // The selection resets. Only one cluster is left in the list, so it is
+      // picked for the user (finding 25) - the stale name is gone.
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: 'Adopt cluster' })).toBeInTheDocument();
+        expect(
+          screen.getByRole('button', { name: /Adopt other-discovered-cluster/i }),
+        ).toBeInTheDocument();
       });
+      expect(
+        screen.queryByRole('button', { name: /Adopt argo-known-cluster/i }),
+      ).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -407,9 +412,16 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     // V2-cleanup-92.1 (F11): hint reworded to plain English.
     expect(
       screen.getByText(
-        /You manage the cluster connection yourself — Sharko only updates its addon labels\./,
+        'For a cluster you add by hand here, you make the ArgoCD connection yourself and Sharko only puts its addon labels on it. Adopt and Take ownership, for a cluster ArgoCD already has, work differently. Their windows say what they change.',
+        { exact: false },
       ),
     ).toBeInTheDocument();
+    // The old sentence promised "only labels" for every path, which is false
+    // for Adopt (Sharko takes the connection over). It must never come back.
+    expect(
+      screen.queryByText(/You manage the cluster connection yourself/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sharko only updates its addon labels/)).not.toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: /Operator Manual: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();

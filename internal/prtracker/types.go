@@ -63,4 +63,73 @@ type PRInfo struct {
 	CreatedAt  time.Time `json:"created_at"`
 	LastStatus string    `json:"last_status"` // open, merged, closed
 	LastPolled time.Time `json:"last_polled_at"`
+
+	// FollowUp is what Sharko still has to do to the cluster's ArgoCD
+	// connection once this pull request merges (remove-cluster and
+	// unadopt-cluster only; nil for every other operation). Nothing that
+	// cuts a cluster off happens before its pull request is merged, so the
+	// choices made at request time travel with the tracked pull request
+	// and the merge hook reads them back. Stored in the same ConfigMap as
+	// the rest of PRInfo; older entries without it decode to nil.
+	FollowUp *ClusterFollowUp `json:"follow_up,omitempty"`
+
+	// FinishAttempts counts how many times the finish step (see
+	// Tracker.SetFinishFn) failed for this pull request after it merged or
+	// closed. While it is above zero the entry is kept with its terminal
+	// LastStatus so the next poll tries again.
+	FinishAttempts int `json:"finish_attempts,omitempty"`
+
+	// HooksPending says the merged or closed status is saved, but the
+	// audit entry and the merge and complete hooks may not have run yet.
+	// It is cleared once they ran. A restart in between runs them again,
+	// so they are never skipped (EP3 dry run round S, S12).
+	HooksPending bool `json:"hooks_pending,omitempty"`
+	// Gone says Git answered "not found" for this pull request. It is
+	// handled as closed: nothing was merged that Sharko knows of (S10).
+	Gone bool `json:"gone,omitempty"`
+	// NextFinishAt is the earliest time the finish step runs again after
+	// a failed try (S10). Zero means now.
+	NextFinishAt time.Time `json:"next_finish_at,omitempty"`
+	// GaveUp says every try of the finish step failed. The entry is kept,
+	// so nothing starts the same tries again, and is dropped after
+	// GaveUpKeepFor. It is not listed as a pull request still finishing.
+	GaveUp   bool      `json:"gave_up,omitempty"`
+	GaveUpAt time.Time `json:"gave_up_at,omitempty"`
 }
+
+// ClusterFollowUp is the after-merge work a remove or un-adopt pull request
+// carries. It holds no secret material: only the cleanup choice and where
+// to look up the cluster's credentials (a lookup key, a source name and an
+// optional role ARN), all read from the registry before the pull request
+// removed the cluster's entry.
+type ClusterFollowUp struct {
+	// Cleanup is the remove cleanup choice: "all", "git" or "none".
+	// Empty for un-adopt.
+	Cleanup string `json:"cleanup,omitempty"`
+	// KeepConnection says the ArgoCD connection stays. After the merge
+	// Sharko takes its ownership label off the Secret instead of deleting
+	// it, and the orphan sweep must never delete it in between.
+	KeepConnection bool `json:"keep_connection,omitempty"`
+	// CredentialKey, CredentialsSource and CredentialRoleARN say where the
+	// cluster's credentials live, so the addon secrets Sharko put on the
+	// cluster can be removed after the merge.
+	CredentialKey     string `json:"credential_key,omitempty"`
+	CredentialsSource string `json:"credentials_source,omitempty"`
+	CredentialRoleARN string `json:"credential_role_arn,omitempty"`
+
+	// Finish names the ownership step that waits for this pull request:
+	// FinishAdopt or FinishTakeover. Empty for remove and un-adopt. The
+	// finish step reads it, not the mark on the Secret, so an adopt or a
+	// take over that merged before its mark was written still finishes
+	// (EP3 dry run round R, R4 and R5).
+	Finish string `json:"finish,omitempty"`
+	// PreserveLegacyLabels is the take over choice to keep the previous
+	// owner's labels. Only read when Finish is FinishTakeover.
+	PreserveLegacyLabels bool `json:"preserve_legacy_labels,omitempty"`
+}
+
+// Finish kinds carried by ClusterFollowUp.Finish.
+const (
+	FinishAdopt    = "adopt"
+	FinishTakeover = "takeover"
+)

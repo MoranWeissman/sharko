@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
@@ -320,20 +321,30 @@ func (p *ArgoCDProvider) listClusterSecrets(ctx context.Context) (*corev1.Secret
 	return list, credsafe.Mark(err)
 }
 
-// findClusterSecret returns the ArgoCD cluster Secret whose data["name"]
-// matches clusterName. Falls back to data["server"] equality match if no
-// name match is found. Returns a NotFound k8s error when neither matches.
+// findClusterSecret returns the ArgoCD cluster Secret for clusterName.
+//
+// It goes through argosecrets.GetClusterSecret, the one shared lookup every
+// other path uses (EP3-DRYRUN-FIXES call 3): the `name` inside the Secret
+// counts, not the Secret's Kubernetes name, so a Secret made by
+// `argocd cluster add` (cluster-<host>-<hash>) is found by the cluster name
+// ArgoCD shows, and two Secrets with the same name are a clear error, not a
+// guess. Only when that finds nothing does it fall back to data["server"]
+// equality, in case the caller passed a server URL. Returns a NotFound k8s
+// error when neither matches.
 func (p *ArgoCDProvider) findClusterSecret(ctx context.Context, clusterName string) (*corev1.Secret, error) {
+	found, err := argosecrets.GetClusterSecret(ctx, p.client, p.namespace, clusterName)
+	if err == nil {
+		return found, nil
+	}
+	if !apierrors.IsNotFound(err) {
+		// A failed read, or two Secrets with this cluster name. Marked like
+		// the list failure below: Sharko could not give one answer.
+		return nil, credsafe.Mark(fmt.Errorf("finding the argocd cluster secret for %q in namespace %q: %w", clusterName, p.namespace, err))
+	}
+
 	secrets, err := p.listClusterSecrets(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing argocd cluster secrets in namespace %q: %w", p.namespace, err)
-	}
-
-	for i := range secrets.Items {
-		s := &secrets.Items[i]
-		if string(s.Data["name"]) == clusterName {
-			return s, nil
-		}
 	}
 	// Fallback: try matching on data["server"] in case the caller passed a server URL.
 	for i := range secrets.Items {

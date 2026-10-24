@@ -43,8 +43,10 @@ const browserCredentialStageDeclaration = "export const VERIFY_STAGE_CREDENTIALS
 
 // browserCredentialStageFile is the browser file that declares it. Named
 // rather than searched for, so a move shows up here as a failure to find the
-// file instead of as a sweep over nothing.
-const browserCredentialStageFile = "ui/src/services/api.ts"
+// file instead of as a sweep over nothing. Round R moved the declaration out
+// of ui/src/services/api.ts into this file, so a page can use the check while
+// a test mocks the api module; services/api only re-exports it.
+const browserCredentialStageFile = "ui/src/lib/verifyStage.ts"
 
 func TestTestCluster_CredentialFailureStageIsPinned(t *testing.T) {
 	if verifyStageCredentials != "credentials" {

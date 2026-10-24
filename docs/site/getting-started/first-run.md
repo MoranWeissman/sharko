@@ -113,8 +113,8 @@ Sharko needs a Git repo to store your fleet configuration (the engine pin, your 
 
 | Field | What to enter |
 |-------|--------------|
-| **Provider** | GitHub or Azure DevOps |
 | **Repository URL** | e.g., `https://github.com/your-org/addons-repo` |
+| **Git provider** | Leave it on **Work it out from the address** for GitHub, GitHub Enterprise and Azure DevOps. Choose **GitHub (including GitHub Enterprise)** or **Gitea** yourself when the address does not show which one it is, for example a Gitea server or a server you run yourself. |
 | **Personal Access Token** | PAT with read/write access to the repo |
 
 Sharko validates the connection before letting you proceed. If validation fails, check that the token has not expired and the repo URL is correct.
@@ -184,9 +184,9 @@ Marketplace or Catalog tab.
 The dashboard loads with clusters discovered from ArgoCD. You will see:
 
 - **Managed clusters** — clusters already registered with Sharko, listed on the Clusters page
-- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko, collapsed into a single hint line with a count (e.g. "ArgoCD knows 3 more clusters Sharko doesn't manage")
+- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko, shown as one line under the page title (e.g. "3 clusters ArgoCD already knows that Sharko doesn't manage yet.")
 
-Click that hint to open **Register New Cluster** pre-set to adopt one of them. Click **Test connection** to verify connectivity to any cluster.
+Click that line to open **Add Cluster** and adopt one of them. Click **Test connection** to verify connectivity to any cluster.
 
 ## What's Next
 

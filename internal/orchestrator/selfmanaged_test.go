@@ -300,7 +300,9 @@ func TestRemoveCluster_SelfManaged_LeavesArgoSecretInPlace(t *testing.T) {
 		"clusters:\n  - name: byo-conn\n    connectionManagedBy: user\n    labels:\n      monitoring: \"enabled\"\n")
 	git.files["configuration/addons-clusters-values/byo-conn.yaml"] = []byte("clusterGlobalValues: {}\n")
 	mgr := newMockArgoSecretManager()
-	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	// Auto-merge: the ArgoCD side runs only once the PR is merged
+	// (EP3-DRYRUN-FIXES call 1), so this test merges at once.
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 	orch.SetArgoSecretManager(mgr, "")
 
 	result, err := orch.RemoveCluster(context.Background(), RemoveClusterRequest{
@@ -345,7 +347,9 @@ func TestRemoveCluster_SharkoManaged_StillDeletesArgoSecret(t *testing.T) {
 	// The ownership gate (V2-cleanup-60.1) requires the Secret to carry
 	// Sharko's managed-by label before the delete is allowed.
 	mgr.managedByLabel["sharko-owned"] = "sharko"
-	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	// Auto-merge: the ArgoCD side runs only once the PR is merged
+	// (EP3-DRYRUN-FIXES call 1).
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 	orch.SetArgoSecretManager(mgr, "")
 
 	_, err := orch.RemoveCluster(context.Background(), RemoveClusterRequest{

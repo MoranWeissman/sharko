@@ -10,6 +10,8 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
@@ -366,7 +368,16 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		"git":    map[string]interface{}{"status": "ok"},
 		"argocd": map[string]interface{}{"status": "ok"},
 	}
-	if gitErr != nil {
+	var unrecognised *service.UnrecognisedGitHostError
+	if errors.As(gitErr, &unrecognised) {
+		// Not a connection failure: the test never went out. Say the real
+		// reason in the service's own finished sentence.
+		result["git"] = map[string]interface{}{
+			"status":     "error",
+			"message":    unrecognised.Error(),
+			"message_id": "gitHostNotRecognised",
+		}
+	} else if gitErr != nil {
 		result["git"] = connectionErrorFields(connectionKindGit, gitErr)
 	} else if authInfo.GitSource != "" {
 		result["git"] = map[string]interface{}{"status": "ok", "auth": authInfo.GitSource}
@@ -546,6 +557,27 @@ func (s *Server) handleDiscoverArgocd(w http.ResponseWriter, r *http.Request) {
 		"server_url":    url,
 		"has_env_token": hasEnvToken,
 		"namespace":     ns,
+	})
+}
+
+// handleGitDefaults godoc
+//
+// @Summary Git settings declared in the Helm chart
+// @Description Returns the Git provider and repository address the operator set in the Helm chart connection settings for Git. Both are empty strings when the chart does not set them. A user name or password written into the address is never sent back: it is taken out, and an address Sharko cannot read safely comes back empty. The first-run wizard uses this to pre-pick the provider and fill in the address.
+// @Tags connections
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Declared Git provider and repository address"
+// @Router /connections/git-defaults [get]
+func (s *Server) handleGitDefaults(w http.ResponseWriter, r *http.Request) {
+	provider, repoURL := config.DeclaredGitDefaults()
+	// The chart value is the operator's own text and nothing checks it for a
+	// credential, so a token written into the address (https://x:TOKEN@host)
+	// would otherwise come straight back. SafeRepoURL takes it out, and gives
+	// "" for an address it cannot read safely.
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"provider": provider,
+		"repo_url": credsafe.SafeRepoURL(repoURL),
 	})
 }
 

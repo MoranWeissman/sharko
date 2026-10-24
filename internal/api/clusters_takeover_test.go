@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -61,6 +62,9 @@ type takeoverFakeGP struct {
 	branches []string
 	written  map[string][]byte
 	prs      int
+	// open is every pull request CreatePullRequest made, listed back by
+	// ListPullRequests, so a second take over can find the first one.
+	open []gitprovider.PullRequest
 }
 
 func newTakeoverFakeGP() *takeoverFakeGP {
@@ -88,11 +92,25 @@ func (f *takeoverFakeGP) GetFileContent(_ context.Context, path, _ string) ([]by
 	return nil, fmt.Errorf("takeoverFakeGP: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 
-func (f *takeoverFakeGP) ListDirectory(_ context.Context, _, _ string) ([]string, error) {
-	return nil, nil
+func (f *takeoverFakeGP) ListDirectory(_ context.Context, dir, _ string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for p := range f.files {
+		if rest, ok := strings.CutPrefix(p, dir+"/"); ok && !strings.Contains(rest, "/") {
+			out = append(out, rest)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("takeoverFakeGP: %s: %w", dir, gitprovider.ErrFileNotFound)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 func (f *takeoverFakeGP) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]gitprovider.PullRequest(nil), f.open...), nil
 }
 func (f *takeoverFakeGP) TestConnection(_ context.Context) error { return nil }
 func (f *takeoverFakeGP) CreateBranch(_ context.Context, name, _ string) error {
@@ -116,11 +134,13 @@ func (f *takeoverFakeGP) BatchCreateFiles(_ context.Context, files map[string][]
 	return nil
 }
 func (f *takeoverFakeGP) DeleteFile(_ context.Context, _, _, _ string) error { return nil }
-func (f *takeoverFakeGP) CreatePullRequest(_ context.Context, _, _, _, _ string) (*gitprovider.PullRequest, error) {
+func (f *takeoverFakeGP) CreatePullRequest(_ context.Context, title, _, head, _ string) (*gitprovider.PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prs++
-	return &gitprovider.PullRequest{ID: f.prs, URL: "https://example.invalid/pr/1"}, nil
+	pr := gitprovider.PullRequest{ID: f.prs, Title: title, SourceBranch: head, URL: fmt.Sprintf("https://example.invalid/pr/%d", f.prs)}
+	f.open = append(f.open, pr)
+	return &pr, nil
 }
 func (f *takeoverFakeGP) MergePullRequest(_ context.Context, _ int) error { return nil }
 func (f *takeoverFakeGP) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
@@ -408,8 +428,13 @@ func TestTakeover_400_WhenTheConfirmationIsMissing(t *testing.T) {
 	}
 }
 
+// TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner — the pull
+// request merges at once (auto-merge), so the swap happens on this call.
+// Without auto-merge the take over waits; see
+// TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark.
 func TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner(t *testing.T) {
 	gp := newTakeoverFakeGP()
+	autoMerge := true
 	_, router, k8s := takeoverTestServer(t, gp,
 		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
 		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
@@ -420,7 +445,7 @@ func TestTakeover_200_AckedWarningGoesThroughAndSwapsTheOwner(t *testing.T) {
 	// NOT be acknowledgeable; that case is pinned as a 409 below.
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
-		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
+		TakeoverRequest{Yes: true, AutoMerge: &autoMerge, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("acked takeover: got %d, want 200 (body=%s)", w.Code, w.Body.String())
@@ -770,8 +795,8 @@ func TestUnregisterConsequences_GivesRealInstructionsOnAV4Repo(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(resp.ConfirmationRequired, "DELETE /api/v1/clusters/prod-eu") {
-		t.Errorf("a v4 repo was not given the real removal instructions: %q", resp.ConfirmationRequired)
+	if !strings.Contains(resp.ConfirmationAPI, "DELETE /api/v1/clusters/prod-eu") {
+		t.Errorf("a v4 repo was not given the real removal instructions: %q", resp.ConfirmationAPI)
 	}
 	for _, c := range resp.Consequences {
 		if c.ID == "removal-not-available" {
@@ -785,8 +810,10 @@ func TestUnregisterConsequences_GivesRealInstructionsOnAV4Repo(t *testing.T) {
 			continue
 		}
 		found = true
-		if !strings.Contains(c.Detail, "Helm values file") {
-			t.Errorf("the git-record consequence does not say a v4 removal deletes more than the addon-assignment file: %q", c.Detail)
+		// The fixture has no files of prod-eu's own (finding 28: never
+		// name an addon-assignment file that is not there).
+		if want := "A pull request removes this cluster from the fleet record. It has no other files of its own in the repo."; c.Detail != want {
+			t.Errorf("git-record detail:\n got %q\nwant %q", c.Detail, want)
 		}
 	}
 	if !found {
@@ -808,12 +835,145 @@ func TestUnregisterConsequences_KeepsTheInstructionsOnAV3Repo(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !strings.Contains(resp.ConfirmationRequired, "DELETE /api/v1/clusters/prod-eu") {
-		t.Errorf("the v3 instructions went missing: %q", resp.ConfirmationRequired)
+	if !strings.Contains(resp.ConfirmationAPI, "DELETE /api/v1/clusters/prod-eu") {
+		t.Errorf("the v3 instructions went missing: %q", resp.ConfirmationAPI)
 	}
 	for _, c := range resp.Consequences {
 		if c.ID == "removal-not-available" {
 			t.Errorf("a v3 repo was told removal is unavailable: %+v", c)
 		}
+	}
+}
+
+// TestTakeover_Twice_OpensOnePullRequestAndSaysItIsWaiting — episode 3 dry
+// run, design call 8. The second take over points at the open pull request
+// and never says "Its fleet record is up to date" while it is still open.
+func TestTakeover_Twice_OpensOnePullRequestAndSaysItIsWaiting(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	_, router, _ := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
+		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
+	body := TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin", body))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first take over: %d %s", first.Code, first.Body.String())
+	}
+	var r1 TakeoverResponse
+	_ = json.Unmarshal(first.Body.Bytes(), &r1)
+	if r1.Message != takeoverWaitingWant || !r1.WaitingForMerge || r1.SecretSwapped {
+		t.Fatalf("first take over: %s", first.Body.String())
+	}
+
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin", body))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second take over: %d %s", second.Code, second.Body.String())
+	}
+	var r2 TakeoverResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &r2); err != nil {
+		t.Fatal(err)
+	}
+	if gp.prs != 1 {
+		t.Fatalf("taking over twice opened %d pull requests, want 1", gp.prs)
+	}
+	if !r2.AlreadyWaiting || r2.Git == nil || r2.Git.PRID != 1 {
+		t.Fatalf("second take over does not point at pull request #1: %s", second.Body.String())
+	}
+	want := "Taking over prod-eu is already waiting in pull request #1: https://example.invalid/pr/1. Sharko did not open a second one. Merge it to finish."
+	if r2.Message != want || !r2.WaitingForMerge || r2.SecretSwapped {
+		t.Fatalf("second message:\n%s\nwant:\n%s", r2.Message, want)
+	}
+	for _, m := range []string{r1.Message, r2.Message} {
+		if strings.Contains(m, "Sharko now owns") || strings.Contains(m, "already owned") {
+			t.Fatalf("a take over that is still waiting says Sharko owns the connection: %q", m)
+		}
+		if strings.Contains(m, "Its fleet record is up to date") {
+			t.Fatalf("the old untrue sentence is back: %q", m)
+		}
+	}
+}
+
+// takeoverWaitingWant is what a take over says while its pull request waits.
+const takeoverWaitingWant = "Pull request #1 is open: https://example.invalid/pr/1. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection and keeps the previous owner's labels on it (env). If it is closed without merging, Sharko changes nothing on the connection."
+
+// TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark — EP3 dry run round
+// R, R5. While the pull request is open, the connection keeps its owner and
+// its labels. Only the waiting mark with the pull request number goes on.
+func TestTakeover_OpenPR_WaitsAndChangesNothingButTheMark(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	_, router, k8s := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
+		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var resp TakeoverResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Status != "success" || !resp.WaitingForMerge || resp.SecretSwapped {
+		t.Fatalf("status %q waiting %v swapped %v, want success/true/false", resp.Status, resp.WaitingForMerge, resp.SecretSwapped)
+	}
+	if resp.Message != takeoverWaitingWant {
+		t.Fatalf("message:\n got %q\nwant %q", resp.Message, takeoverWaitingWant)
+	}
+	for _, banned := range []string{"Sharko now owns", "Merge it to finish", "is open: #1"} {
+		if strings.Contains(resp.Message, banned) {
+			t.Fatalf("the old wording %q is back: %q", banned, resp.Message)
+		}
+	}
+
+	secret, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "prod-eu", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret.Labels[argosecrets.LabelManagedBy] != "" {
+		t.Fatalf("the owner changed before the merge: %v", secret.Labels)
+	}
+	if secret.Labels["env"] != "prod" {
+		t.Fatalf("the previous owner's label changed before the merge: %v", secret.Labels)
+	}
+	if got := secret.Annotations[argosecrets.AnnotationTakeoverPendingPR]; !models.PendingPRMarkNames(got, 1) {
+		t.Fatalf("waiting mark = %q, want one that names pull request 1", got)
+	}
+}
+
+// The words say the labels go when the person asked to drop them.
+func TestTakeoverWaitingMessage_DropLabels(t *testing.T) {
+	got := takeoverWaitingMessage("prod-eu", 4, "https://example.invalid/pr/4", false, map[string]string{"env": "prod", "team": "a"})
+	want := "Pull request #4 is open: https://example.invalid/pr/4. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection and takes the previous owner's labels off it (env and team). If it is closed without merging, Sharko changes nothing on the connection."
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	if none := takeoverWaitingMessage("prod-eu", 4, "u", true, nil); none != "Pull request #4 is open: u. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection. If it is closed without merging, Sharko changes nothing on the connection." {
+		t.Fatalf("no labels: %q", none)
+	}
+}
+
+// R7: a register pull request still open for the cluster is a 409 with the
+// plain words, and no second pull request opens.
+func TestTakeover_OpenRegisterPR_Is409(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	gp.open = append(gp.open, gitprovider.PullRequest{ID: 12, Title: "sharko: register cluster prod-eu", URL: "https://example.invalid/pr/12"})
+	_, router, _ := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", nil, nil)}, fakeAppSetReader{})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AcknowledgedFindings: []string{takeover.FindingSecretOwner}}))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	want := "Cluster prod-eu is already waiting in pull request #12: https://example.invalid/pr/12. That pull request registers it. Merge it or close it first, then try again."
+	if got, _ := decodeMap(t, w)["error"].(string); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+	if gp.prs != 0 {
+		t.Fatalf("a pull request was opened: %d", gp.prs)
 	}
 }

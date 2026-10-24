@@ -79,18 +79,13 @@ import (
 func TestLogLeak_WriteServerError_NeverLogsTheRepositoryToken(t *testing.T) {
 	srv := serverWithUnreadableRepoURL(t, initLeakUnparseableRepoURL, "an-argocd-token")
 
-	// The fixture must really fail, and the underlying error must really
-	// carry the token. Without this half every assertion below would pass
-	// while proving nothing.
+	// The fixture must really fail, and its address must really carry the
+	// token (the error built from it no longer does, since round S, S15).
 	_, buildErr := srv.connSvc.GetActiveGitProvider()
 	if buildErr == nil {
 		t.Fatal("the fixture must FAIL to build a Git provider — there is nothing to prove otherwise")
 	}
-	if !strings.Contains(buildErr.Error(), initLeakSentinel) {
-		t.Fatalf(`the underlying error does NOT carry the token, so this test proves nothing.
-
-got: %v`, buildErr)
-	}
+	assertTokenStopsAtTheSource(t, buildErr)
 
 	router := NewRouter(srv, nil)
 	var body string

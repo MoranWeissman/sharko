@@ -1095,6 +1095,18 @@ describe('ClusterDetail', () => {
       });
     }
 
+    // Ep3 dry run, finding 10: the Remove dialog does not say "cannot be
+    // undone" (the panel under it says how to undo it by reverting the PR).
+    it('says what the pull request does and drops "cannot be undone"', async () => {
+      await openRemoveModal();
+      expect(
+        screen.getByText(
+          'This opens a pull request that removes the cluster from your GitOps repo. Nothing changes until you merge it.',
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/cannot be undone/i)).not.toBeInTheDocument();
+    });
+
     it('does NOT render the "Merge PR automatically" toggle — global setting governs', async () => {
       await openRemoveModal();
       expect(screen.queryByLabelText(/Merge PR automatically/i)).not.toBeInTheDocument();
@@ -3346,9 +3358,32 @@ describe('ClusterDetail', () => {
     });
 
     it('does not show the admin-only line to an admin', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, adopted: true },
+      });
       renderView();
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
       expect(screen.queryByText(ADMIN_ONLY_HINT)).not.toBeInTheDocument();
+      expect(screen.getByTestId('open-drop-labels')).toBeInTheDocument();
+    });
+
+    // Ep3 dry run, finding 18: a cluster Sharko registered itself has no old
+    // labels, so the button only opened a dialog that said "nothing to remove".
+    it('hides "Remove the old labels" on a cluster Sharko registered itself', async () => {
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.queryByTestId('open-drop-labels')).not.toBeInTheDocument();
+      expect(screen.queryByText('Remove the old labels')).not.toBeInTheDocument();
+    });
+
+    it('shows "Remove the old labels" on a cluster that was taken over', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, taken_over: true },
+      });
+      renderView();
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
       expect(screen.getByTestId('open-drop-labels')).toBeInTheDocument();
     });
   });
@@ -3459,5 +3494,56 @@ describe('ClusterDetail — the not-found screen follows the status code', () =>
     await waitFor(() =>
       expect(screen.queryByText(/Cluster "prod-eu" not found/i)).not.toBeInTheDocument(),
     );
+  });
+});
+
+// Ep3 dry run, finding 7: a cluster ArgoCD knows but Sharko does not manage
+// opens as "Sharko doesn't manage this cluster yet", with Adopt and Take
+// ownership, not as "not found". Chosen by the typed code in the body.
+describe('ClusterDetail — a cluster ArgoCD knows but Sharko does not manage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+    mockGetAddonCatalog.mockResolvedValue({ addons: [] });
+  });
+
+  it('shows "Sharko doesn\'t manage this cluster yet" with Adopt and Take ownership', async () => {
+    mockGetClusterComparison.mockRejectedValue(
+      new ApiError(404, { error: 'cluster not found', code: 'not_managed', argocd_known: true }, 'failed'),
+    );
+    renderView();
+
+    expect(await screen.findByText("Sharko doesn't manage this cluster yet")).toBeInTheDocument();
+    expect(screen.getByTestId('not-managed-adopt')).toBeInTheDocument();
+    expect(screen.getByTestId('not-managed-takeover')).toHaveTextContent('Take ownership');
+    expect(screen.queryByText(/Cluster "prod-eu" not found/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps "not found" for a plain 404 and for a code that is not not_managed', async () => {
+    mockGetClusterComparison.mockRejectedValue(
+      new ApiError(404, { error: 'Sharko doesn\'t manage this cluster yet', code: 'something_else', argocd_known: true }, 'failed'),
+    );
+    renderView();
+    expect(await screen.findByText(/Cluster "prod-eu" not found/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('not-managed-adopt')).not.toBeInTheDocument();
+  });
+
+  it('keeps "not found" when ArgoCD does not know the cluster either', async () => {
+    mockGetClusterComparison.mockRejectedValue(
+      new ApiError(404, { error: 'cluster not found', code: 'not_managed', argocd_known: false }, 'failed'),
+    );
+    renderView();
+    expect(await screen.findByText(/Cluster "prod-eu" not found/i)).toBeInTheDocument();
+  });
+
+  it('Adopt opens the adopt dialog for this cluster', async () => {
+    mockGetClusterComparison.mockRejectedValue(
+      new ApiError(404, { error: 'cluster not found', code: 'not_managed', argocd_known: true }, 'failed'),
+    );
+    const user = userEvent.setup();
+    renderView();
+    await user.click(await screen.findByTestId('not-managed-adopt'));
+    expect(await screen.findByText('Adopt Clusters')).toBeInTheDocument();
+    expect(screen.getAllByText('prod-eu').length).toBeGreaterThan(0);
   });
 });

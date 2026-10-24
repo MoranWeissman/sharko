@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -140,6 +141,28 @@ func (s *ClusterService) readManagedClustersData(ctx context.Context, gp gitprov
 	return nil, nil
 }
 
+// ManagedClusterNames returns the name of every cluster in the fleet
+// record in Git (managed-clusters.yaml, v3 or v4 place). An empty or
+// missing file gives an empty set.
+func (s *ClusterService) ManagedClusterNames(ctx context.Context, gp gitprovider.GitProvider) (map[string]struct{}, error) {
+	data, err := s.readManagedClustersData(ctx, gp)
+	if err != nil {
+		return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
+	}
+	names := map[string]struct{}{}
+	if data == nil {
+		return names, nil
+	}
+	clusters, err := s.parser.ParseClusterAddons(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range clusters {
+		names[c.Name] = struct{}{}
+	}
+	return names, nil
+}
+
 // ListClusters returns all clusters with health stats from Git + ArgoCD.
 // Cached for readcache.DefaultTTL (perf M1) — see internal/readcache's
 // package doc for the invalidation contract. Fleet-wide, not per-user:
@@ -222,6 +245,7 @@ func (s *ClusterService) listClustersUncached(ctx context.Context, gp gitprovide
 			clusters[i].ConnectionStatus = ac.ConnectionState
 			clusters[i].ServerVersion = ac.ServerVersion
 			clusters[i].ServerURL = ac.Server
+			clusters[i].Adopted, clusters[i].TakenOver = argocdOwnershipMarks(ac)
 			delete(argocdMap, clusters[i].Name)
 		} else {
 			clusters[i].ConnectionStatus = "missing"
@@ -235,12 +259,18 @@ func (s *ClusterService) listClustersUncached(ctx context.Context, gp gitprovide
 		if name == "in-cluster" || strings.HasPrefix(ac.Server, "https://kubernetes.default") {
 			continue
 		}
+		adopted, takenOver := argocdOwnershipMarks(ac)
 		notInGitClusters = append(notInGitClusters, models.Cluster{
-			Name:             name,
-			Labels:           map[string]string{},
+			Name: name,
+			// Not in Git, so the only labels there are are the ones on
+			// ArgoCD's connection. Shown so the person can see what an
+			// adopt or take over would carry across (EP3 dry run).
+			Labels:           argocdLabelsCopy(ac.Labels),
 			ConnectionStatus: "not_in_git",
 			ServerVersion:    ac.ServerVersion,
 			ServerURL:        ac.Server,
+			Adopted:          adopted,
+			TakenOver:        takenOver,
 		})
 	}
 
@@ -365,6 +395,10 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 			if argoCluster.Name != clusterName {
 				continue
 			}
+			// The cluster page reads these two marks from the detail and
+			// the comparison calls, same as the list (EP3 dry run round R,
+			// R10).
+			cluster.Adopted, cluster.TakenOver = argocdOwnershipMarks(argoCluster)
 			if argoCluster.Name == "in-cluster" || strings.HasPrefix(argoCluster.Server, "https://kubernetes.default") {
 				break
 			}
@@ -451,6 +485,10 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			if argoCluster.Name != clusterName {
 				continue
 			}
+			// The cluster page reads these two marks from the detail and
+			// the comparison calls, same as the list (EP3 dry run round R,
+			// R10).
+			cluster.Adopted, cluster.TakenOver = argocdOwnershipMarks(argoCluster)
 			if argoCluster.Name == "in-cluster" || strings.HasPrefix(argoCluster.Server, "https://kubernetes.default") {
 				break
 			}
@@ -1046,4 +1084,31 @@ func classifyHealth(healthStatus, _ string) string {
 	default:
 		return "unknown_state"
 	}
+}
+
+// argocdOwnershipMarks reads Sharko's two marks off a cluster as ArgoCD
+// reports it: adopted (any of the three spellings the adopted annotation
+// has had) and taken over (sharko.dev/taken-over-at is set).
+func argocdOwnershipMarks(ac models.ArgocdCluster) (adopted, takenOver bool) {
+	for _, key := range []string{
+		argosecrets.AnnotationAdopted,
+		argosecrets.AnnotationAdoptedDoubledPrefixLegacy,
+		argosecrets.AnnotationAdoptedLegacy,
+	} {
+		if ac.Annotations[key] == "true" {
+			adopted = true
+			break
+		}
+	}
+	takenOver = strings.TrimSpace(ac.Annotations[argosecrets.AnnotationTakenOverAt]) != ""
+	return adopted, takenOver
+}
+
+// argocdLabelsCopy returns a copy of labels, never nil.
+func argocdLabelsCopy(labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		out[k] = v
+	}
+	return out
 }

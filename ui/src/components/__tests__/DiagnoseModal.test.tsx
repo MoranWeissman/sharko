@@ -102,4 +102,17 @@ describe('DiagnoseModal', () => {
 
     expect(mockDiagnoseCluster).not.toHaveBeenCalled();
   });
+
+  it('shows the same suggested fix only once', async () => {
+    const fix = { description: 'Let the account read secrets', yaml: 'kind: Role\nname: same' };
+    mockDiagnoseCluster.mockResolvedValue({
+      ...sampleReport,
+      suggested_fixes: [fix, { ...fix }, { ...fix }],
+    });
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Let the account read secrets')).toHaveLength(1);
+    });
+  });
 });

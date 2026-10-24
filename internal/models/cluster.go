@@ -333,6 +333,15 @@ type Cluster struct {
 	ConnectionStatus string `json:"connection_status,omitempty"`
 	Managed          bool   `json:"managed"` // true if in cluster-addons.yaml
 
+	// Adopted is true when the cluster's ArgoCD connection carries
+	// Sharko's adopted mark (sharko.dev/adopted, or one of its two older
+	// spellings). Read from ArgoCD on every list; never stored in Git.
+	Adopted bool `json:"adopted"`
+	// TakenOver is true when the cluster's ArgoCD connection carries
+	// sharko.dev/taken-over-at, i.e. Sharko took it over from another
+	// owner. The UI shows "Remove the old labels" only then.
+	TakenOver bool `json:"taken_over"`
+
 	// ConnectionManagedBy mirrors the managed-clusters.yaml entry's
 	// connectionManagedBy field onto the API surface (V2-cleanup-57.2).
 	// Empty means Sharko-managed (the default); "user" means the user
@@ -543,12 +552,27 @@ type ClusterHealthStats struct {
 // open-PRs list, filtered by the registration-PR title pattern emitted
 // by the orchestrator (see findOpenPRForCluster — same matching
 // contract). OpenedAt is the upstream PR's createdAt timestamp.
+//
+// Operation says what the open pull request does to the cluster:
+// "register", "adopt", "takeover" or "remove" (EP3-DRYRUN-FIXES API
+// contract). PRNumber is the pull request's number on the Git host; it is
+// left out (never 0) when the Git host gave no number.
 type PendingRegistration struct {
 	ClusterName string `json:"cluster_name"`
 	PRURL       string `json:"pr_url"`
 	Branch      string `json:"branch"`
 	OpenedAt    string `json:"opened_at"`
+	Operation   string `json:"operation" enums:"register,adopt,takeover,remove"`
+	PRNumber    int    `json:"pr_number,omitempty"`
 }
+
+// Values of PendingRegistration.Operation.
+const (
+	PendingOperationRegister = "register"
+	PendingOperationAdopt    = "adopt"
+	PendingOperationTakeover = "takeover"
+	PendingOperationRemove   = "remove"
+)
 
 // OrphanRegistration represents an ArgoCD cluster Secret that has NO
 // corresponding entry in managed-clusters.yaml AND no open registration PR

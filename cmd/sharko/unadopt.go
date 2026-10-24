@@ -94,8 +94,13 @@ Sharko puts on a cluster when you adopt it.`,
 		// one. It also decides the word that finishes the progress line,
 		// which used to be "done" the moment the HTTP call came back.
 		outcome := fanout.SingleStatus(result.Status, status == 207)
+		waiting := !dryRun && outcome.Completed() && result.Git != nil && prWaiting(result.Git.PRUrl, result.Git.Merged)
 		if !dryRun {
-			fmt.Println(outcome.ProgressWord())
+			if waiting {
+				fmt.Println(waitingProgressWord)
+			} else {
+				fmt.Println(outcome.ProgressWord())
+			}
 		}
 
 		fmt.Println()
@@ -111,6 +116,13 @@ Sharko puts on a cluster when you adopt it.`,
 			return nil
 		}
 
+		if waiting {
+			// Nothing changes on the cluster until the pull request is
+			// merged, so "un-adopted" would be untrue here.
+			fmt.Println(waitingForMergeLine(result.Git.PRUrl))
+			fmt.Printf("  Nothing has changed on cluster %s yet. Sharko finishes the un-adopt after the pull request is merged.\n", name)
+			return outcome.ExitError(unadoptOperation, name)
+		}
 		if outcome.Completed() {
 			fmt.Printf("Cluster %s un-adopted.\n", name)
 		} else {

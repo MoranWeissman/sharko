@@ -66,11 +66,11 @@ After the wizard completes, the dashboard loads with clusters discovered from Ar
 From the dashboard, you will see:
 
 - **Managed clusters** — clusters registered and managed by Sharko
-- A hint line for **discovered clusters** — existing ArgoCD clusters not yet managed by Sharko, with a count
+- A line for **discovered clusters** under the page title: "N clusters ArgoCD already knows that Sharko doesn't manage yet."
 
 The fastest first cluster is one **adopted** from that discovered list — a cluster ArgoCD already knows how to reach, so there is no credentials step to fill in. (Sharko's own credentials — a kubeconfig, a stored secret, or an EKS token — only matter later, for addons that push their own secrets to the cluster; a plain registration or adoption works without any of them.)
 
-**Via UI:** Click the discovered-clusters hint to open **Register New Cluster**, pre-set to adopt. Confirm the cluster and click **Adopt**.
+**Via UI:** Click the discovered-clusters line to open **Add Cluster**. Pick your cluster under **Discovered clusters** and click **Adopt <name>**. Preview the changes, tick any warnings after you have read them, and click **Confirm Adoption**.
 
 **Via CLI:**
 
@@ -78,7 +78,7 @@ The fastest first cluster is one **adopted** from that discovered list — a clu
 sharko adopt my-cluster
 ```
 
-Either path opens a pull request that creates `managed-clusters.yaml` (if this is your first cluster) with an entry for `my-cluster`, plus its values directory. Merge the PR (or turn on **Auto-merge PRs** in **Settings**, **GitOps** before you register, and Sharko merges it for you) and the cluster moves from "discovered" to **Managed Clusters** once Sharko confirms the connection.
+Either path opens a pull request that creates `managed-clusters.yaml` (if this is your first cluster) with an entry for `my-cluster`, plus its addon file, `cluster-addons/my-cluster.yaml`. Nothing is adopted until that pull request is merged. Merge it (or turn on **Auto-merge PRs** in **Settings**, **GitOps** before you register, and Sharko merges it for you). Then the cluster moves from "discovered" to **Managed Clusters**.
 
 Registering a brand-new cluster ArgoCD doesn't already know works the same way, with `sharko add-cluster my-cluster --region us-east-1` in place of `adopt`; see [Managing Clusters](../user-guide/clusters.md) for the three ways to hand Sharko its credentials.
 

@@ -15,6 +15,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -241,7 +242,10 @@ func deriveBaseURL(repoURL string) (string, error) {
 	}
 	u, err := url.Parse(repoURL)
 	if err != nil {
-		return "", fmt.Errorf("parse repo_url: %w", err)
+		// Never the parser's own text: it repeats the whole address, and
+		// a token written into it would come back in the answer and the
+		// log (EP3 dry run round S, S15).
+		return "", errors.New(models.UnreadableRepoAddressSentence)
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("repo_url must have scheme and host")

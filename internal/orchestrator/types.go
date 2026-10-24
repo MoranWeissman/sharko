@@ -339,6 +339,33 @@ type AdoptClustersRequest struct {
 	Clusters  []string `json:"clusters"`
 	AutoMerge *bool    `json:"auto_merge,omitempty"`
 	DryRun    bool     `json:"dry_run,omitempty"`
+
+	// AcknowledgedFindings lists the id of every warning the person has
+	// read (the ids come back in results[].warnings[].id from a preview).
+	// A real adopt (not a dry run) refuses, with nothing written, while any
+	// cluster in the request has a warning whose id is not in this list.
+	// One id covers that warning on every cluster in the request.
+	AcknowledgedFindings []string `json:"acknowledged_findings,omitempty"`
+}
+
+// AdoptWarning is one thing a person must read before an adopt goes ahead.
+// Same fields as a take over preflight finding, so both screens show the
+// same thing. Message is always filled in.
+type AdoptWarning struct {
+	ID              string   `json:"id"`
+	Message         string   `json:"message"`
+	Title           string   `json:"title,omitempty"`
+	WhatItMeans     string   `json:"what_it_means,omitempty"`
+	WhatToDo        string   `json:"what_to_do,omitempty"`
+	ApplicationSets []string `json:"application_sets,omitempty"`
+	Applications    []string `json:"applications,omitempty"`
+}
+
+// AdoptBlocker is one reason a cluster cannot be adopted until something is
+// fixed. Every reason is listed, not only a count of them.
+type AdoptBlocker struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
 }
 
 // AdoptClusterResult holds the outcome for a single cluster adoption.
@@ -351,11 +378,32 @@ type AdoptClusterResult struct {
 	Message      string         `json:"message,omitempty"`
 	DryRun       *DryRunResult  `json:"dry_run,omitempty"`
 
+	// Merged is true only when the pull request merged AND the adopt
+	// really finished on this call (Sharko owns the connection and marked
+	// it adopted). An open pull request, a partial result and a dry run
+	// are all false (EP3 dry run round R, R11).
+	Merged bool `json:"merged"`
+
 	// Warnings holds plain-English advisories that do NOT fail the
 	// adoption — e.g. this cluster's ArgoCD cluster Secret turning out to
 	// be rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/
-	// omitted when there is nothing to warn about.
-	Warnings []string `json:"warnings,omitempty"`
+	// omitted when there is nothing to warn about. Each one has an id to
+	// send back in acknowledged_findings.
+	Warnings []AdoptWarning `json:"warnings,omitempty"`
+
+	// Blockers lists every reason this cluster cannot be adopted yet.
+	// Empty/omitted when nothing blocks it.
+	Blockers []AdoptBlocker `json:"blockers,omitempty"`
+
+	// UnacknowledgedFindings lists the warning ids on this cluster that were
+	// not in the request's acknowledged_findings, when that is why this
+	// cluster was not adopted.
+	UnacknowledgedFindings []string `json:"unacknowledged_findings,omitempty"`
+
+	// OtherPR is set when an open take over pull request stops this adopt
+	// (EP3 dry run round S, S5). The handler answers 409 other_pr_open
+	// from it. Not sent as is.
+	OtherPR *OtherJoinPRError `json:"-"`
 }
 
 // AdoptClustersResult is the aggregate response from adopting multiple clusters.

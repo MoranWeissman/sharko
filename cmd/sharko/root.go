@@ -18,6 +18,9 @@ var rootCmd = &cobra.Command{
 	Use:     "sharko",
 	Short:   "Addon management for Kubernetes clusters, built on ArgoCD",
 	Version: version,
+	// An error prints once, from Execute, and without the whole usage text.
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 // serverFlag holds the value of the global --server flag, registered as a

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 )
@@ -14,11 +16,13 @@ import (
 // handleListClusters handles GET /api/v1/clusters
 //
 // @Summary List clusters
-// @Description Returns all registered clusters with health stats
+// @Description Returns all registered clusters with health stats, plus the clusters only ArgoCD knows (connection_status "not_in_git", with their ArgoCD labels).
+// @Description Every item carries "adopted" (the ArgoCD connection has Sharko's adopted mark) and "taken_over" (the connection has sharko.dev/taken-over-at), both always sent as true or false.
+// @Description pending_registrations lists open Sharko pull requests for a cluster; each row's operation says what the pull request does (register, adopt, takeover or remove) and pr_number is its number on the Git host. orphan_registrations lists only leftovers of a registration that never finished.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} models.ClustersResponse
 // @Router /clusters [get]
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
@@ -47,7 +51,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// registrations" surface AND the "Discovered clusters / not_in_git"
 	// surface (the argosecrets reconciler can create the ArgoCD cluster
 	// secret BEFORE the values-file PR merges).
-	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
+	pending := resolvePendingRegistrations(r.Context(), s.readCache, gp, s.gitopsConfig().CommitPrefix)
 
 	// LW-18 (Part 2): Filter out any pending-registration PRs for clusters
 	// that are already managed (in git). This handles the idempotent-retry
@@ -62,16 +66,21 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			managedNames[c.Name] = struct{}{}
 		}
 	}
-	filteredPending := pending[:0]
-	for _, p := range pending {
-		if _, alreadyManaged := managedNames[p.ClusterName]; !alreadyManaged {
-			filteredPending = append(filteredPending, p)
-		}
-	}
+	filteredPending := dropPendingForManagedClusters(pending, managedNames)
 	resp.PendingRegistrations = filteredPending
 	pendingNames := make(map[string]struct{}, len(filteredPending))
+	// Only an open REGISTER pull request takes a cluster out of the
+	// not_in_git lane: that cluster is not Sharko's until the merge, and
+	// its pending row is where it shows. A cluster with an open adopt or
+	// take over pull request stays in the list too (the UI uses the same
+	// rule), so its page and its ArgoCD labels are still there while the
+	// pull request waits.
+	pendingRegisterNames := make(map[string]struct{}, len(filteredPending))
 	for _, p := range filteredPending {
 		pendingNames[p.ClusterName] = struct{}{}
+		if p.Operation == models.PendingOperationRegister {
+			pendingRegisterNames[p.ClusterName] = struct{}{}
+		}
 	}
 
 	// Resolve orphan ArgoCD cluster Secrets (in ArgoCD, not in git, no
@@ -105,7 +114,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// Filter the `not_in_git` lane to remove BOTH pending and orphan
 	// cluster names, and correct HealthStats.NotInGit by the same amount
 	// (see prunePendingAndOrphanFromNotInGit for the full contract).
-	prunePendingAndOrphanFromNotInGit(resp, pendingNames, orphanNames)
+	prunePendingAndOrphanFromNotInGit(resp, pendingRegisterNames, orphanNames)
 
 	// Enrich clusters with connectivity status + Sharko obs fields.
 	// Fetch the full application list once (no N+1 per cluster).
@@ -134,7 +143,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// gracefully by leaving the baseline ConnectivityDetail as-is.
 		if verdict.Status == "check_pending" && allApps != nil {
 			if k8sClient, namespace, ok := s.k8sClientAndNamespace(); ok {
-				secret, err := k8sClient.CoreV1().Secrets(namespace).Get(r.Context(), c.Name, metav1.GetOptions{})
+				secret, err := argosecrets.GetClusterSecret(r.Context(), k8sClient, namespace, c.Name)
 				if err == nil && secret != nil {
 					if driftReason := detectConnectivityCheckDrift(r.Context(), ac, c.Name, secret.Labels, allApps); driftReason != "" {
 						c.ConnectivityDetail = driftReason
@@ -290,7 +299,7 @@ func sortClusters(clusters []models.Cluster, field, order string) {
 // @Param name path string true "Cluster name"
 // @Success 200 {object} map[string]interface{} "Cluster detail"
 // @Failure 400 {object} map[string]interface{} "Bad request"
-// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 404 {object} clusterNotManagedResponse "Cluster not found. code is not_managed and argocd_known is true when ArgoCD connects to it but Sharko does not manage it"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /clusters/{name} [get]
 func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
@@ -319,7 +328,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if resp == nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		writeClusterNotFound(w, r, ac, name)
 		return
 	}
 
@@ -439,7 +448,7 @@ func (s *Server) handleGetConfigDiff(w http.ResponseWriter, r *http.Request) {
 // @Param name path string true "Cluster name"
 // @Success 200 {object} map[string]interface{} "Comparison result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
-// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 404 {object} clusterNotManagedResponse "Cluster not found. code is not_managed and argocd_known is true when ArgoCD connects to it but Sharko does not manage it"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /clusters/{name}/comparison [get]
 func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Request) {
@@ -468,7 +477,9 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if resp == nil {
-		writeError(w, http.StatusNotFound, "cluster not found")
+		// Same 404 as GET /clusters/{name}: the cluster page reads this
+		// call, so it must see not_managed too (EP3 dry run round R, R10).
+		writeClusterNotFound(w, r, ac, name)
 		return
 	}
 
@@ -506,4 +517,54 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	s.applyManagedSecretFields(r.Context(), &resp.Cluster)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// clusterNotManagedCode is the code GET /clusters/{name} sends when Sharko
+// does not manage the cluster but ArgoCD already connects to it. The UI
+// shows the adopt and take over choices on it (episode 3 dry run, finding 7).
+const clusterNotManagedCode = "not_managed"
+
+// clusterNotManagedFmt is the sentence that goes with clusterNotManagedCode.
+const clusterNotManagedFmt = "Sharko does not manage %s yet. ArgoCD already connects to it, so you can adopt it or take it over."
+
+// clusterNotManagedResponse is the 404 body for a cluster ArgoCD knows and
+// Sharko does not manage.
+type clusterNotManagedResponse struct {
+	Error       string `json:"error"`
+	Code        string `json:"code"`
+	ArgocdKnown bool   `json:"argocd_known"`
+}
+
+// writeClusterNotFound writes the 404 for a cluster Sharko does not manage:
+// the not_managed body when ArgoCD connects to it, else the plain one.
+// GET /clusters/{name} and GET /clusters/{name}/comparison both use it.
+func writeClusterNotFound(w http.ResponseWriter, r *http.Request, ac *argocd.Client, name string) {
+	if argocdKnowsCluster(r, ac, name) {
+		writeJSON(w, http.StatusNotFound, clusterNotManagedResponse{
+			Error:       fmt.Sprintf(clusterNotManagedFmt, name),
+			Code:        clusterNotManagedCode,
+			ArgocdKnown: true,
+		})
+		return
+	}
+	writeError(w, http.StatusNotFound, "cluster not found")
+}
+
+// argocdKnowsCluster reports whether ArgoCD has a cluster called name. A
+// failed ArgoCD read counts as no, so the answer stays the plain 404.
+func argocdKnowsCluster(r *http.Request, ac *argocd.Client, name string) bool {
+	if ac == nil {
+		return false
+	}
+	clusters, err := ac.ListClusters(r.Context())
+	if err != nil {
+		slog.Warn("[cluster-get] could not ask ArgoCD whether it knows the cluster", "cluster", name, "error", err)
+		return false
+	}
+	for _, c := range clusters {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }

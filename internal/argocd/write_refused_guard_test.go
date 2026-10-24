@@ -560,7 +560,9 @@ var argocdWriteMethods = map[string]bool{
 // cannot be added without somebody looking at what it shows a person.
 var wantWriteCallers = []string{
 	"internal/ai/tools_write.go",
-	"internal/api/clusters_orphan_delete.go",
+	// internal/api/clusters_orphan_delete.go left the list in EP3 dry run
+	// round R (R8): Discard now deletes the checked Secret by its own name
+	// through Kubernetes, and never calls ArgoCD's DeleteCluster.
 	"internal/api/clusters_restart_sync.go",
 	"internal/api/init.go",
 	"internal/orchestrator/cluster.go",

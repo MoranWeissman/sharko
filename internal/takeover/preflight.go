@@ -397,10 +397,32 @@ func checkApplicationSetSafety(in Inputs) Finding {
 		return f
 	}
 
-	unsafe := appsets.NotDeletionSafe(in.ApplicationSets)
+	// Only the ApplicationSets that pick this cluster today can drop it
+	// later. One that does not match its labels now — Sharko's own
+	// connectivity-check ApplicationSet on a cluster without that label,
+	// say — has nothing of this cluster's to delete (episode 3 dry run,
+	// finding 24).
+	targeting := appsets.TargetingCluster(in.ApplicationSets, in.SecretLabels)
+	if len(targeting) == 0 {
+		f.Status = StatusOK
+		if len(in.ApplicationSets) == 1 {
+			f.Detail = "The only ApplicationSet in the argocd namespace does not pick this cluster today."
+		} else {
+			f.Detail = fmt.Sprintf("None of the %d ApplicationSets in the argocd namespace picks this cluster today.", len(in.ApplicationSets))
+		}
+		f.WhatItMeans = "None of them has installed anything on this cluster through its labels, so changing this cluster's labels cannot make them delete anything."
+		f.WhatToDo = "Nothing to do."
+		return f
+	}
+
+	unsafe := appsets.NotDeletionSafe(targeting)
 	if len(unsafe) == 0 {
 		f.Status = StatusOK
-		f.Detail = fmt.Sprintf("All %d ApplicationSets are set up to leave running workloads alone.", len(in.ApplicationSets))
+		if len(targeting) == 1 {
+			f.Detail = "The 1 ApplicationSet that picks this cluster is set up to leave running workloads alone."
+		} else {
+			f.Detail = fmt.Sprintf("All %d ApplicationSets that pick this cluster are set up to leave running workloads alone.", len(targeting))
+		}
 		f.WhatItMeans = "Even if this cluster stops matching one of them, whatever it installed keeps running."
 		f.WhatToDo = "Nothing to do."
 		return f

@@ -177,9 +177,16 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     // V2-cleanup-92.1 (F11): hint reworded to plain English.
     expect(
       screen.getByText(
-        /You manage the cluster connection yourself — Sharko only updates its addon labels\./,
+        'For a cluster you add by hand here, you make the ArgoCD connection yourself and Sharko only puts its addon labels on it. Adopt and Take ownership, for a cluster ArgoCD already has, work differently. Their windows say what they change.',
+        { exact: false },
       ),
     ).toBeInTheDocument();
+    // The old sentence promised "only labels" for every path, which is false
+    // for Adopt (Sharko takes the connection over). It must never come back.
+    expect(
+      screen.queryByText(/You manage the cluster connection yourself/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sharko only updates its addon labels/)).not.toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: /Operator Manual: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();
@@ -273,6 +280,13 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
           server_url: 'https://discovered-aks.hcp.eastus.azmk8s.io:443',
           managed: false,
         },
+        // Two to pick from, so nothing is picked for the user (finding 25).
+        {
+          name: 'discovered-eks',
+          labels: {},
+          server_url: 'https://discovered-eks.example.com:443',
+          managed: false,
+        },
       ],
     });
     mockHealth.mockResolvedValue({
@@ -320,6 +334,10 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
 
     // F1 pin: the Connection source and Cluster Name fields are NOW VISIBLE
     // (the pick was cleared on ownership toggle)
+    // In user mode the connection source is tucked away (finding 23), so open it.
+    fireEvent.click(
+      await screen.findByText(/Add connection credentials \(optional/),
+    );
     await waitFor(() => {
       expect(screen.getByText(/connection source/i)).toBeInTheDocument();
     });

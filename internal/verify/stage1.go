@@ -307,27 +307,61 @@ func isTerminating(ns *corev1.Namespace) bool {
 	return ns != nil && ns.Status.Phase == corev1.NamespaceTerminating
 }
 
+// NamespaceIsTerminating and WaitForNamespace are the same wait, for
+// Check permissions (internal/diagnose), so both checks treat a namespace
+// still being deleted the same way (EP3 dry run round R, R12).
+func NamespaceIsTerminating(ns *corev1.Namespace) bool { return isTerminating(ns) }
+
+// NamespaceWait is how a wait for a namespace being deleted ended. Gone is
+// true when it is gone. Err is set when a read of it failed. Namespace is
+// set when it is there again and no longer being deleted. When none of them
+// is set, it is still being deleted (the wait limit or the context ended).
+// Check permissions needs all four apart: only the last one is "still being
+// deleted" (EP3 dry run round S, S16).
+type NamespaceWait struct {
+	Gone      bool
+	Err       error
+	Namespace *corev1.Namespace
+}
+
+// StillDeleting reports whether the namespace was still being deleted when
+// the wait ended.
+func (w NamespaceWait) StillDeleting() bool {
+	return !w.Gone && w.Err == nil && w.Namespace == nil
+}
+
+// WaitForNamespace is waitForNamespaceGone that also says why it stopped.
+func WaitForNamespace(ctx context.Context, client kubernetes.Interface, namespace string) NamespaceWait {
+	deadline := time.Now().Add(terminatingWaitLimit)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return NamespaceWait{}
+		case <-time.After(terminatingPollInterval):
+		}
+		ns, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return NamespaceWait{Gone: true}
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return NamespaceWait{}
+			}
+			return NamespaceWait{Err: err}
+		}
+		if !isTerminating(ns) {
+			return NamespaceWait{Namespace: ns}
+		}
+	}
+	return NamespaceWait{}
+}
+
 // waitForNamespaceGone waits until a namespace that is being deleted is
 // really gone. It returns true when it is gone, false when it is still there
 // after the wait limit (or the context ended), in which case Stage 1 carries
 // on and the next write fails with a normal, classified error.
 func waitForNamespaceGone(ctx context.Context, client kubernetes.Interface, namespace string) bool {
-	deadline := time.Now().Add(terminatingWaitLimit)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(terminatingPollInterval):
-		}
-		ns, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return true
-		}
-		if err != nil || !isTerminating(ns) {
-			return false
-		}
-	}
-	return false
+	return WaitForNamespace(ctx, client, namespace).Gone
 }
 
 // safeDetail is the sentence a failed step shows a person.

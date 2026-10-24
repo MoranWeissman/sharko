@@ -46,7 +46,7 @@ What you can see, from earliest to latest:
 | `partial` | `PR created but merge failed for cluster <cluster>: <PR link>` | The pull request is open but did not merge |
 | `partial` | `Adoption PR merged but Sharko could not take ownership of the ArgoCD connection ...` | Git has the change, but the ArgoCD Secret was not updated |
 | `partial` | `Adoption PR merged, but <cluster>'s ArgoCD connection disappeared ...` | The ArgoCD Secret was removed while Sharko worked |
-| `partial` | `Adoption PR merged but failed to set adopted annotation on ArgoCD secret` | Almost done: only the last mark on the Secret is missing |
+| `partial` | `The adoption pull request is merged, but Sharko could not mark the cluster's ArgoCD connection as adopted. ...` | Almost done: only the last mark on the Secret is missing. Adopt again to finish |
 
 The `partial` cases also write one of these lines to the Sharko log:
 

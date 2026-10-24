@@ -41,6 +41,29 @@ var ErrValidation = errors.New("validation failed")
 // "Connected" for an ArgoCD nobody had asked.
 var ErrArgocdNotTested = errors.New("the ArgoCD connection was not tested")
 
+// UnrecognisedGitHostError is returned by TestCredentials as the Git result
+// when the request gave no Git provider and the address is not one Sharko
+// knows by its host name (github.com, dev.azure.com). Before this the test
+// guessed "GitHub" for every unknown host, asked the GitHub API on a Gitea
+// server, and reported "Sharko can't reach your Git host" — which was not the
+// real reason. Error() is the finished sentence the user reads.
+//
+// Host is the host name read out of the address. It is empty when the
+// address could not be read; the sentence then says "the address" and
+// never repeats it.
+type UnrecognisedGitHostError struct{ Host string }
+
+// UnreadableGitHostSentence is the sentence for an address whose host
+// Sharko cannot read.
+const UnreadableGitHostSentence = "Sharko cannot read the Git host in the address. Check that it looks like https://host/owner/repo, then test again."
+
+func (e *UnrecognisedGitHostError) Error() string {
+	if e.Host == "" {
+		return UnreadableGitHostSentence
+	}
+	return fmt.Sprintf("Sharko does not recognise the Git host %q. Choose the Git provider (GitHub or Gitea) next to the address, then test again.", e.Host)
+}
+
 // validationError is a message-only error that errors.Is-matches
 // ErrValidation without literally embedding ErrValidation's own text
 // ("validation failed") in the rendered message.
@@ -293,6 +316,10 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 	}
 	// Parse repo URL into provider/owner/repo if provided
 	if err := req.Git.ParseRepoURL(); err != nil {
+		if err.Error() == models.UnreadableRepoAddressSentence {
+			// Already a whole sentence: say it alone (S40).
+			return wrapValidationError(err.Error(), err)
+		}
 		return wrapValidationError(fmt.Sprintf("invalid git URL: %s", err), err)
 	}
 	conn := models.Connection{
@@ -351,7 +378,11 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 func deriveProviderFromURL(repoURL string) (string, error) {
 	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" {
-		return "", newValidationError("cannot parse git repo URL %q", repoURL)
+		// Never repeat the address: a token written into it would come
+		// back in the answer (EP3 dry run round R, R9).
+		// The sentence stands alone, with no "cannot parse" in front (EP3
+		// dry run round S, S40).
+		return "", newValidationError("%s", models.UnreadableRepoAddressSentence)
 	}
 	host := strings.ToLower(u.Host)
 	switch {
@@ -373,7 +404,7 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 		}
 	}
 
-	return "", newValidationError("unsupported git host %q (supported: github.com, dev.azure.com)", host)
+	return "", newValidationError("unsupported git host %q: Sharko cannot tell which Git product runs there. Set the Git provider (github or gitea), or use a github.com or dev.azure.com address", host)
 }
 
 // validateConnectionRequest checks that the create/update request has the
@@ -720,6 +751,21 @@ type AuthInfo struct {
 
 // TestCredentials tests Git and ArgoCD connectivity for unsaved credentials.
 func (s *ConnectionService) TestCredentials(ctx context.Context, conn *models.Connection) (gitErr, argocdErr error, auth AuthInfo) {
+	// No provider given and a host Sharko does not know by name: say so,
+	// instead of guessing GitHub and reporting a made-up network failure.
+	// A given provider (github, gitea) works with any self-hosted address.
+	if conn.Git.Provider == "" && conn.Git.RepoURL != "" {
+		if _, err := deriveProviderFromURL(conn.Git.RepoURL); err != nil {
+			// Only a host name Sharko read out of the address, never the
+			// address itself: one that does not parse can carry a token
+			// (EP3 dry run round R, R9).
+			host := ""
+			if u, perr := url.Parse(conn.Git.RepoURL); perr == nil {
+				host = strings.ToLower(u.Hostname())
+			}
+			return &UnrecognisedGitHostError{Host: host}, ErrArgocdNotTested, auth
+		}
+	}
 	// Parse repo URL if provided
 	if err := conn.Git.ParseRepoURL(); err != nil {
 		// ArgoCD was never asked. Say so, rather than leave its result nil
@@ -878,7 +924,10 @@ func deriveGiteaBaseURL(repoURL string) (string, error) {
 	}
 	u, err := url.Parse(repoURL)
 	if err != nil {
-		return "", fmt.Errorf("parse repo_url: %w", err)
+		// Never the parser's own text: it repeats the whole address, and
+		// a token written into it would come back in the answer and the
+		// log (EP3 dry run round S, S15).
+		return "", errors.New(models.UnreadableRepoAddressSentence)
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("repo_url must have scheme and host")

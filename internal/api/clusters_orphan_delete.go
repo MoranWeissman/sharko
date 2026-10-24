@@ -9,12 +9,15 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/models"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // handleDeleteOrphanCluster godoc
 //
 // @Summary Delete an orphan cluster
-// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory.
+// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open pull request. Refuses to delete a cluster that is genuinely managed (in Git), pending (has an open pull request to register, adopt, take over or remove it), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory. Also refuses (409) any Secret that is not a leftover from a registration that never finished: one that is or was adopted or taken over, or one without the sharko.dev/registration-pending mark, or one with a mark saying a pull request still has to finish with it. The delete goes by the Secret's own Kubernetes name, and only if it is still the same Secret, unchanged since the checks.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -24,6 +27,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 404 {object} map[string]interface{} "Cluster Secret not found in ArgoCD"
+// @Failure 409 {object} map[string]interface{} "The Secret is not a leftover from a registration that never finished: it is or was adopted or taken over, it has no registration-pending mark (for example a connection a removal kept), a pull request still has to finish with it, or it changed while Sharko was checking it"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Failure 503 {object} map[string]interface{} "K8s client not wired — ownership label cannot be verified"
@@ -115,12 +119,14 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check #2: cluster must NOT have an open registration PR.
-	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
+	// Check #2: cluster must NOT have an open pull request of any kind
+	// (register, adopt, take over or remove). The message names what the
+	// pull request really waits to do.
+	pending := resolvePendingRegistrations(r.Context(), nil, gp, s.gitopsConfig().CommitPrefix)
 	for _, p := range pending {
 		if p.ClusterName == name {
 			writeError(w, http.StatusBadRequest,
-				fmt.Sprintf("cluster %q has an open registration PR (%s) — close the PR first, then retry orphan delete", name, p.PRURL))
+				fmt.Sprintf("cluster %q has an open pull request that waits to %s (%s) — close the pull request first, then retry orphan delete", name, pendingWaitsTo(p.Operation), p.PRURL))
 			return
 		}
 	}
@@ -200,9 +206,51 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// All safety checks passed — perform the delete.
-	if err := ac.DeleteCluster(r.Context(), serverURL); err != nil {
-		writeUpstreamError(w, "delete_orphan_cluster_argocd_delete", err)
+	// Leftovers rule (EP3-DRYRUN-FIXES call 4): the same rule the
+	// leftovers list uses. Only a registration that never finished may be
+	// discarded — never a Secret that is or was adopted or taken over, and
+	// never one without the registration-pending mark (for example a
+	// connection a removal chose to keep). 409: the request is fine, the
+	// Secret's state forbids it.
+	switch leftoverRegistrationRefusal(secret) {
+	case leftoverAdopted:
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_orphan_delete_rejected",
+			Resource: fmt.Sprintf("cluster:%s", name),
+		})
+		writeError(w, http.StatusConflict, orphanDiscardAdoptedMessage(name))
+		return
+	case leftoverNotARegistration:
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_orphan_delete_rejected",
+			Resource: fmt.Sprintf("cluster:%s", name),
+		})
+		writeError(w, http.StatusConflict, orphanDiscardNotARegistrationMessage(name))
+		return
+	case leftoverWaitingPR:
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_orphan_delete_rejected",
+			Resource: fmt.Sprintf("cluster:%s", name),
+		})
+		writeError(w, http.StatusConflict, orphanDiscardWaitingPRMessage(name))
+		return
+	}
+
+	// All safety checks passed — perform the delete. It goes by the
+	// Secret the checks above looked at, by its own Kubernetes name, and
+	// only if it is still that same Secret unchanged (EP3 dry run round R,
+	// R8). Deleting through ArgoCD by server address could hit a different
+	// connection that shares the address.
+	if err := s.deleteCheckedSecret(r.Context(), secret); err != nil {
+		switch {
+		case apierrors.IsNotFound(err):
+			writeError(w, http.StatusNotFound,
+				fmt.Sprintf("cluster Secret %q no longer present in argocd namespace — nothing to delete (refresh and retry)", name))
+		case apierrors.IsConflict(err):
+			writeError(w, http.StatusConflict, orphanDiscardChangedMessage(name))
+		default:
+			writeUpstreamError(w, "delete_orphan_cluster_secret_delete", err)
+		}
 		return
 	}
 
@@ -212,4 +260,22 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// pendingWaitsTo says, in plain words, what an open pull request of the given
+// kind waits to do to the cluster. An unknown kind gets a neutral phrase
+// rather than a wrong one.
+func pendingWaitsTo(operation string) string {
+	switch operation {
+	case models.PendingOperationRegister:
+		return "register it"
+	case models.PendingOperationAdopt:
+		return "adopt it"
+	case models.PendingOperationTakeover:
+		return "take it over"
+	case models.PendingOperationRemove:
+		return "remove it"
+	default:
+		return "change it"
+	}
 }

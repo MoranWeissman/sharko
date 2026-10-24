@@ -181,6 +181,7 @@ func TestUnadoptCluster_V4_DryRun_ListsEveryFileAndWritesNothing(t *testing.T) {
 func TestUnadoptCluster_V3Repo_UnaffectedByV4Unadopt(t *testing.T) {
 	git := newMockGitProvider()
 	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: cluster-a\n    labels: {}\n")
+	git.files[defaultPaths().ClusterValues+"/cluster-a.yaml"] = []byte("clusterGlobalValues: {}\n")
 	asm := newMockArgoSecretManager()
 	asm.annotations["cluster-a"] = map[string]string{AnnotationAdopted: "true"}
 

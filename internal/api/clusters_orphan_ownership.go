@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -10,7 +11,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // Ownership-label gate helpers shared between the orphan resolver
@@ -70,7 +73,11 @@ func (s *Server) k8sClientAndNamespace() (kubernetes.Interface, string, bool) {
 
 // listSharkoOwnedSecretNames returns the set of cluster names whose
 // backing Secret in the argocd namespace carries the
-// app.kubernetes.io/managed-by=sharko label.
+// app.kubernetes.io/managed-by=sharko label AND is a leftover from a
+// registration that never finished (leftoverRegistrationRefusal — the
+// registration-pending mark, never adopted or taken over;
+// EP3-DRYRUN-FIXES call 4). A labelled Secret that fails that rule is not
+// in the set, so the leftovers list never offers it for discard.
 //
 // Returns nil (NOT empty map) when the k8s client is not wired so the
 // caller can distinguish "no k8s available" from "k8s available, zero
@@ -98,10 +105,117 @@ func listSharkoOwnedSecretNames(ctx context.Context, k8sClient kubernetes.Interf
 		return nil
 	}
 	out := make(map[string]struct{}, len(list.Items))
-	for _, s := range list.Items {
-		out[s.Name] = struct{}{}
+	for i := range list.Items {
+		sec := &list.Items[i]
+		if leftoverRegistrationRefusal(sec) != leftoverOK {
+			continue
+		}
+		// Keyed by the cluster name ArgoCD shows, which can differ from
+		// the Secret's Kubernetes name (a Secret made by `argocd cluster
+		// add`); the orphan resolver matches on the name ArgoCD shows.
+		out[argosecrets.ClusterNameOf(sec)] = struct{}{}
 	}
 	return out
+}
+
+// leftoverReason is why a Sharko-labelled ArgoCD cluster Secret that is not
+// in Git is, or is not, a leftover from a registration that never finished.
+type leftoverReason int
+
+const (
+	// leftoverOK: a real cancelled registration — Sharko's label, and the
+	// registration-pending mark from a register that never merged, and
+	// never adopted or taken over.
+	leftoverOK leftoverReason = iota
+	// leftoverAdopted: the Secret is or was adopted or taken over.
+	leftoverAdopted
+	// leftoverWaitingPR: a pull request still has to finish with it.
+	leftoverWaitingPR
+	// leftoverNotARegistration: no registration-pending mark, so it is not
+	// a register that never merged (for example a connection a removal
+	// chose to keep).
+	leftoverNotARegistration
+)
+
+// leftoverRegistrationRefusal applies the leftovers rule (EP3-DRYRUN-FIXES
+// call 4) to one Secret: the leftovers list shows it, and Discard may delete
+// it, only when it is a registration that never finished. The caller has
+// already checked Sharko's label, that the cluster is not in Git and that
+// no open pull request registers it.
+func leftoverRegistrationRefusal(sec *corev1.Secret) leftoverReason {
+	if sec == nil {
+		return leftoverNotARegistration
+	}
+	annotations := sec.Annotations
+	if argosecrets.IsAdopted(annotations) {
+		return leftoverAdopted
+	}
+	if _, takenOver := annotations[argosecrets.AnnotationTakenOverAt]; takenOver {
+		return leftoverAdopted
+	}
+	// A waiting mark says a pull request still has to finish with this
+	// connection (a removal that keeps it, a take over, an adopt). It is
+	// never a leftover, even after a remove and a new register (EP3 dry
+	// run round R, R1).
+	for _, key := range argosecrets.PendingPRMarks {
+		if _, waiting := annotations[key]; waiting {
+			return leftoverWaitingPR
+		}
+	}
+	if _, marked := models.RegistrationPendingValue(annotations); !marked {
+		return leftoverNotARegistration
+	}
+	return leftoverOK
+}
+
+// deleteCheckedSecret deletes exactly the Secret the caller checked: by
+// its Kubernetes name, and only while its UID and resource version are the
+// ones the checks saw. A Secret changed or replaced in between is a
+// Conflict, and nothing is deleted.
+// errSecretNotCheckable is returned when a Secret to delete has no UID and
+// no resource version, so the delete could not be pinned to it.
+var errSecretNotCheckable = errors.New("the Secret has no UID and no resource version, so Sharko cannot make sure it deletes exactly the Secret it checked")
+
+func (s *Server) deleteCheckedSecret(ctx context.Context, sec *corev1.Secret) error {
+	k8sClient, namespace, ok := s.k8sClientAndNamespace()
+	if !ok {
+		return errNoK8sClient
+	}
+	uid, rv := sec.UID, sec.ResourceVersion
+	if uid == "" && rv == "" {
+		// Nothing to check the delete against: refuse rather than send a
+		// delete with no checks (EP3 dry run round S, S19).
+		return errSecretNotCheckable
+	}
+	pre := &metav1.Preconditions{}
+	if uid != "" {
+		pre.UID = &uid
+	}
+	if rv != "" {
+		pre.ResourceVersion = &rv
+	}
+	return k8sClient.CoreV1().Secrets(namespace).Delete(ctx, sec.Name, metav1.DeleteOptions{Preconditions: pre})
+}
+
+// orphanDiscardWaitingPRMessage and orphanDiscardChangedMessage are the
+// other two 409 answers Discard gives. Pinned by exact text in tests.
+func orphanDiscardWaitingPRMessage(name string) string {
+	return fmt.Sprintf("Sharko will not delete the ArgoCD connection for cluster %q: a pull request still has to finish with it. It stays as it is.", name)
+}
+
+func orphanDiscardChangedMessage(name string) string {
+	return fmt.Sprintf("Sharko did not delete the ArgoCD connection for cluster %q: it changed while Sharko was checking it. Nothing was deleted. Look at it again, then try again.", name)
+}
+
+// orphanDiscardAdoptedMessage and orphanDiscardNotARegistrationMessage are
+// the 409 answers Discard gives when the Secret is not a leftover from a
+// registration that never finished. Pinned by exact text in tests.
+func orphanDiscardAdoptedMessage(name string) string {
+	return fmt.Sprintf("Sharko will not delete the ArgoCD connection for cluster %q: Sharko adopted it or took it over, so it is not a leftover from a registration that never finished. It stays as it is.", name)
+}
+
+func orphanDiscardNotARegistrationMessage(name string) string {
+	return fmt.Sprintf("Sharko will not delete the ArgoCD connection for cluster %q: it is not a leftover from a registration that never finished, so Sharko cannot be sure nobody needs it. It stays as it is. If you no longer want ArgoCD connected to this cluster, delete it in ArgoCD yourself.", name)
 }
 
 // getSecretIfPresent fetches a single Secret by name from the argocd
@@ -117,7 +231,7 @@ func (s *Server) getSecretIfPresent(ctx context.Context, name string) (*corev1.S
 	if !ok {
 		return nil, errNoK8sClient
 	}
-	secret, err := k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	secret, err := argosecrets.GetClusterSecret(ctx, k8sClient, namespace, name)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}

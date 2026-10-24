@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,14 +11,18 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -135,13 +140,20 @@ func newStubArgoSrv(t *testing.T, clusters []map[string]interface{}, deleteStatu
 func orphanK8sSecret(name string, labeled bool) *corev1.Secret {
 	s := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: "argocd",
+			Name:            name,
+			Namespace:       "argocd",
+			ResourceVersion: "1",
 		},
 		Type: corev1.SecretTypeOpaque,
 	}
 	if labeled {
 		clusterreconciler.ApplyManagedBySharkoLabel(s)
+		// A labelled Secret in these tests is a real leftover: a register
+		// that never merged, so it carries the registration-pending mark
+		// (EP3-DRYRUN-FIXES call 4).
+		s.Annotations = map[string]string{
+			models.AnnotationRegistrationPending: models.RegistrationPendingTimestamp(time.Now().Add(-time.Hour)),
+		}
 	}
 	return s
 }
@@ -255,19 +267,12 @@ func TestHandleDeleteOrphanCluster_SuccessRealOrphan(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Errorf("expected 1 ArgoCD DELETE call, got %d", got)
+	// R8: the Secret is deleted by its own name, never through ArgoCD by
+	// server address (two connections can share one address).
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Errorf("deleted through ArgoCD by server address (%d calls)", got)
 	}
-	// Go's net/http unescapes the path before exposing it on r.URL.Path,
-	// so we assert on the unescaped form (the wire-level form is
-	// url.PathEscape(server) — verified separately by the argocd client
-	// unit tests). Either form is acceptable to net/http; a literal
-	// https://... in the path is unusual but legal. What matters is the
-	// server URL appears verbatim and the DELETE fired.
-	last := argo.deleteCallURL.Load().(string)
-	if last == "" || !strings.Contains(last, "kind-orphan.local:6443") {
-		t.Errorf("unexpected DELETE path: %q", last)
-	}
+	assertSecretGone(t, k8s, "kind-orphan")
 	_ = url.PathEscape // keep the import if a future test wants the escaped form
 }
 
@@ -298,35 +303,58 @@ func TestHandleDeleteOrphanCluster_RefusesManagedCluster(t *testing.T) {
 }
 
 func TestHandleDeleteOrphanCluster_RefusesPendingCluster(t *testing.T) {
-	// Cluster has an open registration PR — the handler must refuse
-	// (400) and tell the user to close the PR first.
-	argo := newStubArgoSrv(t, []map[string]interface{}{
-		{"name": "kind-pending", "server": "https://kind-pending.local:6443"},
-	}, http.StatusOK)
-	gp := &orphanFakeGP{
-		managedYAML: []byte("clusters: []"),
-		prs: []gitprovider.PullRequest{
-			{
-				Title:        "sharko: register cluster kind-pending (kubeconfig provider)",
-				URL:          "https://github.com/o/r/pull/77",
-				SourceBranch: "sharko/register-cluster-kind-pending-abcd",
-			},
-		},
+	// Cluster has an open pull request — the handler must refuse (400) and
+	// tell the user to close it first. The message names what the pull
+	// request really waits to do, not always "registration".
+	cases := []struct {
+		title string
+		want  string
+	}{
+		{"sharko: register cluster kind-pending (kubeconfig provider)", `cluster "kind-pending" has an open pull request that waits to register it (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
+		{"sharko: adopt cluster kind-pending", `cluster "kind-pending" has an open pull request that waits to adopt it (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
+		{"sharko: take over cluster kind-pending", `cluster "kind-pending" has an open pull request that waits to take it over (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
+		{"sharko: remove cluster kind-pending", `cluster "kind-pending" has an open pull request that waits to remove it (https://github.com/o/r/pull/77) — close the pull request first, then retry orphan delete`},
 	}
-	// nil k8s client — pending check rejects before the label gate.
-	_, router := orphanTestServer(t, gp, argo.URL, nil)
+	for _, tc := range cases {
+		t.Run(tc.title, func(t *testing.T) {
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": "kind-pending", "server": "https://kind-pending.local:6443"},
+			}, http.StatusOK)
+			gp := &orphanFakeGP{
+				managedYAML: []byte("clusters: []"),
+				prs: []gitprovider.PullRequest{
+					{
+						Title:        tc.title,
+						URL:          "https://github.com/o/r/pull/77",
+						SourceBranch: "sharko/register-cluster-kind-pending-abcd",
+					},
+				},
+			}
+			// nil k8s client — pending check rejects before the label gate.
+			_, router := orphanTestServer(t, gp, argo.URL, nil)
 
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, orphanAdminReq("kind-pending"))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, orphanAdminReq("kind-pending"))
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
-	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
-		t.Errorf("expected 0 ArgoCD DELETE calls (refused), got %d", got)
-	}
-	if !strings.Contains(w.Body.String(), "registration PR") {
-		t.Errorf("expected error to mention 'registration PR', got: %s", w.Body.String())
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (body=%s)", w.Code, w.Body.String())
+			}
+			if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+				t.Errorf("expected 0 ArgoCD DELETE calls (refused), got %d", got)
+			}
+			var body struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body is not JSON: %v (%s)", err, w.Body.String())
+			}
+			if body.Error != tc.want {
+				t.Errorf("error = %q, want %q", body.Error, tc.want)
+			}
+			if strings.Contains(w.Body.String(), "registration PR") {
+				t.Errorf("old wording 'registration PR' must not appear: %s", w.Body.String())
+			}
+		})
 	}
 }
 
@@ -352,19 +380,18 @@ func TestHandleDeleteOrphanCluster_NotFoundInArgoCD(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteOrphanCluster_ArgocdDeleteErrorPropagates(t *testing.T) {
-	// The cluster IS an orphan — but the ArgoCD DELETE itself errors.
-	// The handler must surface a 5xx (upstream-error path), not silently
+func TestHandleDeleteOrphanCluster_SecretDeleteErrorPropagates(t *testing.T) {
+	// The cluster IS an orphan — but the Secret delete itself errors. The
+	// handler must surface a 5xx (upstream-error path), not silently
 	// pretend success.
-	//
-	// V125-1-8.2 — the test reaches the DELETE step only when the new
-	// ownership-label gate accepts the Secret, so seed it with the
-	// sharko label.
 	argo := newStubArgoSrv(t, []map[string]interface{}{
 		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
-	}, http.StatusInternalServerError)
+	}, http.StatusOK)
 	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
-	k8s := orphanK8sClient(orphanK8sSecret("kind-orphan", true))
+	k8s := orphanK8sClient(orphanK8sSecret("kind-orphan", true)).(*fake.Clientset)
+	k8s.PrependReactor("delete", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("etcd unavailable")
+	})
 	_, router := orphanTestServer(t, gp, argo.URL, k8s)
 
 	w := httptest.NewRecorder()
@@ -373,8 +400,76 @@ func TestHandleDeleteOrphanCluster_ArgocdDeleteErrorPropagates(t *testing.T) {
 	if w.Code < 500 || w.Code > 599 {
 		t.Fatalf("expected 5xx upstream error, got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Errorf("expected 1 ArgoCD DELETE call (which errored), got %d", got)
+}
+
+// R8: a Secret that changed between the checks and the delete is not
+// deleted. The answer is a 409 in plain words.
+func TestHandleDeleteOrphan_SecretChangedInBetween_Refuses409(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	sec := orphanK8sSecret("kind-orphan", true)
+	sec.UID = "uid-checked"
+	sec.ResourceVersion = "5"
+	k8s := orphanK8sClient(sec).(*fake.Clientset)
+	var gotPre *metav1.Preconditions
+	k8s.PrependReactor("delete", "secrets", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		gotPre = a.(k8stesting.DeleteAction).GetDeleteOptions().Preconditions
+		return true, nil, apierrors.NewConflict(corev1.Resource("secrets"), "kind-orphan", errors.New("the object has been modified"))
+	})
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
+	}
+	want := `Sharko did not delete the ArgoCD connection for cluster "kind-orphan": it changed while Sharko was checking it. Nothing was deleted. Look at it again, then try again.`
+	if got, _ := decodeMap(t, w)["error"].(string); got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+	if gotPre == nil || gotPre.UID == nil || *gotPre.UID != "uid-checked" || gotPre.ResourceVersion == nil || *gotPre.ResourceVersion != "5" {
+		t.Fatalf("the delete did not carry the checked Secret's UID and version: %+v", gotPre)
+	}
+}
+
+// R1: a connection with a waiting mark is never discarded, even when it
+// also carries an old registration-pending mark.
+func TestHandleDeleteOrphan_WaitingMark_Refuses409(t *testing.T) {
+	for _, mark := range argosecrets.PendingPRMarks {
+		t.Run(mark, func(t *testing.T) {
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+			}, http.StatusOK)
+			sec := orphanK8sSecret("kind-orphan", true)
+			sec.Annotations[mark] = "4"
+			k8s := orphanK8sClient(sec)
+			_, router := orphanTestServer(t, &orphanFakeGP{managedYAML: []byte("clusters: []")}, argo.URL, k8s)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+			if w.Code != http.StatusConflict {
+				t.Fatalf("got %d, want 409 (body=%s)", w.Code, w.Body.String())
+			}
+			want := `Sharko will not delete the ArgoCD connection for cluster "kind-orphan": a pull request still has to finish with it. It stays as it is.`
+			if got, _ := decodeMap(t, w)["error"].(string); got != want {
+				t.Fatalf("error = %q, want %q", got, want)
+			}
+			if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "kind-orphan", metav1.GetOptions{}); err != nil {
+				t.Fatalf("the marked Secret was deleted: %v", err)
+			}
+			// The leftovers list leaves it out too.
+			if names := listSharkoOwnedSecretNames(context.Background(), k8s, "argocd"); len(names) != 0 {
+				t.Fatalf("the leftovers list offers a marked connection: %v", names)
+			}
+		})
+	}
+}
+
+func assertSecretGone(t *testing.T, k8s kubernetes.Interface, name string) {
+	t.Helper()
+	if _, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("Secret %q is still there: %v", name, err)
 	}
 }
 
@@ -551,15 +646,10 @@ func TestHandleDeleteOrphan_LabeledSecret_DeletesAsBeforeShipped(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 (labeled Secret deletes as before), got %d (body=%s)", w.Code, w.Body.String())
 	}
-	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
-		t.Errorf("expected 1 ArgoCD DELETE call (gate passed), got %d", got)
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Errorf("deleted through ArgoCD by server address (%d calls)", got)
 	}
-	// Verify it was the right URL — defence-in-depth in case a future
-	// refactor accidentally targets the wrong cluster after the gate.
-	last := argo.deleteCallURL.Load().(string)
-	if last == "" || !strings.Contains(last, "kind-owned.local:6443") {
-		t.Errorf("unexpected DELETE path: %q", last)
-	}
+	assertSecretGone(t, k8s, "kind-owned")
 }
 
 func TestHandleDeleteOrphan_NoK8sClient_Returns503(t *testing.T) {
@@ -587,5 +677,83 @@ func TestHandleDeleteOrphan_NoK8sClient_Returns503(t *testing.T) {
 	// Sanity: the op tag identifies the failure mode for log grepping.
 	if !strings.Contains(w.Body.String(), "delete_orphan_cluster_no_k8s_client") {
 		t.Errorf("expected op=delete_orphan_cluster_no_k8s_client in body, got: %s", w.Body.String())
+	}
+}
+
+// EP3-DRYRUN-FIXES call 4: Discard re-checks the leftovers rule on the
+// server. A Sharko-labelled Secret that is or was adopted or taken over, or
+// that has no registration-pending mark (a connection a removal kept), is
+// refused with 409 and plain words, and nothing is deleted.
+func TestHandleDeleteOrphan_NotALeftover_Refuses409(t *testing.T) {
+	cases := []struct {
+		name        string
+		annotations map[string]string
+		want        string
+	}{
+		{"adopted", map[string]string{"sharko.dev/adopted": "true", models.AnnotationRegistrationPending: "x"}, orphanDiscardAdoptedMessage("kind-x")},
+		{"taken over", map[string]string{"sharko.dev/taken-over-at": "2026-10-23T10:00:00Z"}, orphanDiscardAdoptedMessage("kind-x")},
+		{"kept by a removal (no pending mark)", nil, orphanDiscardNotARegistrationMessage("kind-x")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			argo := newStubArgoSrv(t, []map[string]interface{}{
+				{"name": "kind-x", "server": "https://kind-x.local:6443"},
+			}, http.StatusOK)
+			gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+			sec := orphanK8sSecret("kind-x", true)
+			sec.Annotations = tc.annotations
+			_, router := orphanTestServer(t, gp, argo.URL, orphanK8sClient(sec))
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, orphanAdminReq("kind-x"))
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("expected 409, got %d (body=%s)", w.Code, w.Body.String())
+			}
+			if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+				t.Fatalf("expected no ArgoCD DELETE, got %d", got)
+			}
+			var body map[string]interface{}
+			_ = json.Unmarshal(w.Body.Bytes(), &body)
+			if body["error"] != tc.want {
+				t.Fatalf("message:\n got %v\nwant %q", body["error"], tc.want)
+			}
+		})
+	}
+}
+
+func TestOrphanDiscardMessages_ExactText(t *testing.T) {
+	if got, want := orphanDiscardAdoptedMessage("prod"), `Sharko will not delete the ArgoCD connection for cluster "prod": Sharko adopted it or took it over, so it is not a leftover from a registration that never finished. It stays as it is.`; got != want {
+		t.Fatalf("adopted message:\n got %q\nwant %q", got, want)
+	}
+	if got, want := orphanDiscardNotARegistrationMessage("prod"), `Sharko will not delete the ArgoCD connection for cluster "prod": it is not a leftover from a registration that never finished, so Sharko cannot be sure nobody needs it. It stays as it is. If you no longer want ArgoCD connected to this cluster, delete it in ArgoCD yourself.`; got != want {
+		t.Fatalf("not-a-registration message:\n got %q\nwant %q", got, want)
+	}
+}
+
+// EP3 dry run round S (S19): Discard never sends a delete with no checks.
+// A Secret with no UID and no version is refused and stays.
+func TestHandleDeleteOrphan_NoUIDNoVersion_NotDeleted_RoundS(t *testing.T) {
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	sec := orphanK8sSecret("kind-orphan", true)
+	sec.UID, sec.ResourceVersion = "", ""
+	k8s := orphanK8sClient(sec).(*fake.Clientset)
+	deletes := 0
+	k8s.PrependReactor("delete", "secrets", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		deletes++
+		return false, nil, nil
+	})
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+	if w.Code >= 200 && w.Code < 300 {
+		t.Fatalf("got %d, want a refusal (body=%s)", w.Code, w.Body.String())
+	}
+	if deletes != 0 {
+		t.Fatalf("%d delete(s) sent with nothing to check them against", deletes)
 	}
 }

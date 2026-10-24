@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -18,6 +19,7 @@ import (
 // @Description Adopts one or more existing ArgoCD clusters under Sharko management.
 // @Description Phase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.
 // @Description On a v4 repo, phase 1 is replaced per cluster by the same takeover preflight the brownfield-takeover door runs: a cluster the preflight blocks fails with the preflight's summary as its error (the batch continues with the rest); a cluster it only warns about proceeds, and the warnings are listed on that cluster's result. The write is the same two v4 files a takeover writes (managed-clusters.yaml plus an empty cluster-addons/{name}.yaml), followed by the ArgoCD connection ownership swap and the adopted annotation once the pull request merges — no separate confirmation step beyond dry_run.
+// @Description Every cluster result lists `blockers` (each reason it cannot be adopted yet, as {id, message}) and `warnings` (each thing to read first, as {id, message, title, what_it_means, what_to_do, application_sets, applications}). A real adopt (not dry_run) goes ahead only when the id of every warning on every cluster in the request is in `acknowledged_findings`; otherwise it answers 409 with code `unacknowledged_findings`, the missing ids, and the warnings per cluster, and writes nothing. One id covers that warning on every cluster in the request.
 // @Description CLIENTS MUST INSPECT THE RESPONSE BODY. HTTP 200 does NOT mean every cluster was adopted: an adoption in which every single cluster failed also answers 200, and so does one in which every cluster stopped part-way. Read `outcome` — `completed`, `partly_completed` and `failed` — and treat anything other than `completed == total` as work that did not finish. A `partly_completed` cluster was NOT rolled back, so real changes may already be in Git and on the cluster.
 // @Tags clusters
 // @Accept json
@@ -30,7 +32,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 409 {object} map[string]interface{} "The repo carries both the old and the new layout (code repo_layout)"
+// @Failure 409 {object} adoptNeedsAcknowledgementResponse "A warning was not acknowledged (code unacknowledged_findings, nothing was written), or the repo carries both the old and the new layout (code repo_layout)"
 // @Router /clusters/adopt [post]
 func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.adopt") {
@@ -52,7 +54,9 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ac, err := s.connSvc.GetActiveArgocdClient()
+	// The orchestrator form of the client: the same client in production,
+	// and the one tests can swap for a fake.
+	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
 	if err != nil {
 		writeNoActiveArgocdConnection(w, r)
 		return
@@ -85,6 +89,19 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	orch.SetApplicationSetManager(s.appSetManager)
 
 	result, err := orch.AdoptClusters(r.Context(), req)
+	var needsAck *orchestrator.AdoptNeedsAcknowledgementError
+	if errors.As(err, &needsAck) {
+		// Nothing was written. Same answer take over gives for a warning
+		// that was not acknowledged: 409, with the warnings to read.
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    lifecycleevents.ClusterAdopted,
+			Resource: adoptAuditResource(&orchestrator.AdoptClustersResult{Results: needsAck.Results}),
+			Result:   "failure",
+			Changes:  audit.ChangesNone,
+		})
+		writeJSON(w, http.StatusConflict, adoptNeedsAcknowledgementBody(needsAck))
+		return
+	}
 	if err != nil {
 		// A v4 repo is now a supported adopt door (v4-coherence-closure lane
 		// D) — this stays only as a defensive mapping, matching the coded
@@ -95,6 +112,20 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// An open take over pull request stopped every cluster: answer 409
+	// other_pr_open, the same answer take over gives for an open adopt
+	// pull request (EP3 dry run round S, S5).
+	if other := adoptOtherPROpen(result); other != nil {
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    lifecycleevents.ClusterAdopted,
+			Resource: "cluster:" + other.Cluster,
+			Result:   "failure",
+			Changes:  audit.ChangesNone,
+		})
+		writeOtherPROpen(w, other)
 		return
 	}
 
@@ -117,6 +148,20 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, adoptHTTPStatus(result), result)
+}
+
+// adoptOtherPROpen returns the open pull request of the other kind when it
+// is what stopped every cluster in the request, else nil.
+func adoptOtherPROpen(result *orchestrator.AdoptClustersResult) *orchestrator.OtherJoinPRError {
+	if result == nil || len(result.Results) == 0 {
+		return nil
+	}
+	for _, cr := range result.Results {
+		if cr.OtherPR == nil {
+			return nil
+		}
+	}
+	return result.Results[0].OtherPR
 }
 
 // adoptAuditOutcome says what the adoption really did, for the audit trail.
@@ -322,4 +367,39 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// adoptNeedsAcknowledgementResponse is the 409 body when a real adopt found
+// a warning that was not acknowledged. Nothing was written.
+type adoptNeedsAcknowledgementResponse struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+	// UnacknowledgedFindings is every warning id that still needs to be
+	// acknowledged, sorted.
+	UnacknowledgedFindings []string `json:"unacknowledged_findings"`
+	// Warnings is every warning across the clusters, each id once.
+	Warnings []orchestrator.AdoptWarning `json:"warnings"`
+	// Results lists, for each cluster with a warning, its warnings.
+	Results []orchestrator.AdoptClusterResult `json:"results"`
+}
+
+func adoptNeedsAcknowledgementBody(e *orchestrator.AdoptNeedsAcknowledgementError) adoptNeedsAcknowledgementResponse {
+	seen := map[string]struct{}{}
+	warnings := []orchestrator.AdoptWarning{}
+	for _, r := range e.Results {
+		for _, w := range r.Warnings {
+			if _, ok := seen[w.ID]; ok {
+				continue
+			}
+			seen[w.ID] = struct{}{}
+			warnings = append(warnings, w)
+		}
+	}
+	return adoptNeedsAcknowledgementResponse{
+		Error:                  e.Error(),
+		Code:                   orchestrator.CodeUnacknowledgedFindings,
+		UnacknowledgedFindings: e.Missing,
+		Warnings:               warnings,
+		Results:                e.Results,
+	}
 }

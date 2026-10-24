@@ -44,7 +44,46 @@ export interface ClusterStatusPart {
   severity: StatusSeverity;
   /** One-sentence plain-English meaning. */
   meaning: string;
+  /**
+   * True for a line that only says "nothing to show yet". It is listed in the
+   * popover but never changes the colour or the word on the pill.
+   */
+  informational?: boolean;
+  /** Dot and pill colour for a state that has its own (else the severity's). */
+  dot?: string;
+  pill?: string;
 }
+
+/** The last "Test connection" result from this page, when there is one. */
+export interface ClusterLatestTest {
+  success: boolean;
+  /** Steps that passed, out of `total`, when the test reported steps. */
+  passed?: number;
+  total?: number;
+  /** Name of the step that failed, when it reported one. */
+  failedStep?: string;
+  /**
+   * True when Sharko could not read the cluster's sign-in details, so
+   * nothing was tested. Shown as "Not verified", the same as the Adopt
+   * dialog, never as "Test failing".
+   */
+  notVerified?: boolean;
+  /**
+   * The SERVER's time for this same test (RFC3339), once the server list
+   * shows it. Compared only with `lastTestAt`, which is also the server's
+   * clock; the browser clock is never used.
+   */
+  at?: string;
+}
+
+// Words in the popover, pinned by exact text in ClusterStatusSummary.test.tsx.
+export const DEPLOY_CHECK_NOT_NEEDED_MEANING =
+  'ArgoCD already confirms it can reach this cluster, so no deploy check was needed.';
+export const DEPLOY_CHECK_NOT_KNOWN_MEANING =
+  'Sharko got a deploy check result it does not know how to show.';
+export const DEPLOY_CHECK_NOT_RUN_MEANING = 'No deploy check has run for this cluster.';
+export const SHARKO_NOT_VERIFIED_MEANING =
+  "Sharko could not read this cluster's sign-in details, so it could not test the connection.";
 
 export interface ClusterStatusSummaryProps {
   /** ArgoCD's own connection state for the cluster (connection_status). */
@@ -67,6 +106,11 @@ export interface ClusterStatusSummaryProps {
    * resolve (v4 walk-findings W2, item 2). Omit when unknown.
    */
   enabledAddonCount?: number;
+  /**
+   * The result of the Test connection run the user just did on this page.
+   * Newer than sharkoStatus, so it wins when both are there.
+   */
+  latestTest?: ClusterLatestTest;
 }
 
 // Severity → pill + dot styling. ONE color per severity (finding D3):
@@ -127,10 +171,13 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
     label: conn.label,
     severity: conn.severity,
     meaning: conn.meaning,
+    dot: conn.pillDot,
+    pill: conn.pill,
   });
 
-  // 2. Deploy-path check (a test workload deployed through ArgoCD).
-  // Only surface when pending or failed — not the standing success/"Verified" row.
+  // 2. Deploy-path check (a test workload deployed through ArgoCD). Always
+  // listed, so the popover has the same three lines on every cluster; a
+  // check that has not run says so instead of vanishing.
   const cs = props.connectivityStatus ?? '';
   if (cs === 'check_pending') {
     parts.push({
@@ -150,11 +197,90 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
         props.connectivityDetail ||
         'The test workload could not be deployed to this cluster.',
     });
+  } else if (cs === 'verified_check') {
+    parts.push({
+      who: 'Deploy check',
+      label: 'Passed',
+      severity: 'good',
+      meaning: 'A small test app was deployed to this cluster and it worked.',
+    });
+  } else if (cs === 'verified_argocd') {
+    // ArgoCD itself says the connection works, so the server ran no
+    // deploy check. That is not "no check has run": nothing is missing.
+    parts.push({
+      who: 'Deploy check',
+      label: 'Not needed',
+      severity: 'unknown',
+      meaning: DEPLOY_CHECK_NOT_NEEDED_MEANING,
+      informational: true,
+    });
+  } else if (cs === '') {
+    parts.push({
+      who: 'Deploy check',
+      label: 'Not run',
+      severity: 'unknown',
+      meaning: DEPLOY_CHECK_NOT_RUN_MEANING,
+      informational: true,
+    });
+  } else {
+    // A value this page does not know (a newer server). Do not claim no
+    // check ran.
+    parts.push({
+      who: 'Deploy check',
+      label: 'Not known',
+      severity: 'unknown',
+      meaning: DEPLOY_CHECK_NOT_KNOWN_MEANING,
+      informational: true,
+    });
   }
 
-  // 3. Sharko's own direct connection test.
-  if (props.sharkoStatus) {
-    const when = props.lastTestAt ? ` Tested ${relativeTime(props.lastTestAt)}.` : '';
+  // 3. Sharko's own direct connection test. The run the user just did on this
+  // page beats what the server remembers, because it is newer.
+  const when = props.lastTestAt ? ` Tested ${relativeTime(props.lastTestAt)}.` : '';
+  // The run on this page wins, unless the server remembers a test that
+  // finished after it (another tab, the CLI, a background check). Both times
+  // are the server's clock.
+  const serverIsNewer =
+    !!props.latestTest?.at &&
+    !!props.lastTestAt &&
+    !!props.sharkoStatus &&
+    new Date(props.lastTestAt).getTime() > new Date(props.latestTest.at).getTime();
+  const useLatest = props.latestTest && !serverIsNewer;
+  if (useLatest && props.latestTest?.notVerified) {
+    parts.push({
+      who: SHARKO_CONN_LABEL,
+      whoTooltip: SHARKO_CONN_TOOLTIP,
+      label: 'Not verified',
+      severity: 'unknown',
+      meaning: SHARKO_NOT_VERIFIED_MEANING,
+      informational: true,
+    });
+  } else if (useLatest && props.latestTest) {
+    const t = props.latestTest;
+    const counts =
+      typeof t.passed === 'number' && typeof t.total === 'number' && t.total > 0
+        ? ` ${t.passed} of ${t.total} checks passed.`
+        : '';
+    if (t.success) {
+      parts.push({
+        who: SHARKO_CONN_LABEL,
+        whoTooltip: SHARKO_CONN_TOOLTIP,
+        label: 'Reachable',
+        severity: 'good',
+        meaning: `Sharko can reach this cluster directly.${counts}`,
+      });
+    } else {
+      parts.push({
+        who: SHARKO_CONN_LABEL,
+        whoTooltip: SHARKO_CONN_TOOLTIP,
+        label: 'Test failing',
+        severity: 'attention',
+        meaning: `Sharko's last direct connection test failed${
+          t.failedStep ? ` at: ${t.failedStep}` : ''
+        }.${counts}`,
+      });
+    }
+  } else if (props.sharkoStatus) {
     if (props.testFailing) {
       parts.push({
         who: SHARKO_CONN_LABEL,
@@ -174,6 +300,15 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
         meaning: `Sharko can reach this cluster directly.${when}`,
       });
     }
+  } else {
+    parts.push({
+      who: SHARKO_CONN_LABEL,
+      whoTooltip: SHARKO_CONN_TOOLTIP,
+      label: 'Not run',
+      severity: 'unknown',
+      meaning: 'Sharko has not tested this cluster yet. Use Test connection to run it.',
+      informational: true,
+    });
   }
 
   return parts;
@@ -185,14 +320,21 @@ export function clusterStatusParts(props: ClusterStatusSummaryProps): ClusterSta
  * tests.
  */
 export function compositeClusterStatus(parts: ClusterStatusPart[]): ClusterStatusPart {
-  const worst = worstSeverity(parts.map((p) => p.severity));
-  return parts.find((p) => p.severity === worst) ?? parts[0];
+  // A "not run yet" line is listed but never speaks for the cluster.
+  const counted = parts.filter((p) => !p.informational);
+  const worst = worstSeverity(counted.map((p) => p.severity));
+  return counted.find((p) => p.severity === worst) ?? counted[0] ?? parts[0];
+}
+
+function styleOf(part: ClusterStatusPart): { dot: string; pill: string } {
+  const base = SEVERITY_STYLES[part.severity];
+  return { dot: part.dot ?? base.dot, pill: part.pill ?? base.pill };
 }
 
 export function ClusterStatusSummary(props: ClusterStatusSummaryProps) {
   const parts = clusterStatusParts(props);
   const composite = compositeClusterStatus(parts);
-  const style = SEVERITY_STYLES[composite.severity];
+  const style = styleOf(composite);
   const selfManaged = props.connectionManagedBy === 'user';
 
   return (
@@ -216,7 +358,7 @@ export function ClusterStatusSummary(props: ClusterStatusSummaryProps) {
         onClick={(e) => e.stopPropagation()}
       >
         {parts.map((part) => {
-          const partStyle = SEVERITY_STYLES[part.severity];
+          const partStyle = styleOf(part);
           return (
             <div key={`${part.who}-${part.label}`}>
               <p

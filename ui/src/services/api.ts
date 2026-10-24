@@ -3,6 +3,8 @@ import type {
   AddonDetailResponse,
   AddonValuesSecretActionResult,
   AdoptClustersResponse,
+  AvailableCluster,
+  AvailableClustersResponse,
   AIConfigResponse,
   APIToken,
   AuditEntry,
@@ -425,53 +427,9 @@ const KNOWN_TEST_ERROR_CODES: ReadonlySet<TestClusterErrorCode> = new Set<TestCl
   'argocd_provider_unsupported_auth',
 ])
 
-/**
- * The verification stage the server names when the CREDENTIAL LOOKUP itself
- * failed, before any cluster was contacted.
- *
- * The wire value is written in exactly one place server-side —
- * `Stage: "credentials"` in internal/api/clusters_discover.go's handleTestCluster
- * — on the one branch it takes when fetching this cluster's sign-in details
- * did not work. Whatever the reason, that branch means: nothing was asked of
- * the cluster.
- *
- * It is pinned as a written-out literal on both sides. Go's half is
- * TestTestCluster_CredentialFailureStageIsPinned in internal/api; this
- * constant and its test are the browser's half, in the same shape as the
- * banned-wording pair that already spans the two languages.
- */
-export const VERIFY_STAGE_CREDENTIALS = 'credentials'
-
-/**
- * True when a cluster test failed because Sharko could not read the cluster's
- * sign-in details — not because anything was wrong with the cluster.
- *
- * WHY THIS IS A TYPED CHECK AND NOT A SEARCH THROUGH THE MESSAGE. The adopt
- * dialog used to answer this question by lower-casing the server's
- * `error_message` and looking in it for "secret", "not found", "credential",
- * "unavailable" and "no credentials available". Two things were wrong with
- * that, and the second one is live:
- *
- *   1. It is the browser deciding what to render by reading a human sentence
- *      the server wrote, which the product owner ruled out: presentation
- *      structure follows typed facts.
- *   2. Since the credentials hotfix, a credentials-backend failure carries
- *      ONE fixed sentence — the backend's own words never leave the server —
- *      and that sentence contains none of the five phrases. So the search
- *      answered "no" for every credentials failure there is, and the
- *      credentials-optional contract it was implementing had quietly stopped
- *      working: a cluster whose credentials simply are not configured was
- *      being shown as a failed verification and deselected, when the server
- *      would have adopted it happily.
- *
- * The server's own adopt path (internal/orchestrator/adopt.go) treats ANY
- * credential-lookup failure the same way — "a failed credential lookup is the
- * NORMAL case, not a fatal one — skip verification instead of failing the
- * adoption" — with no sub-classification by reason. This matches it exactly.
- */
-export function isCredentialLookupFailure(v: VerifyResult): boolean {
-  return v.success === false && v.stage === VERIFY_STAGE_CREDENTIALS
-}
+// The credentials-stage check lives in lib/verifyStage (pure, no network),
+// so pages can use it while tests mock this module.
+export { VERIFY_STAGE_CREDENTIALS, isCredentialLookupFailure } from '@/lib/verifyStage'
 
 export function isTestClusterUnavailable(
   v: unknown,
@@ -1024,7 +982,14 @@ export async function deregisterCluster(name: string, autoMerge?: boolean, dryRu
   return res.json() as Promise<RemoveClusterResult>
 }
 
-export async function adoptClusters(data: { clusters: string[]; auto_merge?: boolean; dry_run?: boolean }) {
+export async function adoptClusters(data: {
+  clusters: string[]
+  auto_merge?: boolean
+  dry_run?: boolean
+  // The ids of every warning the user ticked. The server answers 409 when a
+  // warning appears that is not in this list.
+  acknowledged_findings?: string[]
+}) {
   // AdoptClustersRequest on the backend does NOT have a `Yes` field —
   // `cluster.adopt` is gated on RBAC + per-cluster Stage1 verification,
   // not on a confirmation flag. Do NOT send `yes: true` here even though
@@ -1296,6 +1261,17 @@ export async function batchRegisterClusters(clusters: Array<{ name: string; addo
 
 export async function discoverClusters() {
   return fetchJSON<unknown>('/clusters/available')
+}
+
+/**
+ * Clusters ArgoCD already knows that Sharko does not manage yet
+ * (GET /clusters/available). An answer in an older shape gives an empty
+ * list. A failed call throws: "the server could not answer" is not the same
+ * as "ArgoCD knows no other clusters", and the caller says which one it is.
+ */
+export async function getAvailableClusters(): Promise<AvailableCluster[]> {
+  const res = await fetchJSON<AvailableClustersResponse | null>('/clusters/available')
+  return Array.isArray(res?.clusters) ? res.clusters : []
 }
 
 export interface OperationStep {
@@ -1654,6 +1630,7 @@ export const api = {
   health: () => fetchJSON<HealthResponse>('/health'),
 
   // Clusters
+  getAvailableClusters: () => getAvailableClusters(),
   getClusters: () => fetchJSON<ClustersResponse>(`/clusters?per_page=${CLUSTERS_PAGE_SIZE}`),
   // getClustersPage — page-aware variant that also surfaces the total
   // count (X-Total-Count), for continuing past the first page when an
@@ -1703,6 +1680,8 @@ export const api = {
   // connection.
   testCredentials: (data: unknown) => postJSON<{ git: { status: string; message?: string; auth?: string }; argocd: { status: string; message?: string; auth?: string } }>('/connections/test-credentials', data),
   discoverArgocd: (namespace?: string) => fetchJSON<{ server_url: string; has_env_token: boolean; namespace: string }>(`/connections/discover-argocd${namespace ? `?namespace=${namespace}` : ''}`),
+
+  gitDefaults: () => fetchJSON<{ provider: string; repo_url: string }>('/connections/git-defaults'),
 
   // Observability
   getObservability: () => fetchJSON<ObservabilityOverviewResponse>('/observability/overview'),

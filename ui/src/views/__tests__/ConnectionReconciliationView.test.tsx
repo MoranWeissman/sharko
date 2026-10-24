@@ -56,6 +56,7 @@ const mockGetConnectionReconciliation = vi.fn()
 const mockRepairConnection = vi.fn()
 const mockFetchAuditLog = vi.fn()
 const mockTakeoverPreflight = vi.fn()
+const mockTakeoverCluster = vi.fn()
 
 vi.mock('@/services/api', () => {
   class MockApiError extends Error {
@@ -76,7 +77,7 @@ vi.mock('@/services/api', () => {
     fetchAuditLog: (...args: unknown[]) => mockFetchAuditLog(...args),
     // TakeoverDialog's own imports — inert unless a test opens the dialog.
     takeoverPreflight: (...args: unknown[]) => mockTakeoverPreflight(...args),
-    takeoverCluster: vi.fn(),
+    takeoverCluster: (...args: unknown[]) => mockTakeoverCluster(...args),
     dropLegacyLabels: vi.fn(),
     ApiError: MockApiError,
   }
@@ -1865,6 +1866,58 @@ describe('P7 — a defaulted mode is still not stated on a failed check', () => 
 // R2-5: the two surfaces cannot disagree, and the folded-successes line is
 // total.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// EP3 dry run round R: a take over waits for its pull request. The page
+// used to close the window and reload the moment the call came back, so the
+// user never saw "Pull request opened, waiting for merge". It now reloads
+// only when the user closes the window.
+describe('take over from this page: the waiting answer stays on screen until the user closes it', () => {
+  it('shows the waiting-for-merge answer, and reloads the page only after Close', async () => {
+    mockTakeoverPreflight.mockResolvedValue({
+      cluster: 'spoke-eu',
+      ready: true,
+      needs_acknowledgement: false,
+      summary: 'spoke-eu is ready to take over — every check came back clean.',
+      findings: [],
+    })
+    mockTakeoverCluster.mockResolvedValue({
+      cluster: 'spoke-eu',
+      status: 'success',
+      secret_swapped: false,
+      waiting_for_merge: true,
+      git: { pr_url: 'https://github.com/example/fleet/pull/7', pr_id: 7, merged: false },
+      message:
+        "Pull request #7 is open: https://github.com/example/fleet/pull/7. When it is merged, Sharko takes ownership of spoke-eu's ArgoCD connection. If it is closed without merging, Sharko changes nothing on the connection.",
+    })
+    const onChanged = vi.fn()
+    mockGetConnectionReconciliation.mockResolvedValue(foreignOwnedOrdinary())
+    mockFetchAuditLog.mockResolvedValue({ entries: [] })
+    render(
+      <AuthContext.Provider value={authFor('admin')}>
+        <MemoryRouter>
+          <ConnectionReconciliationView cluster="spoke-eu" onRequestSync={vi.fn()} onChanged={onChanged} />
+        </MemoryRouter>
+      </AuthContext.Provider>,
+    )
+    await waitForView()
+    const loadsBefore = mockGetConnectionReconciliation.mock.calls.length
+
+    fireEvent.click(screen.getByTestId('recon-action-takeover'))
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled())
+    fireEvent.click(screen.getByTestId('takeover-confirm'))
+
+    expect(await screen.findByTestId('takeover-waiting')).toHaveTextContent('Pull request opened, waiting for merge')
+    // Still on screen, and nothing reloaded behind it.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByTestId('takeover-waiting')).toBeTruthy()
+    expect(onChanged).not.toHaveBeenCalled()
+    expect(mockGetConnectionReconciliation.mock.calls.length).toBe(loadsBefore)
+
+    fireEvent.click(screen.getByTestId('takeover-close'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockGetConnectionReconciliation.mock.calls.length).toBeGreaterThan(loadsBefore))
+  })
+})
 
 describe('the synced word is refused at a scope that cannot support it — the same guard the fleet row has', () => {
   it('renders the not-checked headline, not the synced one the server sent', async () => {

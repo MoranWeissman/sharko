@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
@@ -452,7 +453,7 @@ func (s *Server) handleGetConnectionSecretResource(w http.ResponseWriter, r *htt
 	// row this panel opened from.
 	resource := fmt.Sprintf("cluster:%s", cluster)
 
-	sec, err := client.CoreV1().Secrets(ns).Get(r.Context(), cluster, metav1.GetOptions{})
+	sec, err := argosecrets.GetClusterSecret(r.Context(), client, ns, cluster)
 	if err != nil {
 		logReadFailure("get", cluster, ns, cluster)
 		status, msg := readFailureSentence("get", cluster, err)

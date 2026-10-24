@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { TakeoverDialog, DropLegacyLabelsDialog } from '@/components/TakeoverDialog';
+import { TakeoverDialog, DropLegacyLabelsDialog, takeoverPRLinkText } from '@/components/TakeoverDialog';
 import type { TakeoverReport, DropLegacyLabelsResponse } from '@/services/models';
 
 const mockPreflight = vi.fn();
@@ -226,7 +226,8 @@ describe('TakeoverDialog', () => {
     mockPreflight.mockResolvedValue({ ...warningReport, needs_acknowledgement: false });
     mockTakeover.mockResolvedValue({
       cluster: 'prod-eu', status: 'partial', secret_swapped: false,
-      message: 'The pull request adding prod-eu to the fleet was opened, but Sharko could not take ownership of its ArgoCD connection.',
+      // The server's real sentence (internal/api/clusters_takeover.go).
+      message: 'The Git side of taking over prod-eu is done, but Sharko could not take ownership of its ArgoCD connection: the connection could not be updated. Nothing was deleted. Fix the problem and run the takeover again — it is safe to repeat.',
     });
     render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
     await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
@@ -236,6 +237,154 @@ describe('TakeoverDialog', () => {
     expect(box).toHaveAttribute('role', 'alert');
     expect(box.className).not.toMatch(/green/);
     expect(box).toHaveTextContent('could not take ownership');
+  });
+
+  // EP3 dry run round R: take over now opens a pull request and waits for
+  // it. While it is open, nothing on the connection has changed, so the
+  // window must say a pull request is waiting — never "done" or "taken
+  // over". This is the server's real answer shape (clusters_takeover.go,
+  // takeoverWaitingMessage).
+  const waitingResponse = {
+    cluster: 'prod-eu',
+    status: 'success',
+    secret_swapped: false,
+    waiting_for_merge: true,
+    git: { pr_url: 'https://github.com/example/fleet/pull/12', pr_id: 12, branch: 'sharko/takeover-prod-eu', merged: false },
+    message:
+      "Pull request #12 is open: https://github.com/example/fleet/pull/12. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection. If it is closed without merging, Sharko changes nothing on the connection.",
+  };
+
+  it('while the pull request is open, says it is waiting for the merge, with the link, and never says done', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue(waitingResponse);
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    expect(await screen.findByTestId('takeover-waiting')).toHaveTextContent(/^Pull request opened, waiting for merge$/);
+    const box = screen.getByTestId('takeover-result-message');
+    expect(box.className).not.toMatch(/green/);
+    expect(box).toHaveTextContent(waitingResponse.message);
+    const link = screen.getByTestId('takeover-pr-link');
+    expect(link).toHaveAttribute('href', 'https://github.com/example/fleet/pull/12');
+    expect(link).toHaveTextContent(/^View pull request #12$/);
+    const result = screen.getByTestId('takeover-result');
+    expect(result).not.toHaveTextContent(/taken over/i);
+    expect(result).not.toHaveTextContent(/Sharko now owns/i);
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+    expect(screen.getByTestId('takeover-close')).toHaveTextContent(/^Close$/);
+  });
+
+  it('a second take over that finds the pull request already open still says it is waiting', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue({
+      ...waitingResponse,
+      already_waiting: true,
+      message:
+        'Taking over prod-eu is already waiting in pull request #12: https://github.com/example/fleet/pull/12. Sharko did not open a second one. Merge it to finish.',
+    });
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    expect(await screen.findByTestId('takeover-waiting')).toHaveTextContent('Pull request opened, waiting for merge');
+    expect(screen.getByTestId('takeover-result-message').className).not.toMatch(/green/);
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+  });
+
+  // EP3 round S shared contract: when Sharko could not merge the pull
+  // request on its own, the server answers 207 with waiting_for_merge,
+  // merge_error and the pull request at the top level (pr_number, pr_url).
+  const mergeFailedResponse = {
+    cluster: 'prod-eu',
+    status: 'success',
+    secret_swapped: false,
+    waiting_for_merge: true,
+    pr_number: 12,
+    pr_url: 'https://github.com/example/fleet/pull/12',
+    // The real 207 also carries git (clusters_takeover.go sets resp.Git).
+    git: { pr_url: 'https://github.com/example/fleet/pull/12', pr_id: 12, branch: 'sharko/takeover-prod-eu', merged: false },
+    merge_error:
+      'Sharko could not merge the pull request on its own. Nothing on the connection has changed. Merge the pull request yourself to finish the take over, or close it to leave things as they are.',
+    message:
+      "Pull request #12 is open: https://github.com/example/fleet/pull/12. When it is merged, Sharko takes ownership of prod-eu's ArgoCD connection. If it is closed without merging, Sharko changes nothing on the connection.",
+  };
+
+  it('round S: a failed auto-merge shows as waiting, amber, with the merge line and the link', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue(mergeFailedResponse);
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    expect(await screen.findByTestId('takeover-waiting')).toHaveTextContent(/^Pull request opened, waiting for merge$/);
+    const line = screen.getByTestId('takeover-merge-error');
+    expect(line).toHaveTextContent(mergeFailedResponse.merge_error);
+    expect(line.className).toMatch(/amber/);
+    const link = screen.getByTestId('takeover-pr-link');
+    expect(link).toHaveAttribute('href', 'https://github.com/example/fleet/pull/12');
+    expect(link).toHaveTextContent(/^View pull request #12$/);
+    expect(screen.getByTestId('takeover-result-message').className).not.toMatch(/green/);
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
+  });
+
+  it('round S: a waiting answer with no pull request number never says #0', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    // With no number the server leaves out pr_number and git.pr_id both.
+    const { pr_number: _n, git, ...rest } = mergeFailedResponse;
+    void _n;
+    const { pr_id: _id, ...gitNoNumber } = git;
+    void _id;
+    mockTakeover.mockResolvedValue({ ...rest, git: gitNoNumber });
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    const link = await screen.findByTestId('takeover-pr-link');
+    expect(link).toHaveTextContent(/^View pull request$/);
+    expect(screen.getByTestId('takeover-result')).not.toHaveTextContent('#0');
+  });
+
+  it('round S: takeoverPRLinkText leaves the number out when it is not known', () => {
+    expect(takeoverPRLinkText(12)).toBe('View pull request #12');
+    expect(takeoverPRLinkText(0)).toBe('View pull request');
+    expect(takeoverPRLinkText(undefined)).toBe('View pull request');
+  });
+
+  it('round S: an open adopt pull request (409 other_pr_open) shows the sentence and its link', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    const sentence = 'A pull request to adopt prod-eu is already open. Merge or close it first.';
+    const err = Object.assign(new Error(sentence), {
+      status: 409,
+      code: 'other_pr_open',
+      body: { error: sentence, code: 'other_pr_open', pr_number: 7, pr_url: 'https://github.com/example/fleet/pull/7' },
+    });
+    mockTakeover.mockRejectedValue(err);
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    expect(await screen.findByTestId('takeover-error')).toHaveTextContent(sentence);
+    const link = screen.getByTestId('takeover-error-pr-link');
+    expect(link).toHaveAttribute('href', 'https://github.com/example/fleet/pull/7');
+    expect(link).toHaveTextContent(/^View pull request #7$/);
+  });
+
+  it('a finished take over (pull request merged) still shows green and Done', async () => {
+    mockPreflight.mockResolvedValue(okReport);
+    mockTakeover.mockResolvedValue({
+      cluster: 'prod-eu', status: 'success', secret_swapped: true,
+      git: { pr_url: 'https://github.com/example/fleet/pull/12', pr_id: 12, merged: true },
+      message: "Sharko now owns prod-eu's ArgoCD connection. It kept the same name and the same address, and nothing was deleted.",
+    });
+    render(<TakeoverDialog clusterName="prod-eu" open onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByTestId('takeover-confirm')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('takeover-confirm'));
+
+    await screen.findByTestId('takeover-result');
+    expect(screen.queryByTestId('takeover-waiting')).toBeNull();
+    expect(screen.getByTestId('takeover-result-message').className).toMatch(/green/);
+    expect(screen.getByTestId('takeover-close')).toHaveTextContent(/^Done$/);
   });
 
   it('never calls the takeover just by being opened', async () => {

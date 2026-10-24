@@ -43,7 +43,13 @@ import (
 //
 // Adding a route means bumping this by hand. That is the point — the bump is
 // the moment somebody looks at the new endpoint.
-const wantRegisteredRoutes = 178
+//
+// 180 since the episode 3 dry run fixes: story B added
+// GET /api/v1/providers/clusters (role-gated on cluster.discover) and story
+// F added GET /api/v1/connections/git-defaults (open to any signed-in user,
+// listed in readEndpointsWithoutRoleGate). Each story bumped 178 to 179 on
+// its own branch; together they make 180.
+const wantRegisteredRoutes = 180
 
 // wantMutatingHandlers is the EXACT number of distinct handler functions
 // registered under POST/PUT/PATCH/DELETE. Same rule: exact, and a change here

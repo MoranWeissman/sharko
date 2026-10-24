@@ -228,7 +228,9 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, clusterName strin
 }
 
 // deleteAllAddonSecrets deletes all known addon secrets from a remote cluster (used during deregister).
-// Best-effort: continues on individual delete failures, logs errors but doesn't abort.
+// It goes on after a failed delete, and returns every failure (a secret
+// Sharko did not create is left alone and is not a failure), so the
+// removal finish can try again (EP3 dry run round S, S1).
 //
 // Same ownership gate as deleteAddonSecrets above — a secret Sharko did not
 // create survives a deregister untouched.
@@ -244,6 +246,7 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, clusterName st
 	}
 
 	var deleted []string
+	var failures []error
 	for _, def := range o.secretDefs {
 		// Delete by specific secret name, not namespace sweep, to avoid cross-addon deletion.
 		removed, delErr := remoteclient.DeleteSecretIfManaged(ctx, client, def.Namespace, def.SecretName)
@@ -255,6 +258,7 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, clusterName st
 			} else {
 				log.Warn("failed to delete secret",
 					"cluster", clusterName, "addon", def.AddonName, "secret", def.SecretName, "error", delErr)
+				failures = append(failures, fmt.Errorf("deleting secret %s/%s: %w", def.Namespace, def.SecretName, delErr))
 			}
 			continue
 		}
@@ -264,5 +268,5 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, clusterName st
 		}
 		deleted = append(deleted, def.SecretName)
 	}
-	return deleted, nil
+	return deleted, errors.Join(failures...)
 }

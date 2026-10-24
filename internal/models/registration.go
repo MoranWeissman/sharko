@@ -1,6 +1,12 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Registration-window contract shared by the kubeconfig-registration
 // direct-write (internal/orchestrator/cluster.go) and the cluster-Secret
@@ -118,4 +124,191 @@ func RegistrationPendingValue(annotations map[string]string) (value string, ok b
 		return v, true
 	}
 	return "", false
+}
+
+// PendingPRMark is what a waiting mark on a cluster's ArgoCD connection
+// holds (sharko.dev/adopt-pending-pr, sharko.dev/takeover-pending-pr,
+// sharko.dev/remove-keep-pending-pr). It names the pull request that still
+// has to finish with the connection, the repository that pull request is
+// in, and the choices the finish needs, so the finish can run from the
+// mark alone when the PR tracker no longer has the pull request (EP3 dry
+// run round S, S8 and S11).
+//
+// Older marks hold only the pull request number ("12"), or "pending" for
+// the moment before the number is known. ParsePendingPRMark still reads
+// both.
+type PendingPRMark struct {
+	// PR is the pull request number. 0 means it is not known yet.
+	PR int `json:"pr,omitempty"`
+	// Repo is the repository the pull request is in, as RepoKeyFromPRURL
+	// gives it ("owner/repo", or "org/project/repo" on Azure DevOps).
+	// Empty on older marks.
+	Repo string `json:"repo,omitempty"`
+	// Op says what finishes the mark when it is a keep mark: "remove" or
+	// "unadopt". Empty means "remove".
+	Op string `json:"op,omitempty"`
+	// KeepOldLabels is the take over choice to keep the previous owner's
+	// labels. Only a take over mark has it.
+	KeepOldLabels *bool `json:"keep_old_labels,omitempty"`
+	// At is when the mark was written, RFC3339 in UTC. Empty on older
+	// marks.
+	At string `json:"at,omitempty"`
+}
+
+// Keep mark kinds carried by PendingPRMark.Op.
+const (
+	PendingMarkOpRemove  = "remove"
+	PendingMarkOpUnadopt = "unadopt"
+)
+
+// pendingPRMarkLegacyPending is the value older keep marks hold before the
+// pull request number is known.
+const pendingPRMarkLegacyPending = "pending"
+
+// String renders the mark as the annotation value.
+func (m PendingPRMark) String() string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		// Cannot happen for this struct; fall back to the number alone.
+		return strconv.Itoa(m.PR)
+	}
+	return string(b)
+}
+
+// WrittenAt is when the mark was written, and false when it does not say.
+func (m PendingPRMark) WrittenAt() (time.Time, bool) {
+	if m.At == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, m.At)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// ParsePendingPRMark reads a waiting mark's value: the current form, a
+// plain pull request number, or "pending". ok is false for an empty or
+// unreadable value.
+func ParsePendingPRMark(value string) (PendingPRMark, bool) {
+	v := strings.TrimSpace(value)
+	switch {
+	case v == "":
+		return PendingPRMark{}, false
+	case v == pendingPRMarkLegacyPending:
+		return PendingPRMark{}, true
+	case strings.HasPrefix(v, "{"):
+		var m PendingPRMark
+		if err := json.Unmarshal([]byte(v), &m); err != nil || m.PR < 0 {
+			return PendingPRMark{}, false
+		}
+		return m, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return PendingPRMark{}, false
+	}
+	return PendingPRMark{PR: n}, true
+}
+
+// PendingPRMarkNames says whether a mark value names pull request prID.
+func PendingPRMarkNames(value string, prID int) bool {
+	m, ok := ParsePendingPRMark(value)
+	return ok && prID > 0 && m.PR == prID
+}
+
+// RepoKeyFromPRURL gives the repository part of a pull request address:
+// "owner/repo" for GitHub and Gitea (https://host/owner/repo/pull/12,
+// .../pulls/12), "org/project/repo" for Azure DevOps
+// (https://dev.azure.com/org/project/_git/repo/pullrequest/12). Lower
+// case. "" when the address does not look like a pull request address.
+func RepoKeyFromPRURL(prURL string) string {
+	u, err := url.Parse(strings.TrimSpace(prURL))
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	idx := -1
+	for i := len(parts) - 1; i >= 0; i-- {
+		switch strings.ToLower(parts[i]) {
+		case "pull", "pulls", "pullrequest":
+			idx = i
+		}
+		if idx >= 0 {
+			break
+		}
+	}
+	if idx < 0 {
+		return ""
+	}
+	before := parts[:idx]
+	if n := len(before); n >= 4 && before[n-2] == "_git" {
+		return strings.ToLower(before[n-4] + "/" + before[n-3] + "/" + before[n-1])
+	}
+	if n := len(before); n >= 2 {
+		return strings.ToLower(before[n-2] + "/" + strings.TrimSuffix(before[n-1], ".git"))
+	}
+	return ""
+}
+
+// RepoKey is the same repository key RepoKeyFromPRURL gives, built from a
+// Git connection. "" when the connection does not say enough.
+func (g GitRepoConfig) RepoKey() string {
+	c := g
+	_ = c.ParseRepoURL()
+	if c.Provider == GitProviderAzureDevOps {
+		if c.Organization == "" || c.Project == "" || c.Repository == "" {
+			return ""
+		}
+		return strings.ToLower(c.Organization + "/" + c.Project + "/" + c.Repository)
+	}
+	if c.Owner == "" || c.Repo == "" {
+		return ""
+	}
+	return strings.ToLower(c.Owner + "/" + strings.TrimSuffix(c.Repo, ".git"))
+}
+
+// RepoKeysMatch says whether two repository keys name the same
+// repository. One may carry an extra leading path part (a Git server under
+// a sub-path), so a key that ends with "/" plus the other also matches.
+// An empty key never matches.
+func RepoKeysMatch(a, b string) bool {
+	a, b = strings.ToLower(strings.Trim(a, "/")), strings.ToLower(strings.Trim(b, "/"))
+	if a == "" || b == "" {
+		return false
+	}
+	return a == b || strings.HasSuffix(a, "/"+b) || strings.HasSuffix(b, "/"+a)
+}
+
+// PendingPRMarkMatches says whether the mark value cur is the mark want
+// stands for. want is a mark value, a plain pull request number, or
+// "pending". Two marks match when they name the same pull request (and,
+// when both name a repository, the same repository), or when both are
+// marks with no pull request number yet.
+func PendingPRMarkMatches(cur, want string) bool {
+	if cur == want {
+		return true
+	}
+	c, okC := ParsePendingPRMark(cur)
+	w, okW := ParsePendingPRMark(want)
+	if !okC || !okW || c.PR != w.PR {
+		return false
+	}
+	if c.Repo != "" && w.Repo != "" && !RepoKeysMatch(c.Repo, w.Repo) {
+		return false
+	}
+	return true
+}
+
+// ConnectionHold is what the PR tracker tells the orphan sweep about one
+// cluster's ArgoCD connection.
+type ConnectionHold struct {
+	// ReleasePR is the merged removal (or un-adopt) that keeps the
+	// connection and has not finished yet. The sweep hands the connection
+	// back for that pull request instead of deleting it. 0 means none.
+	ReleasePR int
+	// Hold says a removal has not finished with the connection yet (it is
+	// still open, or merged and its finish has not run). The sweep leaves
+	// the Secret alone; the finish deals with it.
+	Hold bool
 }

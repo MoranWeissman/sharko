@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   GitBranch,
@@ -73,8 +73,16 @@ function wizardProviderType(raw: string | undefined | null): ProviderType {
   return canonicalizeProviderType(raw)
 }
 
+// The Git provider the user picked for the address. '' means "work it out from
+// the address" (github.com, GitHub Enterprise, Azure DevOps).
+type GitProviderChoice = '' | 'github' | 'gitea'
+
+export const GIT_PROVIDER_HELP =
+  'GitHub, GitHub Enterprise and Azure DevOps are picked from the address. For Gitea or a server you run yourself, choose the provider here.'
+
 interface WizardForm {
   git_url: string
+  git_provider: GitProviderChoice
   git_token: string
   argocd_server_url: string
   argocd_token: string
@@ -87,6 +95,7 @@ interface WizardForm {
 
 const emptyForm: WizardForm = {
   git_url: '',
+  git_provider: '',
   git_token: '',
   argocd_server_url: '',
   argocd_token: '',
@@ -101,7 +110,7 @@ type TestState = 'idle' | 'testing' | 'ok' | 'error'
 
 // The form fields each connection test depends on. Changing one of these
 // clears that test's result; changing anything else leaves it alone.
-const GIT_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = ['git_url', 'git_token']
+const GIT_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = ['git_url', 'git_provider', 'git_token']
 const ARGOCD_TEST_FIELDS: ReadonlyArray<keyof WizardForm> = [
   'argocd_server_url',
   'argocd_token',
@@ -235,9 +244,21 @@ function StepGit({
             onChange={(e) => onChange({ git_url: e.target.value })}
             placeholder="https://github.com/your-org/your-repo"
           />
-          <p className="mt-1 text-sm text-[#3a6a8a]">
-            GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)
-          </p>
+        </div>
+
+        <div>
+          <label className={labelCls} htmlFor="wizard-git-provider">Git provider</label>
+          <select
+            id="wizard-git-provider"
+            className={inputCls}
+            value={form.git_provider}
+            onChange={(e) => onChange({ git_provider: e.target.value as GitProviderChoice })}
+          >
+            <option value="">Work it out from the address</option>
+            <option value="github">GitHub (including GitHub Enterprise)</option>
+            <option value="gitea">Gitea</option>
+          </select>
+          <p className="mt-1 text-sm text-[#3a6a8a]">{GIT_PROVIDER_HELP}</p>
         </div>
 
         <div>
@@ -1790,6 +1811,56 @@ export function FirstRunWizard({
   // is tracked so save hits PUT /connections/{name} for a guaranteed
   // token-preserving merge update (vs POST upsert-by-derived-name).
   const existingConnection = connections[0]
+  // Read by the late git-defaults answer: the list of connections can load
+  // after the defaults call started.
+  const existingConnectionRef = useRef(existingConnection)
+  existingConnectionRef.current = existingConnection
+  // The form fields the user has changed. A late default never replaces
+  // them, even when the user's choice is an empty value.
+  const touchedFieldsRef = useRef<Set<keyof WizardForm>>(new Set())
+
+  // Fresh install: if the Helm chart names a Git provider and address
+  // (connection.git.provider / connection.git.repoURL), pre-pick the provider
+  // and fill in the address — never over something the user already typed.
+  useEffect(() => {
+    if (initialStep === 4 || typeof api.gitDefaults !== 'function') return
+    let cancelled = false
+    api
+      .gitDefaults()
+      .then((d) => {
+        if (cancelled || !d) return
+        // A saved connection already says what to use.
+        if (existingConnectionRef.current) return
+        const provider: GitProviderChoice =
+          d.provider === 'github' || d.provider === 'gitea' ? d.provider : ''
+        const touched = touchedFieldsRef.current
+        setForm((prev) => {
+          // The provider the default address belongs to: read from the
+          // address when the host says it, else the default provider.
+          const defaultURL = d.repo_url || ''
+          const defaultURLProvider = detectGitProvider(defaultURL) ?? (provider || undefined)
+          // The user already picked a provider the default address does not
+          // belong to (Gitea, with a github.com default): leave the address
+          // empty for them to type, never a mismatched pair.
+          const urlFitsUserProvider =
+            prev.git_provider === '' || defaultURLProvider === undefined || defaultURLProvider === prev.git_provider
+          const gitUrl =
+            touched.has('git_url') || prev.git_url || !urlFitsUserProvider ? prev.git_url : defaultURL
+          // Never put a provider on an address it does not match, such as
+          // Gitea on a github.com address.
+          const detected = detectGitProvider(gitUrl)
+          const fits = provider !== '' && (detected === undefined || detected === provider)
+          const gitProvider = touched.has('git_provider') || prev.git_provider || !fits ? prev.git_provider : provider
+          return { ...prev, git_url: gitUrl, git_provider: gitProvider }
+        })
+      })
+      .catch(() => {
+        // No defaults is the normal case; the user fills the form in.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialStep])
   const [loadedConnectionName, setLoadedConnectionName] = useState<string | null>(null)
   // The saved provider block and GitOps settings, kept as they were loaded.
   // The server replaces the whole provider block on save, and it keeps a
@@ -1817,6 +1888,12 @@ export function FirstRunWizard({
       setForm((prev) => ({
         ...prev,
         git_url: gitUrl,
+        // Keep a saved GitHub choice: a GitHub Enterprise address cannot be
+        // worked out from the address alone.
+        git_provider:
+          existingConnection.git_provider === 'gitea' || existingConnection.git_provider === 'github'
+            ? existingConnection.git_provider
+            : '',
         argocd_server_url: existingConnection.argocd_server_url,
         argocd_namespace: existingConnection.argocd_namespace || 'argocd',
         argocd_insecure: existingConnection.argocd_insecure ?? false,
@@ -1833,6 +1910,7 @@ export function FirstRunWizard({
   }, [initialStep, existingConnection, loadedConnectionName])
 
   const patchForm = (patch: Partial<WizardForm>) => {
+    for (const k of Object.keys(patch) as Array<keyof WizardForm>) touchedFieldsRef.current.add(k)
     setForm((prev) => ({ ...prev, ...patch }))
     // A change clears only the test result it can affect. Changing the
     // secrets provider, for example, keeps both "Connected" results.
@@ -1854,7 +1932,7 @@ export function FirstRunWizard({
       // doesn't fire on wizard submission. `undefined` is dropped by
       // JSON.stringify, in which case the backend's deriveProviderFromURL
       // takes over. See detectGitProvider for the recognized-host list.
-      provider: detectGitProvider(form.git_url),
+      provider: form.git_provider || detectGitProvider(form.git_url),
       repo_url: form.git_url,
       token: form.git_token || undefined,
     },

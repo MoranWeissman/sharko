@@ -7,6 +7,8 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 )
 
 // resolvePendingRegistrations queries the Git provider for open pull
@@ -29,8 +31,16 @@ import (
 //
 // The return type is always a non-nil slice. Callers do NOT need to
 // nil-check (never let a nil array reach the FE).
+//
+// cache, when not nil, holds the open pull request list for a short time
+// (the shared read cache, wiped after every successful write and every
+// merge). The Clusters page loads /clusters and /clusters/available
+// together, and both need the same list: with the cache that is one Git
+// call, not two (EP3 dry run round S, S22). A failed list is never kept. A
+// caller that decides a write passes nil and reads fresh.
 func resolvePendingRegistrations(
 	ctx context.Context,
+	cache *readcache.Cache,
 	gp gitprovider.GitProvider,
 	commitPrefix string,
 ) []models.PendingRegistration {
@@ -40,7 +50,14 @@ func resolvePendingRegistrations(
 		return out
 	}
 
-	prs, err := gp.ListPullRequests(ctx, "open")
+	list := func() ([]gitprovider.PullRequest, error) { return gp.ListPullRequests(ctx, "open") }
+	var prs []gitprovider.PullRequest
+	var err error
+	if cache != nil {
+		prs, err = readcache.GetOrCompute(cache, openPullRequestsCacheKey, list)
+	} else {
+		prs, err = list()
+	}
 	if err != nil {
 		// Defensive: don't 500 the entire /clusters endpoint because the
 		// PR-list call hit a rate limit. Log and degrade to empty.
@@ -49,44 +66,91 @@ func resolvePendingRegistrations(
 		return out
 	}
 
-	// Title pattern emitted by the orchestrator. Mirrors the existing
-	// matcher in internal/orchestrator/git_helpers.go.
+	// Title patterns emitted by the orchestrator, one per operation.
+	// Mirrors the matcher in internal/orchestrator/git_helpers.go.
 	//
 	// "<commit-prefix> register cluster <name>"
-	//   |-------- common prefix -------|
+	// "<commit-prefix> remove cluster <name>"
+	// "<commit-prefix> adopt cluster <name>"
+	// "<commit-prefix> take over cluster <name>"
+	//   |-------- common header -------|
 	//
-	// Anything after that header is suffix decoration (e.g.,
-	// " (kubeconfig provider)") — we extract the cluster name as the
-	// first whitespace-bounded token after the header.
-	commonHeader := strings.TrimSpace(commitPrefix) + " register cluster "
+	// The header includes the commit prefix and the space after it, so
+	// "unadopt cluster" never matches "adopt cluster". Anything after the header is suffix
+	// decoration (e.g. " (kubeconfig provider)") — the cluster name is
+	// the first whitespace-bounded token after the header.
+	prefix := strings.TrimSpace(commitPrefix)
+	headers := []struct {
+		header    string
+		operation string
+	}{
+		{prefix + " register cluster ", models.PendingOperationRegister},
+		{prefix + " remove cluster ", models.PendingOperationRemove},
+		{prefix + " adopt cluster ", models.PendingOperationAdopt},
+		{prefix + " take over cluster ", models.PendingOperationTakeover},
+	}
 
 	for i := range prs {
 		title := prs[i].Title
-		idx := strings.Index(title, commonHeader)
-		if idx == -1 {
-			continue
+		for _, h := range headers {
+			idx := strings.Index(title, h.header)
+			if idx == -1 {
+				continue
+			}
+			rest := title[idx+len(h.header):]
+			// Cluster name = first whitespace-bounded token of `rest`.
+			// Examples:
+			//   "sharko: register cluster prod-eu"              -> "prod-eu"
+			//   "sharko: register cluster prod-eu (kubeconfig provider)"
+			//                                                   -> "prod-eu"
+			name := rest
+			if sp := strings.IndexAny(rest, " \t"); sp != -1 {
+				name = rest[:sp]
+			}
+			name = strings.TrimSpace(name)
+			if name == "" {
+				break
+			}
+			out = append(out, models.PendingRegistration{
+				ClusterName: name,
+				PRURL:       prs[i].URL,
+				Branch:      prs[i].SourceBranch,
+				OpenedAt:    prs[i].CreatedAt,
+				Operation:   h.operation,
+				PRNumber:    pendingPRNumber(prs[i]),
+			})
+			break
 		}
-		rest := title[idx+len(commonHeader):]
-		// Cluster name = first whitespace-bounded token of `rest`.
-		// Examples:
-		//   "sharko: register cluster prod-eu"              -> "prod-eu"
-		//   "sharko: register cluster prod-eu (kubeconfig provider)"
-		//                                                   -> "prod-eu"
-		name := rest
-		if sp := strings.IndexAny(rest, " \t"); sp != -1 {
-			name = rest[:sp]
-		}
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
+	}
+	return out
+}
 
-		out = append(out, models.PendingRegistration{
-			ClusterName: name,
-			PRURL:       prs[i].URL,
-			Branch:      prs[i].SourceBranch,
-			OpenedAt:    prs[i].CreatedAt,
-		})
+// openPullRequestsCacheKey is where the open pull request list is kept in
+// the shared read cache.
+const openPullRequestsCacheKey = "open-pull-requests"
+
+// pendingPRNumber is the pull request's number. A provider that left the
+// number out gets it from the end of the pull request's address
+// (".../pull/12"). When neither has it, it is 0 and pr_number is left out
+// of the answer, so no screen ever shows "PR #0" (EP3 dry run round R, R7).
+func pendingPRNumber(pr gitprovider.PullRequest) int {
+	return orchestrator.PRNumber(pr.ID, pr.URL)
+}
+
+// dropPendingForManagedClusters is the LW-18 (Part 2) filter: a register
+// pull request for a cluster that is already in Git is an idempotent
+// re-run and only noise, so it is dropped. A remove pull request is the
+// opposite — its cluster is always still in Git until it merges — so it is
+// kept (EP3-DRYRUN-FIXES finding 19: open remove PRs show as pending).
+func dropPendingForManagedClusters(pending []models.PendingRegistration, managedNames map[string]struct{}) []models.PendingRegistration {
+	out := make([]models.PendingRegistration, 0, len(pending))
+	for _, p := range pending {
+		if p.Operation == models.PendingOperationRegister {
+			if _, alreadyManaged := managedNames[p.ClusterName]; alreadyManaged {
+				continue
+			}
+		}
+		out = append(out, p)
 	}
 	return out
 }

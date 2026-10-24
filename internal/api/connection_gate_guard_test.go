@@ -140,7 +140,8 @@ var connectionGateSites = []connectionGateSite{
 	{file: "internal/api/clusters_adopt.go", fn: "handleAdoptClusters", lookups: "argocd,git", routed: "argocd,git"},
 	{file: "internal/api/clusters_adopt.go", fn: "handleUnadoptCluster", lookups: "argocd,git", routed: "argocd,git"},
 	{file: "internal/api/clusters_batch.go", fn: "handleBatchRegisterClusters", lookups: "argocd,git", routed: "argocd,git"},
-	{file: "internal/api/clusters_discover.go", fn: "handleDiscoverClusters", lookups: "argocd", routed: "argocd"},
+	{file: "internal/api/clusters_discover.go", fn: "handleDiscoverClusters", lookups: "argocd,git", routed: "argocd,git"},
+	{file: "internal/api/clusters_discover.go", fn: "handleListProviderClusters", lookups: "argocd", routed: "argocd"},
 	{file: "internal/api/clusters_doctor.go", fn: "connectivityAppDriftFix", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/clusters_doctor.go", fn: "doctorCheckAddonSecretPaths", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/clusters_doctor.go", fn: "doctorCheckConnectivityApp", lookups: "argocd", notRouted: "swallowed"},
@@ -167,6 +168,10 @@ var connectionGateSites = []connectionGateSite{
 	{file: "internal/api/engine_pin.go", fn: "CheckEnginePinLive", lookups: "git", routed: "git"},
 	{file: "internal/api/engine_pin.go", fn: "handleUpgradeEnginePin", lookups: "git", routed: "git"},
 	{file: "internal/api/fleet.go", fn: "computeFleetStatus", lookups: "argocd,git", notRouted: "swallowed"},
+	{file: "internal/api/cluster_followup_on_merge.go", fn: "FinishClusterFollowUpOnMerge", lookups: "argocd,git", notRouted: "swallowed"},
+	// The background waiting-marks pass: no Git connection means it skips
+	// this pass and tries on the next one (EP3 dry run round R, R4).
+	{file: "internal/api/waiting_marks.go", fn: "FinishWaitingClusterMarks", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/init.go", fn: "handleInit", lookups: "argocd,git", routed: "argocd,git"},
 	{file: "internal/api/init_status.go", fn: "handleInitStatus", lookups: "argocd,git", routed: "git"},
 	{file: "internal/api/migration.go", fn: "CompleteMigrationHandoffOnMerge", lookups: "git", notRouted: "swallowed"},
@@ -177,6 +182,7 @@ var connectionGateSites = []connectionGateSite{
 	{file: "internal/api/migration.go", fn: "migrationOrchestrator", lookups: "argocd", notRouted: "swallowed"},
 	{file: "internal/api/observability.go", fn: "handleGetObservabilityOverview", lookups: "argocd,git", routed: "argocd"},
 	{file: "internal/api/prs.go", fn: "handleListMergedPRs", lookups: "git", routed: "git"},
+	{file: "internal/api/prs.go", fn: "finishedUntrackedPR", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/repo_status.go", fn: "handleRepoStatus", lookups: "git", notRouted: "swallowed"},
 	{file: "internal/api/repo_status.go", fn: "probeBootstrapSynced", lookups: "argocd", notRouted: "swallowed"},
 	{file: "internal/api/system.go", fn: "handleGetConfig", lookups: "argocd", notRouted: "swallowed"},

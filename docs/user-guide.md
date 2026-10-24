@@ -137,7 +137,7 @@ sharko add-cluster prod-eu \
   --region eu-west-1
 ```
 
-The server fetches cluster credentials from the configured secrets provider, verifies connectivity (Stage 1 test), registers the cluster in ArgoCD, creates a values file, and commits to Git as a pull request.
+The server fetches cluster credentials from the configured secrets provider, verifies connectivity (Stage 1 test), registers the cluster in ArgoCD, adds it to `managed-clusters.yaml`, and commits to Git as a pull request.
 
 ### Cluster Discovery and Adoption
 
@@ -145,20 +145,28 @@ Sharko supports two modes for onboarding clusters: **direct registration** (abov
 
 #### Discover Available Clusters
 
-Find clusters that exist in the configured secrets provider but are not yet registered:
+Find clusters ArgoCD already connects to that Sharko does not manage yet:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
 ```
 
-Sharko only reads from its configured secrets backend and cross-references ArgoCD here — it never
-scans your cloud account's infrastructure directly. In the UI, navigate to **Clusters** to see
-unregistered clusters as candidates for adoption.
+Find clusters in the configured secrets provider, and which ones ArgoCD already has:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/providers/clusters
+```
+
+The first call reads the list from ArgoCD. The second reads it from your secrets provider and
+cross-references ArgoCD. Sharko never scans your cloud account's infrastructure directly. In the UI,
+the **Clusters** page has a line that says how many clusters ArgoCD already knows that Sharko does not
+manage yet. Click it to pick one to adopt.
 
 #### Adopt Existing Clusters
 
-Adoption is for clusters that already have an ArgoCD cluster secret but are not managed by Sharko. It verifies connectivity, creates a values file, adds the cluster to `managed-clusters.yaml`, and creates a PR.
+Adoption is for clusters that already have an ArgoCD cluster secret but are not managed by Sharko. It checks the cluster the same way take over does, then opens a pull request that adds the cluster to `managed-clusters.yaml` and creates its addon file. Nothing is adopted until that pull request is merged.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
@@ -166,12 +174,12 @@ curl -H "Authorization: Bearer $TOKEN" \
   -d '{"clusters": ["prod-eu", "staging-us"], "auto_merge": false}'
 ```
 
-In the UI, discovered clusters show a **Start Managing** button. Clicking it triggers adoption.
+In the UI, pick the cluster under **Discovered clusters** in **Add Cluster** and click **Adopt <name>**.
 
 Key behaviors:
 - Adoption rejects clusters managed by a different tool (non-`sharko` `managed-by` label).
 - A Stage 1 connectivity test runs before adoption proceeds.
-- If a PR already exists for the cluster (idempotent retry), it returns the existing PR instead of creating a duplicate.
+- If a pull request for the cluster is already open, Sharko returns that one and does not open a second one.
 - After the PR is merged, Sharko sets the `sharko.dev/adopted` annotation on the ArgoCD cluster secret.
 
 #### Un-adopt a Cluster
@@ -187,7 +195,7 @@ Steps:
 1. Verifies the cluster has the `adopted` annotation (errors if not -- use `remove-cluster` instead).
 2. Removes the `managed-by` label and `adopted` annotation from the ArgoCD secret (keeps the secret).
 3. Deletes Sharko-created addon secrets from the remote cluster (best-effort).
-4. Creates a PR to remove the cluster from `managed-clusters.yaml` and delete its values file.
+4. Creates a PR to remove the cluster from `managed-clusters.yaml` and delete its addon file. Steps 2 and 3 happen only after that PR is merged.
 
 ### Batch Register Clusters
 
@@ -211,9 +219,9 @@ Cluster removal supports three cleanup scopes:
 
 | Scope | What it does |
 |-------|-------------|
-| `all` (default) | Removes from `managed-clusters.yaml`, deletes values file via PR, deletes addon secrets from remote cluster, deletes ArgoCD cluster secret. |
+| `all` (default) | Removes from `managed-clusters.yaml`, deletes the cluster's files (`cluster-addons/<cluster>.yaml` and `values/clusters/<cluster>/`) via PR, deletes addon secrets from remote cluster, deletes ArgoCD cluster secret. |
 | `git` | Same Git changes as `all`, but skips remote addon secret deletion and ArgoCD secret deletion. |
-| `none` | Only removes the `managed-clusters.yaml` entry. Values file and ArgoCD secret are kept. |
+| `none` | Only removes the `managed-clusters.yaml` entry. The cluster's other files and its ArgoCD secret are kept. |
 
 Via the API, pass `cleanup` in the request body:
 
@@ -225,21 +233,20 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Disable an Addon on a Cluster
 
-Remove a specific addon from a single cluster without removing it from the catalog:
+Turn an addon off on one cluster without removing it from the catalog:
 
 ```bash
+sharko disable-addon prod-eu monitoring --yes
+
+# Via API
 curl -H "Authorization: Bearer $TOKEN" \
-  -X DELETE https://sharko.your-cluster.com/api/v1/clusters/prod-eu/addons/monitoring \
-  -d '{"yes": true, "cleanup": "all"}'
+  -X DELETE https://sharko.your-cluster.com/api/v1/v4/clusters/prod-eu/addons/monitoring \
+  -d '{"yes": true}'
 ```
 
-Cleanup scopes for addon disable:
-
-| Scope | What it does |
-|-------|-------------|
-| `all` (default) | Updates values file, updates `managed-clusters.yaml` labels, deletes addon secrets from remote cluster. |
-| `labels` | Updates values file and `managed-clusters.yaml` labels only. |
-| `none` | Updates the values file only. |
+This opens a pull request that sets the addon to `enabled: false` in `cluster-addons/prod-eu.yaml`.
+The entry, its version and its settings stay, so turning it back on is a one-word change. Add
+`--remove` (or `"remove": true`) to delete the entry instead.
 
 ### Update Cluster Addons
 
@@ -304,6 +311,7 @@ sharko pr wait 42 --timeout 10m
 ```
 
 This is useful in CI/CD pipelines where you need to wait for a Sharko-created PR to be merged before proceeding.
+If the pull request already merged (for example with auto-merge), `sharko pr wait` says so at once and exits 0.
 
 ### Cluster Status Overview
 
@@ -651,11 +659,18 @@ Clusters are registered sequentially. Each cluster gets its own PR. If one clust
 
 ### Discover Available Clusters
 
-Find clusters that exist in the configured secrets provider but are not yet registered:
+Find clusters ArgoCD already connects to that Sharko does not manage yet:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
+```
+
+Find clusters in the configured secrets provider, and which ones ArgoCD already has:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/providers/clusters
 ```
 
 ---
@@ -678,7 +693,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Per-Cluster Upgrade
 
-Updates the version in the cluster's values file only. The cluster will have a different version from the global catalog.
+Changes the addon's version only in that cluster's `cluster-addons/<cluster>.yaml`. Other clusters keep their own version.
 
 ```bash
 # Via CLI

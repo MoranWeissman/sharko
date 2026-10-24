@@ -23,12 +23,15 @@ import {
   RefreshCw,
   Trash2,
   ExternalLink,
+  Shield,
 } from 'lucide-react';
+import { isCredentialLookupFailure } from '@/lib/verifyStage';
 import { api, registerCluster, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, getSystemCapabilities, type PRWriteResult } from '@/services/api';
-import { PRLifecycleProgress, extractPR, writeFailureMessage } from '@/components/PRFeedback';
+import { PRLifecycleProgress, extractPR, useFollowedPR, writeFailureMessage } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
+  AvailableCluster,
   Cluster,
   ClusterHealthStats,
   ClusterProvider,
@@ -43,7 +46,7 @@ import type {
 } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls';
-import { ClusterStatusSummary } from '@/components/ClusterStatusSummary';
+import { ClusterStatusSummary, type ClusterLatestTest } from '@/components/ClusterStatusSummary';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { ErrorDetail } from '@/components/ErrorDetail';
@@ -62,10 +65,12 @@ import {
 } from '@/components/ClusterActionHints';
 import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
+import { withV } from '@/lib/versionLabel';
 import { ClusterIdentityStrip } from '@/components/ClusterIdentityStrip';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import { showToast } from '@/components/ToastNotification';
 import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
+import { TakeoverDialog } from '@/components/TakeoverDialog';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import {
   Dialog,
@@ -207,7 +212,9 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
   ),
   user: (
     <>
-      You manage the cluster connection yourself — Sharko only updates its addon labels.{' '}
+      For a cluster you add by hand here, you make the ArgoCD connection yourself and Sharko only
+      puts its addon labels on it. Adopt and Take ownership, for a cluster ArgoCD already has, work
+      differently. Their windows say what they change.{' '}
       <a
         href="https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/"
         target="_blank"
@@ -263,6 +270,104 @@ const REGISTER_DID_NOT_FINISH = 'Sharko did not finish registering this cluster.
 const REGISTER_PR_NO_LINK =
   "There is an open pull request that registers this cluster, but Sharko's answer had no link to it. Find it in your GitOps repo and merge it to finish the registration.";
 
+// The popover's Sharko line reads the test the user just ran on this page.
+// A test that is still running, or could not run at all, says nothing yet.
+// A test run on this page, told apart from a newer one the server remembers
+// by the SERVER's clock only. The browser clock and the server clock can be
+// minutes apart, so they are never compared.
+//
+// `before` is the server's last test time when the page's run came back.
+// The server records that same run too, so the first different server time
+// seen after it is this run's own server time (`own`). A server time later
+// than `own` is a newer test: another tab, the CLI, a background check.
+export interface PageRunServerTimes {
+  before: string;
+  own?: string;
+}
+export function notePageRunServerTime(
+  rec: PageRunServerTimes | undefined,
+  serverLastTestAt: string | undefined,
+): PageRunServerTimes | undefined {
+  if (!rec || rec.own || !serverLastTestAt || serverLastTestAt === rec.before) return rec;
+  return { ...rec, own: serverLastTestAt };
+}
+
+export function latestTestOf(r: unknown, at?: string): ClusterLatestTest | undefined {
+  const t = latestTestResultOf(r);
+  return t && at ? { ...t, at } : t;
+}
+function latestTestResultOf(r: unknown): ClusterLatestTest | undefined {
+  if (!r || r === 'testing' || typeof r !== 'object') return undefined;
+  if (isTestClusterUnavailable(r as never)) return undefined;
+  // Sharko could not read the cluster's sign-in details: nothing was
+  // tested. The Adopt dialog calls the same answer "Not verified", so this
+  // page says so too, not "Test failing".
+  if (isCredentialLookupFailure(r as never)) return { success: false, notVerified: true };
+  const t = r as { reachable?: boolean; success?: boolean; steps?: VerifyStep[] };
+  const steps = t.steps ?? [];
+  return {
+    // A pass only when the answer says so. A missing field is not a pass.
+    success: t.success === true || (t.success === undefined && t.reachable === true),
+    passed: steps.length > 0 ? steps.filter((x) => x.status === 'pass').length : undefined,
+    total: steps.length > 0 ? steps.length : undefined,
+    failedStep: steps.find((x) => x.status === 'fail')?.name,
+  };
+}
+
+// Shown when Sharko could not ask ArgoCD which other clusters it knows.
+// Pinned by exact text in ClustersOverview.roundr.test.tsx.
+export const AVAILABLE_CHECK_FAILED =
+  "Sharko could not check which other clusters ArgoCD knows. Refresh to try again.";
+
+// The two sentences the server sends when Sharko has no usable Git or ArgoCD
+// connection (internal/credsafe, pinned there by exact text). A refresh does
+// not fix that, so the page does not say "Refresh to try again" for it.
+const NO_USABLE_CONNECTION_ERRORS = [
+  'Sharko has no usable Git connection. Open Settings and check the active connection: the Git provider, the repository it points at, and the access token.',
+  'Sharko has no usable ArgoCD connection. Open Settings and check the active connection: the ArgoCD server address and the ArgoCD token.',
+];
+
+// Round S: the Un-adopt window says only what the button does. The old
+// sentence promised what the server would do later, which the browser
+// cannot know (browserAuthoredPromises guard).
+// Shown to a non-admin where the Un-adopt button would be.
+export const UNADOPT_ADMIN_ONLY_HINT = 'Only an admin can un-adopt this cluster.';
+
+export function unadoptDescription(name: string): string {
+  return `Un-adopt opens a pull request that takes "${name}" off the list of clusters Sharko manages. It does not delete the ArgoCD connection. Click Preview changes to see what the pull request changes.`;
+}
+
+export type AvailableStatus = 'pending' | 'ok' | 'failed' | 'skipped';
+
+/**
+ * Sorts a failed GET /clusters/available into "say it could not check"
+ * ('failed') or "say nothing" ('skipped'). A viewer is not allowed to ask
+ * (403), and a set-up with no usable connection is not fixed by a refresh:
+ * neither is a failure the user can fix from this page (EP3 round S, S27).
+ */
+export function availableFailureKind(err: unknown): 'failed' | 'skipped' {
+  // Read the fields, not `instanceof`: many tests mock the api module.
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status === 401 || status === 403) return 'skipped';
+  const message = err instanceof Error ? err.message : '';
+  if (typeof status === 'number' && NO_USABLE_CONNECTION_ERRORS.includes(message)) return 'skipped';
+  return 'failed';
+}
+
+// The button that lets go of a picked cluster, so the fields for a cluster
+// typed by hand show again.
+export const PICKER_ENTER_BY_HAND = 'Enter a different cluster by hand';
+
+// What an open pull request in the pending table is for.
+const PENDING_OPERATION_LABEL: Record<string, string> = {
+  register: 'Register',
+  adopt: 'Adopt',
+  takeover: 'Take ownership',
+  remove: 'Remove',
+};
+// An operation this page does not know yet (a newer server).
+const PENDING_OPERATION_OTHER = 'Change';
+
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
   // Mirror the latest allClusters in a ref so fetchData's catch block can read
@@ -270,6 +375,16 @@ export function ClustersOverview() {
   // allClusters in fetchData's dep array (which would cause the fetch effect
   // to re-fire on every state update).
   const allClustersRef = useRef<Cluster[]>([]);
+  // True while the Adopt or Take ownership window is open on this page. The
+  // error screen takes the whole page, and with it the open window, so a
+  // quiet reload that fails while a window is open must not bring it up
+  // (EP3 round S, S34). The reload runs again when the window closes.
+  const actionDialogOpenRef = useRef(false);
+  const reloadFailedWhileDialogOpenRef = useRef(false);
+  // True once a load has worked. From then on every reload is quiet: the page
+  // stays on screen and any open dialog (like the Adopt success screen with
+  // its PR link) is not thrown away by a full-page loading swap.
+  const hasLoadedRef = useRef(false);
   // S4: server-side pagination — api.getClusters() already requests
   // CLUSTERS_PAGE_SIZE (100), which covers any realistic estate in one
   // call. clusterTotal stays null until a page-aware call
@@ -372,6 +487,20 @@ export function ClustersOverview() {
   } | null>(() => location.state?.removalPR ?? null);
 
   // Test connection state per cluster
+  // Each test run on this page, by cluster name, with the server's own times
+  // (see PageRunServerTimes). The popover uses it to tell this run from a
+  // newer one the server remembers.
+  const pageRunRef = useRef<Record<string, PageRunServerTimes>>({});
+  const notePageRun = useCallback((name: string) => {
+    const c = allClustersRef.current.find((x) => x.name === name);
+    pageRunRef.current[name] = { before: c?.last_test_at ?? '' };
+  }, []);
+  const noteServerTimes = useCallback((list: Cluster[]) => {
+    for (const c of list) {
+      const next = notePageRunServerTime(pageRunRef.current[c.name], c.last_test_at);
+      if (next) pageRunRef.current[c.name] = next;
+    }
+  }, []);
   const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | 'testing'>>({});
 
   // Expanded test steps per cluster
@@ -383,11 +512,34 @@ export function ClustersOverview() {
   // Adopt dialog state
   const [adoptDialogOpen, setAdoptDialogOpen] = useState(false);
   const [adoptDialogClusters, setAdoptDialogClusters] = useState<Cluster[]>([]);
+  // Clusters ArgoCD already knows that Sharko does not manage yet, from
+  // GET /clusters/available. Empty until the server answers (or when it
+  // cannot): the page then falls back to what /clusters itself lists.
+  const [availableClusters, setAvailableClusters] = useState<AvailableCluster[]>([]);
+  // How the last /clusters/available call went:
+  //   'pending' — no answer yet;
+  //   'ok'      — ArgoCD's list came back;
+  //   'failed'  — a failure a refresh can fix (network, ArgoCD or Git not
+  //               answering). The page keeps the last good list and says, in
+  //               one line, that it could not check;
+  //   'skipped' — the user may not ask (a viewer gets 403), or Sharko has no
+  //               usable connection yet. Nothing to say about it here.
+  // Only 'ok' lets the Add Cluster dialog say "Sharko checked ArgoCD".
+  const [availableStatus, setAvailableStatus] = useState<AvailableStatus>('pending');
+  const availableFailed = availableStatus === 'failed';
+  // Each call gets a number. Only the answer to the newest call is used, so
+  // a slow, older answer never replaces a newer one.
+  const availableSeqRef = useRef(0);
+  // The cluster the Take ownership dialog is open for, from the Clusters page.
+  const [takeoverTarget, setTakeoverTarget] = useState<string | null>(null);
   // V2-cleanup-89.3: which discovered (ArgoCD-only) cluster is picked in the
   // Register dialog's "Pick from what ArgoCD already has" block, keyed by
   // name. Single-select — adopting is a one-cluster-at-a-time decision made
   // from inside the dialog now, not a standing bulk-select list.
   const [pickedDiscovered, setPickedDiscovered] = useState<string | null>(null);
+  // True once the user let go of the picked cluster to type one by hand.
+  // Stops the one-cluster auto-pick from picking it again.
+  const userLetGoOfPickRef = useRef(false);
   // V2-cleanup-92.1 (F13): search filter for discovered-clusters picker.
   const [discoveredFilter, setDiscoveredFilter] = useState('');
 
@@ -441,6 +593,13 @@ export function ClustersOverview() {
   const [addClusterError, setAddClusterError] = useState<unknown>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
   const [addClusterResultMsg, setAddClusterResultMsg] = useState<string | null>(null);
+  // The number of the registration pull request while it is open, so the green
+  // banner can follow it to a later merge or close.
+  const [addClusterPRId, setAddClusterPRId] = useState<number | null>(null);
+  const registerPRState = useFollowedPR(
+    addClusterPRId,
+    addClusterPRId !== null && (addClusterResultMsg?.startsWith('__pending__|') ?? false),
+  );
 
   // Credential-source selection (creds-reframe-2). This is the PRIMARY
   // question the Direct-mode form asks: "How should Sharko get this
@@ -491,7 +650,8 @@ export function ClustersOverview() {
   const [capabilities, setCapabilities] = useState<SystemCapabilitiesResponse | null>(null);
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
 
-  const fetchData = useCallback(async (background = false) => {
+  const fetchData = useCallback(async (requestedBackground = false) => {
+    const background = requestedBackground || hasLoadedRef.current;
     try {
       if (background) {
         setIsRefreshing(true);
@@ -504,6 +664,27 @@ export function ClustersOverview() {
       // the prior ErrorState off-screen and leave an empty cluster list
       // with no error chrome.
       setError(null);
+      hasLoadedRef.current = true;
+      // Best effort: the hint line and the picker only gain from this.
+      // Wrapped because a test's partial API mock has no such function, and
+      // a failed answer must never break the page.
+      const seq = ++availableSeqRef.current;
+      try {
+        Promise.resolve(api.getAvailableClusters())
+          .then((list) => {
+            if (seq !== availableSeqRef.current) return;
+            setAvailableClusters(Array.isArray(list) ? list : []);
+            setAvailableStatus('ok');
+          })
+          .catch((err: unknown) => {
+            if (seq !== availableSeqRef.current) return;
+            setAvailableStatus(availableFailureKind(err));
+          });
+      } catch {
+        /* no available list: the page uses what /clusters listed */
+        setAvailableStatus('ok');
+      }
+      noteServerTimes(response.clusters);
       setAllClusters(response.clusters);
       // A fresh load — any earlier "Load more" progress no longer applies.
       setClusterTotal(null);
@@ -548,9 +729,14 @@ export function ClustersOverview() {
         // next refresh try to recover. Read the prior length via the ref
         // (NOT inside a state updater, which would violate purity in
         // StrictMode).
-        if (allClustersRef.current.length === 0) {
+        if (actionDialogOpenRef.current) {
+          // Keep the page, and the open window, as it is. Try again on close.
+          reloadFailedWhileDialogOpenRef.current = true;
+        } else if (allClustersRef.current.length === 0) {
           setError(message);
           setHealthStats(null);
+          // Nothing to keep on screen: let the retry show the loading state.
+          hasLoadedRef.current = false;
         }
         // Intentionally do NOT call setAllClusters — prior data stays on screen.
       }
@@ -558,11 +744,16 @@ export function ClustersOverview() {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [noteServerTimes]);
 
   const handleRefresh = useCallback(() => {
     void fetchData(true);
   }, [fetchData]);
+
+  // A registration pull request that gets merged later: bring the list current.
+  useEffect(() => {
+    if (registerPRState === 'merged') void fetchData(true);
+  }, [registerPRState, fetchData]);
 
   // S4: fetch the next page beyond what api.getClusters() already loaded.
   // Only reachable once allClusters.length has hit a full CLUSTERS_PAGE_SIZE
@@ -575,6 +766,7 @@ export function ClustersOverview() {
       const loadedSoFar = allClustersRef.current.length;
       const nextPage = Math.floor(loadedSoFar / CLUSTERS_PAGE_SIZE) + 1;
       const { data, total } = await api.getClustersPage(nextPage, CLUSTERS_PAGE_SIZE);
+      noteServerTimes(data.clusters);
       setAllClusters((prev) => [...prev, ...data.clusters]);
       // total == null means the server didn't send X-Total-Count (should
       // never happen against the real API, but degrade safely): treat
@@ -586,7 +778,7 @@ export function ClustersOverview() {
     } finally {
       setLoadingMore(false);
     }
-  }, []);
+  }, [noteServerTimes]);
 
   // Keep allClustersRef in sync with allClusters so fetchData's catch
   // block can check "did we have prior data on screen?" without depending
@@ -674,13 +866,21 @@ export function ClustersOverview() {
     };
   }, [addClusterOpen]);
 
-  // Auto-refresh every 30s
+  // Auto-refresh every 30s, but not while the Adopt or Take ownership window
+  // is open (S34): the same rule as the cluster page.
+  const actionDialogOpen = adoptDialogOpen || takeoverTarget !== null;
   useEffect(() => {
+    actionDialogOpenRef.current = actionDialogOpen;
+    if (actionDialogOpen) return;
+    if (reloadFailedWhileDialogOpenRef.current) {
+      reloadFailedWhileDialogOpenRef.current = false;
+      void fetchData(true);
+    }
     const interval = setInterval(() => {
       void fetchData(true);
     }, 30_000);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [fetchData, actionDialogOpen]);
 
   // `presetOwnership` (V2-cleanup-89.3): the collapsed Discovered-clusters
   // hint opens this same dialog pre-set to "I do", since that's the only
@@ -700,6 +900,7 @@ export function ClustersOverview() {
     setCredsSource('');
     setConnManagedBy(presetOwnership ?? 'sharko');
     setPickedDiscovered(null);
+    userLetGoOfPickRef.current = false;
     setDiscoveredFilter('');
     // V2-cleanup-91.2 (F2): reset optional-creds toggle when dialog reopens.
     setShowOptionalCreds(false);
@@ -825,6 +1026,7 @@ export function ClustersOverview() {
     setAddClusterError(null);
     setAddClusterResult(null);
     setAddClusterResultMsg(null);
+    setAddClusterPRId(null);
     try {
       // The chosen creds source (creds-reframe-2) decides which disjoint
       // field set is sent — see buildRegisterPayload. `creds_source` is
@@ -868,9 +1070,11 @@ export function ClustersOverview() {
         void fetchData().then(() => {
           testClusterConnection(clusterName)
             .then((testResult) => {
+              notePageRun(clusterName);
               setTestResults((prev) => ({ ...prev, [clusterName]: testResult }));
             })
             .catch((err) => {
+              notePageRun(clusterName);
               setTestResults((prev) => ({
                 ...prev,
                 [clusterName]: {
@@ -888,6 +1092,7 @@ export function ClustersOverview() {
         // activate" wording rather than the legacy "Cluster registered"
         // wording.
         setAddClusterResultMsg(`__pending__|${prUrl}`);
+        setAddClusterPRId(extractPR(result).prId);
       } else {
         // The server said "success" but sent no PR link and no merge.
         // Stay truthful — don't claim "registered" without evidence, and
@@ -904,18 +1109,20 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, buildRegisterPayload, fetchData]);
+  }, [addClusterName, buildRegisterPayload, fetchData, notePageRun]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setTestResults((prev) => ({ ...prev, [name]: 'testing' }));
     try {
       const result = await testClusterConnection(name);
+      notePageRun(name);
       setTestResults((prev) => ({ ...prev, [name]: result }));
     } catch (err) {
+      notePageRun(name);
       setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
     }
-  }, []);
+  }, [notePageRun]);
 
   const toggleTestSteps = useCallback((name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1088,46 +1295,57 @@ export function ClustersOverview() {
     return Array.from(types).sort();
   }, [allClusters]);
 
+  // The status filter, the search box and the version and connection
+  // filters, as one test. The clusters that only /clusters/available lists
+  // go through it too, so a filter hides them like any other row.
+  const passesFilters = useCallback(
+    (cluster: Cluster): boolean => {
+      if (statusFilter !== 'all') {
+        const cs = cluster.connection_status?.toLowerCase() ?? '';
+        let statusMatch: boolean;
+        switch (statusFilter) {
+          case 'connected':
+            statusMatch = cs === 'connected' || cs === 'successful';
+            break;
+          case 'disconnected':
+            // Failed or missing ONLY — same definition the Dashboard
+            // uses for its red "disconnected clusters" count. Pending
+            // ("" / Unknown) and discovered / not_in_git clusters are
+            // NOT counted here; they aren't a problem.
+            statusMatch = cs === 'failed' || cs === 'missing';
+            break;
+          case 'failed':
+            statusMatch = cs === 'failed';
+            break;
+          case 'missing_from_argocd':
+            statusMatch = cs === 'missing';
+            break;
+          case 'not_in_git':
+            statusMatch = cs === 'not_in_git';
+            break;
+          default:
+            statusMatch = true;
+        }
+        if (!statusMatch) return false;
+      }
+      const nameMatch = cluster.name
+        .toLowerCase()
+        .includes(filters.name.toLowerCase());
+      const versionMatch =
+        filters.versions.length === 0 ||
+        (!!cluster.server_version &&
+          filters.versions.includes(cluster.server_version));
+      const connectionMatch =
+        filters.connectionTypes.length === 0 ||
+        (!!cluster.connection_status &&
+          filters.connectionTypes.includes(cluster.connection_status));
+      return nameMatch && versionMatch && connectionMatch;
+    },
+    [statusFilter, filters],
+  );
   const filteredClusters = useMemo(
-    () =>
-      allClusters
-        .filter((cluster) => {
-          if (statusFilter === 'all') return true;
-          const cs = cluster.connection_status?.toLowerCase() ?? '';
-          switch (statusFilter) {
-            case 'connected':
-              return cs === 'connected' || cs === 'successful';
-            case 'disconnected':
-              // Failed or missing ONLY — same definition the Dashboard
-              // uses for its red "disconnected clusters" count. Pending
-              // ("" / Unknown) and discovered / not_in_git clusters are
-              // NOT counted here; they aren't a problem.
-              return cs === 'failed' || cs === 'missing';
-            case 'failed':
-              return cs === 'failed';
-            case 'missing_from_argocd':
-              return cs === 'missing';
-            case 'not_in_git':
-              return cs === 'not_in_git';
-            default:
-              return true;
-          }
-        })
-        .filter((cluster) => {
-          const nameMatch = cluster.name
-            .toLowerCase()
-            .includes(filters.name.toLowerCase());
-          const versionMatch =
-            filters.versions.length === 0 ||
-            (cluster.server_version &&
-              filters.versions.includes(cluster.server_version));
-          const connectionMatch =
-            filters.connectionTypes.length === 0 ||
-            (cluster.connection_status &&
-              filters.connectionTypes.includes(cluster.connection_status));
-          return nameMatch && versionMatch && connectionMatch;
-        }),
-    [allClusters, statusFilter, filters],
+    () => allClusters.filter(passesFilters),
+    [allClusters, passesFilters],
   );
 
   // Cluster names that have an open registration PR but whose values-file
@@ -1135,7 +1353,28 @@ export function ClustersOverview() {
   // Registrations" surface. The BE strips them from `not_in_git`; we
   // re-apply the filter so a stale BE response or slow refresh can't
   // surface the cluster in two places.
+  // Only a REGISTER PR keeps a cluster out of the managed list: that cluster
+  // is not managed until the PR merges. An open adopt, take over or remove PR
+  // is about a cluster that is already on screen somewhere. A row with no
+  // `operation` (an older server) is a register.
   const pendingNames = useMemo(
+    () =>
+      new Set(
+        pendingRegistrations
+          .filter((p) => (p.operation ?? 'register') === 'register')
+          .map((p) => p.cluster_name),
+      ),
+    [pendingRegistrations],
+  );
+
+  const pendingOnlyRegisters = useMemo(
+    () => pendingRegistrations.every((p) => (p.operation ?? 'register') === 'register'),
+    [pendingRegistrations],
+  );
+
+  // Any open PR at all: the cluster is already being dealt with, so it is not
+  // offered again as "ArgoCD knows this one".
+  const anyPendingNames = useMemo(
     () => new Set(pendingRegistrations.map((p) => p.cluster_name)),
     [pendingRegistrations],
   );
@@ -1166,11 +1405,42 @@ export function ClustersOverview() {
     ? EMPTY_CLUSTERS_FILTERED_MESSAGE
     : EMPTY_CLUSTERS_MESSAGE;
 
+  // Everything ArgoCD knows that Sharko does not manage: what /clusters lists
+  // plus what /clusters/available adds. Built from the whole list, with no
+  // page filter: the Add Cluster picker, its count and its one-cluster pick
+  // use this, so a word typed in the page search never hides a cluster from
+  // the picker (EP3 round S, S29).
+  const allDiscoveredClusters = useMemo(() => {
+    const fromList = allClusters.filter(
+      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !anyPendingNames.has(c.name) && !orphanNames.has(c.name),
+    );
+    // Any name /clusters already lists is handled there. It never comes back
+    // as an extra.
+    const listed = new Set(allClusters.map((c) => c.name));
+    const extra = availableClusters
+      .filter(
+        (a) =>
+          a.name &&
+          !listed.has(a.name) &&
+          !anyPendingNames.has(a.name) &&
+          !orphanNames.has(a.name),
+      )
+      .map((a): Cluster => ({
+        name: a.name,
+        labels: {},
+        server_url: a.server_url,
+        managed: false,
+        // For the status filter: ArgoCD knows it, Sharko does not manage it.
+        connection_status: 'not_in_git',
+      }));
+    return [...fromList, ...extra];
+  }, [availableClusters, allClusters, anyPendingNames, orphanNames]);
+
+  // The same list with the page's search and filters on. Only the hint line
+  // under the page title uses it, so the hint follows what the page shows.
   const discoveredClusters = useMemo(
-    () => filteredClusters.filter(
-      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !pendingNames.has(c.name) && !orphanNames.has(c.name),
-    ),
-    [filteredClusters, pendingNames, orphanNames],
+    () => allDiscoveredClusters.filter(passesFilters),
+    [allDiscoveredClusters, passesFilters],
   );
 
   // S1: sort, THEN paginate — filters/search already ran above in
@@ -1228,7 +1498,7 @@ export function ClustersOverview() {
   // same adopt flow the (now-collapsed) standing Discovered section used —
   // same verify-then-confirm dialog, same Git-PR success banner.
   const handleAdoptFromPicker = useCallback(() => {
-    const cluster = discoveredClusters.find((c) => c.name === pickedDiscovered);
+    const cluster = allDiscoveredClusters.find((c) => c.name === pickedDiscovered);
     if (!cluster) {
       // V2-cleanup-90.4: the picked cluster can disappear between the pick
       // and the confirm click — the picker's 30s auto-refresh may have
@@ -1243,7 +1513,38 @@ export function ClustersOverview() {
     }
     setAddClusterOpen(false);
     handleOpenAdoptDialog([cluster]);
-  }, [discoveredClusters, pickedDiscovered, handleOpenAdoptDialog]);
+  }, [allDiscoveredClusters, pickedDiscovered, handleOpenAdoptDialog]);
+
+  // Take ownership of the picked cluster: same dialog as on the cluster page.
+  const handleTakeOwnershipFromPicker = useCallback(() => {
+    const cluster = allDiscoveredClusters.find((c) => c.name === pickedDiscovered);
+    if (!cluster) {
+      if (pickedDiscovered) {
+        showToast(`"${pickedDiscovered}" is no longer discoverable — refresh the list.`, 'error');
+        setPickedDiscovered(null);
+      }
+      return;
+    }
+    setAddClusterOpen(false);
+    setTakeoverTarget(cluster.name);
+  }, [allDiscoveredClusters, pickedDiscovered]);
+
+  // Only one cluster to pick from: pick it, so Adopt is not greyed until the
+  // user clicks a radio button that has no other choice. Picking hides the
+  // fields for a cluster typed by hand, so the user can let go of it
+  // ("Enter a different cluster by hand"), and then it is not picked again
+  // until the dialog opens again.
+  useEffect(() => {
+    if (
+      addClusterOpen &&
+      connManagedBy === 'user' &&
+      pickedDiscovered === null &&
+      !userLetGoOfPickRef.current &&
+      allDiscoveredClusters.length === 1
+    ) {
+      setPickedDiscovered(allDiscoveredClusters[0].name);
+    }
+  }, [addClusterOpen, connManagedBy, pickedDiscovered, allDiscoveredClusters]);
 
   // Client-side gate for the Preview/Register buttons.
   //
@@ -1263,11 +1564,9 @@ export function ClustersOverview() {
   // the creds-source selector is optional (collapsed behind a toggle) — then
   // an empty credsSource is allowed (the user never clicked the toggle to add
   // optional credentials).
-  const userManagedWithNothingToAdopt =
-    connManagedBy === 'user' &&
-    !loading &&
-    !argoCDUnreachable &&
-    discoveredClusters.length === 0;
+  // With a connection ArgoCD already has, Sharko does not need to be told how
+  // to connect, so the choice stays folded away behind an optional link.
+  const userManagedWithNothingToAdopt = connManagedBy === 'user';
   const directRequiredMissing = credsSource === '' && !userManagedWithNothingToAdopt;
 
   const handleStatusFilter = (filter: StatusFilter) => {
@@ -1406,6 +1705,32 @@ export function ClustersOverview() {
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Clusters ArgoCD deploys to — Sharko manages their connections from git.
           </p>
+          {discoveredClusters.length > 0 && (
+            <p data-testid="argocd-known-hint" className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+              <RoleGuard
+                adminOnly
+                fallback={
+                  <span>
+                    {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} ArgoCD already knows
+                  </span>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => openAddCluster('user')}
+                  className="font-medium text-teal-700 underline hover:text-teal-900 dark:text-teal-400 dark:hover:text-teal-300"
+                >
+                  {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} ArgoCD already knows
+                </button>
+              </RoleGuard>
+              <span> that Sharko doesn&apos;t manage yet.</span>
+            </p>
+          )}
+          {availableFailed && (
+            <p data-testid="argocd-known-failed" className="mt-1 text-sm text-amber-700 dark:text-amber-400">
+              {AVAILABLE_CHECK_FAILED}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -1486,16 +1811,11 @@ export function ClustersOverview() {
               * asking them to know it. The full explainer (ARN, method,
               * "how it works") now lives on the System page — this dialog
               * only needs the one-line summary + a link there. */}
-            <ClusterIdentityStrip capabilities={capabilities} loading={capabilitiesLoading} />
-
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
-                Cluster location
-              </p>
-              <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
-                The connection details are optional. You can add them later if an addon needs secrets on this cluster.
-              </p>
-            </div>
+            {/* Round S (S37, finding 23): Sharko's own AWS identity line now
+              * sits inside the Amazon EKS choice below, the only place it is
+              * used. On a kind or other non-EKS set-up it never shows. The old
+              * "add the connection details later" line is gone: it sat right
+              * above "Required — choose one", which said the opposite. */}
 
             {/* Connection ownership — WHO manages the ArgoCD cluster secret
               * (V2-cleanup-57.2). Asked before the credentials question
@@ -1510,7 +1830,17 @@ export function ClustersOverview() {
                 value={connManagedBy}
                 onChange={(e) => {
                   setConnManagedBy(e.target.value as ConnOwnership);
+                  // A new owner starts the connection fields over, so a
+                  // choice made for the other owner is never shown (or sent)
+                  // under this one.
+                  setCredsSource('');
+                  setShowOptionalCreds(false);
+                  setAddClusterKubeconfig('');
+                  setAddClusterSecretPath('');
+                  setAddClusterRegion('');
+                  setAddClusterRoleArn('');
                   setPickedDiscovered(null);
+                  userLetGoOfPickRef.current = false;
                   setDiscoveredFilter('');
                 }}
                 className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
@@ -1531,8 +1861,8 @@ export function ClustersOverview() {
               * managed=false. Hidden entirely when there's nothing to pick
               * from (today's behavior is unchanged in that case).
               * V2-cleanup-92.1 (F13): search filter + showing X of Y count. */}
-            {connManagedBy === 'user' && discoveredClusters.length > 0 && (() => {
-              const filteredDiscovered = discoveredClusters.filter((c) => {
+            {connManagedBy === 'user' && allDiscoveredClusters.length > 0 && (() => {
+              const filteredDiscovered = allDiscoveredClusters.filter((c) => {
                 const filterLower = discoveredFilter.toLowerCase();
                 return (
                   c.name.toLowerCase().includes(filterLower) ||
@@ -1548,7 +1878,7 @@ export function ClustersOverview() {
                   Discovered clusters
                 </p>
                 <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
-                  ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt {discoveredClusters.length === 1 ? 'it' : 'them'} instead of typing its coordinates by hand.
+                  ArgoCD already knows about {allDiscoveredClusters.length} cluster{allDiscoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt {allDiscoveredClusters.length === 1 ? 'it' : 'them'} instead of typing its coordinates by hand.
                 </p>
                 <div className="mt-2 relative">
                   <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#3a6a8a] dark:text-gray-500" />
@@ -1563,7 +1893,7 @@ export function ClustersOverview() {
                 {filteredDiscovered.length > 0 ? (
                   <>
                     <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                      Showing {filteredDiscovered.length} of {discoveredClusters.length}
+                      Showing {filteredDiscovered.length} of {allDiscoveredClusters.length}
                     </p>
                     <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-md ring-1 ring-teal-200 bg-white p-2 dark:ring-teal-900 dark:bg-gray-900">
                       {filteredDiscovered.map((cluster) => (
@@ -1594,18 +1924,43 @@ export function ClustersOverview() {
                     No clusters match your search.
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={handleAdoptFromPicker}
-                  disabled={!pickedDiscovered}
-                  className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-                >
-                  <GitMerge className="h-3.5 w-3.5" />
-                  {pickedDiscovered ? `Adopt ${pickedDiscovered}` : 'Adopt cluster'}
-                </button>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAdoptFromPicker}
+                    disabled={!pickedDiscovered}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <GitMerge className="h-3.5 w-3.5" />
+                    {pickedDiscovered ? `Adopt ${pickedDiscovered}` : 'Adopt cluster'}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="picker-take-ownership"
+                    onClick={handleTakeOwnershipFromPicker}
+                    disabled={!pickedDiscovered}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-teal-600 px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-teal-500 dark:text-teal-300 dark:hover:bg-teal-900/30"
+                  >
+                    <Shield className="h-3.5 w-3.5" />
+                    {pickedDiscovered ? `Take ownership of ${pickedDiscovered}` : 'Take ownership'}
+                  </button>
+                </div>
                 <p className="mt-2 text-sm text-[#2a5a7a] dark:text-gray-500">
                   Or enter details manually below for a cluster ArgoCD doesn't have yet.
                 </p>
+                {pickedDiscovered && (
+                  <button
+                    type="button"
+                    data-testid="picker-clear"
+                    onClick={() => {
+                      userLetGoOfPickRef.current = true;
+                      setPickedDiscovered(null);
+                    }}
+                    className="mt-1 text-sm font-medium text-teal-700 underline hover:text-teal-800 dark:text-teal-300"
+                  >
+                    {PICKER_ENTER_BY_HAND}
+                  </button>
+                )}
               </div>
               );
             })()}
@@ -1621,12 +1976,21 @@ export function ClustersOverview() {
               * adopt" is misleading — Sharko didn't check, it couldn't. The
               * ArgoCDStatusBanner already covers that case, so this line
               * stays silent rather than saying something false. */}
-            {connManagedBy === 'user' && !loading && !argoCDUnreachable && discoveredClusters.length === 0 && (
+            {connManagedBy === 'user' && !loading && !argoCDUnreachable && availableStatus === 'ok' && allDiscoveredClusters.length === 0 && (
               <p
                 data-testid="discovered-empty"
                 className="text-sm text-[#2a5a7a] dark:text-gray-500"
               >
                 Sharko checked ArgoCD — no other clusters there to adopt.
+              </p>
+            )}
+            {/* The check failed: say so, never "no other clusters" (S36). */}
+            {connManagedBy === 'user' && !loading && availableFailed && allDiscoveredClusters.length === 0 && (
+              <p
+                data-testid="discovered-check-failed"
+                className="text-sm text-amber-700 dark:text-amber-400"
+              >
+                {AVAILABLE_CHECK_FAILED}
               </p>
             )}
 
@@ -1649,11 +2013,6 @@ export function ClustersOverview() {
               * selector when adopting — the picked discovered cluster already
               * supplies its connection from ArgoCD. */}
             {(() => {
-              const userManagedWithNothingToAdopt =
-                connManagedBy === 'user' &&
-                !loading &&
-                !argoCDUnreachable &&
-                discoveredClusters.length === 0;
               const adoptingDiscovered = connManagedBy === 'user' && pickedDiscovered;
 
               if (adoptingDiscovered) {
@@ -1798,7 +2157,9 @@ export function ClustersOverview() {
             {credsSource === 'eks-token' && (
               <>
                 {/* Amazon EKS — generate a token from cloud identity
-                  * (IRSA / role assumption). The AWS-shaped fields. */}
+                  * (IRSA / role assumption). The AWS-shaped fields. Sharko's
+                  * own AWS identity is used only here, so its line is here. */}
+                <ClusterIdentityStrip capabilities={capabilities} loading={capabilitiesLoading} />
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                     Region (optional)
@@ -1906,11 +2267,16 @@ export function ClustersOverview() {
         // (__merged__|<url> vs __pending__|<url>). The tag is set in
         // handleAddCluster; we strip it here so external callers never
         // see the marker characters.
-        const isMergedTag = addClusterResultMsg.startsWith('__merged__|');
-        const isPendingTag = addClusterResultMsg.startsWith('__pending__|');
-        const taggedURL = isMergedTag
+        // A pending banner follows the pull request: once it is merged the
+        // banner reads like the merged one, once it is closed it says so.
+        const followedMerged = addClusterResultMsg.startsWith('__pending__|') && registerPRState === 'merged';
+        const followedClosed = addClusterResultMsg.startsWith('__pending__|') && registerPRState === 'closed';
+        const followedFinishing = addClusterResultMsg.startsWith('__pending__|') && registerPRState === 'finishing';
+        const isMergedTag = addClusterResultMsg.startsWith('__merged__|') || followedMerged;
+        const isPendingTag = addClusterResultMsg.startsWith('__pending__|') && !followedMerged;
+        const taggedURL = addClusterResultMsg.startsWith('__merged__|')
           ? addClusterResultMsg.slice('__merged__|'.length)
-          : isPendingTag
+          : addClusterResultMsg.startsWith('__pending__|')
             ? addClusterResultMsg.slice('__pending__|'.length)
             : '';
         const isPartial = addClusterResult?.status === 'partial' || addClusterResult?.partial;
@@ -1925,7 +2291,7 @@ export function ClustersOverview() {
         //     outcome of a PR-only write. Per the status-vocabulary color
         //     law, "a change is in progress" is blue, not amber.
         //   - "success" (green) — the PR already merged.
-        const tone: 'success' | 'warn' | 'pending' = isPartial
+        const tone: 'success' | 'warn' | 'pending' = isPartial || followedClosed
           ? 'warn'
           : isPendingTag || addClusterResultMsg === REGISTER_PR_NO_LINK
             ? 'pending'
@@ -1948,7 +2314,7 @@ export function ClustersOverview() {
         // exactly by ClustersOverview.pending.test.tsx) stays untouched.
         // Skipped for the untagged no-PR-URL fallback message, which
         // already says "pull request" and "GitOps repo" itself.
-        const showGitOpsLine = !isPartial && (isPendingTag || isMergedTag || addClusterResultMsg.startsWith('http'));
+        const showGitOpsLine = !isPartial && !followedClosed && (isPendingTag || isMergedTag || addClusterResultMsg.startsWith('http'));
         return (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${toneClasses}`}>
           <div className="flex flex-col gap-0.5">
@@ -1962,7 +2328,11 @@ export function ClustersOverview() {
                   </>}
                 </>
               : isPendingTag
-                ? <>Cluster registration PR opened — merge to activate.{' '}
+                ? <>{followedClosed
+                      ? 'Cluster registration PR was closed without merging — the cluster was not registered.'
+                      : followedFinishing
+                        ? 'Cluster registration PR merged — finishing up…'
+                        : 'Cluster registration PR opened — merge to activate.'}{' '}
                     <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
                       View PR <ExternalLink className="h-3 w-3" />
                     </a>
@@ -2223,12 +2593,14 @@ export function ClustersOverview() {
         <div className="space-y-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
             <GitMerge className="h-4 w-4 text-blue-600" />
-            Pending Registrations
+            {pendingOnlyRegisters ? 'Pending Registrations' : 'Pending Changes'}
             <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
               {pendingRegistrations.length}
             </span>
             <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
-              — registration PR open, will appear as managed once merged
+              {pendingOnlyRegisters
+                ? '— registration PR open, will appear as managed once merged'
+                : '— a pull request is open for each, the change happens once it is merged'}
             </span>
           </h3>
           <div className="overflow-x-auto rounded-xl ring-2 ring-blue-200 bg-[#f0f7ff] shadow-sm dark:ring-blue-900/40 dark:bg-gray-800">
@@ -2236,6 +2608,7 @@ export function ClustersOverview() {
               <thead className="border-b border-blue-200 bg-blue-50 text-xs uppercase text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-400">
                 <tr>
                   <th className="px-6 py-3">Cluster Name</th>
+                  {!pendingOnlyRegisters && <th className="px-6 py-3">Change</th>}
                   <th className="px-6 py-3">Branch</th>
                   <th className="px-6 py-3">Opened</th>
                   <th className="px-6 py-3">Action</th>
@@ -2247,6 +2620,11 @@ export function ClustersOverview() {
                     <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                       {p.cluster_name}
                     </td>
+                    {!pendingOnlyRegisters && (
+                      <td className="px-6 py-3 text-sm text-[#2a5a7a] dark:text-gray-400">
+                        {PENDING_OPERATION_LABEL[p.operation ?? 'register'] ?? PENDING_OPERATION_OTHER}
+                      </td>
+                    )}
                     <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                       {p.branch || '--'}
                     </td>
@@ -2262,7 +2640,7 @@ export function ClustersOverview() {
                           className="inline-flex items-center gap-1 rounded border border-blue-300 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/20"
                         >
                           <Eye className="h-3 w-3" />
-                          View PR
+                          View PR{typeof p.pr_number === 'number' && p.pr_number > 0 ? ` #${p.pr_number}` : ''}
                         </a>
                       ) : (
                         <span className="text-sm text-[#3a6a8a] dark:text-gray-500">PR URL unavailable</span>
@@ -2467,6 +2845,7 @@ export function ClustersOverview() {
                           testErrorCode={cluster.test_error_code}
                           connectionManagedBy={cluster.connection_managed_by}
                           enabledAddonCount={rowAddonCount}
+                          latestTest={latestTestOf(testResults[cluster.name], pageRunRef.current[cluster.name]?.own)}
                         />
                       </td>
                       <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -2501,7 +2880,10 @@ export function ClustersOverview() {
                             label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
                           />
                           {cluster.adopted && (
-                            <RoleGuard adminOnly>
+                            <RoleGuard
+                              adminOnly
+                              fallback={<span data-testid="unadopt-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">{UNADOPT_ADMIN_ONLY_HINT}</span>}
+                            >
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); setUnadoptTarget(cluster.name); }}
@@ -2585,10 +2967,11 @@ export function ClustersOverview() {
                       testErrorCode={cluster.test_error_code}
                       connectionManagedBy={cluster.connection_managed_by}
                       enabledAddonCount={addonCount}
+                      latestTest={latestTestOf(testResults[cluster.name], pageRunRef.current[cluster.name]?.own)}
                     />
                   </div>
                   <p className="mb-2 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
-                    {cluster.server_version ? `v${cluster.server_version}` : '--'}
+                    {cluster.server_version ? withV(cluster.server_version) : '--'}
                   </p>
                   <div className="flex items-center justify-between">
                     {addonCount > 0 && (
@@ -2597,7 +2980,10 @@ export function ClustersOverview() {
                       </span>
                     )}
                     {cluster.adopted && (
-                      <RoleGuard adminOnly>
+                      <RoleGuard
+                        adminOnly
+                        fallback={<span data-testid="unadopt-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">{UNADOPT_ADMIN_ONLY_HINT}</span>}
+                      >
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); setUnadoptTarget(cluster.name); }}
@@ -2672,6 +3058,16 @@ export function ClustersOverview() {
         onDiagnose={(name) => { setAdoptDialogOpen(false); setDiagnoseCluster(name); }}
       />
 
+      {/* Take ownership, from the Clusters page. Same dialog as the cluster page. */}
+      {takeoverTarget && (
+        <TakeoverDialog
+          clusterName={takeoverTarget}
+          open
+          onClose={() => setTakeoverTarget(null)}
+          onDone={() => void fetchData()}
+        />
+      )}
+
       {/* Un-adopt Confirmation Modal */}
       <ConfirmationModal
         open={unadoptTarget !== null}
@@ -2682,7 +3078,7 @@ export function ClustersOverview() {
         }}
         onConfirm={handleUnadopt}
         title="Un-adopt Cluster"
-        description={`This will remove "${unadoptTarget}" from Sharko management. The ArgoCD connection will remain, but Sharko will no longer manage addons for this cluster.`}
+        description={unadoptDescription(unadoptTarget ?? '')}
         confirmText="Un-adopt"
         typeToConfirm={unadoptTarget ?? ''}
         destructive
@@ -2742,6 +3138,8 @@ export function ClustersOverview() {
             autoMergeExpected={(unadoptResult.pr?.merged ?? unadoptResult.pr?.result?.merged) === true}
             mergedLabel="PR merged — cluster un-adopted"
             openLabel="PR open for review — cluster is un-adopted once it merges"
+            finishingLabel="PR merged — finishing the un-adopt…"
+            closedLabel="PR closed without merging — the cluster is still managed"
           />
           <button
             type="button"
@@ -2779,6 +3177,8 @@ export function ClustersOverview() {
             autoMergeExpected={removalNote.merged}
             mergedLabel={`Cluster "${removalNote.cluster}" removed`}
             openLabel={`Removal PR opened for "${removalNote.cluster}"`}
+            finishingLabel={`Removal PR merged — finishing the removal of "${removalNote.cluster}"…`}
+            closedLabel={`Removal PR for "${removalNote.cluster}" was closed without merging — the cluster is not removed`}
           />
           <button
             type="button"

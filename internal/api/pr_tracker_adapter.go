@@ -53,7 +53,42 @@ func (a *prTrackerAdapter) TrackPR(ctx context.Context, p orchestrator.TrackedPR
 		Source:     p.Source,
 		CreatedAt:  createdAt,
 		LastStatus: lastStatus,
+		FollowUp:   followUpToTracker(p.FollowUp),
 	})
+}
+
+// followUpToTracker copies the orchestrator's after-merge record onto the
+// tracker's own type. nil stays nil.
+func followUpToTracker(f *orchestrator.ClusterFollowUp) *prtracker.ClusterFollowUp {
+	if f == nil {
+		return nil
+	}
+	return &prtracker.ClusterFollowUp{
+		Cleanup:              f.Cleanup,
+		KeepConnection:       f.KeepConnection,
+		CredentialKey:        f.CredentialKey,
+		CredentialsSource:    f.CredentialsSource,
+		CredentialRoleARN:    f.CredentialRoleARN,
+		Finish:               f.Finish,
+		PreserveLegacyLabels: f.PreserveLegacyLabels,
+	}
+}
+
+// followUpFromTracker is the reverse of followUpToTracker, used by the
+// merge hook. nil stays nil.
+func followUpFromTracker(f *prtracker.ClusterFollowUp) *orchestrator.ClusterFollowUp {
+	if f == nil {
+		return nil
+	}
+	return &orchestrator.ClusterFollowUp{
+		Cleanup:              f.Cleanup,
+		KeepConnection:       f.KeepConnection,
+		CredentialKey:        f.CredentialKey,
+		CredentialsSource:    f.CredentialsSource,
+		CredentialRoleARN:    f.CredentialRoleARN,
+		Finish:               f.Finish,
+		PreserveLegacyLabels: f.PreserveLegacyLabels,
+	}
 }
 
 // attachPRTracker wires server-lifetime background hooks onto a

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,8 +19,8 @@ const takeoverOperation = "The takeover"
 func init() {
 	takeoverCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	takeoverCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
-	takeoverCmd.Flags().StringArray("acknowledge", nil, "Finding id to acknowledge (repeatable)")
-	takeoverCmd.Flags().Bool("preserve-legacy-labels", true, "Carry the previous owner's labels over to Sharko's connection (default true — only sent when you set this flag)")
+	takeoverCmd.Flags().StringArray("acknowledge", nil, "Finding id to acknowledge (repeat it, or give several ids split by commas)")
+	takeoverCmd.Flags().Bool("preserve-legacy-labels", true, "Carry the previous owner's labels over to Sharko's connection (only sent when you set this flag)")
 	takeoverCmd.Flags().String("region", "", "Region to record on the fleet entry")
 	takeoverCmd.Flags().Bool("auto-merge", false, "Auto-merge the takeover PR (overrides the server default; only sent when you set this flag)")
 	rootCmd.AddCommand(takeoverCmd)
@@ -29,7 +30,7 @@ func init() {
 	dropLegacyLabelsCmd.Flags().StringArray("label", nil, "Label key to remove (repeatable; empty means every carried-over label)")
 	dropLegacyLabelsCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 	dropLegacyLabelsCmd.Flags().Bool("dry-run", false, "Preview what would be removed without making changes")
-	dropLegacyLabelsCmd.Flags().StringArray("acknowledge", nil, "Warning id to acknowledge (repeatable)")
+	dropLegacyLabelsCmd.Flags().StringArray("acknowledge", nil, "Warning id to acknowledge (repeat it, or give several ids split by commas)")
 	rootCmd.AddCommand(dropLegacyLabelsCmd)
 
 	rootCmd.AddCommand(unregisterConsequencesCmd)
@@ -163,6 +164,7 @@ type takeoverResponse struct {
 	PreservedLabels    map[string]string  `json:"preserved_labels,omitempty"`
 	DroppedLabels      map[string]string  `json:"dropped_labels,omitempty"`
 	SecretSwapped      bool               `json:"secret_swapped"`
+	WaitingForMerge    bool               `json:"waiting_for_merge,omitempty"`
 	AlreadyOwned       bool               `json:"already_owned,omitempty"`
 	ProtectionRepaired bool               `json:"protection_repaired,omitempty"`
 	Git                *takeoverGitResult `json:"git,omitempty"`
@@ -185,10 +187,12 @@ type takeover409Body struct {
 var takeoverCmd = &cobra.Command{
 	Use:   "takeover <cluster>",
 	Short: "Take over a cluster ArgoCD already manages",
-	Long: `Makes Sharko the owner of an existing cluster's ArgoCD connection, keeping
-the same name, the same API address and — by default — every label the
-previous owner left on it. Adds the cluster to Sharko's fleet through a pull
-request and creates an empty addon file for it; no addon is turned on.
+	Long: `Opens a pull request that adds the cluster to Sharko's fleet and creates an
+empty addon file for it; no addon is turned on. When that pull request is
+merged, Sharko becomes the owner of the cluster's existing ArgoCD connection,
+keeping the same name, the same API address and — by default — every label
+the previous owner left on it. If the pull request is closed without merging,
+nothing on the connection changes.
 
 Always fetches and prints the preflight report first. Any warning finding
 must be named with --acknowledge before the takeover is allowed to run —
@@ -199,6 +203,7 @@ run with --dry-run first to see the exact ids to pass.`,
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		yes, _ := cmd.Flags().GetBool("yes")
 		acks, _ := cmd.Flags().GetStringArray("acknowledge")
+		acks = splitAcknowledgeIDs(acks)
 		region, _ := cmd.Flags().GetString("region")
 
 		// The preflight is always fetched and shown first — it is the read
@@ -219,7 +224,7 @@ run with --dry-run first to see the exact ids to pass.`,
 		fmt.Println()
 
 		if !dryRun && !yes {
-			fmt.Printf("Take over cluster %q? Sharko becomes the owner of its existing ArgoCD connection. [y/N]: ", name)
+			fmt.Printf("Take over cluster %q? Sharko opens a pull request, and becomes the owner of its existing ArgoCD connection when it is merged. [y/N]: ", name)
 			var confirm string
 			fmt.Scanln(&confirm)
 			if confirm != "y" && confirm != "Y" {
@@ -269,7 +274,7 @@ run with --dry-run first to see the exact ids to pass.`,
 			if !dryRun {
 				fmt.Println("failed")
 			}
-			return handleTakeover409(respBody, name, acks, dryRun, region, cmd)
+			return handleTakeover409(respBody, name, acks, dryRun, region, cmd, &report)
 		}
 
 		if status != 200 && status != 207 {
@@ -294,15 +299,26 @@ run with --dry-run first to see the exact ids to pass.`,
 		// above a line that then said the takeover had only got part of the
 		// way.
 		outcome := fanout.SingleStatus(result.Status, status == 207)
+		// A pull request that waits for its merge has changed nothing on
+		// the connection yet, so it must never say "Sharko now owns" (EP3
+		// dry run round R, R5).
+		waiting := !dryRun && outcome.Completed() && result.Git != nil &&
+			(result.WaitingForMerge || prWaiting(result.Git.PRUrl, result.Git.Merged))
 		if !dryRun {
-			fmt.Println(outcome.ProgressWord())
+			if waiting {
+				fmt.Println(waitingProgressWord)
+			} else {
+				fmt.Println(outcome.ProgressWord())
+			}
 		}
 
 		fmt.Println()
 		if dryRun {
 			printDryRun(result.DryRun)
 		} else {
-			if outcome.Completed() {
+			if waiting {
+				fmt.Println(waitingForMergeLine(result.Git.PRUrl))
+			} else if outcome.Completed() {
 				fmt.Printf("Sharko now owns %s.\n", name)
 			} else {
 				fmt.Print(outcome.TroubleHeadline(takeoverOperation, name))
@@ -317,7 +333,7 @@ run with --dry-run first to see the exact ids to pass.`,
 			if len(result.DroppedLabels) > 0 {
 				fmt.Printf("  Dropped labels:   %s\n", strings.Join(sortedKeys(result.DroppedLabels), ", "))
 			}
-			if result.Git != nil && result.Git.PRUrl != "" {
+			if result.Git != nil && result.Git.PRUrl != "" && !waiting {
 				if result.Git.Merged {
 					fmt.Printf("  PR: %s (merged)\n", result.Git.PRUrl)
 				} else {
@@ -342,20 +358,34 @@ run with --dry-run first to see the exact ids to pass.`,
 	},
 }
 
+// takeover409NoReasonFmt is the error when the server refused the take over
+// and gave no reason and nothing to acknowledge.
+const takeover409NoReasonFmt = "Sharko did not take over %s, and the server did not say why. Run sharko takeover-preflight %s to see what stops it."
+
 // handleTakeover409 prints the takeover 409 body (either "not ready" or
 // "warnings not acknowledged") and, for the second case, the exact rerun
 // command including every --acknowledge flag still needed.
-func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun bool, region string, cmd *cobra.Command) error {
+//
+// The command has already printed the preflight report before it asked, so
+// the report in the 409 is printed again only when it says something
+// different (the world changed in between). The error itself is returned and
+// printed once, by Execute.
+func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun bool, region string, cmd *cobra.Command, printed *preflightReport) error {
 	var b takeover409Body
 	if err := json.Unmarshal(body, &b); err != nil {
 		return printAPIError(body, 409)
 	}
-	if b.Preflight != nil {
+	if b.Preflight != nil && !reflect.DeepEqual(b.Preflight, printed) {
 		printPreflightReport(b.Preflight)
 	}
 	fmt.Println()
 	if len(b.UnacknowledgedFindings) == 0 {
 		// Blocked — nothing to acknowledge, something has to be fixed first.
+		// A 409 with no words of its own must not print an empty error (EP3
+		// dry run round S, S18).
+		if strings.TrimSpace(b.Error) == "" {
+			return fmt.Errorf(takeover409NoReasonFmt, name, name)
+		}
 		return fmt.Errorf("%s", b.Error)
 	}
 
@@ -369,8 +399,6 @@ func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun b
 		}
 	}
 
-	fmt.Println(b.Error)
-	fmt.Println()
 	rerun := []string{"sharko", "takeover", name, "-y"}
 	for _, id := range combined {
 		rerun = append(rerun, "--acknowledge", id)
@@ -385,8 +413,48 @@ func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun b
 		v, _ := cmd.Flags().GetBool("auto-merge")
 		rerun = append(rerun, "--auto-merge="+fmt.Sprint(v))
 	}
+	// Dropping this one would flip what the user chose about the old owner's
+	// labels, so it rides along whenever it was typed.
+	if cmd.Flags().Changed("preserve-legacy-labels") {
+		v, _ := cmd.Flags().GetBool("preserve-legacy-labels")
+		rerun = append(rerun, "--preserve-legacy-labels="+fmt.Sprint(v))
+	}
 	fmt.Printf("Rerun with: %s\n", strings.Join(rerun, " "))
-	return fmt.Errorf("%s", b.Error)
+	return fmt.Errorf("%s", takeoverAckSentence(b.UnacknowledgedFindings))
+}
+
+// takeoverAckSentence is what the CLI says when warnings have not been read
+// yet. It points at the checks printed above and at the CLI flag. The server's
+// own sentence names an API field, which means nothing on a command line.
+func takeoverAckSentence(ids []string) string {
+	list := strings.Join(ids, ", ")
+	if len(ids) == 1 {
+		return fmt.Sprintf("1 warning has not been read yet. Look at %s in the checks above, then run the command again with --acknowledge %s", list, ids[0])
+	}
+	return fmt.Sprintf("%d warnings have not been read yet. Look at %s in the checks above, then run the command again with %s", len(ids), list, acknowledgeFlags(ids))
+}
+
+// splitAcknowledgeIDs lets --acknowledge take "a,b" as well as being given
+// twice. Empty pieces and repeats are dropped.
+func splitAcknowledgeIDs(in []string) []string {
+	var out []string
+	for _, v := range in {
+		for _, id := range strings.Split(v, ",") {
+			id = strings.TrimSpace(id)
+			if id != "" && !containsStr(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+func acknowledgeFlags(ids []string) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, "--acknowledge "+id)
+	}
+	return strings.Join(parts, " ")
 }
 
 func containsStr(haystack []string, needle string) bool {
@@ -448,6 +516,7 @@ removal runs; run with --dry-run first to see the exact ids.`,
 		yes, _ := cmd.Flags().GetBool("yes")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		acks, _ := cmd.Flags().GetStringArray("acknowledge")
+		acks = splitAcknowledgeIDs(acks)
 
 		if !dryRun && !yes {
 			fmt.Printf("Remove the legacy labels from %q's connection? [y/N]: ", name)
@@ -550,7 +619,6 @@ func handleDropLegacyLabels409(body []byte, name string, alreadyAcked []string, 
 		fmt.Printf("  ⚠ [%s] %s\n", id, w)
 	}
 	fmt.Println()
-	fmt.Println(b.Error)
 
 	combined := append([]string{}, alreadyAcked...)
 	for _, id := range b.UnacknowledgedFindings {

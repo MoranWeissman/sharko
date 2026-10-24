@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -68,6 +69,20 @@ func (m *mockArgoSecretManagerWithTracking) GetTrackingOwner(_ context.Context, 
 
 // ---------- AdoptClusters ----------
 
+// idsToAcknowledge asks once with nothing acknowledged and returns the ids
+// the refusal names — what a person reads before they tick. The ids come
+// from each warning's own words (EP3 dry run round S, S17), so a test does
+// not spell them.
+func idsToAcknowledge(t *testing.T, orch *Orchestrator, clusters ...string) []string {
+	t.Helper()
+	_, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{Clusters: clusters})
+	var needsAck *AdoptNeedsAcknowledgementError
+	if !errors.As(err, &needsAck) || len(needsAck.Missing) == 0 {
+		t.Fatalf("want a refusal that names the warnings, got %v", err)
+	}
+	return needsAck.Missing
+}
+
 func TestAdoptClusters_ForeignOwnerWarning_Hard(t *testing.T) {
 	argocd := newMockArgocd()
 	argocd.existingClusters = []models.ArgocdCluster{
@@ -83,7 +98,8 @@ func TestAdoptClusters_ForeignOwnerWarning_Hard(t *testing.T) {
 	orch.SetArgoSecretManager(asm, "")
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		Clusters: []string{"cluster-a"},
+		AcknowledgedFindings: idsToAcknowledge(t, orch, "cluster-a"),
+		Clusters:             []string{"cluster-a"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -98,14 +114,14 @@ func TestAdoptClusters_ForeignOwnerWarning_Hard(t *testing.T) {
 	if len(cr.Warnings) != 1 {
 		t.Fatalf("expected exactly 1 warning, got %d: %v", len(cr.Warnings), cr.Warnings)
 	}
-	if !strings.Contains(cr.Warnings[0], `"renderer-app"`) {
-		t.Errorf("warning = %q, want it to name the owning app", cr.Warnings[0])
+	if !strings.Contains(cr.Warnings[0].Message, `"renderer-app"`) {
+		t.Errorf("warning = %q, want it to name the owning app", cr.Warnings[0].Message)
 	}
-	if !strings.Contains(cr.Warnings[0], "Replace") {
-		t.Errorf("warning = %q, want it to mention the Replace sync-option risk", cr.Warnings[0])
+	if !strings.Contains(cr.Warnings[0].Message, "Replace") {
+		t.Errorf("warning = %q, want it to mention the Replace sync-option risk", cr.Warnings[0].Message)
 	}
-	if strings.Contains(cr.Warnings[0], "may be") {
-		t.Errorf("warning = %q, a hard-confidence warning must assert ownership, not hedge with \"may be\"", cr.Warnings[0])
+	if strings.Contains(cr.Warnings[0].Message, "may be") {
+		t.Errorf("warning = %q, a hard-confidence warning must assert ownership, not hedge with \"may be\"", cr.Warnings[0].Message)
 	}
 }
 
@@ -128,7 +144,8 @@ func TestAdoptClusters_ForeignOwnerWarning_Soft(t *testing.T) {
 	orch.SetArgoSecretManager(asm, "")
 
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
-		Clusters: []string{"cluster-a"},
+		AcknowledgedFindings: idsToAcknowledge(t, orch, "cluster-a"),
+		Clusters:             []string{"cluster-a"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -140,17 +157,17 @@ func TestAdoptClusters_ForeignOwnerWarning_Soft(t *testing.T) {
 	if len(cr.Warnings) != 1 {
 		t.Fatalf("expected exactly 1 warning, got %d: %v", len(cr.Warnings), cr.Warnings)
 	}
-	if !strings.Contains(cr.Warnings[0], `"helm-release"`) {
-		t.Errorf("warning = %q, want it to name the owning app/release", cr.Warnings[0])
+	if !strings.Contains(cr.Warnings[0].Message, `"helm-release"`) {
+		t.Errorf("warning = %q, want it to name the owning app/release", cr.Warnings[0].Message)
 	}
-	if !strings.Contains(cr.Warnings[0], "may be") {
-		t.Errorf("warning = %q, want the soft-confidence hedge \"may be\"", cr.Warnings[0])
+	if !strings.Contains(cr.Warnings[0].Message, "may be") {
+		t.Errorf("warning = %q, want the soft-confidence hedge \"may be\"", cr.Warnings[0].Message)
 	}
-	if !strings.Contains(cr.Warnings[0], "Helm") {
-		t.Errorf("warning = %q, want it to mention the Helm possibility", cr.Warnings[0])
+	if !strings.Contains(cr.Warnings[0].Message, "Helm") {
+		t.Errorf("warning = %q, want it to mention the Helm possibility", cr.Warnings[0].Message)
 	}
-	if !strings.Contains(cr.Warnings[0], "Replace") {
-		t.Errorf("warning = %q, want it to mention the Replace sync-option risk", cr.Warnings[0])
+	if !strings.Contains(cr.Warnings[0].Message, "Replace") {
+		t.Errorf("warning = %q, want it to mention the Replace sync-option risk", cr.Warnings[0].Message)
 	}
 }
 
@@ -205,10 +222,11 @@ func TestAdoptClusters_PlainMockManager_NoWarning(t *testing.T) {
 	}
 }
 
-// TestAdoptClusters_ForeignOwnerCheckError_DoesNotFailAdoption — a
-// detection-call error (e.g. a transient K8s API error) must never fail
-// the adoption; it is advisory-only and simply produces no warning.
-func TestAdoptClusters_ForeignOwnerCheckError_DoesNotFailAdoption(t *testing.T) {
+// TestAdoptClusters_ForeignOwnerCheckError_FailsClosed — round R, R11: a
+// foreign-owner check that cannot be read stops the adopt for that
+// cluster. A warning nobody could see cannot be acknowledged, so going
+// ahead would skip it.
+func TestAdoptClusters_ForeignOwnerCheckError_FailsClosed(t *testing.T) {
 	argocd := newMockArgocd()
 	argocd.existingClusters = []models.ArgocdCluster{
 		{Name: "cluster-a", Server: "https://a.example.com"},
@@ -228,11 +246,19 @@ func TestAdoptClusters_ForeignOwnerCheckError_DoesNotFailAdoption(t *testing.T) 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Results[0].Status != "success" {
-		t.Fatalf("a foreign-owner detection failure must not fail adoption; status=%q", result.Results[0].Status)
+	cr := result.Results[0]
+	if cr.Status != "failed" || cr.Merged {
+		t.Fatalf("an owner check that could not be read must stop the adopt; status=%q merged=%v", cr.Status, cr.Merged)
 	}
-	if len(result.Results[0].Warnings) != 0 {
-		t.Fatalf("expected no warnings on a detection error, got %v", result.Results[0].Warnings)
+	want := "Sharko could not check whether another ArgoCD Application owns cluster cluster-a's connection, so it did not adopt it. Nothing has changed. Try again."
+	if cr.Error != want {
+		t.Fatalf("error:\n got %q\nwant %q", cr.Error, want)
+	}
+	if len(cr.Blockers) != 1 || cr.Blockers[0].ID != AdoptBlockerCannotCheck {
+		t.Fatalf("blockers = %+v, want one cannot-check", cr.Blockers)
+	}
+	if len(git.prs) != 0 {
+		t.Fatalf("a pull request was opened: %d", len(git.prs))
 	}
 }
 
@@ -320,5 +346,39 @@ func TestRegisterCluster_SharkoManaged_NoForeignOwnerCheck(t *testing.T) {
 	}
 	if len(result.Warnings) != 0 {
 		t.Fatalf("sharko-managed registration must not run the foreign-owner check, got warnings: %v", result.Warnings)
+	}
+}
+
+// On the old layout too, the foreign-owner warning has an id and must be
+// acknowledged before a real adopt writes anything.
+func TestAdoptClusters_ForeignOwnerWarning_NeedsAcknowledgement(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "cluster-a", Server: "https://a.example.com"},
+	}
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n")
+
+	asm := newMockArgoSecretManagerWithTracking()
+	asm.setHardOwner("cluster-a", "renderer-app")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	_, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{Clusters: []string{"cluster-a"}})
+	var needsAck *AdoptNeedsAcknowledgementError
+	if !errors.As(err, &needsAck) || len(needsAck.Missing) != 1 || !strings.HasPrefix(needsAck.Missing[0], AdoptFindingForeignOwner+"-") {
+		t.Fatalf("want a refusal naming %s-<hash>, got %v", AdoptFindingForeignOwner, err)
+	}
+	// A plain "foreign-owner" tick does not cover it: the id comes from what
+	// the warning says (EP3 dry run round S, S17).
+	_, err = orch.AdoptClusters(context.Background(), AdoptClustersRequest{
+		Clusters: []string{"cluster-a"}, AcknowledgedFindings: []string{AdoptFindingForeignOwner},
+	})
+	if !errors.As(err, &needsAck) {
+		t.Fatalf("a tick on the bare kind covered a warning: %v", err)
+	}
+	if string(git.files["configuration/managed-clusters.yaml"]) != "clusters:\n" {
+		t.Error("an unacknowledged adoption must not write anything")
 	}
 }

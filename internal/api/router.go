@@ -450,6 +450,10 @@ type Server struct {
 	// prTracker tracks PRs created by Sharko operations (optional — set via SetPRTracker).
 	prTracker *prtracker.Tracker
 
+	// waitingMarks remembers when the waiting-marks pass first saw a keep
+	// mark with no pull request number (waiting_marks.go).
+	waitingMarks waitingMarkSeen
+
 	// reconcilerTrigger nudges the cluster Secret reconciler after the
 	// orchestrator commits a managed-clusters.yaml change. Optional —
 	// set via SetReconcilerTrigger. Each per-request orchestrator
@@ -1231,6 +1235,7 @@ func registerRoutes(srv *Server, mux *routeMux, staticFS fs.FS) {
 	mux.HandleFunc("POST /api/v1/connections/test", srv.handleTestConnection)
 	mux.HandleFunc("POST /api/v1/connections/test-credentials", srv.handleTestCredentials)
 	mux.HandleFunc("GET /api/v1/connections/discover-argocd", srv.handleDiscoverArgocd)
+	mux.HandleFunc("GET /api/v1/connections/git-defaults", srv.handleGitDefaults)
 
 	// Default addons (GitOps-native)
 	mux.HandleFunc("GET /api/v1/default-addons", srv.handleGetDefaultAddons)
@@ -1240,6 +1245,7 @@ func registerRoutes(srv *Server, mux *routeMux, staticFS fs.FS) {
 	mux.HandleFunc("POST /api/v1/clusters/batch", srv.handleBatchRegisterClusters)
 	mux.HandleFunc("POST /api/v1/clusters/adopt", srv.handleAdoptClusters)
 	mux.HandleFunc("GET /api/v1/clusters/available", srv.handleDiscoverClusters)
+	mux.HandleFunc("GET /api/v1/providers/clusters", srv.handleListProviderClusters)
 
 	// Clusters (read)
 	mux.HandleFunc("GET /api/v1/clusters", srv.handleListClusters)

@@ -90,6 +90,7 @@ var readEndpointsWithoutRoleGate = map[string]struct{}{
 	"GET /api/v1/config":                                          {},
 	"GET /api/v1/connections/":                                    {},
 	"GET /api/v1/connections/discover-argocd":                     {},
+	"GET /api/v1/connections/git-defaults":                        {},
 	"GET /api/v1/dashboard/attention":                             {},
 	"GET /api/v1/dashboard/pull-requests":                         {},
 	"GET /api/v1/dashboard/stats":                                 {},
@@ -126,7 +127,7 @@ var readEndpointsWithoutRoleGate = map[string]struct{}{
 // today. Not a round number under it: a floor with room in it is a hole, and
 // three gates could then be deleted with every route still accounted for by
 // one of the two sets. Re-measure when you add or remove a gate; do not round.
-const wantGatedReadRoutes = 26
+const wantGatedReadRoutes = 27
 
 // TestReadEndpointRoleGateCoverage is the guard.
 func TestReadEndpointRoleGateCoverage(t *testing.T) {

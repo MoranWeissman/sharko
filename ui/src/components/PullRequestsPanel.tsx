@@ -38,6 +38,7 @@ import type { TrackedPR } from '@/services/models'
 import { EmptyState } from '@/components/EmptyState'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PaginationControls, PageSizeSelector, type PageSize } from '@/components/PaginationControls'
+import { prRef, prNumberPrefix, isFinishingPR, PR_FINISHING_LABEL } from '@/lib/prRef'
 
 const POLL_INTERVAL = 30_000
 
@@ -565,7 +566,17 @@ function PendingTabBody({
                   </a>
                 </td>
                 <td className="py-2 pr-3">
-                  <CategoryBadge operation={pr.operation} />
+                  <span className="inline-flex items-center gap-1.5">
+                    <CategoryBadge operation={pr.operation} />
+                    {isFinishingPR(pr) && (
+                      <span
+                        data-testid="pr-finishing"
+                        className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 dark:bg-sky-900/30 dark:text-sky-300"
+                      >
+                        {PR_FINISHING_LABEL}
+                      </span>
+                    )}
+                  </span>
                 </td>
                 {!cluster && (
                   <td className="py-2 pr-3 text-muted-foreground">{pr.cluster || '—'}</td>
@@ -585,7 +596,7 @@ function PendingTabBody({
                       rel="noopener noreferrer"
                       className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
                       title="Open PR in browser"
-                      aria-label={`Open PR #${pr.pr_id} in browser`}
+                      aria-label={`Open ${prRef(pr.pr_id, 'the pull request')} in browser`}
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
@@ -594,7 +605,7 @@ function PendingTabBody({
                       disabled={refreshingId === pr.pr_id}
                       className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground disabled:opacity-50"
                       title="Refresh PR status"
-                      aria-label={`Refresh status of PR #${pr.pr_id}`}
+                      aria-label={`Refresh status of ${prRef(pr.pr_id, 'the pull request')}`}
                     >
                       {refreshingId === pr.pr_id ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -768,7 +779,7 @@ function MergedTabBody({
                     className="font-medium text-card-foreground hover:text-teal-600 hover:underline"
                     title={pr.description ? `${pr.pr_title}\n\n${pr.description}` : pr.pr_title}
                   >
-                    #{pr.pr_id} {pr.pr_title.length > 60 ? pr.pr_title.slice(0, 60) + '…' : pr.pr_title}
+                    {prNumberPrefix(pr.pr_id)}{pr.pr_title.length > 60 ? pr.pr_title.slice(0, 60) + '…' : pr.pr_title}
                   </a>
                 </td>
                 {!cluster && (
@@ -787,7 +798,7 @@ function MergedTabBody({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
-                    aria-label={`Open merged PR #${pr.pr_id} in browser`}
+                    aria-label={`Open merged ${prRef(pr.pr_id, 'pull request')} in browser`}
                     title="Open in browser"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />

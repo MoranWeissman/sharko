@@ -199,12 +199,10 @@ describe('ClustersOverview — LW-11: "Not managed" reframed as "Available to ma
     // "Available to manage" with the same meaning as before.
     const legendItem = screen.getByText('Available to manage');
     expect(legendItem).toBeInTheDocument();
-    // The meaning tooltip should still convey "ArgoCD knows this cluster,
-    // but Sharko doesn't manage addons on it yet — adopt it."
-    const tooltipContainer = legendItem.closest('[title]');
-    expect(tooltipContainer).toHaveAttribute(
-      'title',
-      expect.stringContaining("In ArgoCD but not in Sharko's Git catalog"),
-    );
+    // The meaning is plain visible text next to the name, not a tooltip.
+    expect(
+      screen.getByText(/ArgoCD connects to it, but Sharko does not manage it yet\./),
+    ).toBeInTheDocument();
+    expect(legendItem.closest('[title]')).toBeNull();
   });
 });

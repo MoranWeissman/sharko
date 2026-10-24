@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -206,7 +207,7 @@ func DetectForeignOwner(secret *corev1.Secret) (appName string, confidence Owner
 // found=false, err=nil — because this is commonly called before the user
 // has created their self-managed connection's Secret yet.
 func (m *Manager) GetTrackingOwner(ctx context.Context, name string) (appName string, confidence OwnerConfidence, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return "", "", false, nil
 	}
@@ -240,7 +241,7 @@ type SecretOwnership struct {
 // GetTrackingOwner — so callers can tell "nothing to check yet" apart from
 // a real read failure (permission, timeout, etc.) without inspecting err.
 func (m *Manager) GetSecretOwnership(ctx context.Context, name string) (ownership SecretOwnership, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return SecretOwnership{}, false, nil
 	}
@@ -546,7 +547,7 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	}
 	desiredHash := hashSecretState(desiredLabels, desiredData)
 
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, spec.Name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, spec.Name)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, fmt.Errorf("getting secret %q in namespace %q: %w", spec.Name, m.namespace, err)
 	}
@@ -768,7 +769,7 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 //   - changed == true → a label write occurred.
 //   - changed == false, found == true → labels already converged; no write.
 func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels map[string]string) (changed bool, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return false, false, nil
 	}
@@ -949,7 +950,7 @@ func (m *Manager) RepairAddonLabelsWithOwnershipCheck(
 	// R3-9 rule 2: re-read the Secret and confirm ownership mode matches what
 	// was classified. This Get and the Update below have nothing but in-memory
 	// map work between them — no git read, no backend fetch, no lock.
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return RepairOutcome{}, false, nil
 	}
@@ -1269,7 +1270,7 @@ type ManagedLabelSyncResult struct {
 // calling in a context where the caller has nothing to say) and leaves
 // Annotations byte-identical to before this parameter existed.
 func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, desiredAddonLabels map[string]string, annotations map[string]string) (ManagedLabelSyncResult, error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return ManagedLabelSyncResult{Found: false}, nil
 	}
@@ -1406,7 +1407,7 @@ func (m *Manager) SyncManagedClusterLabels(ctx context.Context, name string, des
 // Not-found is NOT an error (Found=false) — same contract as
 // SyncManagedClusterLabels / SyncLabelsOnly.
 func (m *Manager) SyncConnectivityCheckLabel(ctx context.Context, name string, desiredAddonLabels map[string]string, featureOn bool) (changed, found bool, err error) {
-	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, getErr := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(getErr) {
 		return false, false, nil
 	}
@@ -1543,7 +1544,7 @@ func (m *Manager) ListSecrets(ctx context.Context) ([]corev1.Secret, error) {
 // Returns nil if the secret does not exist (idempotent).
 // Returns an error if the secret exists but is not managed by Sharko.
 func (m *Manager) Delete(ctx context.Context, name string) error {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return nil // idempotent — already gone
 	}
@@ -1557,8 +1558,25 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 			name, LabelManagedBy, ManagedByValue)
 	}
 
-	if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
-		return fmt.Errorf("deleting secret %q in namespace %q: %w", name, m.namespace, err)
+	// Delete exactly the Secret that was checked: if it was replaced or
+	// changed since the read, the API server refuses and nothing is
+	// deleted (EP3 dry run round R, R8).
+	uid, rv := existing.UID, existing.ResourceVersion
+	if uid == "" && rv == "" {
+		// Nothing to check the delete against, so a Secret put back in
+		// its place could be deleted unseen. Refuse (EP3 dry run round
+		// S, S19).
+		return fmt.Errorf("secret %q has no UID and no resource version, so Sharko cannot make sure it deletes exactly the Secret it checked; not deleting it", existing.Name)
+	}
+	opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{}}
+	if uid != "" {
+		opts.Preconditions.UID = &uid
+	}
+	if rv != "" {
+		opts.Preconditions.ResourceVersion = &rv
+	}
+	if err := m.client.CoreV1().Secrets(m.namespace).Delete(ctx, existing.Name, opts); err != nil {
+		return fmt.Errorf("deleting secret %q in namespace %q: %w", existing.Name, m.namespace, err)
 	}
 
 	slog.Info("[argosecrets] cluster secret deleted",
@@ -1570,7 +1588,7 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 // SetAnnotation adds or updates a single annotation on the named secret.
 // Returns an error if the secret does not exist.
 func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) error {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1589,11 +1607,152 @@ func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) er
 	return nil
 }
 
+// AnnotationAdoptPendingPR holds the number of the adopt pull request that
+// is still waiting to be merged. It is the only thing an adopt puts on the
+// Secret before the merge. Kept in lockstep with
+// internal/orchestrator.AnnotationAdoptPendingPR.
+const AnnotationAdoptPendingPR = "sharko.dev/adopt-pending-pr"
+
+// AnnotationRemoveKeepPendingPR is put on a connection a removal (or an
+// un-adopt) keeps, before its pull request opens. It holds the pull
+// request's number ("pending" for the moment before the number is known).
+// While it is on the Secret, the orphan sweep and the leftovers list never
+// touch it, even after the pull request merged and the tracker dropped it.
+// The finish step takes it off together with Sharko's label (EP3 dry run
+// round R, R1). Kept in lockstep with
+// internal/orchestrator.AnnotationRemoveKeepPendingPR.
+const AnnotationRemoveKeepPendingPR = "sharko.dev/remove-keep-pending-pr"
+
+// AnnotationTakeoverPendingPR holds the number of the take over pull
+// request that is still waiting to be merged. Like the adopt mark, it is
+// the only thing a take over puts on the Secret before the merge (R5).
+// Kept in lockstep with internal/orchestrator.AnnotationTakeoverPendingPR.
+const AnnotationTakeoverPendingPR = "sharko.dev/takeover-pending-pr"
+
+// PendingPRMarks are the marks that say "a pull request is still waiting
+// to change this connection". The pass that finishes waiting marks
+// (FinishWaitingClusterMarks in internal/api) looks for each of them.
+var PendingPRMarks = []string{AnnotationAdoptPendingPR, AnnotationTakeoverPendingPR, AnnotationRemoveKeepPendingPR}
+
+// RemoveAnnotationIfValue takes one annotation off the named cluster Secret
+// only when it holds exactly value, so a mark that a newer pull request
+// wrote is never taken off by an older one. A missing Secret, a missing
+// annotation or a different value is (false, nil) and writes nothing.
+func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	// A waiting mark matches when it names the same pull request, in
+	// whichever form it was written (EP3 dry run round S, S4).
+	if cur, ok := existing.Annotations[key]; !ok || !models.PendingPRMarkMatches(cur, value) {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	delete(updated.Annotations, key)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("removing annotation %q from secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation removed from cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
+// ReplaceAnnotationIfValue sets one annotation on the named cluster Secret
+// to value only when it now holds a value that matches old (the same pull
+// request, see models.PendingPRMarkMatches). The write carries the version
+// it read, so a change made in between makes it fail rather than be
+// overwritten. A missing Secret, a missing annotation or another value is
+// (false, nil) and writes nothing.
+func (m *Manager) ReplaceAnnotationIfValue(ctx context.Context, name, key, old, value string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	if cur, ok := existing.Annotations[key]; !ok || !models.PendingPRMarkMatches(cur, old) {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	updated.Annotations[key] = value
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("updating annotation %q on secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation updated on cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
+// ReleaseKeptConnection is the end of a removal or un-adopt that keeps the
+// connection: in one write it takes Sharko's ownership label off the
+// Secret and takes the remove-keep mark off. Nothing else changes. A
+// missing Secret is (false, nil). A Secret with neither is (false, nil)
+// and writes nothing.
+//
+// It only takes off a keep mark that names pull request prID (or a mark
+// with no number yet when prID is 0). A keep mark another pull request put
+// on stays, so that pull request still finishes with it (EP3 dry run round
+// S, S4).
+func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string, prID int) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	cur, marked := existing.Annotations[AnnotationRemoveKeepPendingPR]
+	ownMark := marked && models.PendingPRMarkMatches(cur, strconv.Itoa(prID))
+	if marked && prID == 0 {
+		ownMark = models.PendingPRMarkMatches(cur, "pending")
+	}
+	labelled := existing.Labels[LabelManagedBy] == ManagedByValue
+	if !ownMark && !labelled {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	if labelled {
+		delete(updated.Labels, LabelManagedBy)
+	}
+	if ownMark {
+		delete(updated.Annotations, AnnotationRemoveKeepPendingPR)
+	}
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("handing back the kept connection in secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] kept connection handed back — Sharko's label and its keep mark taken off",
+		"cluster", name, "namespace", m.namespace)
+	return true, nil
+}
+
+// RemoveAnnotation takes one annotation off the named cluster Secret.
+// Returns (false, nil) when the annotation was not there; nothing is
+// written then. Returns an error if the secret does not exist.
+func (m *Manager) RemoveAnnotation(ctx context.Context, name, key string) (bool, error) {
+	existing, err := m.getClusterSecret(ctx, name)
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	if _, ok := existing.Annotations[key]; !ok {
+		return false, nil
+	}
+	updated := existing.DeepCopy()
+	delete(updated.Annotations, key)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("removing annotation %q from secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation removed from cluster secret", "cluster", name, "annotation", key)
+	return true, nil
+}
+
 // GetAnnotation returns the value of a specific annotation on the named secret.
 // Returns ("", nil) if the secret exists but the annotation is not set.
 // Returns an error if the secret does not exist.
 func (m *Manager) GetAnnotation(ctx context.Context, name, key string) (string, error) {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return "", fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1603,7 +1762,7 @@ func (m *Manager) GetAnnotation(ctx context.Context, name, key string) (string, 
 // GetManagedByLabel returns the managed-by label value for the named secret.
 // Returns ("", nil) if the secret exists but the label is not set.
 func (m *Manager) GetManagedByLabel(ctx context.Context, name string) (string, error) {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return "", fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1627,7 +1786,7 @@ func (m *Manager) GetManagedByLabel(ctx context.Context, name string) (string, e
 //     never touched).
 //   - (true, nil) — the label was removed.
 func (m *Manager) StripOwnershipLabel(ctx context.Context, name string) (bool, error) {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
@@ -1653,7 +1812,7 @@ func (m *Manager) StripOwnershipLabel(ctx context.Context, name string) (bool, e
 // without deleting it. The secret remains in the argocd namespace so ArgoCD can still
 // connect to the cluster.
 func (m *Manager) Unadopt(ctx context.Context, name string) error {
-	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := m.getClusterSecret(ctx, name)
 	if err != nil {
 		return fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
@@ -1665,6 +1824,11 @@ func (m *Manager) Unadopt(ctx context.Context, name string) error {
 	// remove both, or the Secret would stay orphan-sweep-immune forever.
 	delete(updated.Annotations, AnnotationAdoptedDoubledPrefixLegacy)
 	delete(updated.Annotations, AnnotationAdoptedLegacy)
+	// A taken-over connection also carries the take-over marks. Un-adopt
+	// hands the connection back, so they go too (EP3-DRYRUN-FIXES call 9):
+	// left behind, they would still say Sharko took this Secret over.
+	delete(updated.Annotations, AnnotationTakenOverAt)
+	delete(updated.Annotations, AnnotationTakeoverPreservedLabels)
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return fmt.Errorf("unadopting secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}

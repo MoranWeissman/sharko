@@ -183,7 +183,7 @@ Surface default: **`stable`**. The core production flow.
 | POST | `/clusters/{name}/test` | `stable` | Surface default. |
 | POST | `/clusters/{name}/diagnose` | `stable` | Surface default. |
 | POST | `/clusters/batch` | `stable` | Surface default. |
-| GET | `/clusters/available` | `stable` | Surface default. |
+| GET | `/clusters/available` | `stable` | Now reads ArgoCD; the credentials-backend list it used to send moved to `/providers/clusters`. |
 | POST | `/clusters/adopt` | `stable` | Label-gate flow; shape settled. |
 | POST | `/clusters/{name}/unadopt` | `stable` | Mirrors adopt. |
 | DELETE | `/clusters/{name}/orphan` | `stable` | Ownership-label gate; settled. |
@@ -252,6 +252,7 @@ Surface default: **`stable`**.
 | POST | `/connections/test-credentials` | `stable` | Surface default. |
 | POST | `/connections/test` | `stable` | Surface default. |
 | GET | `/connections/discover-argocd` | `stable` | Surface default. |
+| GET | `/connections/git-defaults` | `stable` | Surface default. |
 
 ### AI features
 
@@ -379,6 +380,7 @@ Surface default: **`stable`**.
 | GET | `/providers` | `stable` | Surface default. |
 | POST | `/providers/test` | `stable` | Surface default. |
 | POST | `/providers/test-config` | `stable` | Surface default. |
+| GET | `/providers/clusters` | `stable` | What `/clusters/available` used to send. |
 | GET | `/config` | `stable` | Surface default. |
 
 ### Cluster nodes + notifications + ArgoCD reads

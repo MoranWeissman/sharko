@@ -30,11 +30,11 @@ import (
 	"context"
 	"errors"
 
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TriggerCheck requests an immediate READ-ONLY check pass. Never blocks: if
@@ -197,7 +197,7 @@ type secretReadResult struct {
 
 // getSecretForCheck reads one cluster secret by name. A read, never a write.
 func (r *Reconciler) getSecretForCheck(ctx context.Context, name string) secretReadResult {
-	secret, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, name, metav1.GetOptions{})
+	secret, err := argosecrets.GetClusterSecret(ctx, r.deps.ArgoClient, r.namespace, name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return secretReadResult{notFound: true}

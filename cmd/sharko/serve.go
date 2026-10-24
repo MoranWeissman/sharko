@@ -1375,6 +1375,16 @@ var serveCmd = &cobra.Command{
 					ProbeModeFn:              probeModeFn,
 					SelfHealFn:               selfHealFn,
 					EventRecorder:            eventRecorder,
+					// The PR tracker writes the same ConfigMap store. A
+					// read-only view of it (no Git provider) answers which
+					// clusters a tracked remove or un-adopt pull request
+					// keeps the connection for, so the orphan sweep never
+					// deletes one between the merge and the merge hook
+					// taking its label off (EP3-DRYRUN-FIXES call 1).
+					KeptConnectionsFn: prtracker.NewTracker(prCMStore, nil, nil).KeptConnections,
+					// Finishes waiting marks whose pull request the tracker
+					// no longer has (EP3 dry run round R, R4).
+					WaitingMarksFn: srv.FinishWaitingClusterMarks,
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
@@ -1544,47 +1554,10 @@ var serveCmd = &cobra.Command{
 					slog.Info("auto-remediation disabled via SHARKO_AUTO_REMEDIATE")
 				}
 
-				prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
-					// perf M1: a merged PR just changed what dashboard
-					// stats/clusters list/fleet status/catalog/version
-					// matrix/observability overview report. This callback
-					// fires from the PR tracker's background poll loop, not
-					// an HTTP request, so auditMiddleware's invalidation net
-					// can't see it — invalidate explicitly.
-					srv.InvalidateReadCache()
-					triggerMergeReconcilers(clusterRecon, secretRecon)
-					// The second half of a v3 → v4 migration: retire the old
-					// ApplicationSets and start the engine in their place.
-					// Nothing else does this, so without it a merged
-					// migration leaves a repo in the new format with no
-					// engine running (v4 Wave 2 review finding H-2). Ignored
-					// for every other operation, and safe to call twice.
-					go srv.CompleteMigrationHandoffOnMerge(context.Background(), pr.Operation)
-					if remediator != nil {
-						go remediator.OnMerge(pr)
-						// Refresh ArgoCD immediately after the merge so it picks up
-						// the new config without waiting for its git-poll cycle.
-						go remediator.OnMergeRefresh(context.Background(), pr)
-					}
-				})
-
-				// Record every completed change (merged OR closed) into the
-				// durable change-log store BEFORE prtracker drops the PR from
-				// tracking (V2-cleanup-84.1). This fires for both terminal
-				// states, unlike SetOnMergeFn above which only fires on
-				// merge — a rejected/abandoned change belongs in the log too.
-				prTracker.SetOnCompleteFn(func(pr prtracker.PRInfo, status string) {
-					srv.ChangeLogStore().Record(changelog.Entry{
-						Operation:   changelog.PrettyOperation(pr.Operation),
-						Addon:       pr.Addon,
-						Cluster:     pr.Cluster,
-						PRID:        pr.PRID,
-						PRUrl:       pr.PRUrl,
-						OpenedAt:    pr.CreatedAt,
-						CompletedAt: time.Now(),
-						Status:      status,
-					})
-				})
+				// The three hooks (merge, complete, finish) are set in one
+				// place so a unit test can check each is wired to the
+				// right Server method.
+				wirePRTrackerHooks(prTracker, srv, clusterRecon, secretRecon, remediator)
 
 				srv.SetPRTracker(prTracker)
 				prTracker.ReconcileOnStartup(context.Background())
@@ -1659,6 +1632,77 @@ var serveCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// prTrackerHooks is the part of the PR tracker that wirePRTrackerHooks sets.
+type prTrackerHooks interface {
+	SetOnMergeFn(fn func(prtracker.PRInfo))
+	SetOnCompleteFn(fn func(prtracker.PRInfo, string))
+	SetFinishFn(fn prtracker.FinishFn)
+}
+
+// prTrackerHost is the part of the API server the PR tracker hooks call.
+type prTrackerHost interface {
+	InvalidateReadCache()
+	CompleteMigrationHandoffOnMerge(ctx context.Context, operation string)
+	ChangeLogStore() *changelog.Store
+	FinishTrackedPR(ctx context.Context, pr prtracker.PRInfo, status string) error
+}
+
+// wirePRTrackerHooks sets the merge, complete and finish hooks on the PR
+// tracker. Moved out of the serve RunE closure unchanged so a unit test can
+// check which Server method each hook calls (serve_test.go).
+func wirePRTrackerHooks(tracker prTrackerHooks, srv prTrackerHost, clusterRecon *clusterreconciler.Reconciler, secretRecon *secrets.Reconciler, remediator *remediation.Remediator) {
+	tracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+		// perf M1: a merged PR just changed what dashboard
+		// stats/clusters list/fleet status/catalog/version
+		// matrix/observability overview report. This callback
+		// fires from the PR tracker's background poll loop, not
+		// an HTTP request, so auditMiddleware's invalidation net
+		// can't see it — invalidate explicitly.
+		srv.InvalidateReadCache()
+		triggerMergeReconcilers(clusterRecon, secretRecon)
+		// The second half of a v3 → v4 migration: retire the old
+		// ApplicationSets and start the engine in their place.
+		// Nothing else does this, so without it a merged
+		// migration leaves a repo in the new format with no
+		// engine running (v4 Wave 2 review finding H-2). Ignored
+		// for every other operation, and safe to call twice.
+		go srv.CompleteMigrationHandoffOnMerge(context.Background(), pr.Operation)
+		if remediator != nil {
+			go remediator.OnMerge(pr)
+			// Refresh ArgoCD immediately after the merge so it picks up
+			// the new config without waiting for its git-poll cycle.
+			go remediator.OnMergeRefresh(context.Background(), pr)
+		}
+	})
+
+	// Record every completed change (merged OR closed) into the
+	// durable change-log store BEFORE prtracker drops the PR from
+	// tracking (V2-cleanup-84.1). This fires for both terminal
+	// states, unlike SetOnMergeFn above which only fires on
+	// merge — a rejected/abandoned change belongs in the log too.
+	tracker.SetOnCompleteFn(func(pr prtracker.PRInfo, status string) {
+		srv.ChangeLogStore().Record(changelog.Entry{
+			Operation:   changelog.PrettyOperation(pr.Operation),
+			Addon:       pr.Addon,
+			Cluster:     pr.Cluster,
+			PRID:        pr.PRID,
+			PRUrl:       pr.PRUrl,
+			OpenedAt:    pr.CreatedAt,
+			CompletedAt: time.Now(),
+			Status:      status,
+		})
+	})
+
+	// The ArgoCD side of a removal, an un-adopt, an adopt or
+	// a take over whose pull request merged (or was closed)
+	// after the request returned (EP3-DRYRUN-FIXES calls 1, 2
+	// and 9). It runs after the two hooks above. When it fails
+	// the tracker keeps the pull request and runs it again on
+	// the next poll, up to its cap; the marks on the Secret
+	// keep the connection safe meanwhile (round R, R1 and R4).
+	tracker.SetFinishFn(srv.FinishTrackedPR)
 }
 
 // triggerMergeReconcilers fires the low-latency nudge on each reconciler

@@ -34,6 +34,34 @@ const AnnotationAdoptedDoubledPrefixLegacy = "sharko.sharko.dev/adopted"
 // Kept in lockstep with internal/argosecrets.AnnotationAdoptedLegacy.
 const AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 
+// AnnotationAdoptPendingPR holds the number of the adopt pull request that
+// is still waiting to be merged. It is the only thing an adopt puts on the
+// Secret before the merge: it changes no label, so no ApplicationSet and
+// no ownership check sees a difference. When the pull request merges,
+// Sharko takes ownership of the connection and marks it adopted; when it is
+// closed without merging, Sharko takes this mark off and changes nothing
+// else. Kept in lockstep with internal/argosecrets.AnnotationAdoptPendingPR.
+const AnnotationAdoptPendingPR = "sharko.dev/adopt-pending-pr"
+
+// AnnotationRemoveKeepPendingPR is put on a connection that a removal keeps,
+// before the removal's pull request opens. It holds the pull request's
+// number, or "pending" for the moment before the number is known. While it
+// is on the Secret, the orphan sweep and the leftovers list never touch it.
+// The finish step takes it off together with Sharko's label (EP3 dry run
+// round R, R1). Kept in lockstep with
+// internal/argosecrets.AnnotationRemoveKeepPendingPR.
+const AnnotationRemoveKeepPendingPR = "sharko.dev/remove-keep-pending-pr"
+
+// AnnotationTakeoverPendingPR holds the number of the take over pull
+// request that is still waiting to be merged. It is the only thing a take
+// over puts on the Secret before the merge (R5). Kept in lockstep with
+// internal/argosecrets.AnnotationTakeoverPendingPR.
+const AnnotationTakeoverPendingPR = "sharko.dev/takeover-pending-pr"
+
+// pendingMarkValue is what a waiting mark holds before Sharko knows the
+// pull request's number.
+const pendingMarkValue = "pending"
+
 // AdoptClusters orchestrates the two-phase adoption of existing ArgoCD clusters.
 //
 // Phase 1: Per-cluster verification — Stage1 connectivity test.
@@ -80,6 +108,15 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		clusterServerMap[c.Name] = c.Server
 	}
 
+	// A real adopt waits until every warning has been read (call 5 of the
+	// episode 3 fixes). Checked for every cluster before anything is
+	// written, so a missing acknowledgement never leaves half a batch done.
+	if !req.DryRun {
+		if ackErr := o.checkAdoptAcknowledgements(ctx, req, clusterServerMap, v4Repo); ackErr != nil {
+			return nil, ackErr
+		}
+	}
+
 	for _, clusterName := range req.Clusters {
 		cr := AdoptClusterResult{Name: clusterName}
 
@@ -88,12 +125,13 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		if !exists {
 			cr.Status = "failed"
 			cr.Error = fmt.Sprintf("cluster %q not found in ArgoCD — cannot adopt", clusterName)
+			cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerNotInArgoCD, Message: cr.Error}}
 			result.Results = append(result.Results, cr)
 			continue
 		}
 
 		if v4Repo {
-			result.Results = append(result.Results, o.adoptSingleClusterV4(ctx, clusterName, serverURL, req, nil))
+			result.Results = append(result.Results, o.adoptSingleClusterV4(ctx, clusterName, serverURL, req))
 			continue
 		}
 
@@ -113,12 +151,14 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 				cr.Error = fmt.Sprintf(
 					"could not confirm who owns cluster %q's ArgoCD connection: %v — Sharko will not adopt a connection whose owner it cannot read. Fix the read problem and try again.",
 					clusterName, labelErr)
+				cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerOtherOwner, Message: cr.Error}}
 				result.Results = append(result.Results, cr)
 				continue
 			}
 			if managedBy != "" && managedBy != "sharko" {
 				cr.Status = "failed"
 				cr.Error = fmt.Sprintf("cluster %q is managed by %q, not sharko — cannot adopt", clusterName, managedBy)
+				cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerOtherOwner, Message: cr.Error}}
 				result.Results = append(result.Results, cr)
 				continue
 			}
@@ -129,11 +169,20 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		// Adoption always records connectionManagedBy: user (see
 		// adoptSingleCluster below), so this is the earliest point a
 		// foreign owner can be surfaced to the caller.
+		//
+		// A check that cannot be read stops the adopt for this cluster: a
+		// warning nobody could see cannot be acknowledged (EP3 dry run round
+		// R, R11).
 		if warnings, warnErr := o.detectForeignOwnerWarnings(ctx, clusterName); warnErr != nil {
-			log.Warn("could not check cluster secret for foreign ArgoCD ownership — proceeding with adoption",
+			log.Warn("could not check cluster secret for foreign ArgoCD ownership — not adopting this cluster",
 				"cluster", clusterName, "error", warnErr)
+			cr.Status = "failed"
+			cr.Error = ForeignOwnerUnreadableMessage(clusterName)
+			cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerCannotCheck, Message: cr.Error}}
+			result.Results = append(result.Results, cr)
+			continue
 		} else if len(warnings) > 0 {
-			cr.Warnings = append(cr.Warnings, warnings...)
+			cr.Warnings = append(cr.Warnings, foreignOwnerAdoptWarnings(warnings)...)
 		}
 
 		// Phase 1: Verification (Stage1 connectivity test).
@@ -259,12 +308,13 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			log.Info("Found existing open PR for cluster adoption — skipping",
 				"cluster", clusterName, "pr", existingPR.URL)
 			cr.Status = "success"
+			prNum := PRNumber(existingPR.ID, existingPR.URL)
 			cr.Git = &GitResult{
 				PRUrl:  existingPR.URL,
-				PRID:   existingPR.ID,
+				PRID:   prNum,
 				Branch: existingPR.SourceBranch,
 			}
-			cr.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+			cr.Message = adoptAlreadyWaitingMessage(clusterName, prNum, existingPR.URL)
 			result.Results = append(result.Results, cr)
 			continue
 		}
@@ -280,7 +330,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		// adoptSingleCluster returns a fresh AdoptClusterResult that
 		// doesn't carry it forward on its own.
 		if len(cr.Warnings) > 0 {
-			adoptResult.Warnings = append(adoptResult.Warnings, cr.Warnings...)
+			adoptResult.Warnings = uniqueAdoptWarningIDs(append(adoptResult.Warnings, cr.Warnings...))
 		}
 		result.Results = append(result.Results, adoptResult)
 	}
@@ -382,14 +432,27 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 				"cluster", name, "error", annotErr)
 			cr.Status = "partial"
 			cr.Error = annotErr.Error()
-			cr.Message = "Adoption PR merged but failed to set adopted annotation on ArgoCD secret"
+			cr.Message = AdoptMarkFailedMessage
 			return cr
 		}
 	}
 
 	cr.Status = "success"
+	cr.Merged = gitResult.Merged && o.argoSecretManager != nil
 	if !gitResult.Merged {
-		cr.Message = fmt.Sprintf("PR created — adopted annotation will be set after PR is merged: %s", gitResult.PRUrl)
+		cr.Message = fmt.Sprintf("%s is open: %s. When it is merged, Sharko marks cluster %s as adopted.",
+			capitalizeFirst(PullRequestPhrase(PRNumber(gitResult.PRID, gitResult.PRUrl))), gitResult.PRUrl, name)
 	}
 	return cr
+}
+
+// AdoptMarkFailedMessage is the answer when the adoption pull request
+// merged but Sharko could not put the "adopted" mark on the cluster's
+// ArgoCD Secret. Adopting again finishes it (EP3 dry run round S, S23).
+const AdoptMarkFailedMessage = "The adoption pull request is merged, but Sharko could not mark the cluster's ArgoCD connection as adopted. Adopt the cluster again to finish. It is safe to repeat."
+
+// ForeignOwnerUnreadableMessage is the answer when Sharko cannot check
+// whether another ArgoCD Application renders the cluster's connection.
+func ForeignOwnerUnreadableMessage(name string) string {
+	return fmt.Sprintf("Sharko could not check whether another ArgoCD Application owns cluster %s's connection, so it did not adopt it. Nothing has changed. Try again.", name)
 }

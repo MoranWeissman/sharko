@@ -217,6 +217,19 @@ Deregister a cluster through a pull request. Requires `-y/--yes` — the server
 refuses a removal without an explicit confirmation. See what the removal will
 do first with `sharko unregister-consequences <name>`.
 
+Nothing changes on the cluster until the pull request is merged. When the
+pull request is still open, the command says `PR opened, waiting for merge:`
+and gives the link. It prints `Cluster <name> removed.` only when the removal
+really happened.
+
+**Exit code:** the command exits `0` when the pull request is left waiting.
+Waiting is not an error, and the command did what it can do now. This means
+`sharko remove-cluster x -y && next-step` runs `next-step` while the cluster
+is still there. If your script needs the cluster gone, wait for the merge
+first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. If the pull request already merged, `sharko pr wait` says so at once and exits 0. The exit code is not `0`
+only when something went wrong. `sharko unadopt-cluster` and `sharko adopt`
+work the same way.
+
 ```bash
 sharko unregister-consequences <name>   # read this first
 sharko remove-cluster <name> -y
@@ -227,6 +240,11 @@ sharko remove-cluster <name> -y --cleanup git   # keep the ArgoCD connection
 ArgoCD connection only if Sharko owns it; a connection owned by another tool
 or by you is always left alone), `git` (repo files only), or `none` (only the
 fleet-record entry).
+
+When the removal keeps the ArgoCD connection, the connection gets a
+`sharko.dev/remove-keep-pending-pr` mark while the pull request waits, so
+nothing deletes it in the meantime. See
+[A removal that keeps the connection](../operator/cluster-reconciler.md#a-removal-that-keeps-the-connection).
 
 ### `sharko update-cluster`
 
@@ -243,7 +261,7 @@ sharko update-cluster <name> --add-addon cert-manager,metrics-server --remove-ad
 
 ### `sharko test-cluster`
 
-Test connectivity to a cluster. Verifies that Sharko can reach the cluster's Kubernetes API using the credentials stored in the secrets provider.
+Test connectivity to a cluster. Verifies that Sharko can reach the cluster's Kubernetes API, using the connection Sharko holds for it. For a cluster whose connection ArgoCD holds, that is the one stored in ArgoCD. It makes a small test secret on the cluster, reads it back and deletes it.
 
 ```bash
 sharko test-cluster <name>
@@ -261,7 +279,7 @@ If the cluster is unreachable, the error message from the provider or the Kubern
 
 ### `sharko adopt`
 
-Adopt one or more existing ArgoCD clusters into Sharko management. Creates the Git values file for clusters that are already registered in ArgoCD but not yet tracked in the addons repo.
+Adopt one or more existing ArgoCD clusters into Sharko management. Opens a pull request that adds each cluster to `managed-clusters.yaml`. The clusters are already in ArgoCD but not yet managed by Sharko. Nothing is adopted until the pull request is merged. The command says `PR opened, waiting for merge:` with the link, and exits `0` while it waits. When the pull request is merged, Sharko takes over the ArgoCD connection and marks it adopted. If it is closed without a merge, nothing changes on the cluster.
 
 ```bash
 sharko adopt <cluster1> [cluster2] ... [flags]
@@ -270,12 +288,13 @@ sharko adopt <cluster1> [cluster2] ... [flags]
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
-| `--dry-run` | Preview what would happen without making changes — prints per-file the exact diff the pull request would contain |
+| `--dry-run` | Preview what would happen without making changes. Says `would adopt` for each cluster that is ready, and prints per-file the exact diff the pull request would contain |
+| `--acknowledge <id,id,...>` | Ids of the warnings you have read. `--yes` does not skip warnings. `--dry-run` shows them |
 | `--auto-merge` | Auto-merge the adoption PR (overrides the server default) |
 
 ### `sharko unadopt-cluster`
 
-Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact. The cluster must carry the `sharko.dev/adopted` annotation, which Sharko puts on a cluster when you adopt it.
+Reverse adoption of a cluster. Removes Sharko management (GitOps config, managed-by labels) but keeps the ArgoCD cluster secret intact. Nothing changes until the pull request is merged. While it is open the command says `PR opened, waiting for merge:` and exits `0`. It prints that the cluster is un-adopted only when that is really done. The cluster must carry the `sharko.dev/adopted` annotation, which Sharko puts on a cluster when you adopt it.
 
 ```bash
 sharko unadopt-cluster <name>
@@ -496,8 +515,8 @@ sharko takeover <cluster> [flags]
 |------|-------------|
 | `--dry-run` | Preview the plan (files, diffs) without making changes |
 | `-y`, `--yes` | Skip confirmation prompt |
-| `--acknowledge <id>` | Finding id to acknowledge (repeatable) |
-| `--preserve-legacy-labels` | Carry the previous owner's labels over (default true — only sent when you set this flag) |
+| `--acknowledge <id>` | Finding id to acknowledge. Repeat the flag, or give several ids split by commas (`--acknowledge a,b`) |
+| `--preserve-legacy-labels` | Carry the previous owner's labels over (only sent when you set this flag) |
 | `--region <region>` | Region to record on the fleet entry |
 | `--auto-merge` | Auto-merge the takeover PR (overrides the server default; only sent when you set this flag) |
 
@@ -514,14 +533,18 @@ Preflight for prod-eu: ready
   ⚠ [appset-deletion-safety] ApplicationSet reacts on removal
       ...
 
-1 warning has not been read yet — look at appset-deletion-safety, then send it
-back in acknowledged_findings
-
 Rerun with: sharko takeover prod-eu -y --acknowledge appset-deletion-safety
+1 warning has not been read yet. Look at appset-deletion-safety in the checks above, then run the command again with --acknowledge appset-deletion-safety
 ```
 
-A partial outcome (the pull request opened but the ArgoCD ownership swap failed) is reported
-honestly — nothing is deleted, and the takeover is safe to run again.
+The checks print once, and the usage help does not print after an error.
+
+Take over opens the pull request first, the same as adopt. When you run it, Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later. Nothing about the owner of the connection changes yet. When the pull request is merged, Sharko takes over the connection. If the pull request is closed without a merge, Sharko takes the mark off and changes nothing else. The command says `PR opened, waiting for merge:` with the link and exits `0` while it waits.
+
+If you run it again while that pull request is open, Sharko says the take over is already waiting and gives the link. It does not open a second one.
+
+If something goes wrong after the merge (the ownership swap fails), Sharko says so, nothing is
+deleted, and the takeover is safe to run again.
 
 ### `sharko drop-legacy-labels`
 
@@ -538,7 +561,7 @@ sharko drop-legacy-labels <cluster> [flags]
 | `--label <key>` | Label key to remove (repeatable; omit for every carried-over label) |
 | `-y`, `--yes` | Skip confirmation prompt |
 | `--dry-run` | Preview what would be removed without making changes |
-| `--acknowledge <id>` | Warning id to acknowledge (repeatable) |
+| `--acknowledge <id>` | Warning id to acknowledge. Repeat the flag, or give several ids split by commas (`--acknowledge a,b`) |
 
 Same acknowledge-then-rerun pattern as `takeover`: every warning must be named in
 `--acknowledge`, and an unacknowledged warning gets you the exact rerun command back.

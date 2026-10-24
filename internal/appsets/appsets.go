@@ -37,6 +37,8 @@ import (
 	"sort"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 )
@@ -92,6 +94,51 @@ type ApplicationSetInfo struct {
 	// found. An AppSet with no cluster generator cannot react to a cluster
 	// Secret's labels at all, which is a useful thing to be able to say.
 	HasClusterGenerator bool `json:"has_cluster_generator"`
+
+	// Parsed is true when this value came from Parse, so the selector
+	// fields below are complete. A value built any other way says nothing
+	// about which clusters it picks, and TargetsCluster then answers
+	// "yes" — the direction that makes a person look.
+	Parsed bool `json:"-"`
+	// ClusterSelectors holds one selector per cluster generator found.
+	// A cluster generator with no selector picks every cluster and is
+	// stored as labels.Everything(). nil entries never appear.
+	ClusterSelectors []labels.Selector `json:"-"`
+	// SelectorUnreadable is true when a cluster generator's selector
+	// could not be understood. TargetsCluster then answers "yes".
+	SelectorUnreadable bool `json:"-"`
+}
+
+// TargetsCluster reports whether this ApplicationSet picks a cluster whose
+// ArgoCD Secret carries clusterLabels today.
+//
+// Only cluster generators react to a cluster's labels, so an
+// ApplicationSet without one does not target the cluster through them.
+// Anything Sharko cannot read for certain counts as a match: a false
+// "this one cannot touch you" is the answer that hides a danger.
+func (i ApplicationSetInfo) TargetsCluster(clusterLabels map[string]string) bool {
+	if !i.Parsed || i.SelectorUnreadable {
+		return true
+	}
+	set := labels.Set(clusterLabels)
+	for _, sel := range i.ClusterSelectors {
+		if sel.Matches(set) {
+			return true
+		}
+	}
+	return false
+}
+
+// TargetingCluster filters a list down to the ApplicationSets that pick a
+// cluster with these labels today (see TargetsCluster). Order is kept.
+func TargetingCluster(all []ApplicationSetInfo, clusterLabels map[string]string) []ApplicationSetInfo {
+	var out []ApplicationSetInfo
+	for _, a := range all {
+		if a.TargetsCluster(clusterLabels) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // DeletionSafe reports whether this ApplicationSet leaves workloads alone
@@ -215,6 +262,7 @@ func Parse(obj map[string]interface{}) ApplicationSetInfo {
 	if obj == nil {
 		return info
 	}
+	info.Parsed = true
 
 	if meta, ok := obj["metadata"].(map[string]interface{}); ok {
 		info.Name, _ = meta["name"].(string)
@@ -236,6 +284,7 @@ func Parse(obj map[string]interface{}) ApplicationSetInfo {
 	keys := map[string]struct{}{}
 	matchLabels := map[string]string{}
 	collectClusterSelectors(generators, keys, matchLabels, &info.HasClusterGenerator, 0)
+	info.ClusterSelectors, info.SelectorUnreadable = parseClusterSelectors(generators, 0)
 
 	if len(keys) > 0 {
 		info.ClusterSelectorLabels = make([]string, 0, len(keys))
@@ -284,6 +333,50 @@ func collectClusterSelectors(generators []interface{}, keys map[string]struct{},
 			collectClusterSelectors(inner, keys, matchLabels, found, depth+1)
 		}
 	}
+}
+
+// parseClusterSelectors turns every cluster generator's selector into a
+// real label selector, walking matrix / merge / union the same way
+// collectClusterSelectors does. unreadable is true when any one of them
+// could not be understood.
+func parseClusterSelectors(generators []interface{}, depth int) (out []labels.Selector, unreadable bool) {
+	if depth > maxGeneratorDepth {
+		return nil, true
+	}
+	for _, raw := range generators {
+		gen, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if clusters, ok := gen["clusters"].(map[string]interface{}); ok {
+			rawSel, present := clusters["selector"]
+			if !present || rawSel == nil {
+				out = append(out, labels.Everything())
+			} else if m, ok := rawSel.(map[string]interface{}); !ok {
+				unreadable = true
+			} else {
+				var ls metav1.LabelSelector
+				if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, &ls); err != nil {
+					unreadable = true
+				} else if sel, err := metav1.LabelSelectorAsSelector(&ls); err != nil {
+					unreadable = true
+				} else {
+					out = append(out, sel)
+				}
+			}
+		}
+		for _, nested := range []string{"matrix", "merge", "union"} {
+			container, ok := gen[nested].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			inner, _ := container["generators"].([]interface{})
+			sels, bad := parseClusterSelectors(inner, depth+1)
+			out = append(out, sels...)
+			unreadable = unreadable || bad
+		}
+	}
+	return out, unreadable
 }
 
 // collectSelector reads a metav1.LabelSelector-shaped block: matchLabels

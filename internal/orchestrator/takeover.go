@@ -23,10 +23,15 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -43,6 +48,11 @@ type TakeoverClusterRequest struct {
 	// Yes is the explicit confirmation. Without it nothing is written.
 	Yes       bool  `json:"yes"`
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+	// PreserveLegacyLabels is the person's choice to keep the previous
+	// owner's labels. It is saved on the tracked pull request, so the step
+	// that runs after the merge does what was asked (EP3 dry run round R,
+	// R5).
+	PreserveLegacyLabels bool `json:"-"`
 }
 
 // TakeoverGitResult is what the Git half produced.
@@ -52,6 +62,13 @@ type TakeoverGitResult struct {
 	FilesWritten   []string      `json:"files_written,omitempty"`
 	DryRun         *DryRunResult `json:"dry_run,omitempty"`
 	AlreadyInFleet bool          `json:"already_in_fleet,omitempty"`
+	// AlreadyWaiting is true when a take over (or adopt) pull request for
+	// this cluster is already open. Git then points at that pull request
+	// and no second one is opened.
+	AlreadyWaiting bool `json:"already_waiting,omitempty"`
+	// NothingToWrite is true when the fleet record in Git already has
+	// everything a take over writes, so no pull request was opened.
+	NothingToWrite bool `json:"nothing_to_write,omitempty"`
 }
 
 // ErrTakeoverNeedsV4Repo is returned when the connected repo is still in
@@ -101,11 +118,42 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 
 	result := &TakeoverGitResult{Cluster: req.Name}
 
+	// Taking over twice must not open two pull requests (episode 3 dry
+	// run, design call 8). An open take over or adopt pull request for
+	// this cluster is the answer. An open register pull request is
+	// refused: it writes the same files (round R, R7). If the list cannot
+	// be read, the take over stops rather than risk a second pull request.
+	//
+	// An open adopt pull request is refused: finishing it as a take over
+	// (or the other way round) would do the wrong thing to the connection
+	// (round S, S5).
+	keep := req.PreserveLegacyLabels
+	open, openOp, err := o.findOpenJoinPR(ctx, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	if open != nil {
+		if openOp != joinOpTakeover {
+			return nil, &OtherJoinPRError{Cluster: req.Name, Kind: openOp, PRID: open.ID, PRUrl: open.URL}
+		}
+		result.AlreadyWaiting = true
+		result.Git = &GitResult{PRUrl: open.URL, PRID: open.ID, Branch: open.SourceBranch}
+		if !req.DryRun {
+			// Put the waiting mark back in case the first try could not
+			// (S7).
+			if markErr := o.putJoinMark(ctx, AnnotationTakeoverPendingPR, req.Name, open.ID, open.URL, &keep); markErr != nil {
+				return result, fmt.Errorf("%w: %v", ErrMarkNotWritten, markErr)
+			}
+			return result, nil
+		}
+	}
+
 	build, err := o.buildTakeoverFiles(ctx, req.Name, req.Region)
 	if err != nil {
 		return nil, err
 	}
 	result.AlreadyInFleet = build.alreadyInFleet
+	result.NothingToWrite = build.unchanged()
 
 	if req.DryRun {
 		result.DryRun = &DryRunResult{
@@ -121,6 +169,12 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
 	}
 
+	if result.NothingToWrite {
+		// The fleet record already has this cluster and its addon file.
+		// A pull request with no changes in it would only be noise.
+		return result, nil
+	}
+
 	files := build.files()
 	result.FilesWritten = []string{V4ManagedClustersPath, build.clusterPath}
 
@@ -128,9 +182,18 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 	// adopt grew into, and reusing the code keeps the pull request in the
 	// dashboard bucket operators already look in for "a cluster joined the
 	// fleet" changes.
+	//
+	// The follow-up names the finish kind, so the step that runs after the
+	// merge swaps the owner as a take over (round R, R5), with the
+	// person's own choice about the old labels.
+	meta := o.prMeta(req.AutoMerge, "adopt-cluster", fmt.Sprintf("Take over cluster %s", req.Name), req.Name, "")
+	meta.FollowUp = &ClusterFollowUp{Finish: FinishTakeover, PreserveLegacyLabels: req.PreserveLegacyLabels}
+	// The waiting mark goes on before the pull request is tracked (S7).
+	meta.BeforeTrack = func(ctx context.Context, res *GitResult) error {
+		return o.putJoinMark(ctx, AnnotationTakeoverPendingPR, req.Name, res.PRID, res.PRUrl, &keep)
+	}
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil,
-		fmt.Sprintf("take over cluster %s", req.Name),
-		o.prMeta(req.AutoMerge, "adopt-cluster", fmt.Sprintf("Take over cluster %s", req.Name), req.Name, ""))
+		fmt.Sprintf("take over cluster %s", req.Name), meta)
 	if err != nil {
 		if gitResult != nil {
 			result.Git = gitResult
@@ -162,6 +225,124 @@ type takeoverFilesBuild struct {
 	updatedClusterAddons  []byte // after
 
 	alreadyInFleet bool
+}
+
+// unchanged reports whether both files would be written back exactly as
+// they already are.
+func (b *takeoverFilesBuild) unchanged() bool {
+	return b.connectionsExists && b.clusterAddonsExists &&
+		bytes.Equal(b.connectionsData, b.updatedConnections) &&
+		bytes.Equal(b.existingClusterAddons, b.updatedClusterAddons)
+}
+
+// findOpenJoinPR returns an open take over or adopt pull request for the
+// cluster and which of the two it is, or nil. Both write the same two files, so either one means the
+// cluster is already on its way into the fleet.
+//
+// An open register pull request writes the same files too, but it is a
+// different change, so it comes back as a *ClusterPRWaitingError and the
+// caller refuses (EP3 dry run round R, R7). A list that cannot be read is an
+// error: carrying on could open a second pull request for the same files.
+func (o *Orchestrator) findOpenJoinPR(ctx context.Context, name string) (*gitprovider.PullRequest, string, error) {
+	prs, err := o.git.ListPullRequests(ctx, "open")
+	if err != nil {
+		slog.Warn("adopt or take over: could not list open pull requests", "cluster", name, "error", err)
+		return nil, "", OpenPRsUnreadableError(name)
+	}
+	for _, op := range []string{"register", joinOpTakeover, joinOpAdopt} {
+		pattern := fmt.Sprintf("%s %s cluster %s", o.gitops.CommitPrefix, op, name)
+		for i := range prs {
+			if !titleNamesCluster(prs[i].Title, pattern) {
+				continue
+			}
+			found := prs[i]
+			found.ID = PRNumber(found.ID, found.URL)
+			if op == "register" {
+				return nil, op, &ClusterPRWaitingError{Cluster: name, PRID: found.ID, PRUrl: found.URL}
+			}
+			return &found, op, nil
+		}
+	}
+	return nil, "", nil
+}
+
+// The kinds of open pull request findOpenJoinPR names, as they read in a
+// pull request title.
+const (
+	joinOpAdopt    = "adopt"
+	joinOpTakeover = "take over"
+)
+
+// OtherJoinPRError means a pull request of the other kind is already open
+// for the cluster: an adopt when a take over was asked for, or a take over
+// when an adopt was asked for. Both write the same files but finish
+// differently on the connection, so the open one must be merged or closed
+// first (EP3 dry run round S, S5). Kind is "adopt" or "take over".
+type OtherJoinPRError struct {
+	Cluster string
+	Kind    string
+	PRID    int
+	PRUrl   string
+}
+
+func (e *OtherJoinPRError) Error() string { return OtherJoinPRMessage(e.Kind, e.Cluster) }
+
+// OtherJoinPRMessage is the sentence for OtherJoinPRError. Exported so
+// tests pin it by exact text.
+func OtherJoinPRMessage(kind, cluster string) string {
+	return fmt.Sprintf("A pull request to %s %s is already open. Merge or close it first.", kind, cluster)
+}
+
+// putJoinMark puts an adopt or take over waiting mark on the cluster's
+// ArgoCD connection, naming the pull request, its repository and (for a
+// take over) the label choice. A mark that already names this pull request
+// is left as it is. No-op without a Secret manager.
+//
+// A pull request with no number (0: neither the Git host nor the address
+// gave one) is refused. The waiting pass skips such a mark, so nothing
+// would ever finish it. The caller gets ErrMarkNotWritten: never
+// auto-merged, the tracker still holds the pull request (round S join).
+func (o *Orchestrator) putJoinMark(ctx context.Context, key, name string, prID int, prURL string, keepOldLabels *bool) error {
+	if o.argoSecretManager == nil {
+		return nil
+	}
+	if prID <= 0 {
+		return errJoinMarkNoPRNumber
+	}
+	if cur, err := o.argoSecretManager.GetAnnotation(ctx, name, key); err == nil && models.PendingPRMarkNames(cur, prID) {
+		return nil
+	}
+	m := models.PendingPRMark{
+		PR:            prID,
+		Repo:          models.RepoKeyFromPRURL(prURL),
+		KeepOldLabels: keepOldLabels,
+		At:            time.Now().UTC().Format(time.RFC3339),
+	}
+	return o.argoSecretManager.SetAnnotation(ctx, name, key, m.String())
+}
+
+// errJoinMarkNoPRNumber is why putJoinMark refuses a pull request with no
+// number.
+var errJoinMarkNoPRNumber = errors.New("the pull request has no number, so the waiting mark could not name it")
+
+// ClusterPRWaitingError means a register pull request for the cluster is
+// still open. Adopt and take over refuse, because they would write the
+// same files in a second pull request.
+type ClusterPRWaitingError struct {
+	Cluster string
+	PRID    int
+	PRUrl   string
+}
+
+func (e *ClusterPRWaitingError) Error() string {
+	return fmt.Sprintf("Cluster %s is already waiting in %s: %s. That pull request registers it. Merge it or close it first, then try again.",
+		e.Cluster, PullRequestPhrase(e.PRID), e.PRUrl)
+}
+
+// OpenPRsUnreadableError is the answer when the open pull requests cannot be
+// read before an adopt or a take over.
+func OpenPRsUnreadableError(name string) error {
+	return fmt.Errorf("Sharko could not read the open pull requests, so it cannot tell whether %s is already waiting in one. Nothing has changed. Try again.", name)
 }
 
 // files returns the map ready for commitChangesWithMeta / BatchCreateFiles.

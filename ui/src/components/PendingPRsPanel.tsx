@@ -9,6 +9,7 @@ import {
 import { fetchTrackedPRs, refreshPR } from '@/services/api'
 import type { TrackedPR } from '@/services/models'
 import { EmptyState } from '@/components/EmptyState'
+import { isFinishingPR, PR_FINISHING_LABEL } from '@/lib/prRef'
 
 interface PendingPRsPanelProps {
   cluster?: string
@@ -43,6 +44,16 @@ export function prStatusBadge(status: string) {
       <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
         <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
         Open
+      </span>
+    )
+  }
+  if (s === 'finishing') {
+    return (
+      <span
+        data-testid="pr-finishing"
+        className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 dark:bg-sky-900/30 dark:text-sky-300"
+      >
+        {PR_FINISHING_LABEL}
       </span>
     )
   }
@@ -241,7 +252,7 @@ export function PendingPRsPanel({ cluster, onMergeDetected, onDataChange }: Pend
                   {pr.user}
                 </td>
                 <td className="py-2 pr-3">
-                  {prStatusBadge(pr.last_status)}
+                  {prStatusBadge(isFinishingPR(pr) ? 'finishing' : pr.last_status)}
                 </td>
                 <td className="py-2 pr-3 text-[#3a6a8a] dark:text-gray-400 whitespace-nowrap">
                   <span className="flex items-center gap-1">
