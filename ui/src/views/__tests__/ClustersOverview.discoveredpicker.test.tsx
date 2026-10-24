@@ -412,9 +412,16 @@ describe('ClustersOverview — "I do" picks from ArgoCD (V2-cleanup-89.3)', () =
     // V2-cleanup-92.1 (F11): hint reworded to plain English.
     expect(
       screen.getByText(
-        /You manage the cluster connection yourself — Sharko only updates its addon labels\./,
+        'For a cluster you add by hand here, you make the ArgoCD connection yourself and Sharko only puts its addon labels on it. Adopt and Take ownership, for a cluster ArgoCD already has, work differently. Their windows say what they change.',
+        { exact: false },
       ),
     ).toBeInTheDocument();
+    // The old sentence promised "only labels" for every path, which is false
+    // for Adopt (Sharko takes the connection over). It must never come back.
+    expect(
+      screen.queryByText(/You manage the cluster connection yourself/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sharko only updates its addon labels/)).not.toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: /Operator Manual: Managing cluster connections yourself/ }),
     ).toBeInTheDocument();

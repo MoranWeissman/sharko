@@ -212,7 +212,9 @@ export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, ReactNode> = {
   ),
   user: (
     <>
-      You manage the cluster connection yourself — Sharko only updates its addon labels.{' '}
+      For a cluster you add by hand here, you make the ArgoCD connection yourself and Sharko only
+      puts its addon labels on it. Adopt and Take ownership, for a cluster ArgoCD already has, work
+      differently. Their windows say what they change.{' '}
       <a
         href="https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/"
         target="_blank"
