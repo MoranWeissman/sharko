@@ -328,6 +328,9 @@ const NO_USABLE_CONNECTION_ERRORS = [
 // Round S: the Un-adopt window says only what the button does. The old
 // sentence promised what the server would do later, which the browser
 // cannot know (browserAuthoredPromises guard).
+// Shown to a non-admin where the Un-adopt button would be.
+export const UNADOPT_ADMIN_ONLY_HINT = 'Only an admin can un-adopt this cluster.';
+
 export function unadoptDescription(name: string): string {
   return `Un-adopt opens a pull request that takes "${name}" off the list of clusters Sharko manages. It does not delete the ArgoCD connection. Click Preview changes to see what the pull request changes.`;
 }
@@ -2852,7 +2855,10 @@ export function ClustersOverview() {
                             label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
                           />
                           {cluster.adopted && (
-                            <RoleGuard adminOnly>
+                            <RoleGuard
+                              adminOnly
+                              fallback={<span data-testid="unadopt-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">{UNADOPT_ADMIN_ONLY_HINT}</span>}
+                            >
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); setUnadoptTarget(cluster.name); }}
@@ -2949,7 +2955,10 @@ export function ClustersOverview() {
                       </span>
                     )}
                     {cluster.adopted && (
-                      <RoleGuard adminOnly>
+                      <RoleGuard
+                        adminOnly
+                        fallback={<span data-testid="unadopt-admin-only" className="text-xs text-[#3a6a8a] dark:text-gray-400">{UNADOPT_ADMIN_ONLY_HINT}</span>}
+                      >
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); setUnadoptTarget(cluster.name); }}

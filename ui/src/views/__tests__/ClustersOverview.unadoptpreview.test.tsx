@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { ClustersOverview, unadoptDescription } from '@/views/ClustersOverview';
+import { ClustersOverview, unadoptDescription, UNADOPT_ADMIN_ONLY_HINT } from '@/views/ClustersOverview';
 import { AuthProvider } from '@/hooks/useAuth';
 
 /*
@@ -44,11 +44,11 @@ const adoptedCluster = {
   health_stats: { total_in_git: 1, connected: 1, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
 };
 
-function renderView() {
+function renderView(role = 'admin') {
   // Auth session lives in localStorage — see ui/src/lib/authStorage.ts.
   localStorage.setItem('sharko-auth-token', 'test-token');
   localStorage.setItem('sharko-auth-user', 'tester');
-  localStorage.setItem('sharko-auth-role', 'admin');
+  localStorage.setItem('sharko-auth-role', role);
   return render(
     <MemoryRouter>
       <AuthProvider>
@@ -114,6 +114,25 @@ describe('ClustersOverview — Un-adopt preview (V3-TX-A3, Surface 3)', () => {
     expect(screen.getByText(unadoptDescription('prod-eu'))).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/Sharko will no longer manage addons/);
     expect(document.body.textContent).not.toMatch(/from Sharko management/);
+  });
+
+  // Round S (episode 3 open question 12): a non-admin gets a line saying why
+  // there is no Un-adopt button, like Take ownership already has.
+  it('a non-admin sees a plain line instead of the Un-adopt button', async () => {
+    renderView('viewer');
+    await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /un-adopt/i })).toBeNull();
+    const hints = screen.getAllByTestId('unadopt-admin-only');
+    expect(hints.length).toBeGreaterThan(0);
+    for (const h of hints) expect(h).toHaveTextContent(/^Only an admin can un-adopt this cluster\.$/);
+    expect(UNADOPT_ADMIN_ONLY_HINT).toBe('Only an admin can un-adopt this cluster.');
+  });
+
+  it('an admin sees the Un-adopt button and not the line', async () => {
+    renderView();
+    await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+    expect(screen.getAllByRole('button', { name: /un-adopt/i }).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('unadopt-admin-only')).toBeNull();
   });
 
   // v4.0.4 review fix: the server answers HTTP 200 with status "failed"
