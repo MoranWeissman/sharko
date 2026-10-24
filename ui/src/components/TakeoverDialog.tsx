@@ -55,6 +55,14 @@ export const TAKEOVER_DIALOG_TITLE = 'Take ownership of this cluster'
 // window must not say the cluster is taken over (same words as Adopt).
 export const TAKEOVER_WAITING_FOR_MERGE = 'Pull request opened, waiting for merge'
 export const TAKEOVER_VIEW_PR = 'View pull request'
+// Used when a 409 other_pr_open answer carries no sentence of its own.
+export const TAKEOVER_OTHER_PR_OPEN_FALLBACK = 'A pull request for this cluster is already open. Merge or close it first.'
+
+// The words of a pull request link. Never "#0": with no number it is just
+// "View pull request".
+export function takeoverPRLinkText(id: unknown): string {
+  return typeof id === 'number' && id > 0 ? `${TAKEOVER_VIEW_PR} #${id}` : TAKEOVER_VIEW_PR
+}
 
 export const TAKEOVER_HINT =
   "Bring this cluster under Sharko's management. It keeps the same name, the same address and — unless you say otherwise — every label already on it. Nothing is deleted, and no addon is turned on."
@@ -199,10 +207,13 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
   const [preserve, setPreserve] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<TakeoverResponse | null>(null)
+  // The open pull request named by a 409 other_pr_open answer.
+  const [errorPR, setErrorPR] = useState<{ url: string; id?: number } | null>(null)
 
   const runPreflight = useCallback(() => {
     setLoading(true)
     setError(null)
+    setErrorPR(null)
     takeoverPreflight(clusterName)
       .then((r) => {
         setReport(r)
@@ -232,6 +243,7 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
   async function confirm() {
     setSubmitting(true)
     setError(null)
+    setErrorPR(null)
     try {
       const res = await takeoverCluster(clusterName, {
         yes: true,
@@ -246,6 +258,20 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
       setResult(res)
       onDone?.()
     } catch (e) {
+      const apiErr = e as { status?: unknown; code?: unknown; body?: unknown } | null
+      if (apiErr && apiErr.status === 409 && apiErr.code === 'other_pr_open') {
+        // An adopt pull request for this cluster is already open. Show the
+        // server's sentence and a link to that pull request.
+        const body = (apiErr.body ?? {}) as { pr_url?: unknown; pr_number?: unknown }
+        setError(e instanceof Error && e.message ? e.message : TAKEOVER_OTHER_PR_OPEN_FALLBACK)
+        if (typeof body.pr_url === 'string' && body.pr_url !== '') {
+          setErrorPR({
+            url: body.pr_url,
+            id: typeof body.pr_number === 'number' && body.pr_number > 0 ? body.pr_number : undefined,
+          })
+        }
+        return
+      }
       setError(e instanceof Error ? e.message : 'The takeover did not go through')
     } finally {
       setSubmitting(false)
@@ -273,6 +299,17 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
             className="rounded-md bg-red-50 p-4 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400"
           >
             <p>{error}</p>
+            {errorPR && (
+              <a
+                href={errorPR.url}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="takeover-error-pr-link"
+                className="mt-2 flex w-fit items-center gap-1.5 text-sm font-medium underline hover:no-underline"
+              >
+                {takeoverPRLinkText(errorPR.id)} <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            )}
             <button
               type="button"
               onClick={runPreflight}
@@ -290,6 +327,9 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
           // link — never a green "done".
           const waiting = result.waiting_for_merge === true
           const partial = result.status === 'partial'
+          // The pull request: the top-level fields first, then git.
+          const prURL = result.pr_url || result.git?.pr_url
+          const prID = result.pr_number ?? result.git?.pr_id
           return (
             <div className="space-y-3" data-testid="takeover-result" data-waiting={waiting ? 'true' : undefined}>
               {waiting && (
@@ -314,17 +354,23 @@ export function TakeoverDialog({ clusterName, open, onClose, onDone }: TakeoverD
               >
                 {result.message}
               </div>
-              {result.git?.pr_url && (
+              {waiting && result.merge_error && (
+                <p
+                  data-testid="takeover-merge-error"
+                  className="text-sm text-amber-800 dark:text-amber-300"
+                >
+                  {result.merge_error}
+                </p>
+              )}
+              {prURL && (
                 <a
-                  href={result.git.pr_url}
+                  href={prURL}
                   target="_blank"
                   rel="noreferrer"
                   data-testid="takeover-pr-link"
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2a5a7a] hover:underline dark:text-blue-400"
                 >
-                  {waiting
-                    ? `${TAKEOVER_VIEW_PR}${typeof result.git.pr_id === 'number' && result.git.pr_id > 0 ? ` #${result.git.pr_id}` : ''}`
-                    : 'Open the pull request'}{' '}
+                  {waiting ? takeoverPRLinkText(prID) : 'Open the pull request'}{' '}
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               )}
