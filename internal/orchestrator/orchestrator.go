@@ -203,6 +203,11 @@ type ClusterFollowUp struct {
 	// choice to keep the old owner's labels.
 	Finish               string
 	PreserveLegacyLabels bool
+	// PRID is the pull request this follow-up finishes. Not stored with
+	// the tracked PR (the PR has its own number); the finish sets it so a
+	// hand-back only takes off its own pull request's keep mark (EP3 dry
+	// run round S, S4). 0 when there is no pull request.
+	PRID int
 }
 
 // Finish kinds for ClusterFollowUp.Finish. Kept in lockstep with

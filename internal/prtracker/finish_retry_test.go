@@ -130,7 +130,7 @@ func TestPollOnce_FailedFinishIsTriedAgain(t *testing.T) {
 	}
 	// While it waits, the kept connection stays protected...
 	kept, _ := tr.KeptConnections(ctx)
-	if !kept["keep-me"] {
+	if kept["keep-me"].ReleasePR != 3 {
 		t.Fatal("a merged remove that still has to finish must keep protecting its connection")
 	}
 	// ...and it is not listed as a pending pull request.

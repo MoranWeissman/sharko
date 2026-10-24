@@ -332,7 +332,11 @@ type Deps struct {
 	// exactly like an orphan). A read error keeps every orphan candidate
 	// this tick: never delete on an unknown. nil (no PR tracker wired)
 	// means no pull request keeps anything.
-	KeptConnectionsFn func(ctx context.Context) (map[string]bool, error)
+	//
+	// Per cluster it says whether a removal holds the connection (leave
+	// the Secret alone) and, for a merged removal that keeps it, which
+	// pull request to hand it back for (EP3 dry run round S, S1 and S3).
+	KeptConnectionsFn func(ctx context.Context) (map[string]models.ConnectionHold, error)
 
 	// WaitingMarksFn, when non-nil, runs once per pass, before the diff.
 	// It finishes the waiting marks (adopt, take over, kept connection)
@@ -1214,9 +1218,22 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 			)
 			continue
 		}
-		if keptNow.keeps(name, secret) {
+		if hold, ok := keptNow.lookup(name, secret); ok {
 			stats.SkippedKept++
-			r.releaseKeptConnection(ctx, name, stats)
+			if hold.ReleasePR > 0 {
+				// A new registration under the same name owns the Secret
+				// now: hand nothing back, the removal's finish sees the
+				// registration too (EP3 dry run round S, S2, the same
+				// guard as R3).
+				if reregistered, why := r.registrationOwns(ctx, name, secret, &openPRs, gp); reregistered {
+					logging.LoggerFromContext(ctx).Info(
+						"[clusterreconciler] not handing back a connection a removal keeps — a new registration of the same cluster is waiting",
+						"cluster", name, "namespace", r.namespace, "reason", why,
+					)
+					continue
+				}
+				r.releaseKeptConnection(ctx, name, hold.ReleasePR, stats)
+			}
 			continue
 		}
 
@@ -2820,16 +2837,16 @@ func (o *openRegisterPRs) load(ctx context.Context, gp gitprovider.GitProvider) 
 	o.prs, o.err = gp.ListPullRequests(ctx, "open")
 }
 
-// keptConnections is the set of clusters whose tracked remove or un-adopt
-// pull request keeps the ArgoCD connection, read once per tick through
-// Deps.KeptConnectionsFn (EP3-DRYRUN-FIXES call 1).
+// keptConnections is what the tracked remove and un-adopt pull requests
+// still have to do with each cluster's connection, read once per tick
+// through Deps.KeptConnectionsFn (EP3-DRYRUN-FIXES call 1, round S S1/S3).
 type keptConnections struct {
 	loaded bool
 	err    error
-	names  map[string]bool
+	names  map[string]models.ConnectionHold
 }
 
-func (k *keptConnections) load(ctx context.Context, fn func(context.Context) (map[string]bool, error)) {
+func (k *keptConnections) load(ctx context.Context, fn func(context.Context) (map[string]models.ConnectionHold, error)) {
 	k.loaded = true
 	if fn == nil {
 		return
@@ -2837,31 +2854,54 @@ func (k *keptConnections) load(ctx context.Context, fn func(context.Context) (ma
 	k.names, k.err = fn(ctx)
 }
 
-// keeps matches the cluster name the pull request recorded against the
+// lookup matches the cluster name the pull request recorded against the
 // cluster name ArgoCD shows for the Secret (argosecrets.ClusterNameOf: the
 // `name` inside it, else its Kubernetes name), so a Secret whose
 // Kubernetes name differs from the cluster name (cluster-<host>-<hash>) is
-// still kept. clusterName is the sweep's key, which listManagedSecrets
+// still found. clusterName is the sweep's key, which listManagedSecrets
 // builds with the same ClusterNameOf.
-func (k *keptConnections) keeps(clusterName string, secret *corev1.Secret) bool {
+func (k *keptConnections) lookup(clusterName string, secret *corev1.Secret) (models.ConnectionHold, bool) {
 	if len(k.names) == 0 {
-		return false
+		return models.ConnectionHold{}, false
 	}
-	if k.names[clusterName] {
-		return true
+	if h, ok := k.names[clusterName]; ok {
+		return h, true
 	}
-	if secret != nil && k.names[argosecrets.ClusterNameOf(secret)] {
-		return true
+	if secret != nil {
+		if h, ok := k.names[argosecrets.ClusterNameOf(secret)]; ok {
+			return h, true
+		}
 	}
-	return false
+	return models.ConnectionHold{}, false
+}
+
+// registrationOwns says whether a new registration of the same cluster is
+// waiting on this Secret: it carries the registration-pending mark, or an
+// open pull request registers the cluster. Not being able to read the open
+// pull requests counts as yes: never hand back on an unknown.
+func (r *Reconciler) registrationOwns(ctx context.Context, name string, secret *corev1.Secret, openPRs *openRegisterPRs, gp gitprovider.GitProvider) (bool, string) {
+	if _, marked := models.RegistrationPendingValue(annotationsOf(secret)); marked {
+		return true, "registration-pending mark"
+	}
+	if !openPRs.loaded {
+		openPRs.load(ctx, gp)
+	}
+	if keep, _ := openPRs.keepPending(name); keep {
+		if openPRs.err != nil {
+			return true, "open pull requests could not be read"
+		}
+		return true, "open register pull request"
+	}
+	return false, ""
 }
 
 // releaseKeptConnection takes Sharko's ownership label off a kept
 // connection that left Git, without deleting the Secret or touching
-// anything else. A failure is logged and counted; the Secret stays.
-func (r *Reconciler) releaseKeptConnection(ctx context.Context, name string, stats *reconcileStats) {
+// anything else. Only the keep mark of pull request prID comes off. A
+// failure is logged and counted; the Secret stays.
+func (r *Reconciler) releaseKeptConnection(ctx context.Context, name string, prID int, stats *reconcileStats) {
 	log := logging.LoggerFromContext(ctx)
-	stripped, err := argosecrets.NewManager(r.deps.ArgoClient, r.namespace).ReleaseKeptConnection(ctx, name)
+	stripped, err := argosecrets.NewManager(r.deps.ArgoClient, r.namespace).ReleaseKeptConnection(ctx, name, prID)
 	if err != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] could not take Sharko's ownership label off a connection a removal keeps — left in place, will retry next tick",

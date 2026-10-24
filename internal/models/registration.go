@@ -279,3 +279,36 @@ func RepoKeysMatch(a, b string) bool {
 	}
 	return a == b || strings.HasSuffix(a, "/"+b) || strings.HasSuffix(b, "/"+a)
 }
+
+// PendingPRMarkMatches says whether the mark value cur is the mark want
+// stands for. want is a mark value, a plain pull request number, or
+// "pending". Two marks match when they name the same pull request (and,
+// when both name a repository, the same repository), or when both are
+// marks with no pull request number yet.
+func PendingPRMarkMatches(cur, want string) bool {
+	if cur == want {
+		return true
+	}
+	c, okC := ParsePendingPRMark(cur)
+	w, okW := ParsePendingPRMark(want)
+	if !okC || !okW || c.PR != w.PR {
+		return false
+	}
+	if c.Repo != "" && w.Repo != "" && !RepoKeysMatch(c.Repo, w.Repo) {
+		return false
+	}
+	return true
+}
+
+// ConnectionHold is what the PR tracker tells the orphan sweep about one
+// cluster's ArgoCD connection.
+type ConnectionHold struct {
+	// ReleasePR is the merged removal (or un-adopt) that keeps the
+	// connection and has not finished yet. The sweep hands the connection
+	// back for that pull request instead of deleting it. 0 means none.
+	ReleasePR int
+	// Hold says a removal has not finished with the connection yet (it is
+	// still open, or merged and its finish has not run). The sweep leaves
+	// the Secret alone; the finish deals with it.
+	Hold bool
+}

@@ -68,6 +68,9 @@ func (s *Server) FinishClusterFollowUpOnMerge(ctx context.Context, pr prtracker.
 		return nil
 	}
 	followUp := followUpFromTracker(pr.FollowUp)
+	// The finish only takes off this pull request's own keep mark (EP3
+	// dry run round S, S4).
+	followUp.PRID = pr.PRID
 
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil || git == nil {
@@ -176,7 +179,7 @@ func (s *Server) newRegistrationWaiting(ctx context.Context, cluster string) (bo
 // dropKeepMark takes this pull request's remove-keep mark off the
 // cluster's Secret. A mark with another value (a newer removal) stays.
 func (s *Server) dropKeepMark(ctx context.Context, pr prtracker.PRInfo) error {
-	if s.argoSecretManager == nil || pr.Operation != prtracker.OpRemoveCluster || pr.Cluster == "" {
+	if s.argoSecretManager == nil || (pr.Operation != prtracker.OpRemoveCluster && pr.Operation != prtracker.OpUnadoptCluster) || pr.Cluster == "" {
 		return nil
 	}
 	if _, err := s.argoSecretManager.RemoveAnnotationIfValue(ctx, pr.Cluster,

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -18,6 +19,7 @@ import (
 type mockArgoSecretManagerR struct {
 	*mockArgoSecretManagerWithStrip
 	released   []string
+	releasedPR []int
 	releaseErr error
 	deleted    []string
 	setErrFor  map[string]error // annotation key -> error from SetAnnotation
@@ -34,11 +36,14 @@ func (m *mockArgoSecretManagerR) SetAnnotation(ctx context.Context, name, key, v
 	return m.mockArgoSecretManager.SetAnnotation(ctx, name, key, value)
 }
 
-func (m *mockArgoSecretManagerR) ReleaseKeptConnection(_ context.Context, name string) (bool, error) {
+func (m *mockArgoSecretManagerR) ReleaseKeptConnection(_ context.Context, name string, prID int) (bool, error) {
 	if m.releaseErr != nil {
 		return false, m.releaseErr
 	}
-	delete(m.annotations[name], AnnotationRemoveKeepPendingPR)
+	m.releasedPR = append(m.releasedPR, prID)
+	if cur := m.annotations[name][AnnotationRemoveKeepPendingPR]; (prID > 0 && models.PendingPRMarkMatches(cur, strconv.Itoa(prID))) || (prID == 0 && models.PendingPRMarkMatches(cur, "pending")) {
+		delete(m.annotations[name], AnnotationRemoveKeepPendingPR)
+	}
 	if m.managedByLabel[name] != "sharko" {
 		return false, nil
 	}
@@ -53,7 +58,10 @@ func (m *mockArgoSecretManagerR) DeleteClusterSecret(_ context.Context, name str
 }
 
 func (m *mockArgoSecretManagerR) RemoveAnnotationIfValue(_ context.Context, name, key, value string) (bool, error) {
-	if m.annotations[name] == nil || m.annotations[name][key] != value {
+	if m.annotations[name] == nil {
+		return false, nil
+	}
+	if cur, ok := m.annotations[name][key]; !ok || !models.PendingPRMarkMatches(cur, value) {
 		return false, nil
 	}
 	delete(m.annotations[name], key)
@@ -86,7 +94,7 @@ func TestRemoveCluster_KeptConnection_IsMarkedWithThePRNumber(t *testing.T) {
 	if err != nil || res.Status != "success" || res.Git == nil {
 		t.Fatalf("remove: %+v, %v", res, err)
 	}
-	if got := mgr.annotations["keep-me"][AnnotationRemoveKeepPendingPR]; got != "1" {
+	if got := mgr.annotations["keep-me"][AnnotationRemoveKeepPendingPR]; !models.PendingPRMarkNames(got, 1) {
 		t.Fatalf("a kept connection must carry the remove-keep mark with the PR number while the PR waits; got %q", got)
 	}
 	if mgr.managedByLabel["keep-me"] != "sharko" {
@@ -94,7 +102,7 @@ func TestRemoveCluster_KeptConnection_IsMarkedWithThePRNumber(t *testing.T) {
 	}
 
 	// After the merge the finish step takes the label and the mark off.
-	fin := orch.FinishRemoveAfterMerge(context.Background(), "keep-me", ClusterFollowUp{Cleanup: "git", KeepConnection: true})
+	fin := orch.FinishRemoveAfterMerge(context.Background(), "keep-me", ClusterFollowUp{Cleanup: "git", KeepConnection: true, PRID: 1})
 	if fin.Status != "success" || len(mgr.released) != 1 {
 		t.Fatalf("finish: status %q released %v", fin.Status, mgr.released)
 	}
@@ -164,7 +172,7 @@ func TestRemoveCluster_PRNotRecorded_FailsInPlainWords(t *testing.T) {
 		t.Fatalf("message:\n got %q\nwant %q", res.Message, want)
 	}
 	// The mark stays on, so the connection is safe whatever happens to the PR.
-	if got := mgr.annotations["keep-me"][AnnotationRemoveKeepPendingPR]; got != "1" {
+	if got := mgr.annotations["keep-me"][AnnotationRemoveKeepPendingPR]; !models.PendingPRMarkNames(got, 1) {
 		t.Fatalf("the keep mark must stay on with the PR number, got %q", got)
 	}
 }

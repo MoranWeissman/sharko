@@ -339,6 +339,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not take Sharko's ownership label off a kept ArgoCD cluster Secret during removal; Sharko will try again, and its keep mark protects the Secret meanwhile", carriers: "ident:releaseErr", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "deleteOwnedClusterSecret", msg: "could not read the ArgoCD cluster Secret during removal", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "deleteOwnedClusterSecret", msg: "failed to delete ArgoCD cluster during removal", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/orchestrator/remove.go", fn: "noWaitingMarkOn", msg: "could not read the waiting marks on the ArgoCD cluster Secret during removal; not deleting it, Sharko tries again", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "removeMarkIfValue", msg: "could not take a waiting mark off a cluster's ArgoCD connection; it only keeps the connection safe from deletion", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "RemoveCluster", msg: "could not write the pull request number on the kept connection's mark; the mark stays on as it is", carriers: "ident:setErr", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "failed to delete ArgoCD cluster during removal", carriers: "ident:delErr", verdict: "sink"},

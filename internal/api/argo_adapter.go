@@ -47,8 +47,8 @@ func (a *argoManagerAdapter) StripOwnershipLabel(ctx context.Context, name strin
 // OPTIONAL keptConnectionReleaser capability finishRemove type-asserts: it
 // takes Sharko's label and the remove-keep mark off in one write (EP3 dry
 // run round R, R1).
-func (a *argoManagerAdapter) ReleaseKeptConnection(ctx context.Context, name string) (bool, error) {
-	return a.mgr.ReleaseKeptConnection(ctx, name)
+func (a *argoManagerAdapter) ReleaseKeptConnection(ctx context.Context, name string, prID int) (bool, error) {
+	return a.mgr.ReleaseKeptConnection(ctx, name, prID)
 }
 
 // RemoveAnnotationIfValue delegates to the real Manager (optional

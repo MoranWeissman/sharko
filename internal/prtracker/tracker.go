@@ -20,6 +20,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // syntheticTickID returns the canonical "prtrack-<unix_ts>" correlation ID
@@ -748,30 +749,42 @@ func (t *Tracker) encodePRs(data map[string]interface{}, prs map[string]PRInfo) 
 	return nil
 }
 
-// KeptConnections returns the names of clusters whose tracked remove or
-// un-adopt pull request says "keep the ArgoCD connection" (FollowUp with
-// KeepConnection). The cluster reconciler reads this before its orphan
-// sweep deletes a Sharko-labelled Secret that just left Git: between the
-// merge and the merge hook taking the label off, such a Secret looks
-// exactly like an orphan, and deleting it would cut off a connection the
-// person asked to keep.
+// KeptConnections tells the cluster reconciler's orphan sweep, per
+// cluster, what its tracked remove and un-adopt pull requests still have
+// to do with the cluster's ArgoCD connection:
 //
-// It only reads the tracker's ConfigMap, so a Tracker built with a nil Git
-// provider (read-only view) can answer it.
-func (t *Tracker) KeptConnections(ctx context.Context) (map[string]bool, error) {
+//   - a merged pull request that keeps the connection and has not finished
+//     yet gives ReleasePR: the sweep hands the connection back for that
+//     pull request instead of deleting it. An OPEN one that keeps the
+//     connection only holds it: it may still be closed, and then the
+//     connection stays Sharko's (EP3 dry run round S, S3).
+//   - any remove or un-adopt that is still open, or merged and not
+//     finished, gives Hold: the sweep leaves the Secret alone, so a
+//     cleanup=all finish can still read the cluster's credentials and
+//     remove the addon secrets before the connection goes (S1).
+//
+// Closed pull requests hold nothing. It only reads the tracker's
+// ConfigMap, so a Tracker built with a nil Git provider (read-only view)
+// can answer it.
+func (t *Tracker) KeptConnections(ctx context.Context) (map[string]models.ConnectionHold, error) {
 	data, err := t.cmStore.Read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	kept := make(map[string]bool)
+	kept := make(map[string]models.ConnectionHold)
 	for _, pr := range t.extractPRs(data) {
-		if pr.FollowUp == nil || !pr.FollowUp.KeepConnection || pr.Cluster == "" {
+		if pr.Cluster == "" || (pr.Operation != OpRemoveCluster && pr.Operation != OpUnadoptCluster) {
 			continue
 		}
-		if pr.Operation != OpRemoveCluster && pr.Operation != OpUnadoptCluster {
+		if pr.LastStatus != "open" && pr.LastStatus != "merged" {
 			continue
 		}
-		kept[pr.Cluster] = true
+		h := kept[pr.Cluster]
+		h.Hold = true
+		if pr.LastStatus == "merged" && pr.FollowUp != nil && pr.FollowUp.KeepConnection {
+			h.ReleasePR = pr.PRID
+		}
+		kept[pr.Cluster] = h
 	}
 	return kept, nil
 }

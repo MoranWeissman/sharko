@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1645,7 +1646,9 @@ func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value 
 	if err != nil {
 		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
-	if cur, ok := existing.Annotations[key]; !ok || cur != value {
+	// A waiting mark matches when it names the same pull request, in
+	// whichever form it was written (EP3 dry run round S, S4).
+	if cur, ok := existing.Annotations[key]; !ok || !models.PendingPRMarkMatches(cur, value) {
 		return false, nil
 	}
 	updated := existing.DeepCopy()
@@ -1662,7 +1665,12 @@ func (m *Manager) RemoveAnnotationIfValue(ctx context.Context, name, key, value 
 // Secret and takes the remove-keep mark off. Nothing else changes. A
 // missing Secret is (false, nil). A Secret with neither is (false, nil)
 // and writes nothing.
-func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string) (bool, error) {
+//
+// It only takes off a keep mark that names pull request prID (or a mark
+// with no number yet when prID is 0). A keep mark another pull request put
+// on stays, so that pull request still finishes with it (EP3 dry run round
+// S, S4).
+func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string, prID int) (bool, error) {
 	existing, err := m.getClusterSecret(ctx, name)
 	if apierrors.IsNotFound(err) {
 		return false, nil
@@ -1670,16 +1678,22 @@ func (m *Manager) ReleaseKeptConnection(ctx context.Context, name string) (bool,
 	if err != nil {
 		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
 	}
-	_, marked := existing.Annotations[AnnotationRemoveKeepPendingPR]
+	cur, marked := existing.Annotations[AnnotationRemoveKeepPendingPR]
+	ownMark := marked && models.PendingPRMarkMatches(cur, strconv.Itoa(prID))
+	if marked && prID == 0 {
+		ownMark = models.PendingPRMarkMatches(cur, "pending")
+	}
 	labelled := existing.Labels[LabelManagedBy] == ManagedByValue
-	if !marked && !labelled {
+	if !ownMark && !labelled {
 		return false, nil
 	}
 	updated := existing.DeepCopy()
 	if labelled {
 		delete(updated.Labels, LabelManagedBy)
 	}
-	delete(updated.Annotations, AnnotationRemoveKeepPendingPR)
+	if ownMark {
+		delete(updated.Annotations, AnnotationRemoveKeepPendingPR)
+	}
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return false, fmt.Errorf("handing back the kept connection in secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}
