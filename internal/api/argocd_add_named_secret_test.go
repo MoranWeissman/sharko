@@ -40,8 +40,9 @@ const (
 func argocdAddedSecret(annotations map[string]string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      addedSecretName,
-			Namespace: "argocd",
+			Name:            addedSecretName,
+			Namespace:       "argocd",
+			ResourceVersion: "1",
 			Labels: map[string]string{
 				"argocd.argoproj.io/secret-type": "cluster",
 				argosecrets.LabelManagedBy:       argosecrets.ManagedByValue,

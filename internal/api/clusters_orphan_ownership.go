@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -171,12 +172,21 @@ func leftoverRegistrationRefusal(sec *corev1.Secret) leftoverReason {
 // its Kubernetes name, and only while its UID and resource version are the
 // ones the checks saw. A Secret changed or replaced in between is a
 // Conflict, and nothing is deleted.
+// errSecretNotCheckable is returned when a Secret to delete has no UID and
+// no resource version, so the delete could not be pinned to it.
+var errSecretNotCheckable = errors.New("the Secret has no UID and no resource version, so Sharko cannot make sure it deletes exactly the Secret it checked")
+
 func (s *Server) deleteCheckedSecret(ctx context.Context, sec *corev1.Secret) error {
 	k8sClient, namespace, ok := s.k8sClientAndNamespace()
 	if !ok {
 		return errNoK8sClient
 	}
 	uid, rv := sec.UID, sec.ResourceVersion
+	if uid == "" && rv == "" {
+		// Nothing to check the delete against: refuse rather than send a
+		// delete with no checks (EP3 dry run round S, S19).
+		return errSecretNotCheckable
+	}
 	pre := &metav1.Preconditions{}
 	if uid != "" {
 		pre.UID = &uid

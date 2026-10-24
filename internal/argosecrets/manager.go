@@ -1561,6 +1561,12 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 	// changed since the read, the API server refuses and nothing is
 	// deleted (EP3 dry run round R, R8).
 	uid, rv := existing.UID, existing.ResourceVersion
+	if uid == "" && rv == "" {
+		// Nothing to check the delete against, so a Secret put back in
+		// its place could be deleted unseen. Refuse (EP3 dry run round
+		// S, S19).
+		return fmt.Errorf("secret %q has no UID and no resource version, so Sharko cannot make sure it deletes exactly the Secret it checked; not deleting it", existing.Name)
+	}
 	opts := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{}}
 	if uid != "" {
 		opts.Preconditions.UID = &uid
