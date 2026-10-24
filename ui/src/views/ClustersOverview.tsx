@@ -297,6 +297,31 @@ function latestTestResultOf(r: unknown): ClusterLatestTest | undefined {
 export const AVAILABLE_CHECK_FAILED =
   "Sharko could not check which other clusters ArgoCD knows. Refresh to try again.";
 
+// The two sentences the server sends when Sharko has no usable Git or ArgoCD
+// connection (internal/credsafe, pinned there by exact text). A refresh does
+// not fix that, so the page does not say "Refresh to try again" for it.
+const NO_USABLE_CONNECTION_ERRORS = [
+  'Sharko has no usable Git connection. Open Settings and check the active connection: the Git provider, the repository it points at, and the access token.',
+  'Sharko has no usable ArgoCD connection. Open Settings and check the active connection: the ArgoCD server address and the ArgoCD token.',
+];
+
+export type AvailableStatus = 'pending' | 'ok' | 'failed' | 'skipped';
+
+/**
+ * Sorts a failed GET /clusters/available into "say it could not check"
+ * ('failed') or "say nothing" ('skipped'). A viewer is not allowed to ask
+ * (403), and a set-up with no usable connection is not fixed by a refresh:
+ * neither is a failure the user can fix from this page (EP3 round S, S27).
+ */
+export function availableFailureKind(err: unknown): 'failed' | 'skipped' {
+  // Read the fields, not `instanceof`: many tests mock the api module.
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status === 401 || status === 403) return 'skipped';
+  const message = err instanceof Error ? err.message : '';
+  if (typeof status === 'number' && NO_USABLE_CONNECTION_ERRORS.includes(message)) return 'skipped';
+  return 'failed';
+}
+
 // The button that lets go of a picked cluster, so the fields for a cluster
 // typed by hand show again.
 export const PICKER_ENTER_BY_HAND = 'Enter a different cluster by hand';
@@ -442,9 +467,17 @@ export function ClustersOverview() {
   // GET /clusters/available. Empty until the server answers (or when it
   // cannot): the page then falls back to what /clusters itself lists.
   const [availableClusters, setAvailableClusters] = useState<AvailableCluster[]>([]);
-  // True when the last /clusters/available call failed. The page keeps the
-  // last good list and says, in one line, that it could not check.
-  const [availableFailed, setAvailableFailed] = useState(false);
+  // How the last /clusters/available call went:
+  //   'pending' — no answer yet;
+  //   'ok'      — ArgoCD's list came back;
+  //   'failed'  — a failure a refresh can fix (network, ArgoCD or Git not
+  //               answering). The page keeps the last good list and says, in
+  //               one line, that it could not check;
+  //   'skipped' — the user may not ask (a viewer gets 403), or Sharko has no
+  //               usable connection yet. Nothing to say about it here.
+  // Only 'ok' lets the Add Cluster dialog say "Sharko checked ArgoCD".
+  const [availableStatus, setAvailableStatus] = useState<AvailableStatus>('pending');
+  const availableFailed = availableStatus === 'failed';
   // Each call gets a number. Only the answer to the newest call is used, so
   // a slow, older answer never replaces a newer one.
   const availableSeqRef = useRef(0);
@@ -585,14 +618,15 @@ export function ClustersOverview() {
           .then((list) => {
             if (seq !== availableSeqRef.current) return;
             setAvailableClusters(Array.isArray(list) ? list : []);
-            setAvailableFailed(false);
+            setAvailableStatus('ok');
           })
-          .catch(() => {
+          .catch((err: unknown) => {
             if (seq !== availableSeqRef.current) return;
-            setAvailableFailed(true);
+            setAvailableStatus(availableFailureKind(err));
           });
       } catch {
         /* no available list: the page uses what /clusters listed */
+        setAvailableStatus('ok');
       }
       setAllClusters(response.clusters);
       // A fresh load — any earlier "Load more" progress no longer applies.
@@ -1295,19 +1329,17 @@ export function ClustersOverview() {
     ? EMPTY_CLUSTERS_FILTERED_MESSAGE
     : EMPTY_CLUSTERS_MESSAGE;
 
-  const discoveredFromList = useMemo(
-    () => filteredClusters.filter(
-      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !anyPendingNames.has(c.name) && !orphanNames.has(c.name),
-    ),
-    [filteredClusters, anyPendingNames, orphanNames],
-  );
-
   // Everything ArgoCD knows that Sharko does not manage: what /clusters lists
-  // plus what /clusters/available adds. One list for the hint line and the
-  // picker, so the count and the rows always agree.
-  const discoveredClusters = useMemo(() => {
-    // Any name /clusters already lists is handled there: shown, or hidden
-    // by a filter. It never comes back as an extra.
+  // plus what /clusters/available adds. Built from the whole list, with no
+  // page filter: the Add Cluster picker, its count and its one-cluster pick
+  // use this, so a word typed in the page search never hides a cluster from
+  // the picker (EP3 round S, S29).
+  const allDiscoveredClusters = useMemo(() => {
+    const fromList = allClusters.filter(
+      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !anyPendingNames.has(c.name) && !orphanNames.has(c.name),
+    );
+    // Any name /clusters already lists is handled there. It never comes back
+    // as an extra.
     const listed = new Set(allClusters.map((c) => c.name));
     const extra = availableClusters
       .filter(
@@ -1324,10 +1356,16 @@ export function ClustersOverview() {
         managed: false,
         // For the status filter: ArgoCD knows it, Sharko does not manage it.
         connection_status: 'not_in_git',
-      }))
-      .filter(passesFilters);
-    return [...discoveredFromList, ...extra];
-  }, [discoveredFromList, availableClusters, allClusters, anyPendingNames, orphanNames, passesFilters]);
+      }));
+    return [...fromList, ...extra];
+  }, [availableClusters, allClusters, anyPendingNames, orphanNames]);
+
+  // The same list with the page's search and filters on. Only the hint line
+  // under the page title uses it, so the hint follows what the page shows.
+  const discoveredClusters = useMemo(
+    () => allDiscoveredClusters.filter(passesFilters),
+    [allDiscoveredClusters, passesFilters],
+  );
 
   // S1: sort, THEN paginate — filters/search already ran above in
   // filteredClusters/managedClusters. Sorted via a decorate-sort-undecorate
@@ -1384,7 +1422,7 @@ export function ClustersOverview() {
   // same adopt flow the (now-collapsed) standing Discovered section used —
   // same verify-then-confirm dialog, same Git-PR success banner.
   const handleAdoptFromPicker = useCallback(() => {
-    const cluster = discoveredClusters.find((c) => c.name === pickedDiscovered);
+    const cluster = allDiscoveredClusters.find((c) => c.name === pickedDiscovered);
     if (!cluster) {
       // V2-cleanup-90.4: the picked cluster can disappear between the pick
       // and the confirm click — the picker's 30s auto-refresh may have
@@ -1399,11 +1437,11 @@ export function ClustersOverview() {
     }
     setAddClusterOpen(false);
     handleOpenAdoptDialog([cluster]);
-  }, [discoveredClusters, pickedDiscovered, handleOpenAdoptDialog]);
+  }, [allDiscoveredClusters, pickedDiscovered, handleOpenAdoptDialog]);
 
   // Take ownership of the picked cluster: same dialog as on the cluster page.
   const handleTakeOwnershipFromPicker = useCallback(() => {
-    const cluster = discoveredClusters.find((c) => c.name === pickedDiscovered);
+    const cluster = allDiscoveredClusters.find((c) => c.name === pickedDiscovered);
     if (!cluster) {
       if (pickedDiscovered) {
         showToast(`"${pickedDiscovered}" is no longer discoverable — refresh the list.`, 'error');
@@ -1413,7 +1451,7 @@ export function ClustersOverview() {
     }
     setAddClusterOpen(false);
     setTakeoverTarget(cluster.name);
-  }, [discoveredClusters, pickedDiscovered]);
+  }, [allDiscoveredClusters, pickedDiscovered]);
 
   // Only one cluster to pick from: pick it, so Adopt is not greyed until the
   // user clicks a radio button that has no other choice. Picking hides the
@@ -1426,11 +1464,11 @@ export function ClustersOverview() {
       connManagedBy === 'user' &&
       pickedDiscovered === null &&
       !userLetGoOfPickRef.current &&
-      discoveredClusters.length === 1
+      allDiscoveredClusters.length === 1
     ) {
-      setPickedDiscovered(discoveredClusters[0].name);
+      setPickedDiscovered(allDiscoveredClusters[0].name);
     }
-  }, [addClusterOpen, connManagedBy, pickedDiscovered, discoveredClusters]);
+  }, [addClusterOpen, connManagedBy, pickedDiscovered, allDiscoveredClusters]);
 
   // Client-side gate for the Preview/Register buttons.
   //
@@ -1748,8 +1786,8 @@ export function ClustersOverview() {
               * managed=false. Hidden entirely when there's nothing to pick
               * from (today's behavior is unchanged in that case).
               * V2-cleanup-92.1 (F13): search filter + showing X of Y count. */}
-            {connManagedBy === 'user' && discoveredClusters.length > 0 && (() => {
-              const filteredDiscovered = discoveredClusters.filter((c) => {
+            {connManagedBy === 'user' && allDiscoveredClusters.length > 0 && (() => {
+              const filteredDiscovered = allDiscoveredClusters.filter((c) => {
                 const filterLower = discoveredFilter.toLowerCase();
                 return (
                   c.name.toLowerCase().includes(filterLower) ||
@@ -1765,7 +1803,7 @@ export function ClustersOverview() {
                   Discovered clusters
                 </p>
                 <p className="mt-0.5 text-sm text-[#2a5a7a] dark:text-gray-500">
-                  ArgoCD already knows about {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt {discoveredClusters.length === 1 ? 'it' : 'them'} instead of typing its coordinates by hand.
+                  ArgoCD already knows about {allDiscoveredClusters.length} cluster{allDiscoveredClusters.length === 1 ? '' : 's'} Sharko doesn't manage yet. Pick one to adopt {allDiscoveredClusters.length === 1 ? 'it' : 'them'} instead of typing its coordinates by hand.
                 </p>
                 <div className="mt-2 relative">
                   <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#3a6a8a] dark:text-gray-500" />
@@ -1780,7 +1818,7 @@ export function ClustersOverview() {
                 {filteredDiscovered.length > 0 ? (
                   <>
                     <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-500">
-                      Showing {filteredDiscovered.length} of {discoveredClusters.length}
+                      Showing {filteredDiscovered.length} of {allDiscoveredClusters.length}
                     </p>
                     <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded-md ring-1 ring-teal-200 bg-white p-2 dark:ring-teal-900 dark:bg-gray-900">
                       {filteredDiscovered.map((cluster) => (
@@ -1863,12 +1901,21 @@ export function ClustersOverview() {
               * adopt" is misleading — Sharko didn't check, it couldn't. The
               * ArgoCDStatusBanner already covers that case, so this line
               * stays silent rather than saying something false. */}
-            {connManagedBy === 'user' && !loading && !argoCDUnreachable && discoveredClusters.length === 0 && (
+            {connManagedBy === 'user' && !loading && !argoCDUnreachable && availableStatus === 'ok' && allDiscoveredClusters.length === 0 && (
               <p
                 data-testid="discovered-empty"
                 className="text-sm text-[#2a5a7a] dark:text-gray-500"
               >
                 Sharko checked ArgoCD — no other clusters there to adopt.
+              </p>
+            )}
+            {/* The check failed: say so, never "no other clusters" (S36). */}
+            {connManagedBy === 'user' && !loading && availableFailed && allDiscoveredClusters.length === 0 && (
+              <p
+                data-testid="discovered-check-failed"
+                className="text-sm text-amber-700 dark:text-amber-400"
+              >
+                {AVAILABLE_CHECK_FAILED}
               </p>
             )}
 
