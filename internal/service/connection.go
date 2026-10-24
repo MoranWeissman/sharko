@@ -316,6 +316,10 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 	}
 	// Parse repo URL into provider/owner/repo if provided
 	if err := req.Git.ParseRepoURL(); err != nil {
+		if err.Error() == models.UnreadableRepoAddressSentence {
+			// Already a whole sentence: say it alone (S40).
+			return wrapValidationError(err.Error(), err)
+		}
 		return wrapValidationError(fmt.Sprintf("invalid git URL: %s", err), err)
 	}
 	conn := models.Connection{
@@ -376,7 +380,9 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 	if err != nil || u.Host == "" {
 		// Never repeat the address: a token written into it would come
 		// back in the answer (EP3 dry run round R, R9).
-		return "", newValidationError("cannot parse git repo URL: %s", models.UnreadableRepoAddressSentence)
+		// The sentence stands alone, with no "cannot parse" in front (EP3
+		// dry run round S, S40).
+		return "", newValidationError("%s", models.UnreadableRepoAddressSentence)
 	}
 	host := strings.ToLower(u.Host)
 	switch {

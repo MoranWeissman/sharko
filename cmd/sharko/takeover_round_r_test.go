@@ -32,14 +32,13 @@ func TestTakeover_PRWaits_SaysWaitingAndExitsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a take over waiting for its merge must exit 0, got %v (out=%q)", err, out)
 	}
-	if !strings.Contains(out, "Taking over cluster prod-eu... waiting for merge\n") {
-		t.Errorf("progress line: %q", out)
-	}
-	if !strings.Contains(out, "\nPR opened, waiting for merge: https://example.invalid/pr/1\n") {
-		t.Errorf("waiting line missing: %q", out)
-	}
-	if !strings.Contains(out, "  "+takeoverWaitingServerMsg+"\n") {
-		t.Errorf("server message missing: %q", out)
+	// EP3 dry run round S, S40: the whole output, pinned exactly.
+	want := "Preflight for prod-eu: ready\n\n" +
+		"Taking over cluster prod-eu... waiting for merge\n\n" +
+		"PR opened, waiting for merge: https://example.invalid/pr/1\n" +
+		"  " + takeoverWaitingServerMsg + "\n"
+	if out != want {
+		t.Errorf("take over output:\n got %q\nwant %q", out, want)
 	}
 	for _, banned := range []string{"Sharko now owns", "merge manually", "done\n"} {
 		if strings.Contains(out, banned) {
