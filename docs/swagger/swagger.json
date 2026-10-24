@@ -4842,7 +4842,7 @@
                         }
                     },
                     "207": {
-                        "description": "Partly done — see the message",
+                        "description": "Partly done — see the message. With waiting_for_merge and merge_error, the pull request is open but the auto-merge did not go through; merging it finishes the take over",
                         "schema": {
                             "$ref": "#/definitions/internal_api.TakeoverResponse"
                         }
@@ -7865,7 +7865,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Immediately polls the Git provider for this PR's current status",
+                "description": "Immediately polls the Git provider for this PR's current status. A pull request Sharko no longer tracks (for example one that merged at once) comes back with its status when the Git host says it is merged or closed; otherwise it is 404.",
                 "produces": [
                     "application/json"
                 ],
@@ -13396,7 +13396,18 @@
                 "git": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                 },
+                "merge_error": {
+                    "description": "MergeError is set when auto-merge was asked for and the merge did not\ngo through. The pull request is still open and the answer is a 207 that\nwaits for the merge, the same as a take over without auto-merge\n(EP3 dry run round S, S13).",
+                    "type": "string"
+                },
                 "message": {
+                    "type": "string"
+                },
+                "pr_number": {
+                    "description": "PRNumber and PRURL name the open pull request while the take over\nwaits for it (waiting_for_merge). The number is left out when Sharko\ndoes not know it; it is never 0.",
+                    "type": "integer"
+                },
+                "pr_url": {
                     "type": "string"
                 },
                 "preflight": {
