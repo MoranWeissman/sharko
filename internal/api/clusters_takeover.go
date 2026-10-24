@@ -103,6 +103,16 @@ type TakeoverResponse struct {
 	// this cluster was already open. Git points at it; no second one was
 	// opened.
 	AlreadyWaiting bool `json:"already_waiting,omitempty"`
+	// PRNumber and PRURL name the open pull request while the take over
+	// waits for it (waiting_for_merge). The number is left out when Sharko
+	// does not know it; it is never 0.
+	PRNumber int    `json:"pr_number,omitempty"`
+	PRURL    string `json:"pr_url,omitempty"`
+	// MergeError is set when auto-merge was asked for and the merge did not
+	// go through. The pull request is still open and the answer is a 207 that
+	// waits for the merge, the same as a take over without auto-merge
+	// (EP3 dry run round S, S13).
+	MergeError string `json:"merge_error,omitempty"`
 	// WaitingForMerge is true when the pull request is open and nothing on
 	// the connection has changed yet. Sharko becomes the owner when it is
 	// merged; if it is closed without merging, nothing changes (EP3 dry run
@@ -339,7 +349,7 @@ func (s *Server) handleClusterTakeoverPreflight(w http.ResponseWriter, r *http.R
 // @Param name path string true "Cluster name"
 // @Param body body api.TakeoverRequest true "Takeover request"
 // @Success 200 {object} api.TakeoverResponse "Pull request open and waiting for the merge (waiting_for_merge), cluster taken over, or the plan on a dry run"
-// @Success 207 {object} api.TakeoverResponse "Partly done — see the message"
+// @Success 207 {object} api.TakeoverResponse "Partly done — see the message. With waiting_for_merge and merge_error, the pull request is open but the auto-merge did not go through; merging it finishes the take over"
 // @Failure 400 {object} map[string]interface{} "Bad request, or the confirmation is missing"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
@@ -446,9 +456,18 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		AutoMerge:            req.AutoMerge,
 		PreserveLegacyLabels: preserve,
 	})
+	mergeFailed := false
 	if gitErr != nil {
 		var waitingErr *orchestrator.ClusterPRWaitingError
 		switch {
+		case errors.Is(gitErr, orchestrator.ErrAutoMergeFailed) && gitResult != nil && gitResult.Git != nil:
+			// The pull request is open and tracked with the take over's
+			// finish step, so a later merge still takes the cluster over. The
+			// answer waits for that merge, like a take over without
+			// auto-merge; it must not say the take over failed.
+			mergeFailed = true
+			slog.Warn("take over: the pull request is open but the auto-merge did not go through",
+				"cluster", name, "pr", gitResult.Git.PRID, "error", gitErr)
 		case gitErr == orchestrator.ErrTakeoverNeedsV4Repo, errors.As(gitErr, &waitingErr):
 			writeError(w, http.StatusConflict, gitErr.Error())
 		case errors.Is(gitErr, orchestrator.ErrPRNotRecorded) && gitResult != nil && gitResult.Git != nil:
@@ -462,7 +481,9 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 		default:
 			writeError(w, http.StatusBadGateway, gitErr.Error())
 		}
-		return
+		if !mergeFailed {
+			return
+		}
 	}
 
 	if req.DryRun {
@@ -497,6 +518,8 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	if gitResult != nil && gitResult.Git != nil && !gitResult.NothingToWrite && !gitResult.Git.Merged {
 		resp.Status = "success"
 		resp.WaitingForMerge = true
+		resp.PRNumber = gitResult.Git.PRID
+		resp.PRURL = gitResult.Git.PRUrl
 		if gitResult.AlreadyWaiting {
 			resp.Message = takeoverGitSentence(name, gitResult)
 		} else {
@@ -505,6 +528,14 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 					"cluster", name, "pr", gitResult.Git.PRID, "error", markErr)
 			}
 			resp.Message = takeoverWaitingMessage(name, gitResult.Git.PRID, gitResult.Git.PRUrl, preserve, report.LegacyLabels)
+		}
+		if mergeFailed {
+			// Same body as a take over that waits for its merge, plus
+			// merge_error, and a 207 (the shared contract of round S).
+			resp.MergeError = takeoverMergeFailedSentence
+			audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_waiting", Resource: "cluster:" + name, Detail: "auto-merge failed"})
+			writeJSON(w, http.StatusMultiStatus, withAttributionWarning(resp, tokRes))
+			return
 		}
 		audit.Enrich(ctx, audit.Fields{Event: "cluster_takeover_waiting", Resource: "cluster:" + name})
 		writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
@@ -554,6 +585,10 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	audit.Enrich(ctx, audit.Fields{Event: lifecycleevents.ClusterTakenOver, Resource: "cluster:" + name})
 	writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 }
+
+// takeoverMergeFailedSentence is merge_error on a take over whose auto-merge
+// did not go through. The provider's own error goes to the log, not here.
+const takeoverMergeFailedSentence = "Sharko could not merge the pull request on its own. Nothing on the connection has changed. Merge the pull request yourself to finish the take over, or close it to leave things as they are."
 
 // takeoverLegacyLabelKey is the classifier handed to the swap: it decides
 // which of the live labels belonged to the previous owner. Defined here as

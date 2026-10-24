@@ -1,10 +1,21 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/MoranWeissman/sharko/internal/appsets"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/takeover"
 )
 
 // EP3 dry run round S, S14: the take over sentences never say "PR #0" or
@@ -40,5 +51,77 @@ func TestTakeoverSentences_KnownNumber_Unchanged(t *testing.T) {
 	}
 	if got, w := takeoverPlanAlreadyWaiting(12, url), "A pull request for this is already open: #12, "+url+". Running the take over for real will not open a second one."; got != w {
 		t.Errorf("got %q want %q", got, w)
+	}
+}
+
+// EP3 dry run round S, S13: a take over with auto-merge whose merge does not
+// go through is not a failure. The pull request is open and tracked, so the
+// answer is a 207 with the same body as a take over that waits for its
+// merge, plus merge_error.
+
+type takeoverMergeFailsGP struct{ *takeoverFakeGP }
+
+func (takeoverMergeFailsGP) MergePullRequest(context.Context, int) error {
+	return errors.New("405 Method Not Allowed: branch protection token=ghp_fakeleak123")
+}
+
+func TestTakeover_AutoMergeFails_207WaitingWithMergeError(t *testing.T) {
+	gp := takeoverMergeFailsGP{newTakeoverFakeGP()}
+	autoMerge := true
+	_, router, k8s := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
+		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AutoMerge: &autoMerge, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
+
+	if w.Code != http.StatusMultiStatus {
+		t.Fatalf("got %d, want 207 (body=%s)", w.Code, w.Body.String())
+	}
+	var resp TakeoverResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.WaitingForMerge || resp.Status != "success" || resp.PRNumber != 1 || resp.PRURL != "https://example.invalid/pr/1" {
+		t.Fatalf("not a waiting answer with the pull request: %s", w.Body.String())
+	}
+	want := "Sharko could not merge the pull request on its own. Nothing on the connection has changed. Merge the pull request yourself to finish the take over, or close it to leave things as they are."
+	if resp.MergeError != want {
+		t.Fatalf("merge_error = %q, want %q", resp.MergeError, want)
+	}
+	if resp.SecretSwapped {
+		t.Fatal("the connection was swapped although the pull request is not merged")
+	}
+	for _, bad := range []string{"ghp_fakeleak123", "405", "PR created but merge failed"} {
+		if strings.Contains(w.Body.String(), bad) {
+			t.Fatalf("answer carries the raw merge error (%q): %s", bad, w.Body.String())
+		}
+	}
+	secret, err := k8s.CoreV1().Secrets("argocd").Get(context.Background(), "prod-eu", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret.Labels[argosecrets.LabelManagedBy] == argosecrets.ManagedByValue {
+		t.Fatalf("Sharko took ownership before the merge: %v", secret.Labels)
+	}
+}
+
+func TestTakeover_Waiting_NamesThePullRequestAtTheTop(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	autoMerge := false
+	_, router, _ := takeoverTestServer(t, gp,
+		[]*corev1.Secret{brownfieldSecret("prod-eu", map[string]string{"env": "prod"}, nil)},
+		fakeAppSetReader{list: []appsets.ApplicationSetInfo{unsafeAppSet("legacy-addons", "env")}})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/prod-eu/takeover", "admin",
+		TakeoverRequest{Yes: true, AutoMerge: &autoMerge, AcknowledgedFindings: []string{takeover.FindingAppSetSafety, takeover.FindingSecretOwner}}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	var resp TakeoverResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if !resp.WaitingForMerge || resp.PRNumber != 1 || resp.PRURL != "https://example.invalid/pr/1" || resp.MergeError != "" {
+		t.Fatalf("waiting answer = %s", w.Body.String())
 	}
 }
