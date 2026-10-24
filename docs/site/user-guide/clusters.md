@@ -205,7 +205,7 @@ sharko remove-cluster my-cluster -y
 
 This opens a pull request that removes the cluster from the addons repo. **Nothing changes until that pull request is merged.** While it is open, the command says "PR opened, waiting for merge" and gives the link, and the cluster stays exactly as it was. After the merge, Sharko finishes the removal, and then ArgoCD removes the cluster's ApplicationSet entries. The command says "Cluster my-cluster removed." only when that has really happened. If you close the pull request without merging, nothing changes.
 
-The command exits with code 0 while the pull request is waiting. Waiting is not an error. A script that runs `sharko remove-cluster x && next-step` will go on to the next step even though the cluster is not removed yet. Wait for the merge first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`.
+The command exits with code 0 while the pull request is waiting. Waiting is not an error. A script that runs `sharko remove-cluster x && next-step` will go on to the next step even though the cluster is not removed yet. Wait for the merge first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. If the pull request already merged, `sharko pr wait` says so at once and exits 0.
 
 ### Un-adopting a cluster
 
@@ -250,7 +250,7 @@ What the adopt command does:
 4. While the pull request is open, nothing is adopted. Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later.
 5. When the pull request is merged, Sharko takes over the ArgoCD connection (the old labels stay) and marks the cluster as adopted. If the pull request is closed without a merge, Sharko takes its mark off and changes nothing else.
 
-The command exits with code 0 when the pull request is left waiting. Waiting is not an error. If a script must wait until the cluster is really adopted, wait for the merge first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. The command exits with an error code only when something went wrong.
+The command exits with code 0 when the pull request is left waiting. Waiting is not an error. If a script must wait until the cluster is really adopted, wait for the merge first with `sharko pr wait <PR number>`. The command prints the pull request link, not its number. The number is the last part of the link: for a link that ends in `/pull/12`, run `sharko pr wait 12`. If the pull request already merged, `sharko pr wait` says so at once and exits 0. The command exits with an error code only when something went wrong.
 
 The cluster does **not** need to be in your secrets provider. It is already in ArgoCD, so Sharko does not need a kubeconfig to adopt it.
 

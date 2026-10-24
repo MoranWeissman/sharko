@@ -254,10 +254,12 @@ func (o *Orchestrator) findOpenJoinPR(ctx context.Context, name string) (*gitpro
 			if !titleNamesCluster(prs[i].Title, pattern) {
 				continue
 			}
+			found := prs[i]
+			found.ID = PRNumber(found.ID, found.URL)
 			if op == "register" {
-				return nil, op, &ClusterPRWaitingError{Cluster: name, PRID: prs[i].ID, PRUrl: prs[i].URL}
+				return nil, op, &ClusterPRWaitingError{Cluster: name, PRID: found.ID, PRUrl: found.URL}
 			}
-			return &prs[i], op, nil
+			return &found, op, nil
 		}
 	}
 	return nil, "", nil
@@ -320,8 +322,8 @@ type ClusterPRWaitingError struct {
 }
 
 func (e *ClusterPRWaitingError) Error() string {
-	return fmt.Sprintf("Cluster %s is already waiting in PR #%d: %s. That pull request registers it. Merge it or close it first, then try again.",
-		e.Cluster, e.PRID, e.PRUrl)
+	return fmt.Sprintf("Cluster %s is already waiting in %s: %s. That pull request registers it. Merge it or close it first, then try again.",
+		e.Cluster, PullRequestPhrase(e.PRID), e.PRUrl)
 }
 
 // OpenPRsUnreadableError is the answer when the open pull requests cannot be

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -181,12 +182,47 @@ func capitalizeFirst(s string) string {
 	return string(r)
 }
 
+// PRNumber is a pull request's number. A Git provider that left the number
+// out gets it from the end of the pull request's address (".../pull/12").
+// When neither has it, it is 0: callers then leave the number out and say
+// "a pull request", so no answer ever says "PR #0" (EP3 dry run round S,
+// S14).
+func PRNumber(id int, url string) int {
+	if id > 0 {
+		return id
+	}
+	tail := strings.TrimRight(url, "/")
+	if i := strings.LastIndex(tail, "/"); i >= 0 {
+		tail = tail[i+1:]
+	}
+	if n, err := strconv.Atoi(tail); err == nil && n > 0 {
+		return n
+	}
+	return 0
+}
+
+// PullRequestPhrase names a pull request inside a sentence: "pull request
+// #12", or "a pull request" when the number is not known (0).
+func PullRequestPhrase(n int) string {
+	if n > 0 {
+		return fmt.Sprintf("pull request #%d", n)
+	}
+	return "a pull request"
+}
+
 // ErrPRNotRecorded means Sharko opened a pull request that carries
 // after-merge work but could not record it in the PR tracker, and the pull
 // request did not merge at once. Nothing would ever finish that work, so
 // the caller must say so (EP3 dry run round R, R1). The GitResult that
 // comes with it names the pull request.
 var ErrPRNotRecorded = errors.New("the pull request could not be recorded in the PR tracker")
+
+// ErrAutoMergeFailed means the pull request was opened (and recorded) but
+// the merge Sharko tried at once did not go through. The pull request stays
+// open, so the GitResult that comes with it names it, and a later merge by
+// anyone still finishes the work (EP3 dry run round S, S13). The error text
+// still starts "PR created but merge failed:" as before.
+var ErrAutoMergeFailed = errors.New("PR created but merge failed")
 
 // PRNotRecordedMessage is the answer when ErrPRNotRecorded comes back.
 // action is what the pull request was for, in plain words ("removal",
@@ -276,6 +312,10 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		return nil, fmt.Errorf("creating pull request: %w", err)
 	}
 
+	// A provider that left the number out still gives the address, so the
+	// number is read from there. Everything below (the tracker, the merge,
+	// the answer) uses this one number.
+	pr.ID = PRNumber(pr.ID, pr.URL)
 	result := &GitResult{
 		PRUrl:  pr.URL,
 		PRID:   pr.ID,
@@ -356,7 +396,7 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 			}
 			// PR created but merge failed — partial success.
 			// Caller decides how to handle this (e.g. return 207).
-			return result, fmt.Errorf("PR created but merge failed: %w", mergeErr)
+			return result, fmt.Errorf("%w: %w", ErrAutoMergeFailed, mergeErr)
 		}
 		result.Merged = true
 		// Clean up the source branch after every Sharko-merged PR.

@@ -40,8 +40,8 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 		acknowledge, _ := cmd.Flags().GetStringSlice("acknowledge")
 
 		if !dryRun && !yes {
-			fmt.Printf("Adopt %d cluster(s): %s\nThis opens a pull request that adds them to Sharko. Continue? [y/N]: ",
-				len(args), strings.Join(args, ", "))
+			fmt.Printf("Adopt %s: %s\nThis opens a pull request that adds %s to Sharko. Continue? [y/N]: ",
+				clusterCount(len(args)), strings.Join(args, ", "), itOrThem(len(args)))
 			var confirm string
 			fmt.Scanln(&confirm)
 			if confirm != "y" && confirm != "Y" {
@@ -64,9 +64,9 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 		}
 
 		if dryRun {
-			fmt.Printf("Dry-run: previewing adoption of %d cluster(s)...\n", len(args))
+			fmt.Printf("Dry-run: previewing adoption of %s...\n", clusterCount(len(args)))
 		} else {
-			fmt.Printf("Adopting %d cluster(s)... ", len(args))
+			fmt.Printf("Adopting %s... ", clusterCount(len(args)))
 		}
 
 		respBody, status, err := apiPost("/api/v1/clusters/adopt", body)
@@ -309,4 +309,21 @@ func waitingClusters(n int) string {
 		return "1 cluster waits"
 	}
 	return fmt.Sprintf("%d clusters wait", n)
+}
+
+// clusterCount says how many clusters with the right word: "1 cluster",
+// "2 clusters" (EP3 dry run round S, S24).
+func clusterCount(n int) string {
+	if n == 1 {
+		return "1 cluster"
+	}
+	return fmt.Sprintf("%d clusters", n)
+}
+
+// itOrThem is "it" for one cluster and "them" for more.
+func itOrThem(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }

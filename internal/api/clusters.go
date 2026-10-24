@@ -51,7 +51,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// registrations" surface AND the "Discovered clusters / not_in_git"
 	// surface (the argosecrets reconciler can create the ArgoCD cluster
 	// secret BEFORE the values-file PR merges).
-	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix)
+	pending := resolvePendingRegistrations(r.Context(), s.readCache, gp, s.gitopsConfig().CommitPrefix)
 
 	// LW-18 (Part 2): Filter out any pending-registration PRs for clusters
 	// that are already managed (in git). This handles the idempotent-retry

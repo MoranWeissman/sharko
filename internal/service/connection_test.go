@@ -62,7 +62,7 @@ func TestDeriveProviderFromURL(t *testing.T) {
 			envAllowlist: "",
 			repoURL:      "://not-a-url",
 			wantErr:      true,
-			errContains:  "cannot parse git repo URL",
+			errContains:  "Sharko cannot read the Git repository address. Check that it looks like https://host/owner/repo.",
 		},
 
 		// V125-1-13.x.3 — env-var allowlist cases.

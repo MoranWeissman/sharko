@@ -103,7 +103,7 @@ func TestAdopt_WaitingPRSaysWaitingNotAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Adopting 1 cluster(s)... waiting for merge\n\n" +
+	want := "Adopting 1 cluster... waiting for merge\n\n" +
 		"Nothing is adopted yet: 1 cluster waits for the pull request to be merged.\n\n" +
 		"  legacy-1: PR opened, waiting for merge: " + waitPR + "\n" +
 		"    PR:     " + waitPR + " (waiting for merge)\n"
@@ -132,7 +132,7 @@ func TestAdopt_MergedPRSaysAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Adopting 1 cluster(s)... done\n\n" +
+	want := "Adopting 1 cluster... done\n\n" +
 		"Adoption finished for every cluster: 1 fully completed, 0 partly completed, 0 failed (of 1).\n\n" +
 		"  legacy-1: adopted\n" +
 		"    PR:     " + waitPR + " (merged)\n"

@@ -3,6 +3,7 @@ package advisories
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/credsafe"
 )
 
 const (
@@ -75,7 +78,7 @@ func newArtifactHubSource(client *http.Client) *artifactHubSource {
 func (a *artifactHubSource) Get(ctx context.Context, repoURL, chart string) ([]Advisory, error) {
 	repoName, err := a.resolveRepoName(ctx, repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("artifacthub: resolving repo name for %q: %w", repoURL, err)
+		return nil, fmt.Errorf("artifacthub: resolving repo name for %q: %w", credsafe.SafeRepoURLPhrase(repoURL), err)
 	}
 
 	pkg, err := a.fetchPackage(ctx, repoName, chart)
@@ -111,7 +114,14 @@ func (a *artifactHubSource) resolveRepoName(ctx context.Context, repoURL string)
 		return entry.name, nil
 	}
 
-	searchURL := fmt.Sprintf("%s/repositories/search?url=%s", artifactHubBaseURL, url.QueryEscape(repoURL))
+	// Only the part of the address credsafe can vouch for goes out. A login
+	// written into it must not be sent to ArtifactHub, nor come back in an
+	// error that repeats the search address (EP3 dry run round S, S15).
+	safe := credsafe.SafeRepoURL(repoURL)
+	if safe == "" {
+		return "", errors.New("the chart repository address cannot be read")
+	}
+	searchURL := fmt.Sprintf("%s/repositories/search?url=%s", artifactHubBaseURL, url.QueryEscape(safe))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
 		return "", err
@@ -139,11 +149,11 @@ func (a *artifactHubSource) resolveRepoName(ctx context.Context, repoURL string)
 	}
 
 	if len(result.Repositories) == 0 {
-		return "", fmt.Errorf("no ArtifactHub repository found for URL %q", repoURL)
+		return "", fmt.Errorf("no ArtifactHub repository found for URL %q", safe)
 	}
 
 	name := result.Repositories[0].Name
-	slog.Debug("artifacthub: resolved repo name", "url", repoURL, "name", name)
+	slog.Debug("artifacthub: resolved repo name", "url", safe, "name", name)
 
 	a.repoCacheMu.Lock()
 	a.repoCache[repoURL] = repoCacheEntry{name: name, fetchAt: time.Now()}

@@ -84,7 +84,7 @@ func TestResolvePendingRegistrations_MatchesRegisterPRs(t *testing.T) {
 		},
 	}
 
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 
 	if got == nil {
 		t.Fatal("expected non-nil slice (V125-1.4 nil-array regression guard)")
@@ -116,7 +116,7 @@ func TestResolvePendingRegistrations_MatchesRegisterPRs(t *testing.T) {
 func TestResolvePendingRegistrations_NoOpenPRsReturnsEmptyNotNil(t *testing.T) {
 	gp := &fakeGP{prs: nil}
 
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if got == nil {
 		t.Fatal("expected non-nil empty slice (V125-1.4 nil-array regression guard)")
 	}
@@ -134,7 +134,7 @@ func TestResolvePendingRegistrations_ProviderErrorDegradesToEmpty(t *testing.T) 
 	// pending right now".
 	gp := &fakeGP{prsErr: errors.New("rate limited by github (transient)")}
 
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if got == nil {
 		t.Fatal("expected non-nil empty slice on provider error")
 	}
@@ -146,7 +146,7 @@ func TestResolvePendingRegistrations_ProviderErrorDegradesToEmpty(t *testing.T) 
 func TestResolvePendingRegistrations_NilProviderReturnsEmpty(t *testing.T) {
 	// Defensive: if SetOrchestrator hasn't run yet (no active connection),
 	// gp can be nil. The resolver must not crash.
-	got := resolvePendingRegistrations(context.Background(), nil, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, nil, "sharko:")
 	if got == nil {
 		t.Fatal("expected non-nil empty slice on nil provider")
 	}
@@ -165,12 +165,12 @@ func TestResolvePendingRegistrations_RespectsCommitPrefix(t *testing.T) {
 			{Title: "[acme] register cluster c (kubeconfig provider)"},
 		},
 	}
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if len(got) != 1 || got[0].ClusterName != "a" {
 		t.Errorf("expected exactly cluster 'a' for prefix 'sharko:', got %+v", got)
 	}
 
-	gotAcme := resolvePendingRegistrations(context.Background(), gp, "[acme]")
+	gotAcme := resolvePendingRegistrations(context.Background(), nil, gp, "[acme]")
 	if len(gotAcme) != 2 {
 		t.Fatalf("expected 2 matches for prefix '[acme]', got %d: %+v", len(gotAcme), gotAcme)
 	}
@@ -208,7 +208,7 @@ func TestPendingRegistrationsExcludeManagedClusters(t *testing.T) {
 
 	// The raw resolver returns both prod-eu and dr-eu as pending registrations
 	// (it doesn't know what's managed yet).
-	rawPending := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	rawPending := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if len(rawPending) != 2 {
 		t.Fatalf("raw resolver: expected 2 pending registrations, got %d", len(rawPending))
 	}
@@ -256,7 +256,7 @@ func TestResolvePendingRegistrations_RemovePRsShowWithOperation(t *testing.T) {
 		{ID: 9, Title: "sharko: register cluster dr-eu", URL: "https://github.com/org/repo/pull/9"},
 		{ID: 10, Title: "sharko: unadopt cluster legacy", URL: "https://github.com/org/repo/pull/10"},
 	}}
-	raw := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	raw := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if len(raw) != 3 {
 		t.Fatalf("expected 3 rows (remove prod-eu, register prod-eu, register dr-eu), got %+v", raw)
 	}
@@ -288,7 +288,7 @@ func TestResolvePendingRegistrations_PRNumberIsNeverZero(t *testing.T) {
 		{Title: "sharko: register cluster b", URL: "https://gitea.example.invalid/org/repo/pulls/32/"},
 		{Title: "sharko: register cluster c", URL: ""},
 	}}
-	got := resolvePendingRegistrations(context.Background(), gp, "sharko:")
+	got := resolvePendingRegistrations(context.Background(), nil, gp, "sharko:")
 	if len(got) != 3 || got[0].PRNumber != 31 || got[1].PRNumber != 32 || got[2].PRNumber != 0 {
 		t.Fatalf("pr numbers: %+v", got)
 	}

@@ -171,6 +171,10 @@ func (s *Server) handleValidateCatalogChart(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, out)
 }
 
+// unreadableChartRepoSentence is the answer when the chart repository
+// address cannot be read at all.
+const unreadableChartRepoSentence = "Sharko cannot read the chart repository address. Check that it looks like https://host/path."
+
 // validateRepoURL rejects obvious garbage before we hit the network. Keeps the
 // "invalid_input" branch for things the user can fix locally (typo'd scheme,
 // blank host) and saves the "repo_unreachable" branch for genuine network /
@@ -178,7 +182,9 @@ func (s *Server) handleValidateCatalogChart(w http.ResponseWriter, r *http.Reque
 func validateRepoURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("malformed URL: %w", err)
+		// Not the parser's own text: it repeats the whole address, sign-in
+		// details and all (EP3 dry run round S, S15).
+		return errors.New(unreadableChartRepoSentence)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("repo URL must use http or https (got %q)", u.Scheme)

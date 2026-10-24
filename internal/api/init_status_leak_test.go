@@ -82,6 +82,23 @@ const initLeakRepoURLSafe = "https://github.example/sharko-org/addons.git"
 // the token reached the 502 body: the error value embeds the whole string.
 const initLeakUnparseableRepoURL = initLeakRepoURL + "\x7f"
 
+// assertTokenStopsAtTheSource checks the fixture: the repository address
+// really carries the token, and since round S (S15) the error Sharko builds
+// from it does not. It once did — url.Parse's own text repeated the whole
+// address — and that leak was what these leak tests leaned on. The checks
+// below it still run, so a later change that puts the address back into the
+// error, the body or the log is caught.
+func assertTokenStopsAtTheSource(t *testing.T, buildErr error) {
+	t.Helper()
+	if !strings.Contains(initLeakUnparseableRepoURL, initLeakSentinel) {
+		t.Fatal("the fixture address does not carry the token, so this test proves nothing")
+	}
+	want := "gitea provider: " + models.UnreadableRepoAddressSentence
+	if buildErr.Error() != want {
+		t.Fatalf("the error built from the unreadable address is\n  %q\nwant exactly\n  %q", buildErr.Error(), want)
+	}
+}
+
 // --- the sweep -------------------------------------------------------------
 
 // initLeakForms is every shape the sentinel could come out wearing. Each one
@@ -249,18 +266,14 @@ func serverWithUnreadableRepoURL(t *testing.T, repoURL, argocdToken string) *Ser
 func TestInitStatusLeak_GitConnectionFailure_NeverShowsTheRepositoryToken(t *testing.T) {
 	srv := serverWithUnreadableRepoURL(t, initLeakUnparseableRepoURL, "an-argocd-token")
 
-	// Sanity first: the fixture must really fail, and the underlying error
-	// must really carry the token. Without this half every assertion below
-	// would pass while proving nothing.
+	// Sanity first: the fixture must really fail, and its address must
+	// really carry the token (the error built from it no longer does, since
+	// round S, S15).
 	_, buildErr := srv.connSvc.GetActiveGitProvider()
 	if buildErr == nil {
 		t.Fatal("the fixture must FAIL to build a Git provider — there is nothing to prove otherwise")
 	}
-	if !strings.Contains(buildErr.Error(), initLeakSentinel) {
-		t.Fatalf(`the underlying error does NOT carry the token, so this test proves nothing.
-
-got: %v`, buildErr)
-	}
+	assertTokenStopsAtTheSource(t, buildErr)
 
 	router := NewRouter(srv, nil)
 	var body string

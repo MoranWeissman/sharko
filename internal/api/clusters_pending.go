@@ -3,11 +3,12 @@ package api
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/readcache"
 )
 
 // resolvePendingRegistrations queries the Git provider for open pull
@@ -30,8 +31,16 @@ import (
 //
 // The return type is always a non-nil slice. Callers do NOT need to
 // nil-check (never let a nil array reach the FE).
+//
+// cache, when not nil, holds the open pull request list for a short time
+// (the shared read cache, wiped after every successful write and every
+// merge). The Clusters page loads /clusters and /clusters/available
+// together, and both need the same list: with the cache that is one Git
+// call, not two (EP3 dry run round S, S22). A failed list is never kept. A
+// caller that decides a write passes nil and reads fresh.
 func resolvePendingRegistrations(
 	ctx context.Context,
+	cache *readcache.Cache,
 	gp gitprovider.GitProvider,
 	commitPrefix string,
 ) []models.PendingRegistration {
@@ -41,7 +50,14 @@ func resolvePendingRegistrations(
 		return out
 	}
 
-	prs, err := gp.ListPullRequests(ctx, "open")
+	list := func() ([]gitprovider.PullRequest, error) { return gp.ListPullRequests(ctx, "open") }
+	var prs []gitprovider.PullRequest
+	var err error
+	if cache != nil {
+		prs, err = readcache.GetOrCompute(cache, openPullRequestsCacheKey, list)
+	} else {
+		prs, err = list()
+	}
 	if err != nil {
 		// Defensive: don't 500 the entire /clusters endpoint because the
 		// PR-list call hit a rate limit. Log and degrade to empty.
@@ -109,22 +125,16 @@ func resolvePendingRegistrations(
 	return out
 }
 
+// openPullRequestsCacheKey is where the open pull request list is kept in
+// the shared read cache.
+const openPullRequestsCacheKey = "open-pull-requests"
+
 // pendingPRNumber is the pull request's number. A provider that left the
 // number out gets it from the end of the pull request's address
 // (".../pull/12"). When neither has it, it is 0 and pr_number is left out
 // of the answer, so no screen ever shows "PR #0" (EP3 dry run round R, R7).
 func pendingPRNumber(pr gitprovider.PullRequest) int {
-	if pr.ID > 0 {
-		return pr.ID
-	}
-	tail := strings.TrimRight(pr.URL, "/")
-	if i := strings.LastIndex(tail, "/"); i >= 0 {
-		tail = tail[i+1:]
-	}
-	if n, err := strconv.Atoi(tail); err == nil && n > 0 {
-		return n
-	}
-	return 0
+	return orchestrator.PRNumber(pr.ID, pr.URL)
 }
 
 // dropPendingForManagedClusters is the LW-18 (Part 2) filter: a register

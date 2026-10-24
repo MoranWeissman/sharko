@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -51,8 +50,10 @@ func TestRegisterCluster_IdempotentRetry_ExistingPR(t *testing.T) {
 	if result.Git.PRID != 42 {
 		t.Errorf("expected PR ID 42, got %d", result.Git.PRID)
 	}
-	if !strings.Contains(result.Message, "idempotent retry") {
-		t.Errorf("expected idempotent retry message, got: %s", result.Message)
+	// EP3 dry run round S, S23: plain words, pinned exactly.
+	const wantReg = "Registering prod-eu is already waiting in pull request #42: https://github.com/example/repo/pull/42. Sharko did not open a second one. Merge it to finish."
+	if result.Message != wantReg {
+		t.Errorf("message = %q, want %q", result.Message, wantReg)
 	}
 	// Should NOT have created any new PRs (only the pre-existing one).
 	if len(git.prs) != 1 {
@@ -133,8 +134,9 @@ func TestAdoptClusters_IdempotentRetry_ExistingPR(t *testing.T) {
 	if cr.Git == nil || cr.Git.PRID != 99 {
 		t.Error("expected existing PR info in result")
 	}
-	if !strings.Contains(cr.Message, "idempotent retry") {
-		t.Errorf("expected idempotent retry message, got: %s", cr.Message)
+	const wantAdopt = "Adopting cluster-a is already waiting in pull request #99: https://github.com/example/repo/pull/99. Sharko did not open a second one. Merge it to finish."
+	if cr.Message != wantAdopt {
+		t.Errorf("message = %q, want %q", cr.Message, wantAdopt)
 	}
 	// Should NOT have created any new PRs.
 	if len(git.prs) != 1 {

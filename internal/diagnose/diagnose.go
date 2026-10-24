@@ -94,7 +94,19 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 	// new Secrets, which would read as a missing right.
 	existing, err := client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err == nil && verify.NamespaceIsTerminating(existing) {
-		if !verify.WaitForNamespaceGone(ctx, client, namespace) {
+		// Only a namespace still being deleted when the wait ends is "still
+		// being deleted". A read that failed is that failure, and a
+		// namespace that is there again is simply there (EP3 dry run round
+		// S, S16).
+		wait := verify.WaitForNamespace(ctx, client, namespace)
+		switch {
+		case wait.Gone:
+			err = apierrors.NewNotFound(corev1.Resource("namespaces"), namespace)
+		case wait.Err != nil:
+			err = wait.Err
+		case wait.Namespace != nil:
+			// There again and not being deleted: carry on with it.
+		default:
 			record("get namespace "+namespace, nil)
 			report.NamespaceAccess = append(report.NamespaceAccess, PermCheck{
 				Permission: "namespace " + namespace + " ready",
@@ -102,7 +114,6 @@ func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace
 			})
 			return report
 		}
-		err = apierrors.NewNotFound(corev1.Resource("namespaces"), namespace)
 	}
 	missing := apierrors.IsNotFound(err)
 	if missing {

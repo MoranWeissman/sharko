@@ -192,6 +192,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/takeover.go", fn: "findOpenJoinPR", msg: "adopt or take over: could not list open pull requests", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/adopt_v4.go", fn: "adoptSingleClusterV4", msg: "could not put the adopt waiting mark back on the cluster's ArgoCD connection", carriers: "ident:markErr", verdict: "sink"},
 	{file: "internal/orchestrator/git_helpers.go", fn: "commitChangesWithMeta", msg: "could not put the waiting mark on the cluster's ArgoCD connection", carriers: "ident:markErr", verdict: "sink"},
+	{file: "internal/api/clusters_takeover.go", fn: "handleClusterTakeover", msg: "take over: the pull request is open but the auto-merge did not go through", carriers: "ident:gitErr", verdict: "sink"},
 	{file: "internal/api/addon_secret_single.go", fn: "handleRefreshAddonValuesSecret", msg: "[secrets] could not check one addon-values secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addon_secret_single.go", fn: "handleSyncAddonValuesSecret", msg: "[secrets] could not sync one addon-values secret", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/api/addons_write.go", fn: "handleAddAddon", msg: "smart-values pre-fetch failed; falling back to minimal stub", carriers: "ident:ferr", verdict: "sink"},

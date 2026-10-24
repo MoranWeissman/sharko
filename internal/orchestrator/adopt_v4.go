@@ -306,7 +306,7 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 				"cluster", name, "error", annotErr)
 			cr.Status = "partial"
 			cr.Error = annotErr.Error()
-			cr.Message = "Adoption PR merged but failed to set adopted annotation on ArgoCD secret"
+			cr.Message = AdoptMarkFailedMessage
 			return cr
 		}
 	}
@@ -328,14 +328,14 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 // that brings the cluster in is already open.
 func adoptAlreadyWaitingMessage(name string, prID int, prURL string) string {
 	return fmt.Sprintf(
-		"Adopting %s is already waiting in pull request #%d: %s. Sharko did not open a second one. Merge it to finish.",
-		name, prID, prURL)
+		"Adopting %s is already waiting in %s: %s. Sharko did not open a second one. Merge it to finish.",
+		name, PullRequestPhrase(prID), prURL)
 }
 
 // adoptWaitingForMergeMessage is what an adopt says while its pull request
 // waits to be merged.
 func adoptWaitingForMergeMessage(prID int, prURL string) string {
 	return fmt.Sprintf(
-		"Pull request #%d is open: %s. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection.",
-		prID, prURL)
+		"%s is open: %s. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection.",
+		capitalizeFirst(PullRequestPhrase(prID)), prURL)
 }

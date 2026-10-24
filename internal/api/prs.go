@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -202,7 +203,7 @@ func (s *Server) handleGetPR(w http.ResponseWriter, r *http.Request) {
 // handleRefreshPR handles POST /api/v1/prs/{id}/refresh
 //
 // @Summary Force refresh a tracked PR
-// @Description Immediately polls the Git provider for this PR's current status
+// @Description Immediately polls the Git provider for this PR's current status. A pull request Sharko no longer tracks (for example one that merged at once) comes back with its status when the Git host says it is merged or closed; otherwise it is 404.
 // @Tags prs
 // @Produce json
 // @Security BearerAuth
@@ -238,6 +239,15 @@ func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
 	// PR that already got dropped), "the Git provider itself failed"
 	// (502, try again), and a genuine internal fault (500).
 	pr, err := s.prTracker.PollSinglePR(r.Context(), id)
+	if errors.Is(err, prtracker.ErrPRNotTracked) {
+		// A pull request that merged at once (auto-merge), or whose finish
+		// already ran, is no longer tracked. Ask Git how it ended, so
+		// `sharko pr wait` still answers "merged" after a fast merge (EP3
+		// dry run round S, S25).
+		if done := s.finishedUntrackedPR(r.Context(), id); done != nil {
+			pr, err = done, nil
+		}
+	}
 	switch {
 	case errors.Is(err, prtracker.ErrPRNotTracked):
 		writeCodedError(w, http.StatusNotFound, "pr_not_tracked",
@@ -531,4 +541,27 @@ func inferOperation(title, _ string) string {
 		return ""
 	}
 	return strings.ToLower(words[0])
+}
+
+// finishedUntrackedPR asks the Git host about a pull request the tracker
+// does not hold. It returns the pull request only when it is merged or
+// closed; anything else (still open, unknown, or Git cannot answer) is nil,
+// and the caller keeps its "not tracked" answer.
+func (s *Server) finishedUntrackedPR(ctx context.Context, id int) *prtracker.PRInfo {
+	if s.connSvc == nil {
+		return nil
+	}
+	gp, err := s.connSvc.GetActiveGitProvider()
+	if err != nil || gp == nil {
+		return nil
+	}
+	status, err := gp.GetPullRequestStatus(ctx, id)
+	if err != nil {
+		return nil
+	}
+	switch status = strings.ToLower(strings.TrimSpace(status)); status {
+	case "merged", "closed":
+		return &prtracker.PRInfo{PRID: id, LastStatus: status, LastPolled: time.Now().UTC()}
+	}
+	return nil
 }

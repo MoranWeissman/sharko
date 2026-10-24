@@ -3182,7 +3182,22 @@ definitions:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
       git:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      merge_error:
+        description: |-
+          MergeError is set when auto-merge was asked for and the merge did not
+          go through. The pull request is still open and the answer is a 207 that
+          waits for the merge, the same as a take over without auto-merge
+          (EP3 dry run round S, S13).
+        type: string
       message:
+        type: string
+      pr_number:
+        description: |-
+          PRNumber and PRURL name the open pull request while the take over
+          waits for it (waiting_for_merge). The number is left out when Sharko
+          does not know it; it is never 0.
+        type: integer
+      pr_url:
         type: string
       preflight:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_takeover.Report'
@@ -8573,7 +8588,9 @@ paths:
           schema:
             $ref: '#/definitions/internal_api.TakeoverResponse'
         "207":
-          description: Partly done — see the message
+          description: Partly done — see the message. With waiting_for_merge and merge_error,
+            the pull request is open but the auto-merge did not go through; merging
+            it finishes the take over
           schema:
             $ref: '#/definitions/internal_api.TakeoverResponse'
         "400":
@@ -10819,7 +10836,10 @@ paths:
       - prs
   /prs/{id}/refresh:
     post:
-      description: Immediately polls the Git provider for this PR's current status
+      description: Immediately polls the Git provider for this PR's current status.
+        A pull request Sharko no longer tracks (for example one that merged at once)
+        comes back with its status when the Git host says it is merged or closed;
+        otherwise it is 404.
       parameters:
       - description: PR ID
         in: path

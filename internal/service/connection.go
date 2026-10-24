@@ -316,6 +316,10 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 	}
 	// Parse repo URL into provider/owner/repo if provided
 	if err := req.Git.ParseRepoURL(); err != nil {
+		if err.Error() == models.UnreadableRepoAddressSentence {
+			// Already a whole sentence: say it alone (S40).
+			return wrapValidationError(err.Error(), err)
+		}
 		return wrapValidationError(fmt.Sprintf("invalid git URL: %s", err), err)
 	}
 	conn := models.Connection{
@@ -376,7 +380,9 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 	if err != nil || u.Host == "" {
 		// Never repeat the address: a token written into it would come
 		// back in the answer (EP3 dry run round R, R9).
-		return "", newValidationError("cannot parse git repo URL: %s", models.UnreadableRepoAddressSentence)
+		// The sentence stands alone, with no "cannot parse" in front (EP3
+		// dry run round S, S40).
+		return "", newValidationError("%s", models.UnreadableRepoAddressSentence)
 	}
 	host := strings.ToLower(u.Host)
 	switch {
@@ -918,7 +924,10 @@ func deriveGiteaBaseURL(repoURL string) (string, error) {
 	}
 	u, err := url.Parse(repoURL)
 	if err != nil {
-		return "", fmt.Errorf("parse repo_url: %w", err)
+		// Never the parser's own text: it repeats the whole address, and
+		// a token written into it would come back in the answer and the
+		// log (EP3 dry run round S, S15).
+		return "", errors.New(models.UnreadableRepoAddressSentence)
 	}
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("repo_url must have scheme and host")

@@ -108,8 +108,9 @@ func gateLeakRoutes() []gateLeakRoute {
 // and that error is wrapped twice on the way out of GetActiveGitProvider.
 // Every route below is then driven for real.
 func TestConnectionGateLeak_NoRouteEverShowsTheRepositoryToken(t *testing.T) {
-	// The fixture must genuinely carry the token, or every absence below is
-	// an absence of nothing.
+	// The fixture address must genuinely carry the token, or every absence
+	// below is an absence of nothing. Since round S (S15) the error built
+	// from it does not.
 	probe := serverWithUnreadableRepoURL(t, initLeakUnparseableRepoURL, "")
 	buildErr := func() error {
 		_, err := probe.connSvc.GetActiveGitProvider()
@@ -118,11 +119,7 @@ func TestConnectionGateLeak_NoRouteEverShowsTheRepositoryToken(t *testing.T) {
 	if buildErr == nil {
 		t.Fatal("the fixture must FAIL to build a Git provider — there is nothing to prove otherwise")
 	}
-	if !strings.Contains(buildErr.Error(), initLeakSentinel) {
-		t.Fatalf(`the underlying error does NOT carry the token, so this whole file proves nothing.
-
-got: %v`, buildErr)
-	}
+	assertTokenStopsAtTheSource(t, buildErr)
 
 	for _, route := range gateLeakRoutes() {
 		t.Run(route.name, func(t *testing.T) {

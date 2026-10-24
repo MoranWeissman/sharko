@@ -28,7 +28,7 @@ func openRegisterPR(git *mockGitProvider) {
 	})
 }
 
-const registerWaitingWant = "Cluster prod-eu is already waiting in PR #12: https://github.com/example/repo/pull/12. That pull request registers it. Merge it or close it first, then try again."
+const registerWaitingWant = "Cluster prod-eu is already waiting in pull request #12: https://github.com/example/repo/pull/12. That pull request registers it. Merge it or close it first, then try again."
 
 const openPRsUnreadableWant = "Sharko could not read the open pull requests, so it cannot tell whether prod-eu is already waiting in one. Nothing has changed. Try again."
 
@@ -211,16 +211,54 @@ func TestAdoptV4_Merged_OnlyWhenTheAdoptFinished(t *testing.T) {
 
 func TestUniqueAdoptWarningIDs_NoTwoTheSame(t *testing.T) {
 	got := foreignOwnerAdoptWarnings([]string{"one", "two", "three"})
-	ids := []string{got[0].ID, got[1].ID, got[2].ID}
-	want := []string{"foreign-owner", "foreign-owner-2", "foreign-owner-3"}
-	for i := range want {
-		if ids[i] != want[i] {
-			t.Fatalf("ids = %v, want %v", ids, want)
+	seen := map[string]bool{}
+	for _, w := range got {
+		if !strings.HasPrefix(w.ID, "foreign-owner-") || seen[w.ID] {
+			t.Fatalf("ids = %+v, want three different foreign-owner-<hash> ids", got)
+		}
+		seen[w.ID] = true
+	}
+}
+
+// EP3 dry run round S, S17: an id comes from what the warning says, so the
+// same warning keeps its id in any order and on every call, and a new one
+// never takes the id of one already ticked.
+func TestAdoptWarningIDs_FromTheirContent_NotTheirOrder(t *testing.T) {
+	a := foreignOwnerAdoptWarnings([]string{"one", "two"})
+	b := foreignOwnerAdoptWarnings([]string{"three", "two", "one"})
+	ids := map[string]string{}
+	for _, w := range b {
+		ids[w.Message] = w.ID
+	}
+	for _, w := range a {
+		if ids[w.Message] != w.ID {
+			t.Fatalf("%q has id %q in one call and %q in another", w.Message, w.ID, ids[w.Message])
 		}
 	}
-	// A later warning already named "-2" does not collide.
-	mixed := uniqueAdoptWarningIDs([]AdoptWarning{{ID: "x"}, {ID: "x-2"}, {ID: "x"}})
-	if mixed[0].ID != "x" || mixed[1].ID != "x-2" || mixed[2].ID != "x-3" {
-		t.Fatalf("ids = %s %s %s", mixed[0].ID, mixed[1].ID, mixed[2].ID)
+	if ids["three"] == a[0].ID || ids["three"] == a[1].ID {
+		t.Fatal("a new warning took the id of one already ticked")
+	}
+	if got := foreignOwnerAdoptWarnings([]string{"one"})[0].ID; got != a[0].ID {
+		t.Fatalf("one warning alone has id %q, with another %q", got, a[0].ID)
+	}
+
+	// Joining two lists: an exact copy is dropped, and two different
+	// warnings with the same id each get one of their own, in any order.
+	x, y := AdoptWarning{ID: "secret-owner", Message: "x"}, AdoptWarning{ID: "secret-owner", Message: "y"}
+	m1 := uniqueAdoptWarningIDs([]AdoptWarning{x, y, x})
+	m2 := uniqueAdoptWarningIDs([]AdoptWarning{y, x})
+	if len(m1) != 2 || m1[0].ID == m1[1].ID || m1[0].ID == "secret-owner" {
+		t.Fatalf("joined = %+v", m1)
+	}
+	for _, w := range m2 {
+		for _, v := range m1 {
+			if v.Message == w.Message && v.ID != w.ID {
+				t.Fatalf("%q has id %q in one order and %q in the other", w.Message, v.ID, w.ID)
+			}
+		}
+	}
+	// One warning of a kind keeps the plain id the take over check gives it.
+	if one := uniqueAdoptWarningIDs([]AdoptWarning{x}); one[0].ID != "secret-owner" {
+		t.Fatalf("a single warning lost its id: %+v", one)
 	}
 }

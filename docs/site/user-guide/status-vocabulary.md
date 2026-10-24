@@ -46,10 +46,10 @@ three lines:
 | Line | What it says |
 |------|--------------|
 | **ArgoCD → cluster** | The connection state from the table above, with its meaning. |
-| **Deploy check** | **Passed** ("A small test app was deployed to this cluster and it worked."), **Running…** ("The deploy check is still rolling out — usually under a minute."), **Failed** ("The test workload could not be deployed to this cluster."), or **Not run** ("No deploy check has run for this cluster."). |
+| **Deploy check** | **Passed** ("A small test app was deployed to this cluster and it worked."), **Running…** ("The deploy check is still rolling out — usually under a minute."), **Failed** ("The test workload could not be deployed to this cluster."), **Not needed** ("ArgoCD already confirms it can reach this cluster, so no deploy check was needed."), or **Not run** ("No deploy check has run for this cluster."). |
 | **Sharko → cluster** | **Reachable** ("Sharko can reach this cluster directly."), **Test failing** ("Sharko's last direct connection test failed."), or **Not run** ("Sharko has not tested this cluster yet. Use Test connection to run it."). |
 
-A line that says **Not run** is only shown for information. It never changes
+A line that says **Not needed** or **Not run** is only shown for information. It never changes
 the color of the pill. After you press **Test connection** and it passes, the
 third line says **Reachable**, with how many checks passed.
 

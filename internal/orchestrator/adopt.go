@@ -308,12 +308,13 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			log.Info("Found existing open PR for cluster adoption — skipping",
 				"cluster", clusterName, "pr", existingPR.URL)
 			cr.Status = "success"
+			prNum := PRNumber(existingPR.ID, existingPR.URL)
 			cr.Git = &GitResult{
 				PRUrl:  existingPR.URL,
-				PRID:   existingPR.ID,
+				PRID:   prNum,
 				Branch: existingPR.SourceBranch,
 			}
-			cr.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+			cr.Message = adoptAlreadyWaitingMessage(clusterName, prNum, existingPR.URL)
 			result.Results = append(result.Results, cr)
 			continue
 		}
@@ -431,7 +432,7 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 				"cluster", name, "error", annotErr)
 			cr.Status = "partial"
 			cr.Error = annotErr.Error()
-			cr.Message = "Adoption PR merged but failed to set adopted annotation on ArgoCD secret"
+			cr.Message = AdoptMarkFailedMessage
 			return cr
 		}
 	}
@@ -439,10 +440,16 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 	cr.Status = "success"
 	cr.Merged = gitResult.Merged && o.argoSecretManager != nil
 	if !gitResult.Merged {
-		cr.Message = fmt.Sprintf("PR created — adopted annotation will be set after PR is merged: %s", gitResult.PRUrl)
+		cr.Message = fmt.Sprintf("%s is open: %s. When it is merged, Sharko marks cluster %s as adopted.",
+			capitalizeFirst(PullRequestPhrase(PRNumber(gitResult.PRID, gitResult.PRUrl))), gitResult.PRUrl, name)
 	}
 	return cr
 }
+
+// AdoptMarkFailedMessage is the answer when the adoption pull request
+// merged but Sharko could not put the "adopted" mark on the cluster's
+// ArgoCD Secret. Adopting again finishes it (EP3 dry run round S, S23).
+const AdoptMarkFailedMessage = "The adoption pull request is merged, but Sharko could not mark the cluster's ArgoCD connection as adopted. Adopt the cluster again to finish. It is safe to repeat."
 
 // ForeignOwnerUnreadableMessage is the answer when Sharko cannot check
 // whether another ArgoCD Application renders the cluster's connection.

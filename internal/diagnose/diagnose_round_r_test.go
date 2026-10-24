@@ -130,3 +130,59 @@ func TestDiagnose_MadeNamespaceIsRemovedOnEveryPath(t *testing.T) {
 		t.Fatalf("the namespace this run made is still there: %v", err)
 	}
 }
+
+// EP3 dry run round S, S16: only a namespace still being deleted when the
+// wait ends is "still being deleted".
+
+// A read that fails during the wait is that failure, with its own fix.
+func TestDiagnose_ReadFailsDuringTheWait_IsThatFailureNotStillDeleting(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	var gets int32
+	client.PrependReactor("get", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if atomic.AddInt32(&gets, 1) == 1 {
+			return true, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sharko-test"},
+				Status: corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating}}, nil
+		}
+		return true, nil, errors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "sharko-test", nil)
+	})
+	report := DiagnoseCluster(context.Background(), client, "sharko-test", "spoke-1", "N/A")
+	f := failedChecks(report)
+	if len(f) == 0 {
+		t.Fatal("a refused read gave no failure")
+	}
+	for _, line := range f {
+		if strings.Contains(line, "still being deleted") {
+			t.Fatalf("a refused read was reported as still being deleted: %q", f)
+		}
+	}
+	if !strings.HasPrefix(f[0], "get namespace sharko-test: ") {
+		t.Fatalf("failures = %q, want the get namespace step first", f)
+	}
+}
+
+// A namespace that is there again and no longer being deleted is used.
+func TestDiagnose_NamespaceActiveAgainAfterTheWait_IsUsed(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sharko-test"}})
+	var gets int32
+	client.PrependReactor("get", "namespaces", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if atomic.AddInt32(&gets, 1) == 1 {
+			return true, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sharko-test"},
+				Status: corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating}}, nil
+		}
+		return true, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sharko-test"},
+			Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}}, nil
+	})
+	report := DiagnoseCluster(context.Background(), client, "sharko-test", "spoke-1", "N/A")
+	if f := failedChecks(report); len(f) != 0 || len(report.SuggestedFixes) != 0 {
+		t.Fatalf("a namespace that is back gave failures %q and fixes %+v", f, report.SuggestedFixes)
+	}
+	passed := 0
+	for _, c := range report.NamespaceAccess {
+		if c.Passed && strings.HasPrefix(c.Permission, "create secret") {
+			passed++
+		}
+	}
+	if passed != 1 {
+		t.Fatalf("the secret checks did not run in the namespace that is back: %+v", report.NamespaceAccess)
+	}
+}

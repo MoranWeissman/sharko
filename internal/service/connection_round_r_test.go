@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -62,8 +63,12 @@ func TestCreateConnection_UnreadableAddress_NeverEchoesIt(t *testing.T) {
 		if strings.Contains(err.Error(), roundRToken) || strings.Contains(err.Error(), "%zz") {
 			t.Fatalf("provider %q: the address came back in the error: %q", provider, err.Error())
 		}
-		if !strings.Contains(err.Error(), models.UnreadableRepoAddressSentence) {
-			t.Fatalf("provider %q: got %q, want it to say %q", provider, err.Error(), models.UnreadableRepoAddressSentence)
+		// EP3 dry run round S, S40: the sentence alone, pinned exactly.
+		if err.Error() != models.UnreadableRepoAddressSentence {
+			t.Fatalf("provider %q: got %q, want exactly %q", provider, err.Error(), models.UnreadableRepoAddressSentence)
+		}
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("provider %q: %v is not a validation error (the API would not answer 400)", provider, err)
 		}
 	}
 }

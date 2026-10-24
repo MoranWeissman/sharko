@@ -109,7 +109,7 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	// A cluster whose register pull request is still open is not
 	// available: it shows in the pending list, and adopt or take over
 	// would open a second pull request for it (EP3 dry run round R, R7).
-	for _, p := range resolvePendingRegistrations(r.Context(), gp, s.gitopsConfig().CommitPrefix) {
+	for _, p := range resolvePendingRegistrations(r.Context(), s.readCache, gp, s.gitopsConfig().CommitPrefix) {
 		if p.Operation == models.PendingOperationRegister {
 			if registering == nil {
 				registering = map[string]bool{}
