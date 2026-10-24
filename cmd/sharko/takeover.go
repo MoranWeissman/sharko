@@ -358,6 +358,10 @@ run with --dry-run first to see the exact ids to pass.`,
 	},
 }
 
+// takeover409NoReasonFmt is the error when the server refused the take over
+// and gave no reason and nothing to acknowledge.
+const takeover409NoReasonFmt = "Sharko did not take over %s, and the server did not say why. Run sharko takeover-preflight %s to see what stops it."
+
 // handleTakeover409 prints the takeover 409 body (either "not ready" or
 // "warnings not acknowledged") and, for the second case, the exact rerun
 // command including every --acknowledge flag still needed.
@@ -377,6 +381,11 @@ func handleTakeover409(body []byte, name string, alreadyAcked []string, dryRun b
 	fmt.Println()
 	if len(b.UnacknowledgedFindings) == 0 {
 		// Blocked — nothing to acknowledge, something has to be fixed first.
+		// A 409 with no words of its own must not print an empty error (EP3
+		// dry run round S, S18).
+		if strings.TrimSpace(b.Error) == "" {
+			return fmt.Errorf(takeover409NoReasonFmt, name, name)
+		}
 		return fmt.Errorf("%s", b.Error)
 	}
 

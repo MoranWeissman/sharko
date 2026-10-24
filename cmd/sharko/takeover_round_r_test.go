@@ -116,3 +116,23 @@ func TestTakeover_NotReady409_ReturnsTheServerReason(t *testing.T) {
 		t.Errorf("a blocked take over has nothing to acknowledge: %q", out)
 	}
 }
+
+// EP3 dry run round S, S18: a 409 with no error text and nothing to
+// acknowledge still says something a person can act on.
+func TestHandleTakeover409_NoReason_SaysWhatToDo(t *testing.T) {
+	for _, body := range []string{`{}`, `{"error":""}`, `{"error":"  "}`} {
+		_, err := captureStdoutT(t, func() error {
+			return handleTakeover409([]byte(body), "prod-eu", nil, false, "", nil, nil)
+		})
+		want := "Sharko did not take over prod-eu, and the server did not say why. Run sharko takeover-preflight prod-eu to see what stops it."
+		if err == nil || err.Error() != want {
+			t.Fatalf("body %s: err = %v, want %q", body, err, want)
+		}
+	}
+	_, err := captureStdoutT(t, func() error {
+		return handleTakeover409([]byte(`{"error":"Cluster prod-eu is blocked."}`), "prod-eu", nil, false, "", nil, nil)
+	})
+	if err == nil || err.Error() != "Cluster prod-eu is blocked." {
+		t.Fatalf("err = %v", err)
+	}
+}
