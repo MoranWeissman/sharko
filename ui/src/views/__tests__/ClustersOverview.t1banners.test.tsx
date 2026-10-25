@@ -162,4 +162,48 @@ describe('ClustersOverview: banners follow the real pull request (T1b)', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/merge to activate/)).not.toBeInTheDocument();
   });
+
+  // EP3 banner fix: the server used to answer "finishing" for ever after a
+  // finish that worked. These tests walk each banner open, then finishing,
+  // then merged, and pin the exact sentences, so the UI half stays right.
+
+  it('un-adopt: open, then finishing, then merged, with the exact sentences', async () => {
+    await unadoptOpen();
+    mockRefreshPR.mockResolvedValue({ ...openBody, status: 'finishing', last_status: 'merged' });
+    await act(() => vi.advanceTimersByTimeAsync(30_100));
+    expect(await screen.findByText('PR merged — finishing the un-adopt…')).toBeInTheDocument();
+    expect(screen.queryByText('PR open for review — cluster is un-adopted once it merges')).not.toBeInTheDocument();
+
+    mockRefreshPR.mockResolvedValue({ ...openBody, status: 'merged', last_status: 'merged' });
+    await act(() => vi.advanceTimersByTimeAsync(7_100));
+    expect(await screen.findByText('PR merged — cluster un-adopted')).toBeInTheDocument();
+    expect(screen.queryByText('PR merged — finishing the un-adopt…')).not.toBeInTheDocument();
+  });
+
+  it('remove: open, then finishing, then merged, with the exact sentences', async () => {
+    renderView(removal);
+    expect(await screen.findByText('Removal PR opened for "legacy-1"')).toBeInTheDocument();
+    mockRefreshPR.mockResolvedValue({ ...openBody, pr_id: 7, status: 'finishing', last_status: 'merged' });
+    await act(() => vi.advanceTimersByTimeAsync(30_100));
+    expect(await screen.findByText('Removal PR merged — finishing the removal of "legacy-1"…')).toBeInTheDocument();
+    expect(screen.queryByText('Removal PR opened for "legacy-1"')).not.toBeInTheDocument();
+
+    mockRefreshPR.mockResolvedValue({ ...openBody, pr_id: 7, status: 'merged', last_status: 'merged' });
+    await act(() => vi.advanceTimersByTimeAsync(7_100));
+    expect(await screen.findByText('Cluster "legacy-1" removed')).toBeInTheDocument();
+    expect(screen.queryByText('Removal PR merged — finishing the removal of "legacy-1"…')).not.toBeInTheDocument();
+  });
+
+  it('register: open, then finishing, then merged, with the exact sentences', async () => {
+    await registerOpen();
+    mockRefreshPR.mockResolvedValue({ ...openBody, status: 'finishing', last_status: 'merged' });
+    await act(() => vi.advanceTimersByTimeAsync(7_100));
+    expect(await screen.findByText('Cluster registration PR merged — finishing up…')).toBeInTheDocument();
+    expect(screen.queryByText('Cluster registration PR opened — merge to activate.')).not.toBeInTheDocument();
+
+    mockRefreshPR.mockResolvedValue({ ...openBody, status: 'merged', last_status: 'merged' });
+    await act(() => vi.advanceTimersByTimeAsync(7_100));
+    expect(await screen.findByText('Cluster registered.')).toBeInTheDocument();
+    expect(screen.queryByText('Cluster registration PR merged — finishing up…')).not.toBeInTheDocument();
+  });
 });
