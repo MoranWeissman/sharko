@@ -471,7 +471,7 @@ Sharko creates and reconciles ArgoCD cluster secrets automatically. You do not n
 
 When a cluster is registered via `sharko add-cluster`, Sharko writes a Kubernetes Secret in the `argocd` namespace with the label `argocd.argoproj.io/secret-type: cluster`. ArgoCD's ApplicationSet cluster generator picks up this secret and starts deploying addons to the cluster.
 
-A background reconciler runs every 3 minutes (configurable) and keeps all ArgoCD cluster secrets in sync with `configuration/cluster-addons.yaml` in Git. If a cluster is added or removed from that file, the reconciler creates or deletes the corresponding secret automatically.
+Sharko checks all the time that the ArgoCD cluster secrets match what is in Git. You cannot change how often it checks. On the current layout, the list of clusters is `managed-clusters.yaml`, and the addons turned on for each cluster are in `cluster-addons/<cluster>.yaml`. On the older layout, both are in the `configuration/` folder. If a cluster is added to the list, Sharko creates its secret. If a cluster is taken off the list, Sharko deletes the secret it made for it. It does not delete a secret that was adopted, or one that you manage yourself. For those it only changes the addon labels.
 
 ### RBAC
 
