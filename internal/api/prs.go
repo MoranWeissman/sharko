@@ -291,9 +291,29 @@ func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
 		Source:     pr.Source,
 		CreatedAt:  pr.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		LastStatus: pr.LastStatus,
-		Status:     prtracker.ListStatus(*pr),
+		Status:     s.refreshedStatus(r.Context(), *pr),
 		LastPolled: pr.LastPolled.Format("2006-01-02T15:04:05Z"),
 	})
+}
+
+// refreshedStatus is the status a refresh answers, read from what the
+// tracker holds now and not from the copy the poll handed back. That copy
+// is from before the finish step ran, and a pull request Sharko no longer
+// tracks comes back as a bare record, so both used to say "finishing"
+// after a finish that worked and the banners never turned to done (EP3
+// banner fix). Still tracked: "open", or "finishing" while the finish is
+// owed. No longer tracked: what Git said, "merged" or "closed". If the
+// tracker cannot be read, it keeps the answer from the polled copy.
+func (s *Server) refreshedStatus(ctx context.Context, pr prtracker.PRInfo) string {
+	cur, err := s.prTracker.GetPR(ctx, pr.PRID)
+	switch {
+	case err != nil:
+		return prtracker.ListStatus(pr)
+	case cur == nil:
+		return pr.LastStatus
+	default:
+		return prtracker.ListStatus(*cur)
+	}
 }
 
 // handleDeletePR handles DELETE /api/v1/prs/{id}
