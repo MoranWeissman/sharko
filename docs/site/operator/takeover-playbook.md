@@ -14,6 +14,17 @@ scratch" — it is **"how do I hand this over without breaking anything?"**
 This is that recipe. It is written so you can do one cluster, stop, look
 around, and come back tomorrow for the next one.
 
+## Who owns the connection
+
+**Sharko owns cluster connections.** That is the normal, supported way. When Sharko registers a cluster, it creates the ArgoCD cluster Secret and keeps its credentials up to date.
+
+- **Adopt** and **Take ownership** are for connections that already exist and that nothing else keeps managing. For example, a connection you made by hand, with `argocd cluster add`, or with a script you ran one time.
+- **A connection that a GitOps tool keeps managing is not supported.** That means an ArgoCD Application, External Secrets, or any other controller that writes the Secret again and again.
+- Sharko refuses some of these. It stops when the Secret carries another tool's ownership label, or an ArgoCD mark that clearly shows an Application renders this exact Secret. It does not look for External Secrets, so it may not notice it. Details are in [Managing Cluster Connections Yourself](self-managed-connections.md).
+
+!!! warning "Anything else that manages the connection Secret can fight with Sharko"
+    Sharko puts its addon labels on the connection Secret. If something else also manages that Secret (External Secrets, an ArgoCD Application, Terraform, a script), it may remove those labels each time it writes the Secret. Sharko checks the Secret again and again and puts the labels back. Then the two undo each other, and addons can be removed and put back again. If that Application uses `syncOptions: [Replace=true]`, or sets one of Sharko's addon label keys, it is worse. See [Managing Cluster Connections Yourself](self-managed-connections.md).
+
 ## The promise, up front
 
 - **Nothing is deleted before you say so.** Not the cluster secret, not
