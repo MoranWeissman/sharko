@@ -456,13 +456,22 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ## ArgoCD Cluster Secret Management
 
-Sharko creates and reconciles ArgoCD cluster secrets automatically. You do not need External Secrets Operator (ESO) or any other operator to make ArgoCD aware of your clusters.
+Sharko creates and reconciles ArgoCD cluster secrets automatically. You do not need another tool to make ArgoCD aware of your clusters.
+
+**Sharko owns cluster connections.** That is the normal, supported way. When Sharko registers a cluster, it creates the ArgoCD cluster Secret and keeps its credentials up to date.
+
+- **Adopt** and **Take ownership** are for connections that already exist and that nothing else keeps managing. For example, a connection you made by hand, with `argocd cluster add`, or with a script you ran one time.
+- **A connection that a GitOps tool keeps managing is not supported.** That means an ArgoCD Application, External Secrets, or any other controller that writes the Secret again and again.
+- Sharko refuses some of these. It stops when the Secret carries another tool's ownership label, or an ArgoCD mark that clearly shows an Application renders this exact Secret. It does not look for External Secrets, so it may not notice it. Details are in [Managing Cluster Connections Yourself](https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/).
+
+!!! warning "Anything else that manages the connection Secret can fight with Sharko"
+    Sharko puts its addon labels on the connection Secret. If something else also manages that Secret (External Secrets, an ArgoCD Application, Terraform, a script), it may remove those labels each time it writes the Secret. Sharko checks the Secret again and again and puts the labels back. Then the two undo each other, and addons can be removed and put back again. If that Application uses `syncOptions: [Replace=true]`, or sets one of Sharko's addon label keys, it is worse. See [Managing Cluster Connections Yourself](https://sharko.readthedocs.io/en/latest/operator/self-managed-connections/).
 
 ### How It Works
 
 When a cluster is registered via `sharko add-cluster`, Sharko writes a Kubernetes Secret in the `argocd` namespace with the label `argocd.argoproj.io/secret-type: cluster`. ArgoCD's ApplicationSet cluster generator picks up this secret and starts deploying addons to the cluster.
 
-A background reconciler runs every 3 minutes (configurable) and keeps all ArgoCD cluster secrets in sync with `configuration/cluster-addons.yaml` in Git. If a cluster is added or removed from that file, the reconciler creates or deletes the corresponding secret automatically.
+Sharko checks all the time that the ArgoCD cluster secrets match what is in Git. You cannot change how often it checks. On the current layout, the list of clusters is `managed-clusters.yaml`, and the addons turned on for each cluster are in `cluster-addons/<cluster>.yaml`. On the older layout, both are in the `configuration/` folder. If a cluster is added to the list, Sharko creates its secret. If a cluster is taken off the list, Sharko deletes the secret it made for it. It does not delete a secret that was adopted, or one that you manage yourself. For those it only changes the addon labels.
 
 ### RBAC
 

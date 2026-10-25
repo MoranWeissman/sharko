@@ -1,14 +1,45 @@
 # Managing Cluster Connections Yourself
 
+## Sharko owns cluster connections
+
 Sharko is a guest on **your** ArgoCD. ArgoCD reaches each cluster through a
-Kubernetes Secret called the ArgoCD cluster Secret. By default, when Sharko
-registers a cluster, it creates that Secret and keeps its credentials up to
+Kubernetes Secret called the ArgoCD cluster Secret. **Sharko owns that
+Secret.** This is the normal way, and it is the supported way. When Sharko
+registers a cluster, it creates the Secret and keeps its credentials up to
 date.
 
-You may want to own that Secret yourself. Maybe it comes from Terraform,
-from an external-secrets setup, or from plain `kubectl`. If so, set the
-cluster to **"connection managed by the user"**. This is a setting per
-cluster.
+- **Adopt** and **Take ownership** are for connections that already exist
+  and that nothing else keeps managing. For example, a connection you made
+  by hand, with `argocd cluster add`, or with a script you ran one time.
+- **A connection that a GitOps tool keeps managing is not supported.** That
+  means an ArgoCD Application, External Secrets, or any other controller
+  that writes the Secret again and again.
+- Sharko refuses some of these. It stops when the Secret carries another
+  tool's ownership label, or when it carries an ArgoCD mark that clearly
+  shows an Application renders this exact Secret. Sharko does not know every
+  tool. It only looks for those two signs. It does not look for External
+  Secrets, so it may not notice it.
+
+!!! warning "Anything else that manages the connection Secret can fight with Sharko"
+    Sharko puts its addon labels on the connection Secret. If something else
+    also manages that Secret, it may remove those labels each time it writes
+    the Secret. This can be External Secrets, an ArgoCD Application,
+    Terraform or a script. Sharko checks about every 30 seconds and puts the
+    labels back. Then the two undo each other, and addons can be removed and
+    put back again. Nothing tells you unless you look.
+
+    Two cases make it worse. Both are explained in
+    [When another ArgoCD Application also renders this secret](#when-another-argocd-application-also-renders-this-secret):
+
+    - The other Application uses `syncOptions: [Replace=true]`. Every sync
+      then wipes Sharko's addon labels.
+    - The other Application's file sets one of Sharko's addon label keys.
+      The two keep writing different values.
+
+If you manage the Secret yourself anyway, you can set the cluster to
+**"connection managed by the user"**. Use it only for a connection you made
+by hand or once with a tool, and that nothing keeps rewriting. This is a
+setting per cluster.
 
 For a cluster in this mode:
 
@@ -25,9 +56,26 @@ For a cluster in this mode:
 
 ![Two ownership modes, both ending at the ApplicationSet. When Sharko manages the connection, Sharko creates and rotates the ArgoCD cluster Secret and writes credentials plus addon labels. When you manage it, you create the Secret by hand and Sharko only ever adds addon labels to it.](../assets/diagrams/05-connection-ownership.drawio.svg)
 
-Clusters you **adopt** from an existing ArgoCD get this mode on their own.
-They already have a Secret that you or your tools created. That is the
-whole point of adopting.
+## What happens to a cluster you adopt or take over
+
+The Secret stays as it is. Its name, address and credentials are not
+changed. After the pull request is merged, Sharko puts its ownership label
+and an `adopted` mark on the Secret, and keeps the labels that were already
+there. From then on Sharko only changes the addon labels on it. It never
+rewrites or rotates its credentials, and its regular check never deletes it.
+
+What the cluster's entry in Git says depends on your repo:
+
+- **Older layout:** adopt writes `connectionManagedBy: user`, so this page
+  applies to the cluster as written below.
+- **Current layout:** adopt and take over do not write `connectionManagedBy`.
+  Git then says Sharko manages the connection. Sharko still treats the
+  Secret as adopted, and only changes its labels.
+
+When you remove such a cluster with `cleanup=all` (the default), a cluster
+with `connectionManagedBy: user` keeps its Secret. On the current layout,
+Sharko deletes the Secret of an adopted or taken-over cluster. With
+`cleanup=git` or `cleanup=none` the Secret stays.
 
 ## How to turn it on
 
@@ -198,10 +246,11 @@ connection it does not own.
 
 ## When another ArgoCD Application also renders this secret
 
-Some teams keep cluster Secrets in Git and let a separate ArgoCD
-Application put them into the cluster. For example, Terraform writes the
-Secret file into a repo, and an Application points at that folder. If your
-Secret gets to the cluster this way, watch out for two problems:
+This is the case the warning at the top of the page is about. Some teams
+keep cluster Secrets in Git and let a separate ArgoCD Application put them
+into the cluster. For example, Terraform writes the Secret file into a repo,
+and an Application points at that folder. Sharko does not support this. If
+your Secret gets to the cluster this way anyway, watch out for two problems:
 
 - **The Application uses `syncOptions: [Replace=true]`.** A `Replace` sync
   writes the whole Secret again every time that Application syncs. That
@@ -216,17 +265,21 @@ Secret gets to the cluster this way, watch out for two problems:
 
 Sharko tells you about both problems in three places:
 
-- **When you adopt or register the cluster.** ArgoCD marks the things an
-  Application renders. The mark is the `argocd.argoproj.io/tracking-id`
+- **When you adopt, take over or register the cluster.** ArgoCD marks the
+  things an Application renders. The mark is the `argocd.argoproj.io/tracking-id`
   annotation, or the `app.kubernetes.io/instance` label, depending on how
   your ArgoCD is set up. If the Secret has such a mark, Sharko names the
   owner it found.
     - If the mark clearly shows that another Application renders this exact
       Secret, or the Secret has another tool's ownership label, Sharko
-      refuses. Stop the other tool first.
+      refuses. Stop the other tool first. The one exception is adopting on the
+      older repo layout: it refuses for another tool's ownership label, but for
+      an ArgoCD mark it only warns.
     - If the mark is only a weak sign (it may be left over, or it may be a
       plain Helm release label), Sharko warns you and asks you to confirm
       first.
+    - If you register a cluster in the "connection managed by the user" mode,
+      Sharko only warns. It does not refuse.
 - **In the [connection doctor](connection-doctor.md).** Its
   `secret-ownership` check looks for these marks on Secrets you manage. It
   passes when there is no mark. It fails, and names the Application, when

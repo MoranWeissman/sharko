@@ -25,6 +25,17 @@ Clusters are the units of deployment in Sharko. Each registered cluster gets a l
 ![Enabling datadog on cluster dev-us: select the addon, preview file changes, and open a pull request.](../assets/gifs/enable-on-cluster.gif){ loading=lazy }
 <figcaption>Enabling datadog on cluster dev-us: select the addon, preview file changes, and open a pull request.</figcaption>
 
+## Who owns the cluster connection
+
+**Sharko owns cluster connections.** That is the normal, supported way. When Sharko registers a cluster, it creates the ArgoCD cluster Secret and keeps its credentials up to date.
+
+- **Adopt** and **Take ownership** are for connections that already exist and that nothing else keeps managing. For example, a connection you made by hand, with `argocd cluster add`, or with a script you ran one time.
+- **A connection that a GitOps tool keeps managing is not supported.** That means an ArgoCD Application, External Secrets, or any other controller that writes the Secret again and again.
+- Sharko refuses some of these. It stops when the Secret carries another tool's ownership label, or an ArgoCD mark that clearly shows an Application renders this exact Secret. It does not look for External Secrets, so it may not notice it. Details are in [Managing Cluster Connections Yourself](../operator/self-managed-connections.md).
+
+!!! warning "Anything else that manages the connection Secret can fight with Sharko"
+    Sharko puts its addon labels on the connection Secret. If something else also manages that Secret (External Secrets, an ArgoCD Application, Terraform, a script), it may remove those labels each time it writes the Secret. Sharko checks the Secret again and again and puts the labels back. Then the two undo each other, and addons can be removed and put back again. If that Application uses `syncOptions: [Replace=true]`, or sets one of Sharko's addon label keys, it is worse. See [Managing Cluster Connections Yourself](../operator/self-managed-connections.md).
+
 ## Managed vs Discovered Clusters
 
 Sharko distinguishes between two types of clusters:
@@ -225,6 +236,8 @@ When viewing a cluster's detail page, the Addons list shows only the addons **Sh
 If you adopt a cluster that already runs ArgoCD Applications the user deployed themselves (e.g., a guestbook app, a hello-world, any workload unrelated to Sharko), those foreign Applications are **not** listed as addons. An addon is something Sharko manages via your catalog and GitOps config; a random Application running on the cluster is not an addon, and on a busy adopted cluster listing them all would be noise.
 
 ## Adopting an Existing ArgoCD Cluster
+
+Adopt is for connections that nothing else keeps managing, such as one made by hand, with `argocd cluster add`, or by a script you ran one time. If a GitOps tool keeps managing the connection (an ArgoCD Application, External Secrets or another controller), do not adopt it. See [Who owns the cluster connection](#who-owns-the-cluster-connection).
 
 If a cluster is already in ArgoCD but was not registered through Sharko (for example, it was added by hand or by another tool), you can adopt it. Adopting does not turn on any addon. It only puts the cluster under Sharko.
 
