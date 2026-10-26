@@ -1,6 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'
-import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
+import { CONNECTION_FAILURE_MESSAGES, type ConnectionFailureMessageId } from '@/generated/connection-sentences'
+
+// The four sentences that tell "AWS answered and turned Sharko's login down"
+// apart from "Sharko got no answer from AWS" (ep4 serious 6). The page shows
+// the generated sentence for these ids, so the words live in one place.
+export const AWS_LOGIN_MESSAGE_IDS = [
+  'connectionFailureVaultAWSLoginRefused',
+  'connectionFailureVaultAWSUnreachable',
+  'connectionFailureSecretsAWSLoginRefused',
+  'connectionFailureSecretsAWSUnreachable',
+] as const satisfies readonly ConnectionFailureMessageId[]
+
+export function isAWSLoginMessageId(id: string | undefined): id is (typeof AWS_LOGIN_MESSAGE_IDS)[number] {
+  return id !== undefined && (AWS_LOGIN_MESSAGE_IDS as readonly string[]).includes(id)
+}
 
 export type ConnectionHealthState = 'idle' | 'testing' | 'ok' | 'error'
 
@@ -11,6 +25,8 @@ export interface ConnectionHealth {
   gitMessage?: string
   argocdMessage?: string
   vaultMessage?: string
+  /** The server's id for the secrets store sentence (message_id), when it sent one. */
+  vaultMessageId?: string
   loading: boolean
   /** True when at least one of git/argocd/vault is currently failing. */
   anyFailing: boolean
@@ -40,6 +56,7 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
   const [gitMessage, setGitMessage] = useState<string | undefined>()
   const [argocdMessage, setArgocdMessage] = useState<string | undefined>()
   const [vaultMessage, setVaultMessage] = useState<string | undefined>()
+  const [vaultMessageId, setVaultMessageId] = useState<string | undefined>()
   const [loading, setLoading] = useState(enabled)
 
   const refresh = useCallback(() => {
@@ -69,10 +86,12 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
       .then((res) => {
         setVault(res.status === 'connected' || res.status === 'ok' ? 'ok' : 'error')
         setVaultMessage(res.message)
+        setVaultMessageId(res.message_id)
       })
       .catch((err: unknown) => {
         setVault('error')
         setVaultMessage(err instanceof Error ? err.message : undefined)
+        setVaultMessageId(undefined)
       })
       .finally(() => setLoading(false))
   }, [])
@@ -93,8 +112,13 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
   if (git === 'error') failingMessages.push(gitMessage || CONNECTION_FAILURE_MESSAGES.connectionFailureGitUnknown)
   if (argocd === 'error')
     failingMessages.push(argocdMessage || CONNECTION_FAILURE_MESSAGES.connectionFailureArgoCDUnknown)
-  if (vault === 'error')
-    failingMessages.push(vaultMessage || CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsUnknown)
+  if (vault === 'error') {
+    // For the AWS sentences, show the generated sentence picked by message_id.
+    const vaultSentence = isAWSLoginMessageId(vaultMessageId)
+      ? CONNECTION_FAILURE_MESSAGES[vaultMessageId]
+      : vaultMessage
+    failingMessages.push(vaultSentence || CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsUnknown)
+  }
 
   return {
     git,
@@ -103,6 +127,7 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
     gitMessage,
     argocdMessage,
     vaultMessage,
+    vaultMessageId,
     loading,
     anyFailing: failingMessages.length > 0,
     failingMessages,

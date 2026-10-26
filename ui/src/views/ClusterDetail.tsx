@@ -61,7 +61,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
-import { useConnectionHealth } from '@/hooks/useConnectionHealth';
+import { useConnectionHealth, isAWSLoginMessageId } from '@/hooks/useConnectionHealth';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseResultView } from '@/components/DiagnoseModal';
@@ -269,6 +269,10 @@ export const SECRETS_PROVIDER_SETTINGS_ROUTE = '/settings?section=secrets-provid
  */
 export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
   "Check Sharko's login to your secrets store in Settings → Secrets Provider.";
+/** The docs page that shows how to give Sharko an AWS login off EKS. */
+export const AWS_LOGIN_DOCS_URL =
+  'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login-outside-eks';
+export const AWS_LOGIN_DOCS_LINK_TEXT = 'Give Sharko an AWS login when it does not run on EKS';
 export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
 export function notManagedDescription(name: string): string {
   return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;
@@ -2578,11 +2582,27 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                         </>
                       )}
                     </p>
-                    {connHealth.vault === 'error' && (
+                    {connHealth.vault === 'error' && !isAWSLoginMessageId(connHealth.vaultMessageId) && (
                       <p className="mt-1 text-sm text-red-700 dark:text-red-400" data-testid="diag-secrets-fix">
                         <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
                           {DIAGNOSTICS_SECRETS_FIX_SENTENCE}
                         </Link>
+                      </p>
+                    )}
+                    {connHealth.vault === 'error' && isAWSLoginMessageId(connHealth.vaultMessageId) && (
+                      <p className="mt-1 text-sm text-red-700 dark:text-red-400" data-testid="diag-aws-fix">
+                        <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
+                          Open Settings → Secrets Provider
+                        </Link>
+                        {' · '}
+                        <a
+                          href={AWS_LOGIN_DOCS_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-red-900 dark:hover:text-red-300"
+                        >
+                          {AWS_LOGIN_DOCS_LINK_TEXT}
+                        </a>
                       </p>
                     )}
                   </div>

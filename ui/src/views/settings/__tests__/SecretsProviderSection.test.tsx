@@ -7,6 +7,7 @@ import {
   switchBackendWarning,
   SWITCH_BACKEND_TITLE,
   SWITCH_BACKEND_UNKNOWN_WARNING,
+  SWITCH_BACKEND_EKS_NOTE,
 } from '@/views/settings/SecretsProviderSection'
 import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
 import { showToast } from '@/components/ToastNotification'
@@ -1240,10 +1241,14 @@ describe('SecretsProviderSection — switching the backend', () => {
     expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
     expect(SWITCH_BACKEND_TITLE).toBe('Switch the secrets backend?')
     expect(screen.getByText(
-      '2 clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, or these clusters will stop working the next time Sharko rebuilds their connection.',
+      '3 clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, or these clusters will stop working the next time Sharko rebuilds their connection.',
     )).toBeInTheDocument()
     const list = screen.getByTestId('switch-backend-clusters')
-    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['prod-eu', 'stage-us'])
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'prod-eu',
+      'stage-us',
+      'eks-one (stored EKS details)',
+    ])
     // Nothing is saved while the question is open.
     expect(updateConnectionMock).not.toHaveBeenCalled()
 
@@ -1265,9 +1270,24 @@ describe('SecretsProviderSection — switching the backend', () => {
     )
   })
 
+  it('asks about an EKS-token cluster too, because it reads its stored EKS details from the backend', async () => {
+    getClustersMock.mockResolvedValue({ clusters: [cluster('eks-spoke', 'eks-token')] })
+    await switchToK8s()
+    expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
+    expect(SWITCH_BACKEND_EKS_NOTE).toBe('stored EKS details')
+    const list = screen.getByTestId('switch-backend-clusters')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'eks-spoke (stored EKS details)',
+    ])
+    expect(updateConnectionMock).not.toHaveBeenCalled()
+  })
+
   it('asks no question when no cluster reads its login from the backend', async () => {
     getClustersMock.mockResolvedValue({
-      clusters: [cluster('eks-one', 'eks-token'), cluster('pasted', 'inline-kubeconfig')],
+      clusters: [
+        cluster('eks-not-ours', 'eks-token', false),
+        cluster('pasted', 'inline-kubeconfig'),
+      ],
     })
     await switchToK8s()
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))

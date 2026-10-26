@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { useConnectionHealth } from '@/hooks/useConnectionHealth'
 import { api } from '@/services/api'
+import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 
 // useConnectionHealth (v4-wave2 8.1) aggregates git/ArgoCD/vault health
 // behind one hook so a failing connection can be surfaced anywhere in the
@@ -77,5 +78,27 @@ describe('useConnectionHealth', () => {
     expect(result.current.git).toBe('error')
     expect(result.current.argocd).toBe('error')
     expect(result.current.anyFailing).toBe(true)
+  })
+  it('shows the generated sentence for an AWS message_id, and the server words for any other id', async () => {
+    mockedApi.testConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } })
+    mockedApi.testProvider.mockResolvedValue({
+      status: 'error',
+      message: 'server words',
+      message_id: 'connectionFailureVaultAWSLoginRefused',
+    })
+    const first = renderHook(() => useConnectionHealth(true))
+    await waitFor(() => expect(first.result.current.loading).toBe(false))
+    expect(first.result.current.failingMessages).toEqual([
+      CONNECTION_FAILURE_MESSAGES.connectionFailureVaultAWSLoginRefused,
+    ])
+
+    mockedApi.testProvider.mockResolvedValue({
+      status: 'error',
+      message: 'server words',
+      message_id: 'connectionFailureVaultTimeout',
+    })
+    const second = renderHook(() => useConnectionHealth(true))
+    await waitFor(() => expect(second.result.current.loading).toBe(false))
+    expect(second.result.current.failingMessages).toEqual(['server words'])
   })
 })

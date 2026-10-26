@@ -52,8 +52,16 @@ export const SWITCH_BACKEND_UNKNOWN_WARNING =
   'Sharko could not check which clusters read their login from the current backend. If some do, copy their logins to the new backend first, or they will stop working the next time Sharko rebuilds their connection.'
 export const SWITCH_BACKEND_CONFIRM = 'Switch backend'
 
-/** Clusters whose login Sharko reads out of the secrets backend. */
-const BACKEND_LOGIN_SOURCE = 'secret-kubeconfig'
+/**
+ * Clusters whose login Sharko reads out of the secrets backend. A kubeconfig
+ * cluster keeps its whole login there. An EKS-token cluster keeps its stored
+ * EKS details there (address, CA, region, role), and Sharko makes the token
+ * from them (internal/providers routing: both sources are fetched from the
+ * backend). Both stop working if the new backend does not hold them.
+ */
+const BACKEND_LOGIN_SOURCES = ['secret-kubeconfig', 'eks-token']
+/** Said beside an EKS-token cluster in the list, so the reader knows what is read. */
+export const SWITCH_BACKEND_EKS_NOTE = 'stored EKS details'
 
 const UNKNOWN_PROVIDER = '__unknown__' as const
 type FormProviderType = ProviderType | typeof UNKNOWN_PROVIDER
@@ -254,7 +262,7 @@ export function SecretsProviderSection() {
   // Set while the "switch the backend?" question is on screen. `names` is the
   // clusters that read their login from the current backend; null means Sharko
   // could not find out.
-  const [switchWarning, setSwitchWarning] = useState<{ names: string[] | null } | null>(null)
+  const [switchWarning, setSwitchWarning] = useState<{ names: string[] | null; eks: string[] } | null>(null)
 
   async function handleSave() {
     if (!existingConn) return
@@ -264,16 +272,19 @@ export function SecretsProviderSection() {
     const savedBackend = canonicalizeProviderType(savedType)
     if (savedBackend !== '' && form.provider_type !== UNKNOWN_PROVIDER && form.provider_type !== savedBackend) {
       let names: string[] | null
+      let eks: string[] = []
       try {
         const res = await api.getClusters()
-        names = (res.clusters ?? [])
-          .filter((c) => c.managed !== false && c.creds_source === BACKEND_LOGIN_SOURCE)
-          .map((c) => c.name)
+        const hit = (res.clusters ?? []).filter(
+          (c) => c.managed !== false && BACKEND_LOGIN_SOURCES.includes(c.creds_source ?? ''),
+        )
+        names = hit.map((c) => c.name)
+        eks = hit.filter((c) => c.creds_source === 'eks-token').map((c) => c.name)
       } catch {
         names = null
       }
       if (names === null || names.length > 0) {
-        setSwitchWarning({ names })
+        setSwitchWarning({ names, eks })
         return
       }
     }
@@ -368,7 +379,10 @@ export function SecretsProviderSection() {
           switchWarning?.names ? (
             <ul className="mt-3 list-disc space-y-0.5 pl-5 text-sm text-[#0a2a4a] dark:text-gray-200" data-testid="switch-backend-clusters">
               {switchWarning.names.map((n) => (
-                <li key={n} className="font-mono">{n}</li>
+                <li key={n}>
+                  <span className="font-mono">{n}</span>
+                  {switchWarning.eks.includes(n) ? ` (${SWITCH_BACKEND_EKS_NOTE})` : ''}
+                </li>
               ))}
             </ul>
           ) : undefined

@@ -3,6 +3,8 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
+import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences';
+import { AWS_LOGIN_DOCS_URL } from '@/views/ClusterDetail';
 
 // HD1 (V3) — Diagnostics section. Check permissions + Diagnose connection
 // moved from the header into a persistent Diagnostics nav section. Test
@@ -295,6 +297,49 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     // link is not shown when only the secrets store fails.
     expect(screen.queryByText(/Settings → Connections/)).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Fix it in Settings/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['connectionFailureVaultAWSLoginRefused'],
+    ['connectionFailureVaultAWSUnreachable'],
+    ['connectionFailureSecretsAWSLoginRefused'],
+    ['connectionFailureSecretsAWSUnreachable'],
+  ] as const)('AWS secrets-store failure %s shows the generated sentence with real links', async (id) => {
+    mockTestConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } });
+    // The server sends the sentence in `message` and its id in `message_id`.
+    // The page shows the generated sentence picked by the id.
+    mockTestProvider.mockResolvedValue({ status: 'error', message: 'server words', message_id: id });
+
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    expect(await screen.findByText(CONNECTION_FAILURE_MESSAGES[id])).toBeInTheDocument();
+    expect(screen.queryByText('server words')).not.toBeInTheDocument();
+    const fix = screen.getByTestId('diag-aws-fix');
+    expect(within(fix).getByRole('link', { name: 'Open Settings → Secrets Provider' })).toHaveAttribute(
+      'href',
+      '/settings?section=secrets-provider',
+    );
+    const docs = within(fix).getByRole('link', {
+      name: 'Give Sharko an AWS login when it does not run on EKS',
+    });
+    expect(docs).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login-outside-eks',
+    );
+    expect(AWS_LOGIN_DOCS_URL).toBe(docs.getAttribute('href'));
+    // The old wording and the page that does not exist are banned.
+    expect(document.body.textContent).not.toContain("can't reach your secrets store");
+    expect(document.body.textContent).not.toContain('Settings → Connections');
+    expect(screen.queryByTestId('diag-secrets-fix')).not.toBeInTheDocument();
+  });
+
+  it('does not repeat the old "can\'t reach your secrets store" sentence for a refused AWS login', () => {
+    expect(CONNECTION_FAILURE_MESSAGES.connectionFailureVaultAWSLoginRefused).not.toMatch(/can't reach|could not reach/);
+    expect(CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsAWSLoginRefused).not.toMatch(/can't reach|could not reach/);
   });
 
   it('does not probe global connection health until the Diagnostics tab is opened', async () => {
