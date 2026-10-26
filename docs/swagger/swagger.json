@@ -14244,6 +14244,10 @@
                 "state": {
                     "description": "State is connected, unavailable, not_checked or unknown. \"unknown\" is\nthe B13 answer for a self-managed connection whose Secret does not\nexist: there is no connection for ArgoCD to have an opinion about, so\n\"not checked yet\" would invite a person to wait for a probe of\nnothing. It never overwrites a real probe result.",
                     "type": "string"
+                },
+                "warning": {
+                    "description": "Warning is set only while State is connected and Sharko could not get\na new EKS sign-in token: ArgoCD's connection still works now, but it\nwill stop when the current token runs out. It is the reconciler's\nfixed renewal sentence — never error text.",
+                    "type": "string"
                 }
             }
         },

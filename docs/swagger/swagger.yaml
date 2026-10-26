@@ -3965,6 +3965,13 @@ definitions:
           "not checked yet" would invite a person to wait for a probe of
           nothing. It never overwrites a real probe result.
         type: string
+      warning:
+        description: |-
+          Warning is set only while State is connected and Sharko could not get
+          a new EKS sign-in token: ArgoCD's connection still works now, but it
+          will stop when the current token runs out. It is the reconciler's
+          fixed renewal sentence — never error text.
+        type: string
     type: object
   internal_api.connectionReconciliationPlan:
     properties:
