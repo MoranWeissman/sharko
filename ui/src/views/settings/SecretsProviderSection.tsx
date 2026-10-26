@@ -45,12 +45,12 @@ export const ADDON_BACKEND_SAME_AS_CLUSTER_LABEL = 'Same as the cluster backend'
 export const SWITCH_BACKEND_TITLE = 'Switch the secrets backend?'
 export function switchBackendWarning(count: number): string {
   return count === 1
-    ? '1 cluster reads its login from the current backend. After you switch, Sharko will look for that login in the new backend. Copy it there first, or this cluster will stop working the next time Sharko rebuilds its connection.'
-    : `${count} clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, or these clusters will stop working the next time Sharko rebuilds their connection.`
+    ? '1 cluster reads its login from the current backend. After you switch, Sharko will look for that login in the new backend. Copy it there first, so Sharko can still find it.'
+    : `${count} clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, so Sharko can still find them.`
 }
 /** Said instead, when Sharko could not find out which clusters would be hit. */
 export const SWITCH_BACKEND_UNKNOWN_WARNING =
-  'Sharko could not check which clusters read their login from the current backend. If some do, copy their logins to the new backend first, or they will stop working the next time Sharko rebuilds their connection.'
+  'Sharko could not check which clusters read their login from the current backend. If some do, copy their logins to the new backend first, because after you switch Sharko will look for them there.'
 export const SWITCH_BACKEND_CONFIRM = 'Switch backend'
 
 /**
@@ -58,7 +58,7 @@ export const SWITCH_BACKEND_CONFIRM = 'Switch backend'
  * cluster keeps its whole login there. An EKS-token cluster keeps its stored
  * EKS details there (address, CA, region, role), and Sharko makes the token
  * from them (internal/providers routing: both sources are fetched from the
- * backend). Both stop working if the new backend does not hold them.
+ * backend). Sharko looks for both in the new backend after a switch.
  */
 const BACKEND_LOGIN_SOURCES = ['secret-kubeconfig', 'eks-token']
 /**
@@ -67,6 +67,15 @@ const BACKEND_LOGIN_SOURCES = ['secret-kubeconfig', 'eks-token']
  */
 function readsFromBackend(credsSource: string | undefined): boolean {
   return !credsSource || BACKEND_LOGIN_SOURCES.includes(credsSource)
+}
+/**
+ * A cluster counts only when Sharko owns its connection. An adopted cluster
+ * keeps the ArgoCD connection it already had (Sharko only checks its addon
+ * labels), and a cluster the user manages is theirs: neither has a login in
+ * the backend that a switch could lose.
+ */
+function ownedBySharko(c: ClusterInfo): boolean {
+  return c.managed !== false && !c.adopted && (!c.connection_managed_by || c.connection_managed_by === 'sharko')
 }
 /** Said beside a cluster whose login source was never recorded. */
 export const SWITCH_BACKEND_UNRECORDED_NOTE = 'login source not recorded, tried in the backend first'
@@ -300,7 +309,7 @@ export function SecretsProviderSection() {
       let eks: string[] = []
       let unrecorded: string[] = []
       try {
-        const hit = (await listAllClusters()).filter((c) => c.managed !== false && readsFromBackend(c.creds_source))
+        const hit = (await listAllClusters()).filter((c) => ownedBySharko(c) && readsFromBackend(c.creds_source))
         names = hit.map((c) => c.name)
         eks = hit.filter((c) => c.creds_source === 'eks-token').map((c) => c.name)
         unrecorded = hit.filter((c) => !c.creds_source).map((c) => c.name)
