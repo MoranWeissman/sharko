@@ -724,6 +724,9 @@ func (s *Server) handleGetManagedSecrets(w http.ResponseWriter, r *http.Request)
 	// s.clusterRecon — no extra ArgoCD/K8s call, the same enrichment
 	// handleListClusters already applies to every cluster it returns.
 	for i := range listResp.Clusters {
+		// Same rule as the cluster list: a failing EKS token renewal is not
+		// "connected" here either (ep4 round R, R4).
+		applyTokenRenewalTrouble(&listResp.Clusters[i], s.clusterRecon)
 		applyLastReconcile(&listResp.Clusters[i], s.clusterRecon)
 	}
 

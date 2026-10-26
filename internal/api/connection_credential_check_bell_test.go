@@ -44,7 +44,9 @@ func credentialBellEntries(srv *Server) []notifications.Notification {
 
 const wantBellTitle = "Sharko can't read the login for " + comparisonCluster
 const wantBellDetail = "Sharko could not read this cluster's login from your secrets store, so it can't check that the cluster's connection is right. " +
-	"Check Sharko's login to the secrets store in Settings → Secrets Provider. " +
+	"Check the login Sharko uses for your secrets store. " +
+	"On AWS, that is the AWS login Sharko runs with: if it is an access key, update the Kubernetes Secret given to Sharko, then restart Sharko. " +
+	"The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how. " +
 	"The sign-in details Sharko uses were refused, or Sharko could not read them. The server log for this check says which step failed."
 
 func TestCredentialCheckBell_OneEntryPerClusterThenCleared(t *testing.T) {
@@ -77,7 +79,11 @@ func TestCredentialCheckBell_OneEntryPerClusterThenCleared(t *testing.T) {
 		t.Errorf("id = %q", got[0].ID)
 	}
 	blob, _ := json.Marshal(srv.NotificationStore().List())
-	for _, banned := range []string{"zz9-bell-raw", "UnrecognizedClientException", "security token", "Settings → Connections"} {
+	// The old lead sent people to Settings → Secrets Provider, which cannot
+	// change Sharko's AWS login (ep4 round R, R1). It is banned, and so is
+	// any mention of that page in this alert.
+	for _, banned := range []string{"zz9-bell-raw", "UnrecognizedClientException", "security token", "Settings → Connections",
+		"Check Sharko's login to the secrets store in Settings → Secrets Provider", "Settings → Secrets Provider"} {
 		if strings.Contains(string(blob), banned) {
 			t.Errorf("the bell carries %q: %s", banned, blob)
 		}
@@ -168,8 +174,10 @@ func TestCredentialCheckBell_ConnectionAnswerNeverSaysSynced(t *testing.T) {
 	if out.Sync.Headline != "Unknown — check failed" {
 		t.Errorf("sync.headline = %q, want %q", out.Sync.Headline, "Unknown — check failed")
 	}
-	if out.Sync.Reason != failBackendRead {
-		t.Errorf("sync.reason = %q, want %q", out.Sync.Reason, failBackendRead)
+	// AWS turned the login down, so the reason is the AWS sentence that says
+	// so, not the general "could not read" one (ep4 round R, R6).
+	if out.Sync.Reason != wantAWSLoginRefusedSentence {
+		t.Errorf("sync.reason = %q, want %q", out.Sync.Reason, wantAWSLoginRefusedSentence)
 	}
 	body := w.Body.String()
 	for _, banned := range []string{"Connection synced", "checks passed", `"state":"synced"`, "zz9-bell-raw"} {

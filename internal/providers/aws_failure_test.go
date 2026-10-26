@@ -6,6 +6,8 @@ import (
 	"net"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
@@ -23,6 +25,12 @@ func (e noWordsAPIError) ErrorFault() smithy.ErrorFault { return smithy.FaultCli
 
 func awsOp(err error) error {
 	return &smithy.OperationError{ServiceID: "Secrets Manager", OperationName: "ListSecrets", Err: err}
+}
+
+// imdsOp is the error the SDK's IMDS client gives back, the one the login
+// chain hits last when it found no login anywhere else.
+func imdsOp(err error) error {
+	return &smithy.OperationError{ServiceID: imds.ServiceID, OperationName: "GetMetadata", Err: err}
 }
 
 func TestClassifyAWSFailure(t *testing.T) {
@@ -46,6 +54,19 @@ func TestClassifyAWSFailure(t *testing.T) {
 		// ordinary AWS error rather than the one that panics.)
 		{"refused, wrapped and marked", credsafe.Mark(fmt.Errorf("listing secrets: %w", awsOp(&smithy.GenericAPIError{Code: "UnrecognizedClientException", Message: "words"}))), AWSFailureLoginRefused},
 		{"unreachable, wrapped and marked", credsafe.Mark(fmt.Errorf("listing secrets: %w", awsOp(&smithyhttp.RequestSendError{Err: dialErr}))), AWSFailureUnreachable},
+		// No AWS login at all (ep4 round R, R2). The SDK's last place to look
+		// for a login is IMDS; its failure sits INSIDE the Secrets Manager
+		// error, and it carries a RequestSendError and a net.Error too, which
+		// must not turn it into "AWS did not answer".
+		{"no login: IMDS out of reach", awsOp(fmt.Errorf("get identity: get credentials: %w", imdsOp(&smithyhttp.RequestSendError{Err: dialErr}))), AWSFailureNoLogin},
+		{"no login: IMDS switched off", awsOp(fmt.Errorf("get identity: get credentials: %w", imdsOp(errors.New("x")))), AWSFailureNoLogin},
+		{"no login: IMDS answered with an error code", awsOp(fmt.Errorf("get credentials: %w", imdsOp(noWordsAPIError{"NotFound"}))), AWSFailureNoLogin},
+		{"no login: empty static key", awsOp(fmt.Errorf("get credentials: %w", &credentials.StaticCredentialsEmptyError{})), AWSFailureNoLogin},
+		{"no login, wrapped and marked", credsafe.Mark(fmt.Errorf("listing secrets: %w", awsOp(fmt.Errorf("get credentials: %w", imdsOp(&smithyhttp.RequestSendError{Err: dialErr}))))), AWSFailureNoLogin},
+		{"no login inside a joined error", errors.Join(errors.New("first try"), awsOp(imdsOp(errors.New("x")))), AWSFailureNoLogin},
+		// The outer call being something other than Secrets Manager changes
+		// nothing; the outer call being IMDS itself is also "no login".
+		{"a refused login is still refused", awsOp(fmt.Errorf("wrapped: %w", noWordsAPIError{"UnrecognizedClientException"})), AWSFailureLoginRefused},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

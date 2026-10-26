@@ -345,10 +345,6 @@ var auditResultWriters = map[string]auditResultSite{
 			"(refused / failed / completed), each with its own event name. " +
 			"One connection, no item list, so no partial to fold.",
 	},
-	"auditRepairCredentialFailure": {
-		file: "connection_repair.go",
-		how:  "SINGLE DEFINITE OUTCOME. One classified credential-backend failure. Always a failure.",
-	},
 	"runInitOperation": {
 		file: "init.go",
 		how: "SINGLE DEFINITE OUTCOME. Every failing step returns before this line, so the " +

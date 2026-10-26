@@ -206,6 +206,7 @@ var connectionFailureExtraCodeTokens = map[verify.ErrorCode]string{
 	connectionFailureCodeRedirectToHTTP:  "RedirectToHTTP",
 	connectionFailureCodeAWSLoginRefused: "AWSLoginRefused",
 	connectionFailureCodeAWSUnreachable:  "AWSUnreachable",
+	connectionFailureCodeAWSNoLogin:      "AWSNoLogin",
 }
 
 // connectionFailureCodeAWSLoginRefused is the extra code for a secrets store
@@ -223,6 +224,17 @@ const connectionFailureCodeAWSLoginRefused verify.ErrorCode = "ERR_AWS_LOGIN_REF
 // test where the request never got an answer from AWS.
 const connectionFailureCodeAWSUnreachable verify.ErrorCode = "ERR_AWS_UNREACHABLE"
 
+// connectionFailureCodeAWSNoLogin is the extra code for a secrets store test
+// where Sharko has no AWS login at all, so it never asked AWS (ep4 round R,
+// R2). It is picked by providers.ClassifyAWSFailure from the AWS SDK's error
+// TYPES, never its words.
+//
+// Before, this case came out as "Sharko could not get an answer from AWS",
+// which is false: the AWS SDK's last place to look for a login is the EC2
+// instance metadata service, and it is THAT call that does not connect when
+// Sharko does not run on EC2. AWS itself was never asked.
+const connectionFailureCodeAWSNoLogin verify.ErrorCode = "ERR_AWS_NO_LOGIN"
+
 // connectionFailureExtraPairs is every (kind, extra code) pair the catalog
 // holds. An extra code is only ever valid together with its kind.
 var connectionFailureExtraPairs = []connectionFailureKey{
@@ -232,8 +244,10 @@ var connectionFailureExtraPairs = []connectionFailureKey{
 	// backend), so each AWS code is valid with both.
 	{kind: connectionKindVault, code: connectionFailureCodeAWSLoginRefused},
 	{kind: connectionKindVault, code: connectionFailureCodeAWSUnreachable},
+	{kind: connectionKindVault, code: connectionFailureCodeAWSNoLogin},
 	{kind: connectionKindSecrets, code: connectionFailureCodeAWSLoginRefused},
 	{kind: connectionKindSecrets, code: connectionFailureCodeAWSUnreachable},
+	{kind: connectionKindSecrets, code: connectionFailureCodeAWSNoLogin},
 }
 
 // normalizeConnectionFailurePair normalizes both parameters together. An
@@ -407,13 +421,23 @@ const awsLoginDocsPage = `"Give Sharko an AWS login when it does not run on EKS"
 //
 // WHY IT IS A WHOLE SENTENCE. The secrets store subject is "Sharko can't reach
 // your secrets store", and here that is false: AWS was reached, and it said no.
-// It names the real place to fix it, Settings → Secrets Provider, and the docs
-// page. It names no key, no account and nothing AWS said.
+// It names no key, no account and nothing AWS said.
+//
+// WHERE TO FIX IT (ep4 round R, R1). It used to send people to Settings →
+// Secrets Provider, which holds the region and nothing else: it cannot change
+// Sharko's AWS login. Sharko runs with whatever AWS login its pod has. Off EKS
+// that is an access key in the Kubernetes Secret given to Sharko, read once
+// when Sharko starts, so the fix is to update that Secret and restart Sharko.
+// On EKS with IRSA there is no key at all, so the sentence first says "check
+// the AWS login Sharko runs with", which is true in both places, and only
+// then names the Secret for the access key case.
 //
 // Pinned by exact text in connection_aws_failure_sentence_test.go.
 const secretsAWSLoginRefused = "AWS answered, but it turned down Sharko's login, so Sharko could not read your secrets store. " +
-	"The access key may be wrong or switched off, or it may not be allowed to read these secrets. " +
-	"Check Sharko's AWS login in Settings → Secrets Provider. The docs page " + awsLoginDocsPage + " shows how to set it up."
+	"The login may be wrong or switched off, or it may not be allowed to read these secrets. " +
+	"Check the AWS login Sharko runs with. " +
+	"If it is an access key, the key is in the Kubernetes Secret given to Sharko: update that Secret, then restart Sharko. " +
+	"The docs page " + awsLoginDocsPage + " shows how."
 
 // secretsAWSUnreachable is the whole sentence for a secrets store test where
 // the request never got an answer from AWS.
@@ -422,6 +446,15 @@ const secretsAWSLoginRefused = "AWS answered, but it turned down Sharko's login,
 const secretsAWSUnreachable = "Sharko could not get an answer from AWS, so it could not read your secrets store. " +
 	"Check that this server can reach AWS over the network, and check the region in Settings → Secrets Provider. " +
 	"The docs page " + awsLoginDocsPage + " shows how to set up Sharko's AWS login."
+
+// secretsAWSNoLogin is the whole sentence for a secrets store test where Sharko
+// has no AWS login at all (ep4 round R, R2). Nothing was sent to AWS, so it
+// says neither "AWS turned it down" nor "AWS did not answer".
+//
+// Pinned by exact text in connection_aws_failure_sentence_test.go.
+const secretsAWSNoLogin = "Sharko has no AWS login, so it could not read your secrets store. " +
+	"Give Sharko an AWS login, then restart Sharko. " +
+	"The docs page " + awsLoginDocsPage + " shows how."
 
 // connectionTestStatusNotTested is the "status" of a connection-test result
 // for a test that never ran. Every other result is "ok" or "error".
@@ -454,6 +487,8 @@ var connectionFailureWholeSentences = map[connectionFailureKey]string{
 	{kind: connectionKindVault, code: connectionFailureCodeAWSUnreachable}:    secretsAWSUnreachable,
 	{kind: connectionKindSecrets, code: connectionFailureCodeAWSLoginRefused}: secretsAWSLoginRefused,
 	{kind: connectionKindSecrets, code: connectionFailureCodeAWSUnreachable}:  secretsAWSUnreachable,
+	{kind: connectionKindVault, code: connectionFailureCodeAWSNoLogin}:        secretsAWSNoLogin,
+	{kind: connectionKindSecrets, code: connectionFailureCodeAWSNoLogin}:      secretsAWSNoLogin,
 }
 
 // connectionFailureWholeSentence looks a whole-sentence variant up. Both
@@ -567,9 +602,12 @@ func connectionFailureCodeFor(kind connectionKind, err error) verify.ErrorCode {
 			return connectionFailureCodeRedirectToHTTP
 		}
 	case connectionKindVault, connectionKindSecrets:
-		// AWS's own error code and type say whether AWS turned the login
-		// down or never answered. Nothing AWS wrote is read.
+		// AWS's own error code and the SDK's error types say whether Sharko
+		// had no AWS login, AWS turned the login down, or AWS never answered.
+		// Nothing AWS wrote is read.
 		switch providers.ClassifyAWSFailure(err) {
+		case providers.AWSFailureNoLogin:
+			return connectionFailureCodeAWSNoLogin
 		case providers.AWSFailureLoginRefused:
 			return connectionFailureCodeAWSLoginRefused
 		case providers.AWSFailureUnreachable:

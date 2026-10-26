@@ -266,9 +266,15 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 	// when the real problem is a missing IAM permission sends the operator to
 	// fix the wrong thing.
 	allMissing := true
+	// lastReal is the last failure that was NOT "the secret is not there". It
+	// is kept, with %w, inside the error this returns, so a caller can still
+	// tell by TYPE whether AWS turned the login down, never answered, or
+	// Sharko had no AWS login at all (ep4 round R, R6).
+	var lastReal error
 	note := func(err error) {
 		if !credsafe.IsNotFound(err) {
 			allMissing = false
+			lastReal = err
 		}
 	}
 
@@ -314,13 +320,29 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 	// credsafe.IsNotFound, which is a type check.
 	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups",
 		"tried", strings.Join(tried, ", "), "allMissing", allMissing)
+	return nil, lookupFailure(clusterName, tried, allMissing, lastReal)
+}
+
+// lookupFailure builds the error for "every lookup of this cluster's secret
+// failed", for both GetCredentials and StoredConnectionFacts.
+//
+// When every lookup failed because AWS said the secret does not exist, the
+// error gets the not-found marker. Otherwise the last real failure is kept
+// inside it with %w — before ep4 round R (R6) it was dropped, so a refused
+// login, an AWS that never answered and a missing login all came out as the
+// same plain text, and nothing could tell them apart by type. The marker is
+// NOT added in that case: "Sharko could not look" is not "it is missing".
+//
+// Both callers put credsafe.Mark on top, so AWS's own text never reaches an
+// answer; it stays reachable only through Unwrap.
+func lookupFailure(clusterName string, tried []string, allMissing bool, lastReal error) error {
 	failure := fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
 		"Set secret_path on the cluster to specify the exact name",
 		clusterName, strings.Join(tried, ", "))
-	if allMissing {
-		return nil, credsafe.MarkNotFound(failure)
+	if allMissing || lastReal == nil {
+		return credsafe.MarkNotFound(failure)
 	}
-	return nil, failure
+	return fmt.Errorf("%w: %w", failure, lastReal)
 }
 
 // StoredConnectionFacts reports what this backend has STORED for the named
@@ -383,24 +405,39 @@ func (p *AWSSecretsManagerProvider) StoredConnectionFacts(lookupKey string) (*St
 // rawPayloadForCluster fetches the stored secret bytes for a cluster using the
 // same prefix-then-exact-name lookup GetCredentials uses, and does nothing else
 // with them. No sniff, no parse, no mint.
+//
+// Like GetCredentials it keeps the AWS error (ep4 round R, R6): when a lookup
+// fails for any reason other than "the secret is not there", that error stays
+// inside the returned one, so the read-only check can still tell a refused
+// login from an AWS that never answered, by type.
 func (p *AWSSecretsManagerProvider) rawPayloadForCluster(clusterName string) ([]byte, error) {
 	var tried []string
+	allMissing := true
+	var lastReal error
+	note := func(err error) {
+		if !credsafe.IsNotFound(err) {
+			allMissing = false
+			lastReal = err
+		}
+	}
 	if p.prefix != "" {
 		withPrefix := p.prefix + clusterName
 		tried = append(tried, withPrefix)
-		if raw, err := p.rawSecretValue(withPrefix); err == nil {
+		raw, err := p.rawSecretValue(withPrefix)
+		if err == nil {
 			return raw, nil
 		}
+		note(err)
 	}
 	if !sliceContains(tried, clusterName) {
 		tried = append(tried, clusterName)
 	}
-	if raw, err := p.rawSecretValue(clusterName); err == nil {
+	raw, err := p.rawSecretValue(clusterName)
+	if err == nil {
 		return raw, nil
 	}
-	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
-		"Set secret_path on the cluster to specify the exact name",
-		clusterName, strings.Join(tried, ", "))
+	note(err)
+	return nil, lookupFailure(clusterName, tried, allMissing, lastReal)
 }
 
 // rawSecretValue reads one secret's string payload by exact name.
@@ -409,7 +446,14 @@ func (p *AWSSecretsManagerProvider) rawSecretValue(secretName string) ([]byte, e
 		SecretId: aws.String(secretName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+		wrapped := fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+		// Same rule as fetchSecret: the SDK's own type is the only thing that
+		// says the secret is not there.
+		var missing *types.ResourceNotFoundException
+		if errors.As(err, &missing) {
+			return nil, credsafe.MarkNotFound(wrapped)
+		}
+		return nil, wrapped
 	}
 	if output.SecretString == nil {
 		return nil, fmt.Errorf("secret %q has no string value", secretName)

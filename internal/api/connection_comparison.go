@@ -166,6 +166,26 @@ func connectionFailureSentence(f connectioncompare.CheckFailure) string {
 	return failCheckDidNotFinish
 }
 
+// connectionFailureSentenceWithCause is connectionFailureSentence, except that
+// a secrets store read failure on AWS gets the AWS sentence that names the
+// real cause: no AWS login, the login turned down, or no answer from AWS.
+// These are the same sentences Settings → Secrets Provider shows for the same
+// failure, so the two pages never disagree (ep4 round R, R6). Any other cause
+// keeps the general failBackendRead sentence.
+func connectionFailureSentenceWithCause(f connectioncompare.CheckFailure, aws providers.AWSFailure) string {
+	if f == connectioncompare.CheckFailureBackendRead {
+		switch aws {
+		case providers.AWSFailureNoLogin:
+			return secretsAWSNoLogin
+		case providers.AWSFailureLoginRefused:
+			return secretsAWSLoginRefused
+		case providers.AWSFailureUnreachable:
+			return secretsAWSUnreachable
+		}
+	}
+	return connectionFailureSentence(f)
+}
+
 // limitReasonCommitUnknown is the R3-8 repair withdrawal sentence.
 //
 // IT USED TO BE TYPED INLINE, in the middle of compareClusterConnection. A
@@ -328,6 +348,20 @@ type connectionComparisonView struct {
 	// comparison against a sentence constant, so the old shape cannot come
 	// back quietly.
 	failure connectioncompare.CheckFailure
+
+	// backendAWS says, as a typed fact, WHY reading the secrets store failed
+	// when failure is CheckFailureBackendRead and the store is AWS: no AWS
+	// login at all, AWS turned the login down, or AWS never answered. It is
+	// providers.ClassifyAWSFailure's answer for the store's error, so it is
+	// picked by the SDK's error types and AWS's error code, never by words.
+	// UNEXPORTED, like failure. Zero (AWSFailureNone) everywhere else.
+	//
+	// It only changes the WORDS (finishView picks the matching AWS sentence).
+	// Routing still reads failure, which stays CheckFailureBackendRead, so the
+	// bell and the conditions treat every store read failure the same way
+	// (ep4 round R, R6: before, a wrong AWS key showed only the general
+	// "could not read" sentence here, while Settings named the real cause).
+	backendAWS providers.AWSFailure
 
 	// liveAppliedRevision and liveWrittenAt are joins for the reconciliation
 	// endpoint (connection_reconciliation.go): the live Secret's
@@ -594,9 +628,10 @@ func (s *Server) compareClusterConnection(parent context.Context, cluster string
 	// given, from the same router call — that is the whole fix. Two different
 	// answers here is exactly how the policy and the enforcement drifted apart.
 	if desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts) {
-		spec, credFailure := s.expectedConnectionSpec(desired.Entry)
+		spec, credFailure, backendAWS := s.expectedConnectionSpec(desired.Entry)
 		if credFailure != connectioncompare.CheckFailureNone {
 			req.CheckFailure = credFailure
+			view.backendAWS = backendAWS
 		} else {
 			req.ExpectedSpec = spec
 		}
@@ -656,10 +691,14 @@ func auditResultFor(status connectioncompare.Status) string {
 // error can carry credential material in its text, so it is logged on the
 // server side (without its text) and the caller turns the reason into one of
 // two pre-written sentences.
-func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argosecrets.ClusterSecretSpec, connectioncompare.CheckFailure) {
+//
+// The third answer is only set with CheckFailureBackendRead: which of the AWS
+// failures it was, read from the error's types (ep4 round R, R6). It is
+// AWSFailureNone for any other store, and for an AWS failure Sharko cannot name.
+func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argosecrets.ClusterSecretSpec, connectioncompare.CheckFailure, providers.AWSFailure) {
 	router := s.credsRouter()
 	if router == nil {
-		return nil, connectioncompare.CheckFailureCredentialsUnavailable
+		return nil, connectioncompare.CheckFailureCredentialsUnavailable, providers.AWSFailureNone
 	}
 	facts, err := router.StoredFactsIndependentOfArgoCDSecret(entry.CredentialLookupKey(), entry.CredsSource)
 	if err != nil {
@@ -670,13 +709,13 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 			// half, at a narrower scope.
 			slog.Info("[connection-comparison] no independent copy of this cluster's sign-in details — checking the rest of the connection only",
 				"cluster", entry.Name)
-			return nil, connectioncompare.CheckFailureNone
+			return nil, connectioncompare.CheckFailureNone, providers.AWSFailureNone
 		}
 		// The backend error's own text is never passed through or logged — a
 		// provider error can carry credential material in its message.
 		slog.Warn("[connection-comparison] could not read this cluster's configured credentials source",
 			"cluster", entry.Name)
-		return nil, connectioncompare.CheckFailureBackendRead
+		return nil, connectioncompare.CheckFailureBackendRead, providers.ClassifyAWSFailure(err)
 	}
 
 	// The role ARN follows the write path's precedence: the cluster's own
@@ -692,7 +731,7 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 		CertData: base64.StdEncoding.EncodeToString(facts.CertData),
 		KeyData:  base64.StdEncoding.EncodeToString(facts.KeyData),
 		CAData:   base64.StdEncoding.EncodeToString(facts.CAData),
-	}, connectioncompare.CheckFailureNone
+	}, connectioncompare.CheckFailureNone, providers.AWSFailureNone
 }
 
 // finishView copies a comparison result onto the response view.
@@ -713,7 +752,7 @@ func finishView(view connectionComparisonView, res connectioncompare.Result) con
 	// that displays reads view.FailureReason; neither can drift from the other
 	// because there is only one assignment and it derives one from the other.
 	view.failure = res.Failure
-	view.FailureReason = connectionFailureSentence(res.Failure)
+	view.FailureReason = connectionFailureSentenceWithCause(res.Failure, view.backendAWS)
 	view.CheckedFieldCount = res.CheckedFieldCount
 	view.RepairAvailable = res.RepairAvailable
 	view.RepairScope = string(res.RepairScope)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,38 @@ func (refusingEKSBackend) HealthCheck(context.Context) error              { retu
 // read as "Connected" just because ArgoCD has not noticed yet.
 func TestTokenRenewalFailure_IsNotShownAsConnected(t *testing.T) {
 	const name = "eks-old"
+	recon := startFailingRenewal(t, name, refusingEKSBackend{})
+
+	c := models.Cluster{Name: name, ConnectionStatus: "Successful"}
+	applyTokenRenewalTrouble(&c, recon)
+	if c.ConnectionStatus == "Successful" {
+		t.Fatal("a cluster whose token renewal failed still reads as Connected")
+	}
+	v := computeConnectivityVerdict(c.Name, c.ConnectionStatus, nil)
+	if v.Status == "verified_argocd" {
+		t.Fatal("a cluster whose token renewal failed still gets the verified-by-ArgoCD verdict")
+	}
+	applyLastReconcile(&c, recon)
+	if c.LastReconcile == nil || c.LastReconcile.Outcome != string(clusterreconciler.OutcomeFailed) {
+		t.Fatalf("last reconcile = %+v, want failed", c.LastReconcile)
+	}
+	if c.LastReconcile.Message != clusterreconciler.TokenRenewalFailedSentence {
+		t.Fatalf("last reconcile message = %q, want the fixed renewal sentence", c.LastReconcile.Message)
+	}
+
+	// A cluster with no renewal trouble is left exactly as ArgoCD said.
+	other := models.Cluster{Name: "fine", ConnectionStatus: "Successful"}
+	applyTokenRenewalTrouble(&other, recon)
+	if other.ConnectionStatus != "Successful" {
+		t.Fatalf("a healthy cluster was changed to %q", other.ConnectionStatus)
+	}
+}
+
+// startFailingRenewal runs one reconciler pass over an eks-token cluster whose
+// live Secret holds an old token, with the given backend, and waits until the
+// renewal is marked as failing.
+func startFailingRenewal(t *testing.T, name string, backend providers.ClusterCredentialsProvider) *clusterreconciler.Reconciler {
+	t.Helper()
 	old := "k8s-aws-v1." + base64.RawURLEncoding.EncodeToString([]byte(
 		"https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&X-Amz-Date=20200101T000000Z"))
 	cfg, err := argosecrets.BuildSecretConfigJSON(argosecrets.ClusterSecretSpec{Name: name, Server: "https://eks-old.example.invalid", Token: old})
@@ -61,15 +94,14 @@ spec:
 	recon := clusterreconciler.New(clusterreconciler.Deps{
 		GitProvider:  func() gitprovider.GitProvider { return gp },
 		ArgoClient:   fake.NewSimpleClientset(live),
-		Vault:        staticVault(refusingEKSBackend{}),
+		Vault:        staticVault(backend),
 		AuditFn:      func(audit.Entry) {},
 		Namespace:    "argocd",
 		TickInterval: time.Hour,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	recon.Start(ctx) // runs one pass right away
-	defer recon.Stop()
+	t.Cleanup(func() { recon.Stop(); cancel() })
 
 	deadline := time.Now().Add(10 * time.Second)
 	for !recon.TokenRenewalFailing(name) {
@@ -90,27 +122,37 @@ spec:
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	c := models.Cluster{Name: name, ConnectionStatus: "Successful"}
-	applyTokenRenewalTrouble(&c, recon)
-	if c.ConnectionStatus == "Successful" {
-		t.Fatal("a cluster whose token renewal failed still reads as Connected")
-	}
-	v := computeConnectivityVerdict(c.Name, c.ConnectionStatus, nil)
-	if v.Status == "verified_argocd" {
-		t.Fatal("a cluster whose token renewal failed still gets the verified-by-ArgoCD verdict")
-	}
-	applyLastReconcile(&c, recon)
-	if c.LastReconcile == nil || c.LastReconcile.Outcome != string(clusterreconciler.OutcomeFailed) {
-		t.Fatalf("last reconcile = %+v, want failed", c.LastReconcile)
-	}
-	if c.LastReconcile.Message != clusterreconciler.TokenRenewalFailedSentence {
-		t.Fatalf("last reconcile message = %q, want the fixed renewal sentence", c.LastReconcile.Message)
-	}
+	return recon
+}
 
-	// A cluster with no renewal trouble is left exactly as ArgoCD said.
-	other := models.Cluster{Name: "fine", ConnectionStatus: "Successful"}
-	applyTokenRenewalTrouble(&other, recon)
-	if other.ConnectionStatus != "Successful" {
-		t.Fatalf("a healthy cluster was changed to %q", other.ConnectionStatus)
+// movedEKSBackend is an EKS backend whose stored details now point at another
+// cluster address. It can say so read-only, so the renewal must not mint.
+type movedEKSBackend struct{ mints *atomic.Int32 }
+
+func (b movedEKSBackend) GetCredentials(string) (*providers.Kubeconfig, error) {
+	b.mints.Add(1)
+	return &providers.Kubeconfig{Server: "https://eks-moved.example.invalid", Token: "k8s-aws-v1.fake-minted"}, nil
+}
+func (movedEKSBackend) StoredConnectionFacts(string) (*providers.StoredConnectionFacts, error) {
+	return &providers.StoredConnectionFacts{Server: "https://eks-moved.example.invalid", CredentialMintedPerFetch: true}, nil
+}
+func (movedEKSBackend) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
+func (movedEKSBackend) SearchSecrets(string) ([]string, error)         { return nil, nil }
+func (movedEKSBackend) HealthCheck(context.Context) error              { return nil }
+
+// ep4 round R, R3 on the read side: a renewal stopped because the connection
+// changed says THAT, not "could not get a new sign-in token", and no token
+// was made for it.
+func TestTokenRenewalConnectionChanged_SaysSoAndMintsNothing(t *testing.T) {
+	const name = "eks-old"
+	var mints atomic.Int32
+	recon := startFailingRenewal(t, name, movedEKSBackend{mints: &mints})
+	if n := mints.Load(); n != 0 {
+		t.Fatalf("a changed connection made %d sign-in tokens, want 0", n)
+	}
+	c := models.Cluster{Name: name, ConnectionStatus: "Successful"}
+	applyLastReconcile(&c, recon)
+	if c.LastReconcile == nil || c.LastReconcile.Message != clusterreconciler.TokenRenewalConnectionChangedSentence {
+		t.Fatalf("last reconcile = %+v, want the connection-changed sentence", c.LastReconcile)
 	}
 }
