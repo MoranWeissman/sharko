@@ -526,13 +526,20 @@ For EKS clusters in other AWS accounts, also add:
 }
 ```
 
-### Give Sharko an AWS login when it does not run on EKS {#aws-login-outside-eks}
+### Give Sharko an AWS login {#aws-login}
 
 Sharko needs its own AWS login to read secrets from AWS Secrets Manager and
 to make EKS tokens. Where the login comes from depends on where Sharko runs.
 
-**On EKS.** Use IRSA (see above) or EKS Pod Identity. The cluster gives the
-pod its login. You do not store a key anywhere.
+**On EKS.** Give Sharko's pod an AWS role. With IRSA, put the role on
+Sharko's service account with the `eks.amazonaws.com/role-arn` annotation
+(`serviceAccount.annotations` in the chart, see [IRSA Setup](#irsa-setup)),
+then restart Sharko. Or use EKS Pod Identity. The cluster gives the pod its
+login, and you do not store a key anywhere. If Sharko says it has no AWS
+login while it runs on EKS, the annotation is most likely missing, or Sharko
+was not restarted after you added it.
+
+<a id="aws-login-outside-eks"></a>
 
 **Anywhere else** (kind, on-premises, or another cloud). The pod has no AWS
 login of its own, so you give it an access key. The key belongs to an IAM

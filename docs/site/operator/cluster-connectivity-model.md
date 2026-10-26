@@ -183,7 +183,11 @@ For EKS, the best way is to let Sharko get short-lived tokens with an AWS
 role (IRSA or EKS Pod Identity), instead of storing a kubeconfig or a token.
 The EKS details (cluster name, region, role) are kept in your secrets backend.
 Sharko makes a short-lived token from them and renews it before it runs out.
-No long-lived key or token is kept, so there is no key to rotate or leak. Choose the
+On EKS, with an AWS role for Sharko's pod (IRSA or EKS Pod Identity), no
+long-lived AWS key is stored, so there is no key to rotate or leak. When Sharko
+does not run on EKS, you give it an AWS access key, and that key is stored in a
+Kubernetes Secret (see [Give Sharko an AWS login](configuration.md#aws-login)).
+Choose the
 **Amazon EKS token** option when you register (see
 [Managing Clusters → Adding a Cluster](../user-guide/clusters.md#adding-a-cluster)).
 For clusters whose ArgoCD Secret already exists, the `awsAuthConfig` and

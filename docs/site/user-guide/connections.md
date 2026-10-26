@@ -71,7 +71,7 @@ Configure how Sharko fetches cluster kubeconfigs.
 | `aws-sm` | AWS Secrets Manager — IRSA for auth on EKS, an access key anywhere else |
 | `k8s-secrets` | Kubernetes Secrets — no cloud dependency |
 
-**For `aws-sm`:** Set the AWS region. Sharko uses IRSA for authentication — configure the IRSA role annotation at Helm install time (see [Installation](../getting-started/installation.md#aws-secrets-manager-optional)). If Sharko does not run on EKS, it needs an access key instead. See [Give Sharko an AWS login when it does not run on EKS](../operator/configuration.md#aws-login-outside-eks).
+**For `aws-sm`:** Set the AWS region. Sharko uses IRSA for authentication — configure the IRSA role annotation at Helm install time (see [Installation](../getting-started/installation.md#aws-secrets-manager-optional)). If Sharko does not run on EKS, it needs an access key instead. See [Give Sharko an AWS login](../operator/configuration.md#aws-login-outside-eks).
 
 **For `k8s-secrets`:** The Kubernetes namespace where the secrets are stored is not set in Settings, because Settings has no field for it. Set it in the Helm values (`connection.provider.namespace`, and `connection.addonSecretProvider.namespace` for addon secret values). Saving your secrets backend in Settings keeps the namespace you set there.
 
@@ -136,8 +136,12 @@ with a credential Sharko can re-read:
   re-reads it whenever it needs to, so the connection survives losing the
   ArgoCD Secret.
 - **Let Sharko mint an EKS token** — for EKS, register with the cluster's own
-  details. The details are kept in your secrets backend; no long-lived
-  credential is stored.
+  details. The details are kept in your secrets backend. Sharko makes a
+  short-lived token from them, so you never paste a cluster token. On EKS,
+  with an AWS role for Sharko's pod (IRSA or EKS Pod Identity), no long-lived
+  AWS key is stored. When Sharko does not run on EKS, you give it an AWS
+  access key, and that key is stored in a Kubernetes Secret. See
+  [Give Sharko an AWS login](../operator/configuration.md#aws-login).
 - **Register with no credentials** — allowed for every connection mode. Add
   the credential source later.
 - **Self-managed connection** — you create the ArgoCD cluster Secret by hand

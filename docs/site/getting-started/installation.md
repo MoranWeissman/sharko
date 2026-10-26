@@ -44,7 +44,7 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
 
 This lets the Sharko pod assume the IAM role via IRSA and read secrets from AWS SM without static credentials.
 
-If Sharko does not run on EKS (for example on kind or on-premises), there is no IRSA. Give it an access key instead. See [Give Sharko an AWS login when it does not run on EKS](../operator/configuration.md#aws-login-outside-eks).
+If Sharko does not run on EKS (for example on kind or on-premises), there is no IRSA. Give it an access key instead. See [Give Sharko an AWS login](../operator/configuration.md#aws-login-outside-eks).
 
 ## Get the Admin Password
 

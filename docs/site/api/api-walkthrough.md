@@ -188,7 +188,11 @@ curl -s "${auth[@]}" -X POST "$SH/clusters" \
 
 The EKS details (cluster name, region, role) are kept in your secrets backend.
 Sharko makes a short-lived token from them and renews it before it runs out, so
-you don't store or paste any long-lived credential. You give it the cluster's region.
+you never paste a cluster token. On EKS, with an AWS role for Sharko's pod (IRSA
+or EKS Pod Identity), no long-lived AWS key is stored. When Sharko does not run
+on EKS, you give it an AWS access key, and that key is stored in a Kubernetes
+Secret (see [Give Sharko an AWS login](../operator/configuration.md#aws-login)).
+You give it the cluster's region.
 
 For a cluster in **another AWS account** (or any cluster Sharko's own identity
 can't reach directly), also pass `role_arn` — the IAM role Sharko should assume
