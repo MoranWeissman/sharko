@@ -56,8 +56,8 @@ func (v *mintingVault) GetCredentials(string) (*providers.Kubeconfig, error) {
 	}, nil
 }
 func (v *mintingVault) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
-func (v *mintingVault) SearchSecrets(string) ([]string, error)       { return nil, nil }
-func (v *mintingVault) HealthCheck(context.Context) error            { return nil }
+func (v *mintingVault) SearchSecrets(string) ([]string, error)         { return nil, nil }
+func (v *mintingVault) HealthCheck(context.Context) error              { return nil }
 
 func (v *mintingVault) count() int {
 	v.mu.Lock()
