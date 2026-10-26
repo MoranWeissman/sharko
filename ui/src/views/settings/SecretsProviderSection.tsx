@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Shield, Globe, Activity, Loader2, CheckCircle, XCircle, KeyRound, ChevronRight } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
+import type { Cluster as ClusterInfo } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
@@ -60,6 +61,30 @@ export const SWITCH_BACKEND_CONFIRM = 'Switch backend'
  * backend). Both stop working if the new backend does not hold them.
  */
 const BACKEND_LOGIN_SOURCES = ['secret-kubeconfig', 'eks-token']
+/**
+ * A cluster with no recorded login source (an older entry) is tried against the
+ * backend first (internal/providers routing: the "" case), so it counts too.
+ */
+function readsFromBackend(credsSource: string | undefined): boolean {
+  return !credsSource || BACKEND_LOGIN_SOURCES.includes(credsSource)
+}
+/** Said beside a cluster whose login source was never recorded. */
+export const SWITCH_BACKEND_UNRECORDED_NOTE = 'login source not recorded, tried in the backend first'
+
+/** The server's most clusters per page (internal/api/pagination.go). Kept local so tests that mock the api keep working. */
+const CLUSTERS_PAGE_SIZE = 100
+
+/** Every cluster, all pages (the server gives at most 100 at a time). */
+async function listAllClusters() {
+  const all: ClusterInfo[] = []
+  for (let page = 1; page <= 1000; page++) {
+    const { data, total } = await api.getClustersPage(page, CLUSTERS_PAGE_SIZE)
+    const got = data.clusters ?? []
+    all.push(...got)
+    if (got.length < CLUSTERS_PAGE_SIZE || (total !== null && all.length >= total)) break
+  }
+  return all
+}
 /** Said beside an EKS-token cluster in the list, so the reader knows what is read. */
 export const SWITCH_BACKEND_EKS_NOTE = 'stored EKS details'
 
@@ -262,7 +287,7 @@ export function SecretsProviderSection() {
   // Set while the "switch the backend?" question is on screen. `names` is the
   // clusters that read their login from the current backend; null means Sharko
   // could not find out.
-  const [switchWarning, setSwitchWarning] = useState<{ names: string[] | null; eks: string[] } | null>(null)
+  const [switchWarning, setSwitchWarning] = useState<{ names: string[] | null; eks: string[]; unrecorded: string[] } | null>(null)
 
   async function handleSave() {
     if (!existingConn) return
@@ -273,18 +298,17 @@ export function SecretsProviderSection() {
     if (savedBackend !== '' && form.provider_type !== UNKNOWN_PROVIDER && form.provider_type !== savedBackend) {
       let names: string[] | null
       let eks: string[] = []
+      let unrecorded: string[] = []
       try {
-        const res = await api.getClusters()
-        const hit = (res.clusters ?? []).filter(
-          (c) => c.managed !== false && BACKEND_LOGIN_SOURCES.includes(c.creds_source ?? ''),
-        )
+        const hit = (await listAllClusters()).filter((c) => c.managed !== false && readsFromBackend(c.creds_source))
         names = hit.map((c) => c.name)
         eks = hit.filter((c) => c.creds_source === 'eks-token').map((c) => c.name)
+        unrecorded = hit.filter((c) => !c.creds_source).map((c) => c.name)
       } catch {
         names = null
       }
       if (names === null || names.length > 0) {
-        setSwitchWarning({ names, eks })
+        setSwitchWarning({ names, eks, unrecorded })
         return
       }
     }
@@ -382,6 +406,7 @@ export function SecretsProviderSection() {
                 <li key={n}>
                   <span className="font-mono">{n}</span>
                   {switchWarning.eks.includes(n) ? ` (${SWITCH_BACKEND_EKS_NOTE})` : ''}
+                  {switchWarning.unrecorded.includes(n) ? ` (${SWITCH_BACKEND_UNRECORDED_NOTE})` : ''}
                 </li>
               ))}
             </ul>

@@ -184,7 +184,7 @@ export const ARGOCD_STATUS_UNKNOWN_REFUSED =
 export const ARGOCD_STATUS_UNKNOWN_UNREACHABLE =
   "Sharko could not reach ArgoCD, so ArgoCD's status for these clusters is not known right now.";
 export const EMPTY_CLUSTERS_ARGOCD_DOWN_MESSAGE =
-  'No clusters are listed because ArgoCD is not answering Sharko. Fix the ArgoCD connection, then refresh.';
+  'There are no clusters in Git yet. Separately, ArgoCD is not answering Sharko, so Sharko cannot tell what ArgoCD knows. Fix the ArgoCD connection, then refresh.';
 
 /** The status word on a cluster row while ArgoCD cannot say anything about it. */
 function ArgoCDStatusUnknownPill() {
