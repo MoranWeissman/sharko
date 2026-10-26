@@ -12,6 +12,16 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 }
 
+// What `sharko status` says when ArgoCD could not be read (ep4 T1). The
+// clusters are not disconnected in that case: ArgoCD is just not answering
+// Sharko, so Sharko does not know how they are.
+const (
+	statusArgoRefusedLine     = "ArgoCD:       ArgoCD refused Sharko's login, so Sharko does not know right now if your clusters are healthy."
+	statusArgoUnreachableLine = "ArgoCD:       Sharko could not reach ArgoCD, so Sharko does not know right now if your clusters are healthy."
+	statusArgoNotConnected    = "ArgoCD:       not connected"
+	statusClustersUnknownFmt  = "Clusters:     %d total (health not known)\n"
+)
+
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show cluster status overview",
@@ -29,6 +39,7 @@ var statusCmd = &cobra.Command{
 			Uptime               string `json:"uptime"`
 			GitUnavailable       bool   `json:"git_unavailable"`
 			ArgoUnavailable      bool   `json:"argo_unavailable"`
+			ArgoReason           string `json:"argo_unavailable_reason"`
 			TotalClusters        int    `json:"total_clusters"`
 			HealthyClusters      int    `json:"healthy_clusters"`
 			DegradedClusters     int    `json:"degraded_clusters"`
@@ -58,7 +69,20 @@ var statusCmd = &cobra.Command{
 			fmt.Println("Git:          not configured (run 'sharko connect' to set up)")
 		}
 		if fleet.ArgoUnavailable {
-			fmt.Println("ArgoCD:       not connected")
+			switch fleet.ArgoReason {
+			case "auth_refused":
+				fmt.Println(statusArgoRefusedLine)
+			case "unreachable":
+				fmt.Println(statusArgoUnreachableLine)
+			default:
+				fmt.Println(statusArgoNotConnected)
+			}
+			// The clusters still come from Git when ArgoCD is not
+			// answering. Say how many there are, and that their health
+			// is not known. Never call them disconnected.
+			if fleet.ArgoReason != "" && !fleet.GitUnavailable {
+				fmt.Printf(statusClustersUnknownFmt, fleet.TotalClusters)
+			}
 		}
 
 		// Cluster and addon data — only shown when available.
