@@ -8,6 +8,7 @@ import {
   SWITCH_BACKEND_TITLE,
   SWITCH_BACKEND_UNKNOWN_WARNING,
   SWITCH_BACKEND_EKS_NOTE,
+  SWITCH_BACKEND_UNRECORDED_NOTE,
 } from '@/views/settings/SecretsProviderSection'
 import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
 import { showToast } from '@/components/ToastNotification'
@@ -41,6 +42,7 @@ const getProvidersMock = vi.fn()
 const updateConnectionMock = vi.fn()
 const testProviderMock = vi.fn()
 const getClustersMock = vi.fn()
+const getClustersPageMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
@@ -48,6 +50,7 @@ vi.mock('@/services/api', () => ({
     updateConnection: (name: string, data: unknown) => updateConnectionMock(name, data),
     testProvider: () => testProviderMock(),
     getClusters: () => getClustersMock(),
+    getClustersPage: (page: number, perPage: number) => getClustersPageMock(page, perPage),
   },
 }))
 
@@ -98,6 +101,8 @@ describe('SecretsProviderSection', () => {
     testProviderMock.mockReset()
     getClustersMock.mockReset()
     getClustersMock.mockResolvedValue({ clusters: [] })
+    getClustersPageMock.mockReset()
+    getClustersPageMock.mockResolvedValue({ data: { clusters: [] }, total: 0 })
     refreshConnectionsMock.mockReset()
     useConnectionsMock.mockReset()
     vi.mocked(showToast).mockReset()
@@ -1209,7 +1214,7 @@ describe('SecretsProviderSection — switching the backend', () => {
   beforeEach(() => {
     getProvidersMock.mockReset()
     updateConnectionMock.mockReset()
-    getClustersMock.mockReset()
+    getClustersPageMock.mockReset()
     refreshConnectionsMock.mockReset()
     useConnectionsMock.mockReset()
     getProvidersMock.mockResolvedValue({ configured_provider: { type: 'aws-sm', region: 'eu-west-1' }, available_types: [] })
@@ -1227,14 +1232,15 @@ describe('SecretsProviderSection — switching the backend', () => {
   }
 
   it('says the exact warning, names the clusters, and saves only after Switch backend', async () => {
-    getClustersMock.mockResolvedValue({
-      clusters: [
+    getClustersPageMock.mockResolvedValue({
+      total: null,
+      data: { clusters: [
         cluster('prod-eu', 'secret-kubeconfig'),
         cluster('stage-us', 'secret-kubeconfig'),
         cluster('eks-one', 'eks-token'),
         cluster('pasted', 'inline-kubeconfig'),
         cluster('not-ours', 'secret-kubeconfig', false),
-      ],
+      ] },
     })
     const user = await switchToK8s()
 
@@ -1257,7 +1263,7 @@ describe('SecretsProviderSection — switching the backend', () => {
   })
 
   it('does not save when the question is cancelled', async () => {
-    getClustersMock.mockResolvedValue({ clusters: [cluster('prod-eu', 'secret-kubeconfig')] })
+    getClustersPageMock.mockResolvedValue({ data: { clusters: [cluster('prod-eu', 'secret-kubeconfig')] }, total: null })
     const user = await switchToK8s()
     await screen.findByText(SWITCH_BACKEND_TITLE)
     await user.click(screen.getByRole('button', { name: /cancel/i }))
@@ -1271,7 +1277,7 @@ describe('SecretsProviderSection — switching the backend', () => {
   })
 
   it('asks about an EKS-token cluster too, because it reads its stored EKS details from the backend', async () => {
-    getClustersMock.mockResolvedValue({ clusters: [cluster('eks-spoke', 'eks-token')] })
+    getClustersPageMock.mockResolvedValue({ data: { clusters: [cluster('eks-spoke', 'eks-token')] }, total: null })
     await switchToK8s()
     expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
     expect(SWITCH_BACKEND_EKS_NOTE).toBe('stored EKS details')
@@ -1282,12 +1288,44 @@ describe('SecretsProviderSection — switching the backend', () => {
     expect(updateConnectionMock).not.toHaveBeenCalled()
   })
 
+  it('asks about a cluster with no recorded login source, because Sharko tries the backend first for it', async () => {
+    getClustersPageMock.mockResolvedValue({
+      // Go omits creds_source when it is empty (json:"creds_source,omitempty").
+      data: { clusters: [{ name: 'old-one', labels: {}, managed: true, connection_status: 'connected' }] },
+      total: null,
+    })
+    await switchToK8s()
+    expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
+    expect(SWITCH_BACKEND_UNRECORDED_NOTE).toBe('login source not recorded, tried in the backend first')
+    const list = screen.getByTestId('switch-backend-clusters')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'old-one (login source not recorded, tried in the backend first)',
+    ])
+  })
+
+  it('reads every page of clusters, not only the first', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => cluster(`pasted-${i}`, 'inline-kubeconfig'))
+    getClustersPageMock.mockImplementation(async (page: number) =>
+      page === 1
+        ? { data: { clusters: page1 }, total: 101 }
+        : { data: { clusters: [cluster('late-one', 'secret-kubeconfig')] }, total: 101 },
+    )
+    await switchToK8s()
+    expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
+    const list = screen.getByTestId('switch-backend-clusters')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['late-one'])
+    expect(getClustersPageMock).toHaveBeenCalledTimes(2)
+    expect(getClustersPageMock).toHaveBeenNthCalledWith(1, 1, 100)
+    expect(getClustersPageMock).toHaveBeenNthCalledWith(2, 2, 100)
+  })
+
   it('asks no question when no cluster reads its login from the backend', async () => {
-    getClustersMock.mockResolvedValue({
-      clusters: [
+    getClustersPageMock.mockResolvedValue({
+      total: null,
+      data: { clusters: [
         cluster('eks-not-ours', 'eks-token', false),
         cluster('pasted', 'inline-kubeconfig'),
-      ],
+      ] },
     })
     await switchToK8s()
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
@@ -1295,19 +1333,19 @@ describe('SecretsProviderSection — switching the backend', () => {
   })
 
   it('asks no question when the backend is not changed (only the region)', async () => {
-    getClustersMock.mockResolvedValue({ clusters: [cluster('prod-eu', 'secret-kubeconfig')] })
+    getClustersPageMock.mockResolvedValue({ data: { clusters: [cluster('prod-eu', 'secret-kubeconfig')] }, total: null })
     setupHook([awsConn])
     const user = userEvent.setup()
     render(<SecretsProviderSection />)
     await screen.findAllByRole('combobox')
     await user.click(screen.getByRole('button', { name: /Save Provider/i }))
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
-    expect(getClustersMock).not.toHaveBeenCalled()
+    expect(getClustersPageMock).not.toHaveBeenCalled()
     expect(screen.queryByText(SWITCH_BACKEND_TITLE)).not.toBeInTheDocument()
   })
 
   it('says it could not check, and still asks, when the cluster list fails', async () => {
-    getClustersMock.mockRejectedValue(new Error('boom'))
+    getClustersPageMock.mockRejectedValue(new Error('boom'))
     await switchToK8s()
     expect(await screen.findByText(SWITCH_BACKEND_UNKNOWN_WARNING)).toBeInTheDocument()
     expect(updateConnectionMock).not.toHaveBeenCalled()

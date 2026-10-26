@@ -90,13 +90,18 @@ describe('ClustersOverview - ArgoCD did not answer (episode 4, finding 2)', () =
     expect(screen.queryByTestId('argocd-known-hint')).not.toBeInTheDocument();
   });
 
-  it('with nothing to list, does not claim there are no clusters; it says ArgoCD is not answering', async () => {
+  it('with no clusters in Git, says so, and says separately that ArgoCD is not answering', async () => {
     mockGetClusters.mockResolvedValue(response({ clusters: [], argocd_unavailable_reason: 'unreachable' }));
     renderView();
     expect(
-      await screen.findByText('No clusters are listed because ArgoCD is not answering Sharko. Fix the ArgoCD connection, then refresh.'),
+      await screen.findByText(
+        'There are no clusters in Git yet. Separately, ArgoCD is not answering Sharko, so Sharko cannot tell what ArgoCD knows. Fix the ArgoCD connection, then refresh.',
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(EMPTY)).not.toBeInTheDocument();
+    // The list comes from Git, so ArgoCD being down is not why it is empty.
+    expect(screen.queryByText(/No clusters are listed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/because ArgoCD is not answering/)).not.toBeInTheDocument();
   });
 
   it('ArgoCD answered: no unknown word, no note, the "already knows" line is back', async () => {

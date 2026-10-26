@@ -136,7 +136,8 @@ with a credential Sharko can re-read:
   re-reads it whenever it needs to, so the connection survives losing the
   ArgoCD Secret.
 - **Let Sharko mint an EKS token** — for EKS, register with the cluster's own
-  details and no stored credential at all.
+  details. The details are kept in your secrets backend; no long-lived
+  credential is stored.
 - **Register with no credentials** — allowed for every connection mode. Add
   the credential source later.
 - **Self-managed connection** — you create the ArgoCD cluster Secret by hand

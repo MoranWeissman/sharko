@@ -12,6 +12,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/fanout"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func init() {
@@ -85,6 +86,10 @@ type batchResult struct {
 // test can feed it.
 var batchStdin io.Reader = os.Stdin
 
+// batchStdinIsTerminal says whether a person is at the keyboard. A variable so
+// a test can say yes or no.
+var batchStdinIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
 // maxBatchSize is how many clusters one call to the server may carry.
 const maxBatchSize = 10
 
@@ -127,9 +132,13 @@ changes anything.
   --yes       do not ask, go ahead
   --dry-run   show what would happen and change nothing
 
+If there is no terminal (for example in a script), the question cannot be
+asked, so the command stops with an error unless you add --yes (or --dry-run
+to only check).
+
 A batch of 10 clusters can take a minute or two. If this command stops waiting,
-the server may still be working. Do not run it again straight away: look at
-"sharko pr list" or the Clusters page first.
+some clusters may be registered and some may not. Do not run it again straight
+away: look at "sharko pr list" or the Clusters page first.
 
 Examples:
   sharko add-clusters prod-eu,prod-us --addons monitoring
@@ -234,6 +243,11 @@ Examples:
 
 		// Step 2: ask, unless --yes.
 		if !yes {
+			// No terminal and no --yes: nobody can answer. Stop with a
+			// non-zero exit instead of treating silence as "no".
+			if !batchStdinIsTerminal() {
+				return fmt.Errorf("there is no terminal to ask %q, so nothing was changed. Add --yes to go ahead without asking, or --dry-run to only check", "Register these clusters?")
+			}
 			fmt.Printf("\nRegister %d cluster(s)? [y/N]: ", len(names))
 			answer, _ := bufio.NewReader(batchStdin).ReadString('\n')
 			answer = strings.TrimSpace(strings.ToLower(answer))
@@ -253,9 +267,9 @@ Examples:
 			if errors.As(runErr, &timedOut) {
 				fmt.Println()
 				fmt.Printf("Stopped waiting for the server after %s.\n", batchRequestTimeout)
-				fmt.Println("The server may still be working on the clusters, so some may be registered by now.")
-				fmt.Println("Do not run this again yet. To see what happened, run 'sharko pr list' or open the Clusters page.")
-				return fmt.Errorf("stopped waiting for the server; it may still be working (check 'sharko pr list' or the Clusters page)")
+				fmt.Println("Some of the clusters may be registered and some may not.")
+				fmt.Println("Do not run this again yet. To check, run 'sharko pr list' or open the Clusters page.")
+				return fmt.Errorf("stopped waiting for the server; some clusters may be registered and some not (check 'sharko pr list' or the Clusters page)")
 			}
 			return runErr
 		}

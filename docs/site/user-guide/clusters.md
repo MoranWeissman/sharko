@@ -102,7 +102,7 @@ When you register a cluster, one of the things to settle is **how should Sharko 
 | Credentials source | What it means | You supply |
 |--------------------|---------------|------------|
 | **Point at a stored kubeconfig** | The kubeconfig already lives in your secret backend (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or a Kubernetes Secret). Works for **any** cluster, including local / on-prem. | The secret path/name |
-| **Amazon EKS token** | Sharko mints a short-lived token from your EKS cloud identity, so nothing long-lived is stored or pasted. EKS only. | The AWS region |
+| **Amazon EKS token** | The EKS details are kept in your secrets backend. Sharko makes a short-lived token from them and renews it before it runs out, so no long-lived key or token is stored or pasted. EKS only. | The AWS region |
 | **Paste a kubeconfig** (legacy, off by default) | You hand Sharko the kubeconfig directly. It signs in with a bearer token or an inline client certificate. A pasted credential exists **only in the live ArgoCD cluster Secret** — it is never stored in Git and cannot be recovered from Git if that Secret is lost. New pasted registrations are refused unless an admin turns on **Allow legacy inline credentials** (see [Connections & Settings](connections.md#allow-legacy-inline-credentials)). | The kubeconfig YAML |
 
 The credentials source is the *only* thing that changes between these three. Everything else — which addons to enable, the environment label, the cluster name — works the same way no matter how Sharko reaches the cluster.

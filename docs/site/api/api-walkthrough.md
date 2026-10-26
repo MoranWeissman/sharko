@@ -186,8 +186,9 @@ curl -s "${auth[@]}" -X POST "$SH/clusters" \
 
 #### Amazon EKS token (`eks-token`)
 
-Sharko mints a short-lived token from your EKS cloud identity, so you don't store
-or paste any long-lived credential. You give it the cluster's region.
+The EKS details (cluster name, region, role) are kept in your secrets backend.
+Sharko makes a short-lived token from them and renews it before it runs out, so
+you don't store or paste any long-lived credential. You give it the cluster's region.
 
 For a cluster in **another AWS account** (or any cluster Sharko's own identity
 can't reach directly), also pass `role_arn` — the IAM role Sharko should assume

@@ -177,11 +177,13 @@ the last row is different. The ArgoCD Secret is yours, and Sharko only adds
 addon labels to it. The table above is for the default case, where Sharko
 manages the connection.
 
-## Recommended for AWS: log in with an identity, store nothing
+## Recommended for AWS: log in with an identity
 
 For EKS, the best way is to let Sharko get short-lived tokens with an AWS
-role (IRSA or EKS Pod Identity), instead of storing a kubeconfig or a token
-anywhere. There is nothing to rotate and nothing to leak. Choose the
+role (IRSA or EKS Pod Identity), instead of storing a kubeconfig or a token.
+The EKS details (cluster name, region, role) are kept in your secrets backend.
+Sharko makes a short-lived token from them and renews it before it runs out.
+No long-lived key or token is kept, so there is no key to rotate or leak. Choose the
 **Amazon EKS token** option when you register (see
 [Managing Clusters → Adding a Cluster](../user-guide/clusters.md#adding-a-cluster)).
 For clusters whose ArgoCD Secret already exists, the `awsAuthConfig` and
