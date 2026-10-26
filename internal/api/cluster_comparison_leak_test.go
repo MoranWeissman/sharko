@@ -439,6 +439,7 @@ var comparisonGuard = map[string][]providerSourcedField{
 		{field: "ClusterConnectionState", routed: true, reason: "credsafe.SafeConnectionState — echoed only when it is a value Sharko knows"},
 		{field: "ArgocdConnectionStatus", routed: true, reason: "credsafe.SafeConnectionState — same value, same helper"},
 		{field: "ArgocdConnectionMessage", routed: true, reason: "credsafe.ArgocdClusterConnectionFailureMessage — ArgoCD's own connectionMessage never travels"},
+		{field: "TokenRenewalProblem", routed: true, reason: "clusterreconciler's fixed renewal sentence (TokenRenewalTrouble) — never error text"},
 	},
 
 	// --- B10: GET /observability/overview ---------------------------------

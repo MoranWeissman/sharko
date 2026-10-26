@@ -727,6 +727,14 @@ type ClusterComparisonResponse struct {
 	ClusterConnectionState  string `json:"cluster_connection_state,omitempty"`
 	ArgocdConnectionStatus  string `json:"argocd_connection_status,omitempty"`  // e.g. "Successful", "Failed"
 	ArgocdConnectionMessage string `json:"argocd_connection_message,omitempty"` // error details from ArgoCD
+
+	// TokenRenewalProblem is set only while Sharko could not get a new EKS
+	// sign-in token for this cluster AND ArgoCD still reports its connection
+	// as Successful: the old token still works, but ArgoCD will lose the
+	// connection when it runs out. It is the reconciler's fixed renewal
+	// sentence — never error text. Empty in every other case; when ArgoCD
+	// itself reports a failure, its own status and message are what count.
+	TokenRenewalProblem string `json:"token_renewal_problem,omitempty"`
 }
 
 // ClusterValuesResponse is the API response for raw cluster values YAML.

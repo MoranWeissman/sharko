@@ -797,6 +797,13 @@ export interface ClusterComparisonResponse {
   cluster_connection_state?: string
   argocd_connection_status?: string
   argocd_connection_message?: string
+  /**
+   * Only set while Sharko could not get a new EKS sign-in token AND ArgoCD
+   * still reports the connection as Successful: the old token still works,
+   * but ArgoCD will lose the connection when it runs out. A fixed server
+   * sentence.
+   */
+  token_renewal_problem?: string
 }
 
 // Credential source type constants — must match internal/models/credlookup.go

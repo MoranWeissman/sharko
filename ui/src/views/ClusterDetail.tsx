@@ -261,6 +261,12 @@ export const CLUSTER_NOT_FOUND_DESCRIPTION =
   'It may have been registered via a pending PR that has not yet merged. ' +
   'Open the Clusters page and look for an open PR under "Pending Registrations" or "Pending Changes".';
 
+// The title of the amber banner shown while Sharko could not get a new EKS
+// sign-in token but ArgoCD's connection still works (ep4 round S, S2). The
+// body is the server's own sentence. Pinned by exact text in
+// ClusterDetail.test.tsx.
+export const TOKEN_RENEWAL_BANNER_TITLE = 'ArgoCD is still connected, for now';
+
 /** Where Settings → Secrets Provider lives (Settings.tsx section key). */
 export const SECRETS_PROVIDER_SETTINGS_ROUTE = '/settings?section=secrets-provider';
 /**
@@ -1475,6 +1481,13 @@ CLUSTER_NOT_FOUND_DESCRIPTION
   const hasSystemCheckAddon =
     data?.addon_comparisons?.some((a) => a.status === 'sharko_system') ?? false;
   const showConnectivityCheckBanner = showCheckRow || hasSystemCheckAddon;
+  // A failed EKS token renewal while ArgoCD still says "Successful" (ep4
+  // round S, S2): the old token still works, so ArgoCD's connection has NOT
+  // failed and the addon health below is live. This gets its own amber
+  // banner, and the red "unreachable" banners — with their "may be stale"
+  // line — stay off until ArgoCD itself reports a failure.
+  const tokenRenewalProblem =
+    data?.argocd_connection_status === 'Successful' ? (data?.token_renewal_problem ?? '') : '';
 
   return (
     <div className="space-y-6">
@@ -1722,12 +1735,26 @@ CLUSTER_NOT_FOUND_DESCRIPTION
         </div>
       </div>
 
+      {tokenRenewalProblem && (
+        <div
+          className="flex items-start gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 px-5 py-4 dark:border-amber-700 dark:bg-amber-900/20"
+          role="status"
+          data-testid="token-renewal-banner"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{TOKEN_RENEWAL_BANNER_TITLE}</p>
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">{tokenRenewalProblem}</p>
+          </div>
+        </div>
+      )}
+
       {/* Connection health banners — relocated from the old Overview tab so
         * a stale-data warning stays visible on every section, especially the
         * new default (Addons). The redundant green "Cluster connected"
         * banner was dropped here since the ribbon above already shows
         * connection status at a glance. */}
-      {computedStatus === 'unreachable' && (() => {
+      {computedStatus === 'unreachable' && !tokenRenewalProblem && (() => {
         const hasArgoCDError = data.argocd_connection_status && data.argocd_connection_status !== 'Successful';
         if (hasArgoCDError) {
           // Consolidated banner: ArgoCD error IS the root cause

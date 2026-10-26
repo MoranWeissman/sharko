@@ -154,6 +154,24 @@ func applyTokenRenewalVerdict(c *models.Cluster, recon *clusterreconciler.Reconc
 	c.DerivedHealthStatus = derivedHealthUnknown
 }
 
+// applyTokenRenewalProblem tells the cluster page about a failing EKS token
+// renewal WITHOUT saying ArgoCD's connection failed (ep4 round S, S2). While
+// ArgoCD still reports "Successful", the old token still works: ArgoCD's own
+// status and message stay as ArgoCD gave them, so the page never shows
+// "Cluster Unreachable — ArgoCD Connection Failed" or "may be stale" for it.
+// The renewal sentence goes in its own field instead. When ArgoCD itself
+// reports a failure, nothing is added: ArgoCD's report is what counts.
+func applyTokenRenewalProblem(resp *models.ClusterComparisonResponse, recon *clusterreconciler.Reconciler) {
+	if resp == nil {
+		return
+	}
+	sentence, failing := recon.TokenRenewalTrouble(resp.Cluster.Name)
+	if !failing || resp.ArgocdConnectionStatus != "Successful" {
+		return
+	}
+	resp.TokenRenewalProblem = sentence
+}
+
 // moveRenewalTroubleInStats moves one cluster from Connected to Failed in the
 // list's counts, for a cluster applyTokenRenewalTrouble just changed. The
 // counts are made in the service layer, before the change.
