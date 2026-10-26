@@ -11378,7 +11378,8 @@ const docTemplate = `{
                 "argocd_forbidden",
                 "addon_upgrade_available",
                 "addon_major_update",
-                "addon_version_drift"
+                "addon_version_drift",
+                "cluster_credential_check_failed"
             ],
             "x-enum-varnames": [
                 "CodeGitConnectionBroken",
@@ -11388,7 +11389,8 @@ const docTemplate = `{
                 "CodeArgoForbidden",
                 "CodeAddonUpgradeAvailable",
                 "CodeAddonMajorUpdate",
-                "CodeAddonVersionDrift"
+                "CodeAddonVersionDrift",
+                "CodeClusterCredentialCheckFailed"
             ]
         },
         "github_com_MoranWeissman_sharko_internal_notifications.Notification": {

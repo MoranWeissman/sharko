@@ -271,6 +271,15 @@ var messageTemplates = map[Code]messageTemplate{
 			return "Major version change from " + p.CatalogVersion + " — review for security patches"
 		},
 	},
+	CodeClusterCredentialCheckFailed: {
+		typ:   TypeConnection,
+		needs: []paramField{fieldCluster},
+		id:    func(p Params) string { return "credential-check-" + p.Cluster },
+		title: func(p Params) string { return "Sharko can't read the login for " + p.Cluster },
+		detail: func(_ Params, r Reason) string {
+			return LeadClusterCredentialCheckFailed + " " + r.sentence()
+		},
+	},
 	CodeAddonVersionDrift: {
 		typ:   TypeDrift,
 		needs: []paramField{fieldAddon, fieldCluster, fieldVersion, fieldCatalogVersion},
@@ -281,6 +290,13 @@ var messageTemplates = map[Code]messageTemplate{
 		},
 	},
 }
+
+// LeadClusterCredentialCheckFailed is the first sentence under a
+// CodeClusterCredentialCheckFailed alert. It says what Sharko could not do
+// and where a person fixes it.
+const LeadClusterCredentialCheckFailed = "Sharko could not read this cluster's login from your secrets store, " +
+	"so it can't check that the cluster's connection is right. " +
+	"Check Sharko's login to the secrets store in Settings → Secrets Provider."
 
 // New builds a notification whose words Sharko owns.
 //

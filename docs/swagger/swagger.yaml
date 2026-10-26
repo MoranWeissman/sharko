@@ -1443,6 +1443,7 @@ definitions:
     - addon_upgrade_available
     - addon_major_update
     - addon_version_drift
+    - cluster_credential_check_failed
     type: string
     x-enum-varnames:
     - CodeGitConnectionBroken
@@ -1453,6 +1454,7 @@ definitions:
     - CodeAddonUpgradeAvailable
     - CodeAddonMajorUpdate
     - CodeAddonVersionDrift
+    - CodeClusterCredentialCheckFailed
   github_com_MoranWeissman_sharko_internal_notifications.Notification:
     properties:
       code:
