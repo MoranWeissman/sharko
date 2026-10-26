@@ -37,6 +37,7 @@ import {
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs, previewEnableAddon, reconcileCluster, resyncClusterLabels, diagnoseCluster, doctorCluster } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { ApiError } from '@/services/api';
+import { isCredentialLookupFailure } from '@/lib/verifyStage';
 import { PRResultBanner, extractPR, writeFailureMessage } from '@/components/PRFeedback';
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import { EnableAddonPicker } from '@/components/EnableAddonPicker';
@@ -51,6 +52,7 @@ import {
   TEST_CONNECTION_HINT,
   CHECK_PERMISSIONS_LABEL,
   CHECK_PERMISSIONS_HINT,
+  TEST_LOGIN_NOT_READ,
   SYNC_ADDON_LABELS_NOTHING_TO_APPLY,
   SYNC_ADDON_LABELS_HINT,
   syncAddonLabelsConfirmText,
@@ -415,7 +417,7 @@ export function ClusterDetail() {
 
   // Test connection
   const [testResult, setTestResult] = useState<
-    | { reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] }
+    | { reachable?: boolean; success?: boolean; stage?: string; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] }
     | TestClusterUnavailable
     | 'testing'
     | null
@@ -579,7 +581,9 @@ export function ClusterDetail() {
       // connection) does NOT mean the cluster is unreachable — it means
       // the test feature itself is unavailable. Fall through to the
       // server-reported state instead of marking the cluster red.
-      if (!isTestClusterUnavailable(testResult)) {
+      // Nor does a failed login read (ep4 round T): Sharko never asked the
+      // cluster, so it cannot say the cluster is unreachable.
+      if (!isTestClusterUnavailable(testResult) && !isCredentialLookupFailure(testResult)) {
         if (testResult.reachable || testResult.success) return 'connected';
         return 'unreachable';
       }
@@ -2665,6 +2669,16 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                         <div className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
                           <CheckCircle className="h-4 w-4" />
                           <span>Cluster reachable{testResult.server_version ? ` — ${testResult.server_version}` : ''}</span>
+                        </div>
+                      ) : isCredentialLookupFailure(testResult) ? (
+                        <div className="space-y-2">
+                          <div data-testid="test-login-not-read" className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="h-4 w-4" />
+                            <span>{TEST_LOGIN_NOT_READ}</span>
+                          </div>
+                          {testResult.error_message && (
+                            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">{testResult.error_message}</p>
+                          )}
                         </div>
                       ) : (
                         <div className="space-y-2">
