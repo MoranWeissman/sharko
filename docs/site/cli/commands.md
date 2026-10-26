@@ -211,6 +211,14 @@ found and asks before it registers them.
 sharko add-clusters --from-provider
 ```
 
+Sharko always asks before it registers. If there is no terminal (for example in
+a script), it cannot ask, so it stops with an error and changes nothing. Add
+`--yes` to go ahead without asking, or `--dry-run` to only check.
+
+A batch can take a minute or two. If the command stops waiting for the server,
+some clusters may be registered and some may not. Do not run it again straight
+away. Run `sharko pr list` or open the Clusters page to see which ones went in.
+
 ### `sharko remove-cluster`
 
 Deregister a cluster through a pull request. Requires `-y/--yes` — the server

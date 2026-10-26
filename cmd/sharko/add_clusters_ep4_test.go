@@ -114,9 +114,19 @@ func runAddClusters(t *testing.T, stdin string, flags map[string]string, args ..
 	t.Helper()
 	resetFlags(addClustersCmd)
 	setFlags(t, addClustersCmd, flags)
-	old := batchStdin
+	return runAddClustersTerm(t, true, stdin, flags, args...)
+}
+
+// runAddClustersTerm is runAddClusters with a say on whether a person is at the
+// keyboard.
+func runAddClustersTerm(t *testing.T, isTerminal bool, stdin string, flags map[string]string, args ...string) (string, error) {
+	t.Helper()
+	resetFlags(addClustersCmd)
+	setFlags(t, addClustersCmd, flags)
+	old, oldTerm := batchStdin, batchStdinIsTerminal
 	batchStdin = strings.NewReader(stdin)
-	t.Cleanup(func() { batchStdin = old })
+	batchStdinIsTerminal = func() bool { return isTerminal }
+	t.Cleanup(func() { batchStdin, batchStdinIsTerminal = old, oldTerm })
 	return captureStdoutT(t, func() error { return addClustersCmd.RunE(addClustersCmd, args) })
 }
 
@@ -308,7 +318,8 @@ func TestAddClusters_WhenTheClientStopsWaitingItDoesNotSayFailed(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Stopped waiting for the server after 300ms.",
-		"The server may still be working on the clusters",
+		"Some of the clusters may be registered and some may not.",
+		"To check, run 'sharko pr list' or open the Clusters page.",
 		"sharko pr list",
 		"the Clusters page",
 	} {
@@ -316,13 +327,16 @@ func TestAddClusters_WhenTheClientStopsWaitingItDoesNotSayFailed(t *testing.T) {
 			t.Errorf("missing %q:\nout: %s\nerr: %v", want, out, err)
 		}
 	}
-	for _, banned := range []string{"failed", "timed out", "Failed"} {
+	for _, banned := range []string{"failed", "timed out", "Failed", "still working", "still be working"} {
 		if strings.Contains(out, banned) || strings.Contains(err.Error(), banned) {
 			t.Errorf("a timeout says %q:\nout: %s\nerr: %v", banned, out, err)
 		}
 	}
-	if !strings.Contains(err.Error(), "may still be working") {
-		t.Errorf("the exit message does not say the server may still be working: %v", err)
+	if !strings.Contains(err.Error(), "some clusters may be registered and some not") {
+		t.Errorf("the exit message does not say some may be registered and some not: %v", err)
+	}
+	if strings.Contains(addClustersCmd.Long, "still working") {
+		t.Errorf("the help still says the server is still working")
 	}
 }
 
@@ -363,13 +377,45 @@ func TestAddClusters_Prints207ResultsTruthfully(t *testing.T) {
 
 func TestAddCluster_HelpDescribesTheEKSTokenTruthfully(t *testing.T) {
 	long := addClusterCmd.Long
-	want := "A short-lived token that Sharko makes and renews before it\n                     runs out."
+	want := "The EKS details (cluster name, region, role) are kept in\n                     your secrets backend. Sharko makes a short-lived token from\n                     them and renews it before it runs out."
 	if !strings.Contains(long, want) {
 		t.Errorf("the eks-token help lacks the new sentence; help is:\n%s", long)
 	}
-	for _, banned := range []string{"Nothing to store", "nothing to store", "each time it connects"} {
+	for _, banned := range []string{"Nothing to store", "nothing to store", "each time it connects", "store nothing", "You store nothing", "nothing to rotate"} {
 		if strings.Contains(long, banned) {
 			t.Errorf("the eks-token help still says %q", banned)
 		}
+	}
+}
+
+func TestAddClusters_NoTerminalAndNoYesStopsWithAnErrorAndChangesNothing(t *testing.T) {
+	calls := &batchCalls{}
+	batchServer(t, calls, nil, 200, allOK)
+	out, err := runAddClustersTerm(t, false, "", nil, "a,b")
+	if err == nil {
+		t.Fatalf("no terminal and no --yes must not exit 0:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "Add --yes to go ahead without asking, or --dry-run to only check") {
+		t.Errorf("the error does not say to add --yes or --dry-run: %v", err)
+	}
+	if calls.realCount() != 0 {
+		t.Fatalf("the clusters were registered with nobody to ask")
+	}
+	if strings.Contains(out, "Aborted") {
+		t.Errorf("it still says Aborted:\n%s", out)
+	}
+}
+
+func TestAddClusters_NoTerminalIsFineWithYesOrDryRun(t *testing.T) {
+	calls := &batchCalls{}
+	batchServer(t, calls, nil, 200, allOK)
+	if out, err := runAddClustersTerm(t, false, "", map[string]string{"yes": "true"}, "a"); err != nil {
+		t.Fatalf("--yes without a terminal must work: %v\n%s", err, out)
+	}
+	if calls.realCount() != 1 {
+		t.Fatalf("--yes did not register (real calls: %d)", calls.realCount())
+	}
+	if out, err := runAddClustersTerm(t, false, "", map[string]string{"dry-run": "true"}, "a"); err != nil {
+		t.Fatalf("--dry-run without a terminal must work: %v\n%s", err, out)
 	}
 }
