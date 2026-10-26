@@ -174,8 +174,10 @@ func TestCredentialCheckBell_ConnectionAnswerNeverSaysSynced(t *testing.T) {
 	if out.Sync.Headline != "Unknown — check failed" {
 		t.Errorf("sync.headline = %q, want %q", out.Sync.Headline, "Unknown — check failed")
 	}
-	if out.Sync.Reason != failBackendRead {
-		t.Errorf("sync.reason = %q, want %q", out.Sync.Reason, failBackendRead)
+	// AWS turned the login down, so the reason is the AWS sentence that says
+	// so, not the general "could not read" one (ep4 round R, R6).
+	if out.Sync.Reason != wantAWSLoginRefusedSentence {
+		t.Errorf("sync.reason = %q, want %q", out.Sync.Reason, wantAWSLoginRefusedSentence)
 	}
 	body := w.Body.String()
 	for _, banned := range []string{"Connection synced", "checks passed", `"state":"synced"`, "zz9-bell-raw"} {
