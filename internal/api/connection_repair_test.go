@@ -221,10 +221,16 @@ func repairFixture(t *testing.T, managedYAML string, live *corev1.Secret, vault 
 
 	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
 	recon := clusterreconciler.New(clusterreconciler.Deps{
-		GitProvider:  func() gitprovider.GitProvider { return gp },
-		ArgoClient:   argoClient,
-		Vault:        staticVault(vault),
-		AuditFn:      func(audit.Entry) {},
+		GitProvider: func() gitprovider.GitProvider { return gp },
+		ArgoClient:  argoClient,
+		Vault:       staticVault(vault),
+		// The same audit log the request writes to, as in serve.go, so a test
+		// can see every activity line one click produces (ep4 serious 4).
+		AuditFn: func(e audit.Entry) {
+			if l := srv.AuditLog(); l != nil {
+				l.Add(e)
+			}
+		},
 		Namespace:    "argocd",
 		TickInterval: time.Hour, // never auto-fires: these tests drive the endpoint
 		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
@@ -2289,5 +2295,40 @@ func TestRepairAuditDetails_NameNoInternalComponent(t *testing.T) {
 
 	if scanned < 20 {
 		t.Fatalf("the guard only looked at %d strings in %s — it has lost its reach and would pass vacuously", scanned, rel)
+	}
+}
+
+// TestRepair_OneClickGivesOneActivityLine pins ep4 serious 4: a single Repair
+// click that rewrites the connection leaves exactly one repair line in the
+// audit trail (the request's own), not a second "Background reconciler" line
+// saying it repaired the connection too.
+func TestRepair_OneClickGivesOneActivityLine(t *testing.T) {
+	srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(), repairFakeVault{})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var view connectionRepairView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if !view.Repaired {
+		t.Fatalf("the repair reported no change on a drifted connection, so this proves nothing: %s", w.Body.String())
+	}
+
+	var repairLines []string
+	for _, e := range srv.AuditLog().List(1000) {
+		switch e.Event {
+		case string(clusterreconciler.EventClusterConnectionRepair), string(clusterreconciler.EventClusterConnectionRepairFailed):
+			repairLines = append(repairLines, e.Event+" source="+e.Source)
+		}
+	}
+	if len(repairLines) != 1 {
+		t.Fatalf("one Repair click left %d repair lines in the activity trail, want exactly 1: %v", len(repairLines), repairLines)
+	}
+	if strings.Contains(repairLines[0], "source=reconciler") {
+		t.Errorf("the one repair line is credited to the background reconciler, but a person clicked Repair: %v", repairLines)
 	}
 }
