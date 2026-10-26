@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -2330,5 +2331,53 @@ func TestRepair_OneClickGivesOneActivityLine(t *testing.T) {
 	}
 	if strings.Contains(repairLines[0], "source=reconciler") {
 		t.Errorf("the one repair line is credited to the background reconciler, but a person clicked Repair: %v", repairLines)
+	}
+}
+
+// TestRepair_LoginReadFailureGivesOneActivityLine pins ep4 round R, R5: a
+// Repair that stops because the cluster's login cannot be read from the
+// credentials source leaves exactly ONE repair line in the activity trail,
+// and that one line still says the failure was about credentials.
+//
+// It used to leave two: the request's own entry, plus a second one written
+// only to carry the failure's category.
+func TestRepair_LoginReadFailureGivesOneActivityLine(t *testing.T) {
+	srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(),
+		repairFakeVault{failWith: errors.New("backend unreachable")})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code < 400 {
+		t.Fatalf("expected an error status, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	var lines []audit.Entry
+	for _, e := range srv.AuditLog().List(1000) {
+		switch e.Event {
+		case string(clusterreconciler.EventClusterConnectionRepair), string(clusterreconciler.EventClusterConnectionRepairFailed):
+			lines = append(lines, e)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("one Repair click that could not read the login left %d repair lines, want exactly 1: %+v", len(lines), lines)
+	}
+	e := lines[0]
+	if e.Event != clusterreconciler.EventClusterConnectionRepairFailed {
+		t.Errorf("event = %q, want %q", e.Event, clusterreconciler.EventClusterConnectionRepairFailed)
+	}
+	if e.Result != "failure" || e.Level != "error" {
+		t.Errorf("result/level = %q/%q, want failure/error", e.Result, e.Level)
+	}
+	if e.Changes != audit.ChangesNone {
+		t.Errorf("changes = %q, want none — nothing was written", e.Changes)
+	}
+	if e.Reason != audit.ReasonCredentials {
+		t.Errorf("reason = %q, want %q — the one line must still say it was about credentials", e.Reason, audit.ReasonCredentials)
+	}
+	if e.Error.String() != credsafe.Message {
+		t.Errorf("error = %q, want the fixed safe sentence %q", e.Error.String(), credsafe.Message)
+	}
+	if strings.Contains(e.Detail, "backend unreachable") || strings.Contains(e.Error.String(), "backend unreachable") {
+		t.Errorf("the raw backend error reached the activity line: %+v", e)
 	}
 }
