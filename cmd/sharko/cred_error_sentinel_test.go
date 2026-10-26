@@ -103,16 +103,23 @@ func TestCLI_TestCluster_PrintsTheSafeSentenceNotProviderText(t *testing.T) {
 	out, err := captureStdoutT(t, func() error {
 		return testClusterCmd.RunE(testClusterCmd, []string{"prod-eu"})
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// ep4 round T: the login read failed, so the test could not run. The
+	// command must exit non-zero, and say why in its error.
+	if err == nil || err.Error() != `the connection test for "prod-eu" could not run` {
+		t.Fatalf("error = %v, want the could-not-run error", err)
 	}
+	assertNoCLICredSentinel(t, "the `sharko test-cluster` error", err.Error())
 
 	assertNoCLICredSentinel(t, "the `sharko test-cluster` stdout", out)
 
 	// And the operator is still told something. A silent CLI would pass the sweep
-	// above and be worse than useless.
-	if !strings.Contains(out, "Reachable: no") {
-		t.Errorf("the CLI no longer reports the cluster as unreachable; output:\n%s", out)
+	// above and be worse than useless. The cluster was never asked, so the CLI
+	// says it was not tested rather than calling it unreachable.
+	if !strings.Contains(out, "Reachable: not tested. Sharko could not read this cluster's login, so it did not try to reach the cluster.\n") {
+		t.Errorf("the CLI does not say the cluster was not tested; output:\n%s", out)
+	}
+	if strings.Contains(out, "Reachable: no\n") {
+		t.Errorf("the CLI calls the cluster unreachable, but it never asked the cluster; output:\n%s", out)
 	}
 	if !strings.Contains(out, "sign-in details") {
 		t.Errorf("the CLI printed no reason at all; output:\n%s", out)
@@ -140,8 +147,9 @@ func TestCLI_TestCluster_WouldPrintWhateverTheAPISends(t *testing.T) {
 	out, err := captureStdoutT(t, func() error {
 		return testClusterCmd.RunE(testClusterCmd, []string{"prod-eu"})
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Not reachable: the command exits non-zero (ep4 round T).
+	if err == nil || err.Error() != `the connection test for "prod-eu" did not pass` {
+		t.Fatalf("error = %v, want the did-not-pass error", err)
 	}
 	if !strings.Contains(out, cliCredSentinel) {
 		t.Errorf(`the CLI did NOT print what the server sent, which means it has started filtering.

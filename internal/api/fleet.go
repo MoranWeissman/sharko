@@ -33,21 +33,28 @@ type fleetClusterSummary struct {
 
 // fleetStatusResponse is the response for GET /api/v1/fleet/status (cluster status overview).
 type fleetStatusResponse struct {
-	ServerVersion        string                `json:"server_version"`
-	Uptime               string                `json:"uptime"`
-	GitUnavailable       bool                  `json:"git_unavailable,omitempty"`
-	ArgoUnavailable      bool                  `json:"argo_unavailable,omitempty"`
-	TotalClusters        int                   `json:"total_clusters"`
-	HealthyClusters      int                   `json:"healthy_clusters"`
-	DegradedClusters     int                   `json:"degraded_clusters"`
-	DisconnectedClusters int                   `json:"disconnected_clusters"`
-	TotalAddons          int                   `json:"total_addons"`
-	TotalDeployments     int                   `json:"total_deployments"`
-	HealthyDeployments   int                   `json:"healthy_deployments"`
-	DegradedDeployments  int                   `json:"degraded_deployments"`
-	OutOfSyncDeployments int                   `json:"out_of_sync_deployments"`
-	AddonDataUnavailable bool                  `json:"addon_data_unavailable,omitempty"`
-	Clusters             []fleetClusterSummary `json:"clusters"`
+	ServerVersion   string `json:"server_version"`
+	Uptime          string `json:"uptime"`
+	GitUnavailable  bool   `json:"git_unavailable,omitempty"`
+	ArgoUnavailable bool   `json:"argo_unavailable,omitempty"`
+	// ArgoUnavailableReason says why ArgoCD could not be read, when Sharko
+	// knows: "auth_refused" (ArgoCD said no to Sharko's login) or
+	// "unreachable" (no answer from ArgoCD). It is set together with
+	// argo_unavailable. While it is set, total_clusters is the number of
+	// clusters in Git, and no cluster is counted as healthy, degraded or
+	// disconnected, because Sharko does not know their health.
+	ArgoUnavailableReason string                `json:"argo_unavailable_reason,omitempty" enums:"auth_refused,unreachable"`
+	TotalClusters         int                   `json:"total_clusters"`
+	HealthyClusters       int                   `json:"healthy_clusters"`
+	DegradedClusters      int                   `json:"degraded_clusters"`
+	DisconnectedClusters  int                   `json:"disconnected_clusters"`
+	TotalAddons           int                   `json:"total_addons"`
+	TotalDeployments      int                   `json:"total_deployments"`
+	HealthyDeployments    int                   `json:"healthy_deployments"`
+	DegradedDeployments   int                   `json:"degraded_deployments"`
+	OutOfSyncDeployments  int                   `json:"out_of_sync_deployments"`
+	AddonDataUnavailable  bool                  `json:"addon_data_unavailable,omitempty"`
+	Clusters              []fleetClusterSummary `json:"clusters"`
 }
 
 // formatUptime returns a human-readable uptime string.
@@ -157,6 +164,21 @@ func (s *Server) computeFleetStatus(ctx context.Context) (*fleetStatusResponse, 
 
 		if clustersErr != nil {
 			resp.ArgoUnavailable = true
+		} else if clustersResp.ArgocdUnavailableReason != "" {
+			// ep4 T1: ArgoCD refused Sharko or could not be reached. The
+			// clusters still come from Git, but their health is not known.
+			// Do not count them as disconnected — they are not. The addon
+			// numbers come from ArgoCD too, so they are left out.
+			resp.ArgoUnavailable = true
+			resp.ArgoUnavailableReason = clustersResp.ArgocdUnavailableReason
+			resp.TotalClusters = len(clustersResp.Clusters)
+			for _, c := range clustersResp.Clusters {
+				resp.Clusters = append(resp.Clusters, fleetClusterSummary{
+					Name:                c.Name,
+					ConnectionStatus:    c.ConnectionStatus,
+					ConnectionManagedBy: c.ConnectionManagedBy,
+				})
+			}
 		} else {
 			resp.TotalClusters = len(clustersResp.Clusters)
 			for _, c := range clustersResp.Clusters {

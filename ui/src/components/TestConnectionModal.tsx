@@ -9,9 +9,10 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { testClusterConnection, isTestClusterUnavailable } from '@/services/api';
+import { isCredentialLookupFailure } from '@/lib/verifyStage';
 import type { TestClusterUnavailable } from '@/services/api';
 import type { VerifyStep } from '@/services/models';
-import { TEST_CONNECTION_LABEL, TEST_CONNECTION_HINT } from '@/components/ClusterActionHints';
+import { TEST_CONNECTION_LABEL, TEST_CONNECTION_HINT, TEST_LOGIN_NOT_READ } from '@/components/ClusterActionHints';
 import { SHARKO_CONN_LABEL, SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
 
 // Per-error-code copy + optional action link for the Test-unavailable
@@ -91,7 +92,7 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
 }
 
 type TestResult =
-  | { reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[]; warnings?: string[] }
+  | { reachable?: boolean; success?: boolean; stage?: string; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[]; warnings?: string[] }
   | TestClusterUnavailable;
 
 interface TestConnectionModalProps {
@@ -141,6 +142,9 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
   // ships, kept in sync with the contract.
   const unavailable = result !== null && isTestClusterUnavailable(result);
   const testResult = result !== null && !isTestClusterUnavailable(result) ? result : null;
+  // Sharko could not read the cluster's login, so it never asked the cluster
+  // (ep4 round T). Say that in amber, not a red "failed".
+  const loginNotRead = testResult !== null && isCredentialLookupFailure(testResult);
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -224,12 +228,19 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
 
             {/* Summary badge — a single text node so the whole
               * "Connected — v1.29.3" line reads as one string. */}
+            {loginNotRead && (
+              <p data-testid="test-login-not-read" className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {TEST_LOGIN_NOT_READ}
+              </p>
+            )}
             <div
               title={SHARKO_CONN_TOOLTIP}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${
                 testResult.reachable || testResult.success
                   ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                  : loginNotRead
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
               }`}
             >
               {testResult.reachable || testResult.success
@@ -255,7 +266,7 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
                 </div>
               </div>
             )}
-            {!testResult.reachable && !testResult.success && (!testResult.suggestions || testResult.suggestions.length === 0) && (
+            {!testResult.reachable && !testResult.success && !loginNotRead && (!testResult.suggestions || testResult.suggestions.length === 0) && (
               <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
                 Set the secret path manually in cluster settings.
               </p>

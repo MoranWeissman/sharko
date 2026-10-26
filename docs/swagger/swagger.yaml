@@ -4435,6 +4435,18 @@ definitions:
         type: boolean
       argo_unavailable:
         type: boolean
+      argo_unavailable_reason:
+        description: |-
+          ArgoUnavailableReason says why ArgoCD could not be read, when Sharko
+          knows: "auth_refused" (ArgoCD said no to Sharko's login) or
+          "unreachable" (no answer from ArgoCD). It is set together with
+          argo_unavailable. While it is set, total_clusters is the number of
+          clusters in Git, and no cluster is counted as healthy, degraded or
+          disconnected, because Sharko does not know their health.
+        enum:
+        - auth_refused
+        - unreachable
+        type: string
       clusters:
         items:
           $ref: '#/definitions/internal_api.fleetClusterSummary'

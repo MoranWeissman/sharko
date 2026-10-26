@@ -20,6 +20,13 @@ export const TEST_CONNECTION_LABEL = 'Test connection';
 export const TEST_CONNECTION_HINT =
   "Runs Sharko's own connection test to this cluster — is it reachable?";
 
+// ep4 round T: what Test connection says when Sharko could not read the
+// cluster's login. It never asked the cluster, so it must not say the
+// connection failed or that the cluster is unreachable. The reason (for
+// example, AWS turned down Sharko's login) comes from the server, below it.
+export const TEST_LOGIN_NOT_READ =
+  "Sharko could not read this cluster's login, so it did not test the connection.";
+
 export const CHECK_PERMISSIONS_LABEL = 'Check permissions';
 export const CHECK_PERMISSIONS_HINT =
   'Checks the permissions on the cluster and suggests fixes if any are missing.';

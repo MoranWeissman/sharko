@@ -39,6 +39,7 @@ and deletes it.`,
 
 		var result struct {
 			Reachable     bool     `json:"reachable"`
+			Stage         string   `json:"stage"`
 			ErrorMessage  string   `json:"error_message"`
 			ServerVersion string   `json:"server_version"`
 			Suggestions   []string `json:"suggestions"`
@@ -53,19 +54,45 @@ and deletes it.`,
 			if result.ServerVersion != "" {
 				fmt.Printf("Kubernetes version: %s\n", result.ServerVersion)
 			}
+			return nil
+		}
+
+		// Sharko could not read the cluster's login, so it never asked the
+		// cluster anything (ep4 round T, T2). Do not call the cluster
+		// unreachable: say the test could not run, and why.
+		couldNotRun := result.Stage == testClusterStageCredentials
+		if couldNotRun {
+			fmt.Println(testClusterNotTestedLine)
 		} else {
 			fmt.Println("Reachable: no")
-			if result.ErrorMessage != "" {
-				fmt.Printf("Error: %s\n", result.ErrorMessage)
-			}
-			if len(result.Suggestions) > 0 {
-				fmt.Println("Did you mean one of these secret paths:")
-				for _, s := range result.Suggestions {
-					fmt.Printf("  %s\n", s)
-				}
+		}
+		if result.ErrorMessage != "" {
+			fmt.Printf("Error: %s\n", result.ErrorMessage)
+		}
+		if len(result.Suggestions) > 0 {
+			fmt.Println("Did you mean one of these secret paths:")
+			for _, s := range result.Suggestions {
+				fmt.Printf("  %s\n", s)
 			}
 		}
 
-		return nil
+		// A script must be able to tell a failed test from a passed one
+		// by the exit code.
+		if couldNotRun {
+			return fmt.Errorf(testClusterCouldNotRunFmt, name)
+		}
+		return fmt.Errorf(testClusterFailedFmt, name)
 	},
 }
+
+// testClusterStageCredentials is the `stage` the server names when reading
+// the cluster's login failed, before the cluster was asked anything. It is
+// the same wire value as verifyStageCredentials in internal/api.
+const testClusterStageCredentials = "credentials"
+
+// What `sharko test-cluster` says when the test did not pass (ep4 round T).
+const (
+	testClusterNotTestedLine  = "Reachable: not tested. Sharko could not read this cluster's login, so it did not try to reach the cluster."
+	testClusterCouldNotRunFmt = "the connection test for %q could not run"
+	testClusterFailedFmt      = "the connection test for %q did not pass"
+)

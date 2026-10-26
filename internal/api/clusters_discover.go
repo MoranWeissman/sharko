@@ -379,6 +379,14 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		// error's text alone.
 		safeMsg := credsafe.Sentence(err)
 		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", safeMsg)
+		// On AWS, say the real cause, picked by the error's TYPES (ep4
+		// round T, T2): no AWS login, the login turned down, or no answer
+		// from AWS. These are the same sentences the Diagnostics page and
+		// the connection page show for the same failure. Nothing AWS wrote
+		// is read or sent.
+		if sentence, ok := awsBackendReadSentence(providers.ClassifyAWSFailure(err)); ok {
+			safeMsg = sentence
+		}
 		// The secret is simply not there: say so, with the secret names
 		// Sharko tried, picked by the error's TYPE (ep4 round S, S3). The
 		// names come from the cluster's own settings, never from the store.

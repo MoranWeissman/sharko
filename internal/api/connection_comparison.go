@@ -174,16 +174,29 @@ func connectionFailureSentence(f connectioncompare.CheckFailure) string {
 // keeps the general failBackendRead sentence.
 func connectionFailureSentenceWithCause(f connectioncompare.CheckFailure, aws providers.AWSFailure) string {
 	if f == connectioncompare.CheckFailureBackendRead {
-		switch aws {
-		case providers.AWSFailureNoLogin:
-			return secretsAWSNoLogin
-		case providers.AWSFailureLoginRefused:
-			return secretsAWSLoginRefused
-		case providers.AWSFailureUnreachable:
-			return secretsAWSUnreachable
+		if sentence, ok := awsBackendReadSentence(aws); ok {
+			return sentence
 		}
 	}
 	return connectionFailureSentence(f)
+}
+
+// awsBackendReadSentence is the AWS sentence for a secrets store read that
+// failed for a cause Sharko can name: no AWS login, the login turned down, or
+// no answer from AWS. It is the one place that picks these sentences, so the
+// connection page, Test connection and Diagnose connection all say the same
+// thing as Settings → Secrets Provider (ep4 round T). ok is false for
+// AWSFailureNone, and the caller keeps its own sentence.
+func awsBackendReadSentence(aws providers.AWSFailure) (string, bool) {
+	switch aws {
+	case providers.AWSFailureNoLogin:
+		return secretsAWSNoLogin, true
+	case providers.AWSFailureLoginRefused:
+		return secretsAWSLoginRefused, true
+	case providers.AWSFailureUnreachable:
+		return secretsAWSUnreachable, true
+	}
+	return "", false
 }
 
 // limitReasonCommitUnknown is the R3-8 repair withdrawal sentence.

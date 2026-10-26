@@ -1247,7 +1247,7 @@ describe('SecretsProviderSection — switching the backend', () => {
     expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
     expect(SWITCH_BACKEND_TITLE).toBe('Switch the secrets backend?')
     expect(screen.getByText(
-      '3 clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, or these clusters will stop working the next time Sharko rebuilds their connection.',
+      '3 clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, so Sharko can still find them.',
     )).toBeInTheDocument()
     const list = screen.getByTestId('switch-backend-clusters')
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
@@ -1270,9 +1270,59 @@ describe('SecretsProviderSection — switching the backend', () => {
     expect(updateConnectionMock).not.toHaveBeenCalled()
   })
 
+  it('never says the clusters will stop working, in any of the three sentences', () => {
+    for (const text of [switchBackendWarning(1), switchBackendWarning(2), SWITCH_BACKEND_UNKNOWN_WARNING]) {
+      expect(text).not.toMatch(/stop working/i)
+      expect(text).not.toMatch(/rebuilds/i)
+    }
+    expect(SWITCH_BACKEND_UNKNOWN_WARNING).toBe(
+      'Sharko could not check which clusters read their login from the current backend. If some do, copy their logins to the new backend first, because after you switch Sharko will look for them there.',
+    )
+  })
+
+  it('leaves out adopted clusters and clusters the user manages, keeps owned ones and empty-source ones', async () => {
+    // Shapes as the server sends them: false/empty fields are omitted.
+    getClustersPageMock.mockResolvedValue({
+      total: null,
+      data: { clusters: [
+        { name: 'legacy-1', labels: {}, managed: true, adopted: true, taken_over: true, connection_status: 'Successful' },
+        { name: 'adopted-kc', labels: {}, managed: true, adopted: true, creds_source: 'secret-kubeconfig', connection_status: 'Successful' },
+        { name: 'self-run', labels: {}, managed: true, connection_managed_by: 'user', creds_source: 'secret-kubeconfig', connection_status: 'Successful' },
+        { name: 'self-run-eks', labels: {}, managed: true, connection_managed_by: 'user', creds_source: 'eks-token', connection_status: 'Successful' },
+        { name: 'spoke-1', labels: {}, managed: true, connection_managed_by: 'sharko', creds_source: 'secret-kubeconfig', connection_status: 'Successful' },
+        { name: 'eks-owned', labels: {}, managed: true, creds_source: 'eks-token', connection_status: 'Successful' },
+        { name: 'old-owned', labels: {}, managed: true, connection_status: 'Successful' },
+      ] },
+    })
+    await switchToK8s()
+    expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
+    expect(screen.getByText(
+      '3 clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, so Sharko can still find them.',
+    )).toBeInTheDocument()
+    const list = screen.getByTestId('switch-backend-clusters')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'spoke-1',
+      'eks-owned (stored EKS details)',
+      'old-owned (login source not recorded, tried in the backend first)',
+    ])
+  })
+
+  it('asks no question when only adopted or user-managed clusters are left', async () => {
+    getClustersPageMock.mockResolvedValue({
+      total: null,
+      data: { clusters: [
+        { name: 'legacy-1', labels: {}, managed: true, adopted: true, connection_status: 'Successful' },
+        { name: 'self-run', labels: {}, managed: true, connection_managed_by: 'user', creds_source: 'secret-kubeconfig', connection_status: 'Successful' },
+      ] },
+    })
+    await switchToK8s()
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(SWITCH_BACKEND_TITLE)).not.toBeInTheDocument()
+  })
+
   it('uses the singular sentence for one cluster', () => {
     expect(switchBackendWarning(1)).toBe(
-      '1 cluster reads its login from the current backend. After you switch, Sharko will look for that login in the new backend. Copy it there first, or this cluster will stop working the next time Sharko rebuilds its connection.',
+      '1 cluster reads its login from the current backend. After you switch, Sharko will look for that login in the new backend. Copy it there first, so Sharko can still find it.',
     )
   })
 
