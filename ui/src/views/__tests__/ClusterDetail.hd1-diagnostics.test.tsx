@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -271,6 +271,30 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
       'href',
       '/settings?section=connections',
     );
+    // The page is called "Connection" in Settings, not "Connections". And a
+    // Git problem must not send anyone to the secrets store.
+    expect(screen.getByRole('link', { name: 'Fix it in Settings → Connection' })).toBeInTheDocument();
+    expect(screen.queryByText(/Settings → Connections/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('diag-secrets-fix')).not.toBeInTheDocument();
+  });
+
+  it('points a failing secrets store to Settings → Secrets Provider with a real link', async () => {
+    mockTestConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } });
+    mockTestProvider.mockResolvedValue({ status: 'error', message: 'The secrets store refused the login.' });
+
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    const fix = await screen.findByTestId('diag-secrets-fix');
+    expect(fix.textContent).toBe("Check Sharko's login to your secrets store in Settings → Secrets Provider.");
+    expect(within(fix).getByRole('link')).toHaveAttribute('href', '/settings?section=secrets-provider');
+    // Nothing here points to the old page that does not exist, and the Git
+    // link is not shown when only the secrets store fails.
+    expect(screen.queryByText(/Settings → Connections/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Fix it in Settings/ })).not.toBeInTheDocument();
   });
 
   it('does not probe global connection health until the Diagnostics tab is opened', async () => {

@@ -31,6 +31,7 @@ import { PRLifecycleProgress, extractPR, useFollowedPR, writeFailureMessage } fr
 import { DryRunPreview } from '@/components/AddAddonFlow';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
+  ArgocdUnavailableReason,
   AvailableCluster,
   Cluster,
   ClusterHealthStats,
@@ -175,17 +176,40 @@ export const EMPTY_CLUSTERS_MESSAGE =
 export const EMPTY_CLUSTERS_FILTERED_MESSAGE =
   'No managed clusters match the current filters.';
 
+// ArgoCD did not answer the clusters list. The clusters in Git are still shown,
+// so the page must not say there are none, and must not guess ArgoCD's side.
+export const ARGOCD_STATUS_UNKNOWN_LABEL = 'ArgoCD status unknown';
+export const ARGOCD_STATUS_UNKNOWN_REFUSED =
+  "ArgoCD refused Sharko's login, so ArgoCD's status for these clusters is not known right now.";
+export const ARGOCD_STATUS_UNKNOWN_UNREACHABLE =
+  "Sharko could not reach ArgoCD, so ArgoCD's status for these clusters is not known right now.";
+export const EMPTY_CLUSTERS_ARGOCD_DOWN_MESSAGE =
+  'No clusters are listed because ArgoCD is not answering Sharko. Fix the ArgoCD connection, then refresh.';
+
+/** The status word on a cluster row while ArgoCD cannot say anything about it. */
+function ArgoCDStatusUnknownPill() {
+  return (
+    <span
+      data-testid="argocd-status-unknown"
+      className="inline-flex items-center gap-1.5 rounded-full bg-[#e0f0ff] px-2.5 py-1 text-xs font-medium text-[#3a6a8a] dark:bg-gray-700 dark:text-gray-300"
+    >
+      <span className="h-2 w-2 rounded-full bg-[#5a8aaa] dark:bg-gray-400" aria-hidden="true" />
+      {ARGOCD_STATUS_UNKNOWN_LABEL}
+    </span>
+  );
+}
+
 // V2-cleanup-55.3: one plain-English line per credential-source option,
 // shown under the dropdown so a non-expert knows what each choice means
 // before the option-specific fields appear.
 // V3-CC2: clarified to state what-you-provide + expiry + AWS/IAM requirement.
-const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
+export const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
   'inline-kubeconfig':
     'Paste the file once — Sharko stores it. Works for any cluster. The token inside can expire; re-paste when it does.',
   'secret-kubeconfig':
     'Sharko fetches the kubeconfig from your secrets backend by name/path. Works for any cluster; token lifetime is whatever you stored.',
   'eks-token':
-    'Sharko generates a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
+    'Sharko makes a short-lived AWS token with its own AWS identity and renews it before it runs out. EKS only; Sharko needs AWS access to the cluster.',
 };
 
 // V2-cleanup-57.2: connection-ownership choice, in plain English. This is
@@ -237,6 +261,7 @@ interface ClustersSnapshot {
   pendingRegistrations: PendingRegistration[];
   orphanRegistrations: OrphanRegistration[];
   argoCDUnreachable: boolean;
+  argocdUnavailableReason: ArgocdUnavailableReason | null;
 }
 
 // Exported so tests can prime/inspect the same key the component uses.
@@ -555,6 +580,8 @@ export function ClustersOverview() {
 
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
+  // Set when the clusters answer came back but ArgoCD could not answer it.
+  const [argocdUnavailableReason, setArgocdUnavailableReason] = useState<ArgocdUnavailableReason | null>(null);
 
   // Capability flag for the per-cluster Test button. Driven by
   // /api/v1/health.cluster_test_available (true when a secrets backend —
@@ -703,6 +730,8 @@ export function ClustersOverview() {
       // the cluster statuses say.
       const argoCDUnreachableValue = false;
       setArgoCDUnreachable(argoCDUnreachableValue);
+      const argocdUnavailableReasonValue = response.argocd_unavailable_reason ?? null;
+      setArgocdUnavailableReason(argocdUnavailableReasonValue);
 
       // perf S2 write-through — every mutation flow (register/adopt/unadopt/
       // delete-orphan) ends by calling fetchData(), so this one write-through
@@ -713,6 +742,7 @@ export function ClustersOverview() {
         pendingRegistrations: pendingRegistrationsValue,
         orphanRegistrations: orphanRegistrationsValue,
         argoCDUnreachable: argoCDUnreachableValue,
+        argocdUnavailableReason: argocdUnavailableReasonValue,
       });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Failed to load clusters';
@@ -798,6 +828,7 @@ export function ClustersOverview() {
       setPendingRegistrations(cached.data.pendingRegistrations);
       setOrphanRegistrations(cached.data.orphanRegistrations);
       setArgoCDUnreachable(cached.data.argoCDUnreachable);
+      setArgocdUnavailableReason(cached.data.argocdUnavailableReason ?? null);
       setLoading(false);
       void fetchData(true);
     } else {
@@ -1403,7 +1434,9 @@ export function ClustersOverview() {
     filters.connectionTypes.length > 0;
   const emptyManagedMessage = clusterFilterActive
     ? EMPTY_CLUSTERS_FILTERED_MESSAGE
-    : EMPTY_CLUSTERS_MESSAGE;
+    : argocdUnavailableReason
+      ? EMPTY_CLUSTERS_ARGOCD_DOWN_MESSAGE
+      : EMPTY_CLUSTERS_MESSAGE;
 
   // Everything ArgoCD knows that Sharko does not manage: what /clusters lists
   // plus what /clusters/available adds. Built from the whole list, with no
@@ -1705,7 +1738,7 @@ export function ClustersOverview() {
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Clusters ArgoCD deploys to — Sharko manages their connections from git.
           </p>
-          {discoveredClusters.length > 0 && (
+          {discoveredClusters.length > 0 && !argocdUnavailableReason && (
             <p data-testid="argocd-known-hint" className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
               <RoleGuard
                 adminOnly
@@ -1755,6 +1788,13 @@ export function ClustersOverview() {
 
       {/* ArgoCD Status Banner */}
       <ArgoCDStatusBanner visible={argoCDUnreachable} />
+      {argocdUnavailableReason && (
+        <p data-testid="argocd-status-unknown-note" className="text-sm text-amber-700 dark:text-amber-400">
+          {argocdUnavailableReason === 'auth_refused'
+            ? ARGOCD_STATUS_UNKNOWN_REFUSED
+            : ARGOCD_STATUS_UNKNOWN_UNREACHABLE}
+        </p>
+      )}
 
       {/* Cluster Status Legend — automatic at >= 5 clusters (locked
           threshold); below it, an on-demand "what do these mean?" toggle
@@ -2835,6 +2875,9 @@ export function ClustersOverview() {
                             D4). The pill shows the worst of the parts; the
                             popover breaks down ArgoCD connection, deploy
                             check, Sharko test, and connection ownership. */}
+                        {argocdUnavailableReason ? (
+                          <ArgoCDStatusUnknownPill />
+                        ) : (
                         <ClusterStatusSummary
                           connectionStatus={cluster.connection_status}
                           connectivityStatus={cluster.connectivity_status}
@@ -2847,6 +2890,7 @@ export function ClustersOverview() {
                           enabledAddonCount={rowAddonCount}
                           latestTest={latestTestOf(testResults[cluster.name], pageRunRef.current[cluster.name]?.own)}
                         />
+                        )}
                       </td>
                       <td className="px-6 py-3 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                         {cluster.server_version ?? '--'}
@@ -2957,6 +3001,9 @@ export function ClustersOverview() {
                   <div className="mb-2 flex flex-col gap-1">
                     {/* ONE composite status pill per card (V2-cleanup-61.2,
                         D4) — details live in the accessible popover. */}
+                    {argocdUnavailableReason ? (
+                      <ArgoCDStatusUnknownPill />
+                    ) : (
                     <ClusterStatusSummary
                       connectionStatus={cluster.connection_status}
                       connectivityStatus={cluster.connectivity_status}
@@ -2969,6 +3016,7 @@ export function ClustersOverview() {
                       enabledAddonCount={addonCount}
                       latestTest={latestTestOf(testResults[cluster.name], pageRunRef.current[cluster.name]?.own)}
                     />
+                    )}
                   </div>
                   <p className="mb-2 font-mono text-sm text-[#2a5a7a] dark:text-gray-400">
                     {cluster.server_version ? withV(cluster.server_version) : '--'}

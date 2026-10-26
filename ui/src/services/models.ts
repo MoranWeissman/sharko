@@ -714,7 +714,15 @@ export interface ClustersResponse {
   // ArgoCD cluster Secrets with no git entry and no open PR. Same
   // forward-compat contract as pending_registrations.
   orphan_registrations?: OrphanRegistration[]
+  // Set only when ArgoCD could not answer the list: 'auth_refused' = ArgoCD
+  // refused Sharko's token, 'unreachable' = ArgoCD could not be reached.
+  // Absent when ArgoCD answered. While it is set, the clusters in Git still
+  // come back with managed: true, and ArgoCD's part of their status is not
+  // known.
+  argocd_unavailable_reason?: ArgocdUnavailableReason
 }
+
+export type ArgocdUnavailableReason = 'auth_refused' | 'unreachable'
 
 export interface ClusterAddonInfo {
   addon_name: string
