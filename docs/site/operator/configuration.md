@@ -480,9 +480,11 @@ A role can come from three places. Sharko uses the first one it finds:
 When all three are empty, Sharko takes on no role and uses the pod's own
 AWS identity (IRSA).
 
-The token Sharko creates is a `k8s-aws-v1.*` bearer token. It is made fresh
-each time, stops working after 60 seconds (the same as ArgoCD's own
-`argocd-k8s-auth`), and is never stored.
+The token Sharko creates is a `k8s-aws-v1.*` bearer token. AWS makes it
+stop working after about 15 minutes. Sharko makes a new one before the old
+one runs out, so the connection keeps working without you doing anything. If
+Sharko cannot make a new token, the cluster shows as a connection problem
+and not as connected.
 
 If you want to use a fixed bearer token instead, store a full kubeconfig
 (Format 1) with the token inside it. A bare JSON object with only `server`
@@ -523,6 +525,98 @@ For EKS clusters in other AWS accounts, also add:
   "Resource": "arn:aws:iam::*:role/EKSReadRole"
 }
 ```
+
+### Give Sharko an AWS login when it does not run on EKS {#aws-login-outside-eks}
+
+Sharko needs its own AWS login to read secrets from AWS Secrets Manager and
+to make EKS tokens. Where the login comes from depends on where Sharko runs.
+
+**On EKS.** Use IRSA (see above) or EKS Pod Identity. The cluster gives the
+pod its login. You do not store a key anywhere.
+
+**Anywhere else** (kind, on-premises, or another cloud). The pod has no AWS
+login of its own, so you give it an access key. The key belongs to an IAM
+user. It has to be allowed to do only what Sharko needs (the policy is
+below).
+
+1. Put the key in a Kubernetes Secret in the Sharko namespace:
+
+    ```bash
+    kubectl create secret generic sharko-aws-login \
+      --namespace sharko \
+      --from-literal=AWS_ACCESS_KEY_ID=<your access key id> \
+      --from-literal=AWS_SECRET_ACCESS_KEY=<your secret access key>
+    ```
+
+2. Tell the chart to give those two values to the pod, together with the
+   AWS region, in `extraEnv` (see
+   [Extra Environment Variables](#extra-environment-variables)):
+
+    ```yaml
+    extraEnv:
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: sharko-aws-login
+            key: AWS_ACCESS_KEY_ID
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: sharko-aws-login
+            key: AWS_SECRET_ACCESS_KEY
+      - name: AWS_REGION
+        value: eu-west-1
+    ```
+
+3. Install or upgrade with that file, for example
+   `helm upgrade --install sharko ... -f aws-login-values.yaml`.
+
+4. In **Settings → Secrets Provider**, choose AWS Secrets Manager and enter
+   the same region.
+
+The smallest policy for the IAM user. It reads only the secrets whose names
+start with `sharko/`, lists secrets, and takes on the EKS role. Change
+the account number, the region, the prefix and the role name to yours:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:sharko/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "secretsmanager:ListSecrets",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::123456789012:role/SharkoEKSRole"
+    }
+  ]
+}
+```
+
+`secretsmanager:ListSecrets` can only be given for all resources. AWS does
+not let you limit it to a prefix. Leave out the `sts:AssumeRole` part if
+you do not use an IAM role for EKS clusters.
+
+**You cannot change this key in the Sharko screens.** The key is read once,
+when the pod starts. To change it, update the Secret, then restart the pod:
+
+```bash
+kubectl patch secret sharko-aws-login --namespace sharko \
+  --type merge -p '{"stringData":{"AWS_SECRET_ACCESS_KEY":"<new secret access key>","AWS_ACCESS_KEY_ID":"<new access key id>"}}'
+kubectl rollout restart deployment/sharko --namespace sharko
+```
+
+If the key is wrong or has no permission, AWS answers and refuses. Sharko
+then shows that it cannot read the secret. That is a problem with this
+login, not a network problem.
 
 ## Default addons and the host cluster
 
