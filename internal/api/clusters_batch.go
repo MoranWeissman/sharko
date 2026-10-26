@@ -101,6 +101,23 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 
 	result := orch.RegisterClusterBatch(r.Context(), req.Clusters)
 
+	// A batch where every entry is a dry run registered nothing. It must not
+	// write a "cluster registered" line (ep4: `sharko add-clusters` checks
+	// every cluster this way before it asks). The event is deliberately not
+	// a lifecycle event, so it stays out of the cluster activity feed.
+	if batchIsAllDryRun(req.Clusters) {
+		auditResult, _ := batchAuditOutcome(result)
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    batchDryRunAuditEvent,
+			Resource: fmt.Sprintf("clusters:%d", len(req.Clusters)),
+			Detail:   fmt.Sprintf("checked a batch of %d without changing anything", len(req.Clusters)),
+			Result:   auditResult,
+			Changes:  audit.ChangesNone,
+		})
+		writeJSON(w, batchHTTPStatus(result), result)
+		return
+	}
+
 	auditResult, changes := batchAuditOutcome(result)
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    lifecycleevents.ClusterRegistered,
@@ -164,4 +181,18 @@ func batchHTTPStatus(result *orchestrator.BatchResult) int {
 		return http.StatusMultiStatus
 	}
 	return http.StatusOK
+}
+
+// batchDryRunAuditEvent is the audit event for a batch where every entry was
+// a dry run.
+const batchDryRunAuditEvent = "cluster_register_checked"
+
+// batchIsAllDryRun reports whether every entry in the batch is a dry run.
+func batchIsAllDryRun(clusters []orchestrator.RegisterClusterRequest) bool {
+	for _, c := range clusters {
+		if !c.DryRun {
+			return false
+		}
+	}
+	return len(clusters) > 0
 }

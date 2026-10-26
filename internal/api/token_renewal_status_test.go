@@ -27,8 +27,8 @@ func (refusingEKSBackend) GetCredentials(string) (*providers.Kubeconfig, error) 
 	return nil, errors.New("the backend refused")
 }
 func (refusingEKSBackend) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
-func (refusingEKSBackend) SearchSecrets(string) ([]string, error)       { return nil, nil }
-func (refusingEKSBackend) HealthCheck(context.Context) error            { return nil }
+func (refusingEKSBackend) SearchSecrets(string) ([]string, error)         { return nil, nil }
+func (refusingEKSBackend) HealthCheck(context.Context) error              { return nil }
 
 // TestTokenRenewalFailure_IsNotShownAsConnected pins ep4 serious 1 on the
 // read side: when Sharko could not renew an EKS token, the cluster must not

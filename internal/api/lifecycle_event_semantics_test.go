@@ -732,8 +732,11 @@ func TestLifecycleWriters_BatchEndpoints_AllFailed(t *testing.T) {
 
 		body, _ := json.Marshal(map[string]interface{}{
 			"clusters": []map[string]interface{}{
-				{"name": "pasted-one", "creds_source": "inline-kubeconfig", "kubeconfig": killSwitchInlineKubeconfig, "dry_run": true},
-				{"name": "pasted-two", "creds_source": "inline-kubeconfig", "kubeconfig": killSwitchInlineKubeconfig, "dry_run": true},
+				// Real registrations, not dry runs: an all-dry-run batch
+				// registers nothing and writes cluster_register_checked
+				// instead (ep4, TestBatchDryRun_*).
+				{"name": "pasted-one", "creds_source": "inline-kubeconfig", "kubeconfig": killSwitchInlineKubeconfig},
+				{"name": "pasted-two", "creds_source": "inline-kubeconfig", "kubeconfig": killSwitchInlineKubeconfig},
 			},
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/batch", bytes.NewReader(body))
