@@ -111,9 +111,9 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 	}
 	// ep4 serious 1: a failing EKS token renewal is a connection problem,
 	// whatever the last pass said about labels.
-	if recon.TokenRenewalFailing(c.Name) {
+	if sentence, failing := recon.TokenRenewalTrouble(c.Name); failing {
 		lastRec.Outcome = string(clusterreconciler.OutcomeFailed)
-		lastRec.Message = clusterreconciler.TokenRenewalFailedSentence
+		lastRec.Message = sentence
 	}
 	c.LastReconcile = lastRec
 }

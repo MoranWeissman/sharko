@@ -9,7 +9,6 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
-	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 )
@@ -492,10 +491,10 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	// result through the service layer to avoid coupling service ↔ obs.
 	// Best-effort: fields stay absent on failure.
 	applyTokenRenewalTrouble(&resp.Cluster, s.clusterRecon)
-	if resp.Cluster.ConnectionStatus == "Failed" && resp.ArgocdConnectionStatus == "Successful" &&
-		s.clusterRecon.TokenRenewalFailing(resp.Cluster.Name) {
+	if sentence, failing := s.clusterRecon.TokenRenewalTrouble(resp.Cluster.Name); failing &&
+		resp.Cluster.ConnectionStatus == "Failed" && resp.ArgocdConnectionStatus == "Successful" {
 		resp.ArgocdConnectionStatus = "Failed"
-		resp.ArgocdConnectionMessage = clusterreconciler.TokenRenewalFailedSentence
+		resp.ArgocdConnectionMessage = sentence
 	}
 	compApps, compAppsErr := ac.ListApplications(r.Context())
 	hasHealthyAddon := false
