@@ -714,7 +714,15 @@ export interface ClustersResponse {
   // ArgoCD cluster Secrets with no git entry and no open PR. Same
   // forward-compat contract as pending_registrations.
   orphan_registrations?: OrphanRegistration[]
+  // Set only when ArgoCD could not answer the list: 'auth_refused' = ArgoCD
+  // refused Sharko's token, 'unreachable' = ArgoCD could not be reached.
+  // Absent when ArgoCD answered. While it is set, the clusters in Git still
+  // come back with managed: true, and ArgoCD's part of their status is not
+  // known.
+  argocd_unavailable_reason?: ArgocdUnavailableReason
 }
+
+export type ArgocdUnavailableReason = 'auth_refused' | 'unreachable'
 
 export interface ClusterAddonInfo {
   addon_name: string
@@ -789,6 +797,13 @@ export interface ClusterComparisonResponse {
   cluster_connection_state?: string
   argocd_connection_status?: string
   argocd_connection_message?: string
+  /**
+   * Only set while Sharko could not get a new EKS sign-in token AND ArgoCD
+   * still reports the connection as Successful: the old token still works,
+   * but ArgoCD will lose the connection when it runs out. A fixed server
+   * sentence.
+   */
+  token_renewal_problem?: string
 }
 
 // Credential source type constants — must match internal/models/credlookup.go
@@ -892,6 +907,12 @@ export interface ConnectionReconciliationHealth {
   state: ConnectionHealthWord
   /** ArgoCD's own failure text — only ever set for a failed connection. */
   message?: string
+  /**
+   * Only set while state is 'connected' and Sharko could not get a new EKS
+   * sign-in token: ArgoCD's connection still works now, but will stop when
+   * the current token runs out. A fixed server sentence.
+   */
+  warning?: string
 }
 
 export interface ConnectionReconciliationCondition {

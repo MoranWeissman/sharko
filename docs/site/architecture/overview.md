@@ -76,7 +76,7 @@ Sharko uses a pluggable provider interface to fetch cluster kubeconfigs:
 
 | Provider | Description |
 |----------|-------------|
-| `aws-sm` | AWS Secrets Manager — uses IRSA for authentication, no static credentials needed |
+| `aws-sm` | AWS Secrets Manager — uses IRSA on EKS; anywhere else it needs an access key ([how](../operator/configuration.md#aws-login-outside-eks)) |
 | `k8s-secrets` | Kubernetes Secrets — no cloud dependency, simpler setup |
 | `gcp` | GCP (stub) — OAuth2 token generation. Planned for community contribution |
 | `azure` | Azure (stub) — Azure AD token generation. Planned for community contribution |

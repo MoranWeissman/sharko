@@ -256,26 +256,13 @@ func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clust
 func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clusterRoleARN string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called", "cluster", clusterName)
 
-	var tried []string
-	// allMissing tracks whether EVERY attempt that ran failed because AWS said
-	// the secret does not exist. It starts true and only one non-missing failure
-	// (AccessDenied, a throttle, a network error, an unparseable payload) turns
-	// it off for good — because in that case Sharko does not KNOW the secret is
-	// absent, it only knows it could not read it. The caller offers secret-name
-	// suggestions off this answer, and offering "did you mean one of these?"
-	// when the real problem is a missing IAM permission sends the operator to
-	// fix the wrong thing.
-	allMissing := true
-	note := func(err error) {
-		if !credsafe.IsNotFound(err) {
-			allMissing = false
-		}
-	}
+	// look keeps what each try found, so the error at the end can say why
+	// (see secretLookup).
+	look := newSecretLookup(clusterName)
 
 	// Step 1: Try with prefix (skipped when prefix is empty or name already contains prefix).
 	if p.prefix != "" {
 		withPrefix := p.prefix + clusterName
-		tried = append(tried, withPrefix)
 		slog.Debug("[provider] trying with prefix", "secretName", withPrefix)
 		kc, err := p.fetchSecret(withPrefix, clusterRoleARN)
 		if err == nil {
@@ -288,13 +275,10 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 		if _, refused := AsKubeconfigRefusal(err); refused {
 			return nil, err
 		}
-		note(err)
+		look.note(withPrefix, err, true)
 	}
 
 	// Step 2: Try exact name (handles explicit secretPath values that don't need a prefix).
-	if !sliceContains(tried, clusterName) {
-		tried = append(tried, clusterName)
-	}
 	slog.Debug("[provider] trying exact name", "secretName", clusterName)
 	kc, err := p.fetchSecret(clusterName, clusterRoleARN)
 	if err == nil {
@@ -303,24 +287,142 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 	if _, refused := AsKubeconfigRefusal(err); refused {
 		return nil, err
 	}
-	note(err)
+	look.note(clusterName, err, false)
 
 	// Every lookup failed. Return an error — the caller (handleTestCluster) will
 	// call SearchSecrets separately to find suggestions and include them in the
 	// response, but ONLY when this error carries the not-found marker.
 	//
-	// The sentence below still says "not found" because it is Sharko's own
-	// wording for a person, unchanged. Nothing reads it: the caller asks
-	// credsafe.IsNotFound, which is a type check.
+	// Nothing reads the error's words: the caller asks credsafe.IsNotFound,
+	// which is a type check, and SecretNotFoundNames, which is errors.As.
+	failure := look.failure()
+	tried, notFound := look.names, credsafe.IsNotFound(failure)
 	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups",
-		"tried", strings.Join(tried, ", "), "allMissing", allMissing)
-	failure := fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
-		"Set secret_path on the cluster to specify the exact name",
-		clusterName, strings.Join(tried, ", "))
-	if allMissing {
-		return nil, credsafe.MarkNotFound(failure)
-	}
+		"tried", strings.Join(tried, ", "), "notFound", notFound)
 	return nil, failure
+}
+
+// secretLookup keeps what each try of a cluster's secret found, for both
+// GetCredentials and StoredConnectionFacts, so the error at the end says why
+// every try failed.
+//
+// When every try failed because AWS said the secret does not exist, the
+// error gets the not-found marker. Otherwise the last real failure is kept
+// inside it with %w — before ep4 round R (R6) it was dropped, so a refused
+// login, an AWS that never answered and a missing login all came out as the
+// same plain text, and nothing could tell them apart by type. The marker is
+// NOT added in that case: "Sharko could not look" is not "it is missing".
+//
+// ONE EXCEPTION (ep4 round S, S3). With a name prefix, the lookup tries
+// "<prefix><name>" first and then the plain name. The policy in the docs lets
+// Sharko read only names under the prefix, so for a secret that is really
+// missing AWS says "not found" for the prefixed name and then "access denied"
+// for the plain name. That is not a refused login — the login works, and it
+// just showed the secret is not under the prefix. So when the prefixed try
+// was not found and the plain-name try was denied (AWS's own error CODE, see
+// isAWSAccessDenied — never its words), the answer is "not found", and the
+// plain name is listed as one Sharko was not allowed to read. Any other
+// failure on the plain name (a login AWS does not know, no answer) is still
+// kept as the real cause.
+//
+// Both callers put credsafe.Mark on top, so AWS's own text never reaches an
+// answer; it stays reachable only through Unwrap.
+type secretLookup struct {
+	cluster string
+	// names is every name tried, in order.
+	names []string
+	// allMissing stays true while every try so far was "not found".
+	allMissing bool
+	// prefixMissing is set when the prefixed try was "not found".
+	prefixMissing bool
+	// notAllowed is a plain name AWS would not let Sharko read, after the
+	// prefixed name was not found. Only set in that case.
+	notAllowed []string
+	// lastReal is the last failure that was neither "not found" nor the
+	// denied plain name above.
+	lastReal error
+}
+
+func newSecretLookup(cluster string) secretLookup {
+	return secretLookup{cluster: cluster, allMissing: true}
+}
+
+// note records one failed try of name. prefixed says it was the
+// "<prefix><name>" try.
+func (l *secretLookup) note(name string, err error, prefixed bool) {
+	if !sliceContains(l.names, name) {
+		l.names = append(l.names, name)
+	}
+	switch {
+	case credsafe.IsNotFound(err):
+		if prefixed {
+			l.prefixMissing = true
+		}
+	case !prefixed && l.prefixMissing && isAWSAccessDenied(err):
+		l.notAllowed = append(l.notAllowed, name)
+	default:
+		l.allMissing = false
+		l.lastReal = err
+	}
+}
+
+func (l *secretLookup) failure() error {
+	nf := &SecretNotFoundError{Cluster: l.cluster, Tried: l.missingNames(), NotAllowed: append([]string(nil), l.notAllowed...)}
+	if l.allMissing || l.lastReal == nil {
+		return credsafe.MarkNotFound(nf)
+	}
+	return fmt.Errorf("%w: %w", nf, l.lastReal)
+}
+
+// missingNames is every name tried that AWS said is not there.
+func (l *secretLookup) missingNames() []string {
+	out := make([]string, 0, len(l.names))
+	for _, n := range l.names {
+		if !sliceContains(l.notAllowed, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// SecretNotFoundError is the error for "every try of this cluster's secret
+// failed". On its own it means the secret is not there (it then also carries
+// credsafe's not-found marker); wrapped together with a real AWS failure it
+// only lists what was tried.
+//
+// Tried is the names AWS said are not there. NotAllowed is a plain name AWS
+// would not let Sharko read after the prefixed name was not found (ep4 round
+// S, S3). Both are secret NAMES from the cluster's own settings, never a
+// value. Read them with SecretNotFoundNames.
+type SecretNotFoundError struct {
+	Cluster    string
+	Tried      []string
+	NotAllowed []string
+}
+
+func (e *SecretNotFoundError) Error() string {
+	msg := fmt.Sprintf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
+		"Set secret_path on the cluster to specify the exact name",
+		e.Cluster, strings.Join(e.Tried, ", "))
+	if len(e.NotAllowed) > 0 {
+		msg += fmt.Sprintf(". Not allowed to read: %s", strings.Join(e.NotAllowed, ", "))
+	}
+	return msg
+}
+
+// SecretNotFoundNames returns the names AWS said are not there and the names
+// Sharko was not allowed to read, but ONLY when err says the secret is not
+// there (credsafe.IsNotFound). ok is false for every other error, including
+// a lookup that failed for a real AWS reason.
+func SecretNotFoundNames(err error) (tried, notAllowed []string, ok bool) {
+	if !credsafe.IsNotFound(err) {
+		return nil, nil, false
+	}
+	var nf *SecretNotFoundError
+	if !errors.As(err, &nf) || len(nf.Tried) == 0 {
+		return nil, nil, false
+	}
+	return append([]string(nil), nf.Tried...), append([]string(nil), nf.NotAllowed...), true
 }
 
 // StoredConnectionFacts reports what this backend has STORED for the named
@@ -383,24 +485,27 @@ func (p *AWSSecretsManagerProvider) StoredConnectionFacts(lookupKey string) (*St
 // rawPayloadForCluster fetches the stored secret bytes for a cluster using the
 // same prefix-then-exact-name lookup GetCredentials uses, and does nothing else
 // with them. No sniff, no parse, no mint.
+//
+// Like GetCredentials it keeps the AWS error (ep4 round R, R6): when a lookup
+// fails for any reason other than "the secret is not there", that error stays
+// inside the returned one, so the read-only check can still tell a refused
+// login from an AWS that never answered, by type.
 func (p *AWSSecretsManagerProvider) rawPayloadForCluster(clusterName string) ([]byte, error) {
-	var tried []string
+	look := newSecretLookup(clusterName)
 	if p.prefix != "" {
 		withPrefix := p.prefix + clusterName
-		tried = append(tried, withPrefix)
-		if raw, err := p.rawSecretValue(withPrefix); err == nil {
+		raw, err := p.rawSecretValue(withPrefix)
+		if err == nil {
 			return raw, nil
 		}
+		look.note(withPrefix, err, true)
 	}
-	if !sliceContains(tried, clusterName) {
-		tried = append(tried, clusterName)
-	}
-	if raw, err := p.rawSecretValue(clusterName); err == nil {
+	raw, err := p.rawSecretValue(clusterName)
+	if err == nil {
 		return raw, nil
 	}
-	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
-		"Set secret_path on the cluster to specify the exact name",
-		clusterName, strings.Join(tried, ", "))
+	look.note(clusterName, err, false)
+	return nil, look.failure()
 }
 
 // rawSecretValue reads one secret's string payload by exact name.
@@ -409,7 +514,14 @@ func (p *AWSSecretsManagerProvider) rawSecretValue(secretName string) ([]byte, e
 		SecretId: aws.String(secretName),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+		wrapped := fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", secretName, err)
+		// Same rule as fetchSecret: the SDK's own type is the only thing that
+		// says the secret is not there.
+		var missing *types.ResourceNotFoundException
+		if errors.As(err, &missing) {
+			return nil, credsafe.MarkNotFound(wrapped)
+		}
+		return nil, wrapped
 	}
 	if output.SecretString == nil {
 		return nil, fmt.Errorf("secret %q has no string value", secretName)

@@ -61,7 +61,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
-import { useConnectionHealth } from '@/hooks/useConnectionHealth';
+import { useConnectionHealth, isAWSLoginMessageId, isAWSUnreachableMessageId } from '@/hooks/useConnectionHealth';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseResultView } from '@/components/DiagnoseModal';
@@ -261,6 +261,28 @@ export const CLUSTER_NOT_FOUND_DESCRIPTION =
   'It may have been registered via a pending PR that has not yet merged. ' +
   'Open the Clusters page and look for an open PR under "Pending Registrations" or "Pending Changes".';
 
+// The title of the amber banner shown while Sharko could not get a new EKS
+// sign-in token but ArgoCD's connection still works (ep4 round S, S2). The
+// body is the server's own sentence. Pinned by exact text in
+// ClusterDetail.test.tsx.
+export const TOKEN_RENEWAL_BANNER_TITLE = 'ArgoCD is still connected, for now';
+
+/** Where Settings → Secrets Provider lives (Settings.tsx section key). */
+export const SECRETS_PROVIDER_SETTINGS_ROUTE = '/settings?section=secrets-provider';
+/**
+ * The line under the Diagnostics banner when the secrets store is what is
+ * failing and the server did not say it was an AWS login problem.
+ *
+ * Settings → Secrets Provider holds the store type, the region and the name
+ * prefix. It holds no login for any store, so this line does not say to fix a
+ * login there (ep4 round R, R1).
+ */
+export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
+  'Check your secrets store settings in Settings → Secrets Provider, then test it there.';
+/** The docs page that shows how to give Sharko an AWS login off EKS. */
+export const AWS_LOGIN_DOCS_URL =
+  'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login';
+export const AWS_LOGIN_DOCS_LINK_TEXT = 'Give Sharko an AWS login';
 export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
 export function notManagedDescription(name: string): string {
   return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;
@@ -1459,6 +1481,13 @@ CLUSTER_NOT_FOUND_DESCRIPTION
   const hasSystemCheckAddon =
     data?.addon_comparisons?.some((a) => a.status === 'sharko_system') ?? false;
   const showConnectivityCheckBanner = showCheckRow || hasSystemCheckAddon;
+  // A failed EKS token renewal while ArgoCD still says "Successful" (ep4
+  // round S, S2): the old token still works, so ArgoCD's connection has NOT
+  // failed and the addon health below is live. This gets its own amber
+  // banner, and the red "unreachable" banners — with their "may be stale"
+  // line — stay off until ArgoCD itself reports a failure.
+  const tokenRenewalProblem =
+    data?.argocd_connection_status === 'Successful' ? (data?.token_renewal_problem ?? '') : '';
 
   return (
     <div className="space-y-6">
@@ -1706,12 +1735,26 @@ CLUSTER_NOT_FOUND_DESCRIPTION
         </div>
       </div>
 
+      {tokenRenewalProblem && (
+        <div
+          className="flex items-start gap-3 rounded-xl border-2 border-amber-300 bg-amber-50 px-5 py-4 dark:border-amber-700 dark:bg-amber-900/20"
+          role="status"
+          data-testid="token-renewal-banner"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">{TOKEN_RENEWAL_BANNER_TITLE}</p>
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">{tokenRenewalProblem}</p>
+          </div>
+        </div>
+      )}
+
       {/* Connection health banners — relocated from the old Overview tab so
         * a stale-data warning stays visible on every section, especially the
         * new default (Addons). The redundant green "Cluster connected"
         * banner was dropped here since the ribbon above already shows
         * connection status at a glance. */}
-      {computedStatus === 'unreachable' && (() => {
+      {computedStatus === 'unreachable' && !tokenRenewalProblem && (() => {
         const hasArgoCDError = data.argocd_connection_status && data.argocd_connection_status !== 'Successful';
         if (hasArgoCDError) {
           // Consolidated banner: ArgoCD error IS the root cause
@@ -2560,11 +2603,48 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                       ))}
                     </ul>
                     <p className="mt-2 text-sm text-red-700 dark:text-red-400">
-                      The checks below may fail for the same reason.{' '}
-                      <Link to="/settings?section=connections" className="underline hover:text-red-900 dark:hover:text-red-300">
-                        Fix it in Settings → Connections
-                      </Link>
+                      The checks below may fail for the same reason.
+                      {(connHealth.git === 'error' || connHealth.argocd === 'error') && (
+                        <>
+                          {' '}
+                          <Link to="/settings?section=connections" className="underline hover:text-red-900 dark:hover:text-red-300">
+                            Fix it in Settings → Connection
+                          </Link>
+                        </>
+                      )}
                     </p>
+                    {connHealth.vault === 'error' && !isAWSLoginMessageId(connHealth.vaultMessageId) && (
+                      <p className="mt-1 text-sm text-red-700 dark:text-red-400" data-testid="diag-secrets-fix">
+                        <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
+                          {DIAGNOSTICS_SECRETS_FIX_SENTENCE}
+                        </Link>
+                      </p>
+                    )}
+                    {connHealth.vault === 'error' && isAWSLoginMessageId(connHealth.vaultMessageId) && (
+                      <p className="mt-1 text-sm text-red-700 dark:text-red-400" data-testid="diag-aws-fix">
+                        {/* Only "no answer from AWS" links Settings → Secrets
+                            Provider: it asks to check the region, and the
+                            region is all that page holds. A refused login or
+                            no login at all is fixed outside Sharko, so those
+                            show the docs page only (ep4 round R, R1). */}
+                        {isAWSUnreachableMessageId(connHealth.vaultMessageId) && (
+                          <>
+                            <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
+                              Open Settings → Secrets Provider
+                            </Link>
+                            {' · '}
+                          </>
+                        )}
+                        <a
+                          href={AWS_LOGIN_DOCS_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-red-900 dark:hover:text-red-300"
+                        >
+                          {AWS_LOGIN_DOCS_LINK_TEXT}
+                        </a>
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

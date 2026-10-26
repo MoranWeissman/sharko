@@ -237,8 +237,13 @@ instead of silently doing nothing.
 ## Why identity-based access is the recommended path
 
 For EKS, the best way is for Sharko to get its own short-lived EKS tokens
-with IRSA or Pod Identity, the same way this page sets up ArgoCD. Nothing
-long-lived is stored, so there is nothing to leak or forget to rotate. The
+with IRSA or Pod Identity, the same way this page sets up ArgoCD. The EKS
+details are kept in your secrets backend, and Sharko makes a short-lived
+token from them. Sharko runs on EKS here, with its own AWS role, so no
+long-lived AWS key is stored, and there is no key to leak or forget to rotate.
+If Sharko does not run on EKS, you give it an AWS access key, and that key is
+stored in a Kubernetes Secret (see
+[Give Sharko an AWS login](configuration.md#aws-login)). The
 other ways (a stored kubeconfig, or a pasted one) are still supported, and
 they are the only ways for clusters outside AWS. See
 [Cluster Connectivity Model](cluster-connectivity-model.md) for all the

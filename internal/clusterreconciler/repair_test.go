@@ -110,17 +110,22 @@ func TestRepairOwnedConnectionSecret_StampsProvenanceAndAppliedRevision(t *testi
 
 // TestRepairOwnedConnectionSecret_AuditsEveryAttempt is rule 15 for the write
 // half: a success, a no-op and a refusal each leave a trail.
-func TestRepairOwnedConnectionSecret_AuditsEveryAttempt(t *testing.T) {
+// TestRepairOwnedConnectionSecret_WritesNoAuditEntryOfItsOwn pins ep4
+// serious 4: one Repair click must give one activity line. The request that
+// asked for the repair already writes that line (internal/api
+// connection_repair.go — every outcome, refusals included, so rule 15 still
+// holds there). This function used to write a second one under Source
+// "reconciler", which the activity feed showed as "Background reconciler"
+// repairing a connection nobody asked it to repair.
+func TestRepairOwnedConnectionSecret_WritesNoAuditEntryOfItsOwn(t *testing.T) {
 	cases := []struct {
-		name       string
-		live       *corev1.Secret
-		wantResult string
+		name string
+		live *corev1.Secret
 	}{
 		{
 			name: "a repair that writes",
 			live: ownedConnSecret(map[string]string{"datadog": "disabled"},
 				map[string]string{"name": repairReconCluster, "server": "https://stale.invalid"}, nil),
-			wantResult: "success",
 		},
 		{
 			name: "a refusal because another tool owns it",
@@ -129,7 +134,6 @@ func TestRepairOwnedConnectionSecret_AuditsEveryAttempt(t *testing.T) {
 				s.Labels[argosecrets.LabelManagedBy] = "another-tool"
 				return s
 			}(),
-			wantResult: "failure",
 		},
 	}
 
@@ -142,35 +146,8 @@ func TestRepairOwnedConnectionSecret_AuditsEveryAttempt(t *testing.T) {
 			_, _ = r.RepairOwnedConnectionSecret(context.Background(),
 				desiredConnSecret(t, map[string]string{"datadog": "enabled"}), "cafe1234")
 
-			// Ruling (f): a repair that did NOT happen is recorded under
-			// the failure-shaped event, not under the past-tense one. Rule
-			// 15 still holds — every attempt is audited — the entry just no
-			// longer claims a repair that never ran.
-			wantEvent := EventClusterConnectionRepair
-			if tc.wantResult != "success" {
-				wantEvent = EventClusterConnectionRepairFailed
-			}
-			found := false
-			for _, e := range audits.Snapshot() {
-				if e.Event == wantEvent {
-					found = true
-					if e.Result != tc.wantResult {
-						t.Errorf("audit result = %q, want %q", e.Result, tc.wantResult)
-					}
-					if e.Resource != "cluster:"+repairReconCluster {
-						t.Errorf("audit resource = %q", e.Resource)
-					}
-				}
-			}
-			if !found {
-				t.Errorf("no %s audit entry was written for %q — rule 15 says every attempt is audited, including refusals", wantEvent, tc.name)
-			}
-			// And the past-tense event must NEVER carry a non-success
-			// outcome: that pairing is the contradiction ruling (f) removed.
-			for _, e := range audits.Snapshot() {
-				if e.Event == EventClusterConnectionRepair && e.Result != "success" {
-					t.Errorf("%q recorded result %q — a past-tense \"repaired\" title may only ever be a success", e.Event, e.Result)
-				}
+			if got := audits.Snapshot(); len(got) != 0 {
+				t.Errorf("RepairOwnedConnectionSecret wrote %d audit entries (first event %q) — the request already writes the one activity line for a Repair click, a second one doubles it", len(got), got[0].Event)
 			}
 		})
 	}

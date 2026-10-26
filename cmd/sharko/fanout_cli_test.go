@@ -94,6 +94,22 @@ func TestAddClusters_ExitCodeAndSummaryAgreeWithTheOutcome(t *testing.T) {
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				w.Header().Set("Content-Type", "application/json")
+				// The first call is the check with nothing changed: answer it the
+				// way the server does, a success with a preview in it for each
+				// name. Only the second call carries the shape under test.
+				var req batchRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				if len(req.Clusters) > 0 && req.Clusters[0].DryRun {
+					preview := []map[string]any{}
+					for _, c := range req.Clusters {
+						preview = append(preview, map[string]any{
+							"status": "success", "cluster": map[string]any{"name": c.Name},
+							"dry_run": map[string]any{}, "completed_steps": []string{"fetch_credentials"},
+						})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"results": preview})
+					return
+				}
 				w.WriteHeader(batchHTTPStatusFor(shape))
 				_ = json.NewEncoder(w).Encode(batchBodyFor(shape))
 			})
@@ -105,6 +121,7 @@ func TestAddClusters_ExitCodeAndSummaryAgreeWithTheOutcome(t *testing.T) {
 			}
 
 			resetFlags(addClustersCmd)
+			setFlags(t, addClustersCmd, map[string]string{"yes": "true"})
 			out, err := captureStdoutT(t, func() error {
 				return addClustersCmd.RunE(addClustersCmd, []string{strings.Join(names, ",")})
 			})

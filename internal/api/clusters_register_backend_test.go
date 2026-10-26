@@ -32,9 +32,10 @@ import (
 // recordingCredProvider is an SM-style ClusterCredentialsProvider fake that
 // records every GetCredentials lookup.
 type recordingCredProvider struct {
-	calls []string
-	kc    *providers.Kubeconfig
-	err   error
+	calls      []string
+	factsCalls []string
+	kc         *providers.Kubeconfig
+	err        error
 }
 
 func (p *recordingCredProvider) GetCredentials(name string) (*providers.Kubeconfig, error) {
@@ -43,6 +44,21 @@ func (p *recordingCredProvider) GetCredentials(name string) (*providers.Kubeconf
 		return nil, p.err
 	}
 	return p.kc, nil
+}
+
+// StoredConnectionFacts makes the fake an SM-style backend holding a fixed
+// login (a stored kubeconfig), like the real AWS SM and Kubernetes Secrets
+// providers. A dry run asks this first and only goes on to GetCredentials
+// when reading the login makes no sign-in token (ep4).
+func (p *recordingCredProvider) StoredConnectionFacts(name string) (*providers.StoredConnectionFacts, error) {
+	p.factsCalls = append(p.factsCalls, name)
+	if p.err != nil {
+		return nil, p.err
+	}
+	if p.kc == nil {
+		return &providers.StoredConnectionFacts{}, nil
+	}
+	return &providers.StoredConnectionFacts{Server: p.kc.Server, CAData: p.kc.CAData, Token: p.kc.Token}, nil
 }
 
 func (p *recordingCredProvider) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }

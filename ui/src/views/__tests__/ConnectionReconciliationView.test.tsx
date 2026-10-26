@@ -896,6 +896,55 @@ describe('page-state matrix v3 — headline, qualifier, offered action per row',
 // Role gates and error paths
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ep4 round S, S1: Sharko could not get a new EKS sign-in token, but the
+// token ArgoCD holds still works. The page must say what is true: ArgoCD is
+// connected now, and will lose the connection when the current token runs
+// out. Never "Unavailable" for this case.
+const RENEWAL_FAILED_WARNING =
+  'Sharko could not get a new sign-in token for this cluster, so ArgoCD will lose its connection to it soon. Check that Sharko can reach your secrets provider and AWS, then click Refresh EKS connection.'
+
+describe('a failed EKS token renewal while the old token still works (S1)', () => {
+  it('says "ArgoCD connection: Connected" with the renewal warning, and never "Unavailable"', async () => {
+    renderView(
+      makeView({
+        health: { state: 'connected', warning: RENEWAL_FAILED_WARNING },
+        conditions: [
+          ...okConditions.filter((c) => c.id !== 'argocd_connection'),
+          { id: 'argocd_connection', status: 'attention', detail: RENEWAL_FAILED_WARNING },
+        ] as ConnectionReconciliation['conditions'],
+      }),
+    )
+    await waitForView()
+    expect(screen.getByTestId('recon-health').textContent).toBe('ArgoCD connection: Connected')
+    expect(screen.getByTestId('recon-health-warning').textContent).toBe(RENEWAL_FAILED_WARNING)
+    // The old wording for this case, banned.
+    expect(screen.getByTestId('recon-health').textContent).not.toContain('Unavailable')
+    expect(screen.queryByText(/ArgoCD connection: Unavailable/)).toBeNull()
+    expect(screen.queryByText(/ArgoCD cannot currently use this connection/)).toBeNull()
+    // It is a warning, not ArgoCD's own failure.
+    expect(screen.queryByTestId('recon-health-message')).toBeNull()
+  })
+
+  it('a real ArgoCD failure still wins: "Unavailable" with ArgoCD\'s own message, and no renewal warning', async () => {
+    renderView(
+      makeView({
+        health: { state: 'unavailable', message: 'the server has asked for the client to provide credentials' },
+      }),
+    )
+    await waitForView()
+    expect(screen.getByTestId('recon-health').textContent).toBe('ArgoCD connection: Unavailable')
+    expect(screen.getByTestId('recon-health-message').textContent).toBe('the server has asked for the client to provide credentials')
+    expect(screen.queryByTestId('recon-health-warning')).toBeNull()
+  })
+
+  it('no renewal trouble: no warning line at all', async () => {
+    renderView(makeView())
+    await waitForView()
+    expect(screen.getByTestId('recon-health').textContent).toBe('ArgoCD connection: Connected')
+    expect(screen.queryByTestId('recon-health-warning')).toBeNull()
+  })
+})
+
 describe('role gates', () => {
   it('a viewer sees the calm access sentence and fires NO request at all', async () => {
     renderView(makeView(), 'viewer')
@@ -1830,7 +1879,11 @@ describe('P6 — foreign-owned: the boundary is stated once, and the takeover do
       ] as ConnectionReconciliation['conditions'],
     })
     await waitForView()
-    expect(screen.getByTestId('recon-conditions-compact').textContent).toBe('1 check passed.')
+    // This fixture is a check that did not finish (credential read failed), so
+    // the line also says that. Still exact text, still never "1 checks passed".
+    expect(screen.getByTestId('recon-conditions-compact').textContent).toBe(
+      `1 other check passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`,
+    )
   })
 })
 
@@ -2005,6 +2058,32 @@ describe('the folded routine-successes line never claims a check that did not ha
     expect(routineChecksSummary(1, false)).toBe('1 check passed.')
     expect(routineChecksSummary(6, true)).toBe('All 6 checks passed.')
     expect(routineChecksSummary(5, false)).toBe('5 checks passed.')
+  })
+
+  it('does not say "All N checks passed" when the main check did not finish', () => {
+    expect(routineChecksSummary(6, true, false)).toBe(`6 other checks passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`)
+    expect(routineChecksSummary(1, true, false)).toBe(`1 other check passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`)
+    expect(routineChecksSummary(6, true, false)).not.toContain('All 6')
+    expect(routineChecksSummary(0, true, false)).toBe('No routine checks.')
+  })
+
+  it('the page with a failed credential check says it did not finish, even when the server sent no reason', async () => {
+    renderView(
+      makeView({
+        sync: { headline: CONNECTION_SENTENCES.headlineUnknownCheckFailed, state: 'unknown', verification_scope: 'none', approval_required: false, checked_at: '2026-08-18T10:00:00Z' },
+        conditions: [
+          { id: 'git_definition', status: 'ok', detail: S.condGitOK },
+          { id: 'ownership', status: 'ok', detail: S.condOwnOK },
+          { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
+        ],
+        plan: { action: 'none', action_scopes: [] },
+      }),
+    )
+    await waitForView()
+    expect(screen.getByTestId('recon-sync-reason').textContent).toBe(CONNECTION_SENTENCES.condCheckDidNotFinish)
+    const compact = screen.getByTestId('recon-conditions-compact').textContent ?? ''
+    expect(compact).toContain(`3 other checks passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`)
+    expect(compact).not.toContain('All 3 checks passed')
   })
 })
 

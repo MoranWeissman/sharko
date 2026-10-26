@@ -50,6 +50,12 @@ func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		safeMsg := credsafe.Sentence(err)
 		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "step", "fetch-credentials", "error", safeMsg)
+		// The secret is simply not there: say so, with the secret names
+		// Sharko tried, picked by the error's TYPE (ep4 round S, S3).
+		if sentence, ok := secretNotFoundSentence(err); ok {
+			writeError(w, http.StatusBadGateway, sentence)
+			return
+		}
 		writeError(w, http.StatusBadGateway, "failed to fetch credentials: "+safeMsg)
 		return
 	}

@@ -133,6 +133,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	backendConfigured := s.credProvider() != nil
 	for i := range resp.Clusters {
 		c := &resp.Clusters[i]
+		if applyTokenRenewalTrouble(c, s.clusterRecon) {
+			moveRenewalTroubleInStats(resp.HealthStats)
+		}
 		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
 		c.ConnectivityStatus = verdict.Status
 		c.ConnectivityDetail = verdict.Detail
@@ -155,6 +158,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// "Test connection" click — see computeDerivedHealth.
 		hasHealthyAddon := clusterHasHealthyAddon(c.Name, c.ServerURL, allApps)
 		c.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, c.ConnectionStatus)
+		applyTokenRenewalVerdict(c, s.clusterRecon)
 		// V2-cleanup-88.1: pure string/shape derivation, no extra call —
 		// always computed, unlike the ArgoCD-app-dependent fields above.
 		c.TargetPlatform = computeTargetPlatform(c.ServerURL, c.CredsSource)
@@ -337,6 +341,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	// internally; fetch it again here to avoid threading it through the service
 	// return value (the service layer is deliberately obs-free).
 	// Best-effort: fields stay absent on failure.
+	applyTokenRenewalTrouble(&resp.Cluster, s.clusterRecon)
 	detailApps, detailAppsErr := ac.ListApplications(r.Context())
 	hasHealthyAddon := false
 	if detailAppsErr == nil {
@@ -348,6 +353,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		hasHealthyAddon = clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, detailApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
+	applyTokenRenewalVerdict(&resp.Cluster, s.clusterRecon)
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
 	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
 	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)
@@ -488,6 +494,8 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	// build the comparison; we call it again here rather than thread the
 	// result through the service layer to avoid coupling service ↔ obs.
 	// Best-effort: fields stay absent on failure.
+	applyTokenRenewalTrouble(&resp.Cluster, s.clusterRecon)
+	applyTokenRenewalProblem(resp, s.clusterRecon)
 	compApps, compAppsErr := ac.ListApplications(r.Context())
 	hasHealthyAddon := false
 	if compAppsErr == nil {
@@ -499,6 +507,7 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 		hasHealthyAddon = clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, compApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
+	applyTokenRenewalVerdict(&resp.Cluster, s.clusterRecon)
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
 	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
 	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)

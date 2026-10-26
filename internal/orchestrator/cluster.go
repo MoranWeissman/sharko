@@ -255,6 +255,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// credentials available" and every consumer guards on it.
 	var creds *providers.Kubeconfig
 	credsSkippedReason := ""
+	previewNotRead := false
 	if isInlineSource(credsSource) {
 		// TrimSpace (V2-cleanup-60 L5, generalized by V2-cleanup-88.3): a
 		// whitespace-only kubeconfig ("\n", spaces, ...) must be treated
@@ -291,7 +292,25 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			// (and the Stage-1 verification it feeds) mints with the same
 			// identity later fetches will use (V2-cleanup-62.2).
 			var fetchErr error
-			creds, fetchErr = providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupName, req.RoleARN)
+			preview := previewCredentials(o.credProvider, credLookupName, req.DryRun)
+			switch {
+			case preview.notRead:
+				// A dry run on a backend that cannot answer without
+				// possibly making a sign-in token: nothing is read.
+				previewNotRead = true
+			case preview.storedOnly:
+				// A dry run on stored EKS details: Sharko found them and
+				// made no token. There is nothing to verify with.
+				steps = append(steps, "fetch_credentials")
+				if addrErr := checkClusterServerAddress(preview.server); addrErr != nil {
+					return nil, addrErr
+				}
+				result.Cluster.Server = preview.server
+			case preview.err != nil:
+				fetchErr = preview.err
+			default:
+				creds, fetchErr = providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupName, req.RoleARN)
+			}
 			if refusal, refused := providers.AsKubeconfigRefusal(fetchErr); refused {
 				// The backend HAS a kubeconfig for this cluster, but it was
 				// refused: it points at a file or runs a program inside
@@ -318,7 +337,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 				// credentials-backend failure like every other boundary here.
 				creds = nil
 				credsSkippedReason = "credentials lookup failed: " + credsafe.Sentence(fetchErr)
-			} else {
+			} else if creds != nil {
 				steps = append(steps, "fetch_credentials")
 			}
 		}
@@ -330,6 +349,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			return nil, addrErr
 		}
 		result.Cluster.Server = creds.Server
+	}
+	if previewNotRead {
+		steps = append(steps, "skip_credentials_preview")
+		log.Info("registration preview: the cluster's login was not read, because this secrets backend cannot be asked without possibly making a sign-in token",
+			"cluster", req.Name)
 	}
 	if credsSkippedReason != "" {
 		if selfManaged {
@@ -1234,4 +1258,52 @@ func registerAlreadyWaitingMessage(name string, prID int, prURL string) string {
 	return fmt.Sprintf(
 		"Registering %s is already waiting in %s: %s. Sharko did not open a second one. Merge it to finish.",
 		name, PullRequestPhrase(prID), prURL)
+}
+
+// credentialPreview is what a dry run may learn about a cluster's login
+// without making a sign-in token (ep4).
+type credentialPreview struct {
+	// storedOnly: the backend holds EKS details, not a login. They were
+	// found; no token was made, and none will be for the preview.
+	storedOnly bool
+	server     string
+	// notRead: the backend cannot be asked read-only, so a dry run does not
+	// ask it at all (asking could make a token).
+	notRead bool
+	// err: the read-only lookup failed. Treated like a failed fetch.
+	err error
+}
+
+// previewCredentials decides how RegisterCluster may look up a cluster's
+// login. A real registration (dryRun false) always gets the zero value: it
+// fetches as it always has.
+//
+// A dry run must never make an EKS sign-in token. GetCredentials makes one
+// every time it is called on stored EKS details, so a dry run first asks the
+// read-only StoredConnectionFacts. Only when that says the backend holds a
+// fixed login (nothing is made by reading it) does the dry run go on to
+// GetCredentials, which then keeps the read-only connection preview it has
+// always had.
+func previewCredentials(p providers.ClusterCredentialsProvider, lookupKey string, dryRun bool) credentialPreview {
+	if !dryRun {
+		return credentialPreview{}
+	}
+	reader, ok := p.(providers.StoredConnectionFactsProvider)
+	if !ok {
+		return credentialPreview{notRead: true}
+	}
+	if _, isArgo := p.(*providers.ArgoCDProvider); isArgo {
+		return credentialPreview{notRead: true}
+	}
+	facts, err := reader.StoredConnectionFacts(lookupKey)
+	if err != nil {
+		return credentialPreview{err: err}
+	}
+	if facts == nil {
+		return credentialPreview{notRead: true}
+	}
+	if facts.CredentialMintedPerFetch {
+		return credentialPreview{storedOnly: true, server: facts.Server}
+	}
+	return credentialPreview{}
 }

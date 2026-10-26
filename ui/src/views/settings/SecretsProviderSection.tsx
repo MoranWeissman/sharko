@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Shield, Globe, Activity, Loader2, CheckCircle, XCircle, KeyRound, ChevronRight } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
+import type { Cluster as ClusterInfo } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { ConfirmationModal } from '@/components/ConfirmationModal'
 import { showToast } from '@/components/ToastNotification'
 import {
   type ProviderType,
@@ -35,6 +37,56 @@ export { canonicalizeProviderType }
  * values too (internal/providers AddonSecretConfigFromConnection).
  */
 export const ADDON_BACKEND_SAME_AS_CLUSTER_LABEL = 'Same as the cluster backend'
+
+/**
+ * Said before saving a different backend, when some clusters read their login
+ * from the one that is in use now. Pinned word for word in the tests.
+ */
+export const SWITCH_BACKEND_TITLE = 'Switch the secrets backend?'
+export function switchBackendWarning(count: number): string {
+  return count === 1
+    ? '1 cluster reads its login from the current backend. After you switch, Sharko will look for that login in the new backend. Copy it there first, or this cluster will stop working the next time Sharko rebuilds its connection.'
+    : `${count} clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, or these clusters will stop working the next time Sharko rebuilds their connection.`
+}
+/** Said instead, when Sharko could not find out which clusters would be hit. */
+export const SWITCH_BACKEND_UNKNOWN_WARNING =
+  'Sharko could not check which clusters read their login from the current backend. If some do, copy their logins to the new backend first, or they will stop working the next time Sharko rebuilds their connection.'
+export const SWITCH_BACKEND_CONFIRM = 'Switch backend'
+
+/**
+ * Clusters whose login Sharko reads out of the secrets backend. A kubeconfig
+ * cluster keeps its whole login there. An EKS-token cluster keeps its stored
+ * EKS details there (address, CA, region, role), and Sharko makes the token
+ * from them (internal/providers routing: both sources are fetched from the
+ * backend). Both stop working if the new backend does not hold them.
+ */
+const BACKEND_LOGIN_SOURCES = ['secret-kubeconfig', 'eks-token']
+/**
+ * A cluster with no recorded login source (an older entry) is tried against the
+ * backend first (internal/providers routing: the "" case), so it counts too.
+ */
+function readsFromBackend(credsSource: string | undefined): boolean {
+  return !credsSource || BACKEND_LOGIN_SOURCES.includes(credsSource)
+}
+/** Said beside a cluster whose login source was never recorded. */
+export const SWITCH_BACKEND_UNRECORDED_NOTE = 'login source not recorded, tried in the backend first'
+
+/** The server's most clusters per page (internal/api/pagination.go). Kept local so tests that mock the api keep working. */
+const CLUSTERS_PAGE_SIZE = 100
+
+/** Every cluster, all pages (the server gives at most 100 at a time). */
+async function listAllClusters() {
+  const all: ClusterInfo[] = []
+  for (let page = 1; page <= 1000; page++) {
+    const { data, total } = await api.getClustersPage(page, CLUSTERS_PAGE_SIZE)
+    const got = data.clusters ?? []
+    all.push(...got)
+    if (got.length < CLUSTERS_PAGE_SIZE || (total !== null && all.length >= total)) break
+  }
+  return all
+}
+/** Said beside an EKS-token cluster in the list, so the reader knows what is read. */
+export const SWITCH_BACKEND_EKS_NOTE = 'stored EKS details'
 
 const UNKNOWN_PROVIDER = '__unknown__' as const
 type FormProviderType = ProviderType | typeof UNKNOWN_PROVIDER
@@ -232,7 +284,38 @@ export function SecretsProviderSection() {
     setShowAdvanced(!!fallbackPrefix)
   }, [hasConnProvider, providerInfo])
 
+  // Set while the "switch the backend?" question is on screen. `names` is the
+  // clusters that read their login from the current backend; null means Sharko
+  // could not find out.
+  const [switchWarning, setSwitchWarning] = useState<{ names: string[] | null; eks: string[]; unrecorded: string[] } | null>(null)
+
   async function handleSave() {
+    if (!existingConn) return
+    // Switching to a different backend: ask first when clusters depend on the
+    // one in use now. Only the backend itself counts, not region or prefix.
+    const savedType = existingConn.provider?.type ?? providerInfo?.type ?? ''
+    const savedBackend = canonicalizeProviderType(savedType)
+    if (savedBackend !== '' && form.provider_type !== UNKNOWN_PROVIDER && form.provider_type !== savedBackend) {
+      let names: string[] | null
+      let eks: string[] = []
+      let unrecorded: string[] = []
+      try {
+        const hit = (await listAllClusters()).filter((c) => c.managed !== false && readsFromBackend(c.creds_source))
+        names = hit.map((c) => c.name)
+        eks = hit.filter((c) => c.creds_source === 'eks-token').map((c) => c.name)
+        unrecorded = hit.filter((c) => !c.creds_source).map((c) => c.name)
+      } catch {
+        names = null
+      }
+      if (names === null || names.length > 0) {
+        setSwitchWarning({ names, eks, unrecorded })
+        return
+      }
+    }
+    await saveNow()
+  }
+
+  async function saveNow() {
     if (!existingConn) return
 
     // Validate: when cluster-creds is argocd, addon-secret backend is REQUIRED
@@ -302,6 +385,34 @@ export function SecretsProviderSection() {
           <ChevronRight className="h-3.5 w-3.5" />
         </a>
       </div>
+
+      <ConfirmationModal
+        open={switchWarning !== null}
+        onClose={() => setSwitchWarning(null)}
+        onConfirm={() => {
+          setSwitchWarning(null)
+          void saveNow()
+        }}
+        title={SWITCH_BACKEND_TITLE}
+        description={
+          switchWarning?.names ? switchBackendWarning(switchWarning.names.length) : SWITCH_BACKEND_UNKNOWN_WARNING
+        }
+        confirmText={SWITCH_BACKEND_CONFIRM}
+        destructive
+        extraContent={
+          switchWarning?.names ? (
+            <ul className="mt-3 list-disc space-y-0.5 pl-5 text-sm text-[#0a2a4a] dark:text-gray-200" data-testid="switch-backend-clusters">
+              {switchWarning.names.map((n) => (
+                <li key={n}>
+                  <span className="font-mono">{n}</span>
+                  {switchWarning.eks.includes(n) ? ` (${SWITCH_BACKEND_EKS_NOTE})` : ''}
+                  {switchWarning.unrecorded.includes(n) ? ` (${SWITCH_BACKEND_UNRECORDED_NOTE})` : ''}
+                </li>
+              ))}
+            </ul>
+          ) : undefined
+        }
+      />
 
       {/* Current status card */}
       {(

@@ -290,15 +290,41 @@ func saveConfig(cfg *SharkoConfig) error {
 	return nil
 }
 
+// defaultRequestTimeout is how long an ordinary call waits for the server.
+const defaultRequestTimeout = 15 * time.Second
+
+// batchRequestTimeout is how long the batch registration call waits. The
+// server does the clusters one after the other, about 5 to 6 seconds each, so
+// a batch of 10 needs about a minute. 15 seconds gave up in the middle of the
+// work and the command printed "failed" while the server was still going.
+// A variable so a test can shorten it.
+var batchRequestTimeout = 2 * time.Minute
+
+// requestTimedOutError means the client stopped waiting. It does NOT mean the
+// server stopped: a write may still be running there. The text is the same
+// text an ordinary failed call has always had, so callers that only print the
+// error are unchanged; the batch command uses the type to say something more
+// careful.
+type requestTimedOutError struct {
+	msg string
+}
+
+func (e *requestTimedOutError) Error() string { return e.msg }
+
 // buildHTTPClient creates an HTTP client with a 15-second timeout.
 // If insecure is true, TLS certificate verification is skipped.
 func buildHTTPClient(insecure bool) *http.Client {
+	return buildHTTPClientWithTimeout(insecure, defaultRequestTimeout)
+}
+
+// buildHTTPClientWithTimeout is buildHTTPClient with a chosen timeout.
+func buildHTTPClientWithTimeout(insecure bool, timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if insecure {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return &http.Client{
-		Timeout:   15 * time.Second,
+		Timeout:   timeout,
 		Transport: transport,
 	}
 }
@@ -310,6 +336,12 @@ func buildHTTPClient(insecure bool) *http.Client {
 // saved config's server URL. The token is always taken from the saved
 // config — --server is a URL override, not a new auth context.
 func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
+	return apiRequestWithTimeout(method, path, body, defaultRequestTimeout)
+}
+
+// apiRequestWithTimeout is apiRequest with a chosen wait. When the wait runs
+// out, the error is a *requestTimedOutError.
+func apiRequestWithTimeout(method, path string, body interface{}, timeout time.Duration) ([]byte, int, error) {
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, 0, err
@@ -362,9 +394,17 @@ func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
 	req.Header.Set("Content-Type", "application/json")
 
 	insecure, _ := rootCmd.PersistentFlags().GetBool("insecure")
-	client := buildHTTPClient(insecure)
+	client := buildHTTPClientWithTimeout(insecure, timeout)
 	resp, err := client.Do(req)
 	if err != nil {
+		// Whether the wait ran out is read from Sharko's own description of
+		// the failure, so the transport's error is still only ever handed
+		// to credsafe (BF12).
+		reason := credsafe.PlainFailureReason(err)
+		if strings.Contains(reason, "it timed out") {
+			return nil, 0, &requestTimedOutError{msg: fmt.Sprintf(
+				"the %s request to %s did not complete (%s)", method, path, reason)}
+		}
 		// Sharko owns this sentence; the transport's own error is neither
 		// wrapped nor quoted (BF10).
 		//

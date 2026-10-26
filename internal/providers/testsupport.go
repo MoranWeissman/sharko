@@ -104,6 +104,38 @@ func NewAWSSecretsManagerProviderWithFailingReadForTest(readErr error, existingN
 	}
 }
 
+// perNameReadSMClient answers each secret name with its own error, and says
+// ResourceNotFoundException for every name not in errs.
+type perNameReadSMClient struct {
+	errs map[string]error
+}
+
+func (c *perNameReadSMClient) GetSecretValue(_ context.Context, params *secretsmanager.GetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+	if err, ok := c.errs[aws.ToString(params.SecretId)]; ok {
+		return nil, err
+	}
+	return nil, &types.ResourceNotFoundException{Message: aws.String("fake: no such secret")}
+}
+
+func (c *perNameReadSMClient) ListSecrets(_ context.Context, _ *secretsmanager.ListSecretsInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.ListSecretsOutput, error) {
+	return &secretsmanager.ListSecretsOutput{}, nil
+}
+
+// NewAWSSecretsManagerProviderWithPerNameReadsForTest builds a REAL
+// AWSSecretsManagerProvider with the given name prefix, whose read of each
+// secret name fails with errs[name], or with ResourceNotFoundException for a
+// name not in errs (ep4 round S, S3: "not found under the prefix, access
+// denied on the plain name").
+func NewAWSSecretsManagerProviderWithPerNameReadsForTest(prefix string, errs map[string]error) *AWSSecretsManagerProvider {
+	return &AWSSecretsManagerProvider{
+		client: &perNameReadSMClient{errs: errs},
+		prefix: prefix,
+		eksTokenFn: func(context.Context, string, string, string) (string, error) {
+			return "", fmt.Errorf("the mint must never be reached: no payload was ever read")
+		},
+	}
+}
+
 // NewKubernetesSecretProviderWithFailingReadForTest builds a REAL
 // KubernetesSecretProvider whose Secret GETs fail with getErr, while LIST keeps
 // working and returns the supplied Secret names (each with a kubeconfig key, so

@@ -1194,6 +1194,19 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_models.ClustersResponse:
     properties:
+      argocd_unavailable_reason:
+        description: |-
+          ArgocdUnavailableReason is set only when Sharko could not read ArgoCD's
+          cluster list for this answer: "auth_refused" (ArgoCD said no to
+          Sharko's login — 401 or 403) or "unreachable" (anything else: no
+          answer, a timeout, an answer Sharko could not read). Absent when the
+          read worked. While it is set, every cluster from Git is still
+          managed: true with connection_status "unknown", and no cluster is
+          counted as ArgoCD-only.
+        enum:
+        - auth_refused
+        - unreachable
+        type: string
       clusters:
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.Cluster'
@@ -1430,6 +1443,7 @@ definitions:
     - addon_upgrade_available
     - addon_major_update
     - addon_version_drift
+    - cluster_credential_check_failed
     type: string
     x-enum-varnames:
     - CodeGitConnectionBroken
@@ -1440,6 +1454,7 @@ definitions:
     - CodeAddonUpgradeAvailable
     - CodeAddonMajorUpdate
     - CodeAddonVersionDrift
+    - CodeClusterCredentialCheckFailed
   github_com_MoranWeissman_sharko_internal_notifications.Notification:
     properties:
       code:
@@ -3949,6 +3964,13 @@ definitions:
           exist: there is no connection for ArgoCD to have an opinion about, so
           "not checked yet" would invite a person to wait for a probe of
           nothing. It never overwrites a real probe result.
+        type: string
+      warning:
+        description: |-
+          Warning is set only while State is connected and Sharko could not get
+          a new EKS sign-in token: ArgoCD's connection still works now, but it
+          will stop when the current token runs out. It is the reconciler's
+          fixed renewal sentence — never error text.
         type: string
     type: object
   internal_api.connectionReconciliationPlan:

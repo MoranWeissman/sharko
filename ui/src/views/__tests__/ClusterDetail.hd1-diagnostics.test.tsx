@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
+import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences';
+import { AWS_LOGIN_DOCS_URL } from '@/views/ClusterDetail';
 
 // HD1 (V3) — Diagnostics section. Check permissions + Diagnose connection
 // moved from the header into a persistent Diagnostics nav section. Test
@@ -271,6 +273,91 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
       'href',
       '/settings?section=connections',
     );
+    // The page is called "Connection" in Settings, not "Connections". And a
+    // Git problem must not send anyone to the secrets store.
+    expect(screen.getByRole('link', { name: 'Fix it in Settings → Connection' })).toBeInTheDocument();
+    expect(screen.queryByText(/Settings → Connections/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('diag-secrets-fix')).not.toBeInTheDocument();
+  });
+
+  it('points a failing secrets store to Settings → Secrets Provider with a real link', async () => {
+    mockTestConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } });
+    mockTestProvider.mockResolvedValue({ status: 'error', message: 'The secrets store refused the login.' });
+
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    const fix = await screen.findByTestId('diag-secrets-fix');
+    expect(fix.textContent).toBe('Check your secrets store settings in Settings → Secrets Provider, then test it there.');
+    // Settings → Secrets Provider holds no login for any store, so the line
+    // must not say to fix a login there (ep4 round R, R1).
+    expect(fix.textContent).not.toContain("Check Sharko's login to your secrets store");
+    expect(fix.textContent).not.toMatch(/login/i);
+    expect(within(fix).getByRole('link')).toHaveAttribute('href', '/settings?section=secrets-provider');
+    // Nothing here points to the old page that does not exist, and the Git
+    // link is not shown when only the secrets store fails.
+    expect(screen.queryByText(/Settings → Connections/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Fix it in Settings/ })).not.toBeInTheDocument();
+  });
+
+  // Only "no answer from AWS" links Settings → Secrets Provider (it asks to
+  // check the region). A refused login or no login at all is fixed outside
+  // Sharko, so those show the docs page only (ep4 round R, R1 and R2).
+  it.each([
+    ['connectionFailureVaultAWSLoginRefused', false],
+    ['connectionFailureVaultAWSUnreachable', true],
+    ['connectionFailureVaultAWSNoLogin', false],
+    ['connectionFailureSecretsAWSLoginRefused', false],
+    ['connectionFailureSecretsAWSUnreachable', true],
+    ['connectionFailureSecretsAWSNoLogin', false],
+  ] as const)('AWS secrets-store failure %s shows the generated sentence with real links (Settings link: %s)', async (id, settingsLink) => {
+    mockTestConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } });
+    // The server sends the sentence in `message` and its id in `message_id`.
+    // The page shows the generated sentence picked by the id.
+    mockTestProvider.mockResolvedValue({ status: 'error', message: 'server words', message_id: id });
+
+    renderView();
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
+
+    expect(await screen.findByText(CONNECTION_FAILURE_MESSAGES[id])).toBeInTheDocument();
+    expect(screen.queryByText('server words')).not.toBeInTheDocument();
+    const fix = screen.getByTestId('diag-aws-fix');
+    if (settingsLink) {
+      expect(within(fix).getByRole('link', { name: 'Open Settings → Secrets Provider' })).toHaveAttribute(
+        'href',
+        '/settings?section=secrets-provider',
+      );
+    } else {
+      expect(within(fix).queryByRole('link', { name: 'Open Settings → Secrets Provider' })).not.toBeInTheDocument();
+      expect(fix.textContent).not.toContain('Settings → Secrets Provider');
+      expect(fix.textContent).not.toContain(' · ');
+    }
+    const docs = within(fix).getByRole('link', {
+      name: 'Give Sharko an AWS login',
+    });
+    expect(docs).toHaveAttribute(
+      'href',
+      'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login',
+    );
+    expect(AWS_LOGIN_DOCS_URL).toBe(docs.getAttribute('href'));
+    // ep4 round S, S5: the old title told EKS users the page was not for them.
+    expect(document.body.textContent).not.toContain('when it does not run on EKS');
+    // The old wording and the page that does not exist are banned.
+    expect(document.body.textContent).not.toContain("can't reach your secrets store");
+    expect(document.body.textContent).not.toContain('Settings → Connections');
+    expect(document.body.textContent).not.toContain("Check Sharko's AWS login in Settings → Secrets Provider");
+    expect(screen.queryByTestId('diag-secrets-fix')).not.toBeInTheDocument();
+  });
+
+  it('does not repeat the old "can\'t reach your secrets store" sentence for a refused AWS login', () => {
+    expect(CONNECTION_FAILURE_MESSAGES.connectionFailureVaultAWSLoginRefused).not.toMatch(/can't reach|could not reach/);
+    expect(CONNECTION_FAILURE_MESSAGES.connectionFailureSecretsAWSLoginRefused).not.toMatch(/can't reach|could not reach/);
   });
 
   it('does not probe global connection health until the Diagnostics tab is opened', async () => {

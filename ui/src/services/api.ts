@@ -2004,7 +2004,7 @@ export const api = {
   // testConnection()/testCredentials() for git+ArgoCD — same plain-words
   // pass/fail contract, never a raw Go/SDK error (v4-wave2 8.1).
   testProvider: () =>
-    postJSON<{ status: string; message?: string; clusters_found?: number }>('/providers/test', {}),
+    postJSON<{ status: string; message?: string; message_id?: string; clusters_found?: number }>('/providers/test', {}),
 
   // Repo status — `bootstrap_synced` reports whether the canonical ArgoCD
   // application `cluster-addons-bootstrap` exists AND is Sync=Synced AND

@@ -870,6 +870,89 @@ describe('ClusterDetail', () => {
     });
   });
 
+  // ep4 round S, S2: Sharko could not get a new EKS sign-in token, but ArgoCD
+  // still says its connection works (the old token still does). The page
+  // shows the renewal problem in its own amber banner, and none of the red
+  // "unreachable" / "connection failed" wording, and no "may be stale" line:
+  // ArgoCD is connected and the addon health is live.
+  describe('a failed EKS token renewal while ArgoCD is still connected (S2)', () => {
+    const renewalSentence =
+      'Sharko could not get a new sign-in token for this cluster, so ArgoCD will lose its connection to it soon. Check that Sharko can reach your secrets provider and AWS, then click Refresh EKS connection.';
+
+    function expectNoRedConnectionWording() {
+      expect(screen.queryByText('Cluster Unreachable — ArgoCD Connection Failed')).not.toBeInTheDocument();
+      expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
+      expect(screen.queryByText('Cluster unreachable')).not.toBeInTheDocument();
+      expect(screen.queryByText(/may be stale/)).not.toBeInTheDocument();
+    }
+
+    it('shows the amber renewal banner and no red banner', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        argocd_connection_status: 'Successful',
+        cluster_connection_state: 'Successful',
+        token_renewal_problem: renewalSentence,
+      });
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      const banner = screen.getByTestId('token-renewal-banner');
+      expect(within(banner).getByText('ArgoCD is still connected, for now')).toBeInTheDocument();
+      expect(within(banner).getByText(renewalSentence)).toBeInTheDocument();
+      expectNoRedConnectionWording();
+    });
+
+    it('still no red banner when Sharko\'s own test also failed for the same reason', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        cluster: { ...comparisonResponse.cluster, sharko_status: 'Unreachable' },
+        argocd_connection_status: 'Successful',
+        cluster_connection_state: 'Successful',
+        token_renewal_problem: renewalSentence,
+      });
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.getByTestId('token-renewal-banner')).toBeInTheDocument();
+      expectNoRedConnectionWording();
+    });
+
+    it('a real ArgoCD failure keeps the old red banner, and no renewal banner', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        argocd_connection_status: 'Failed',
+        argocd_connection_message: 'unable to reach apiserver',
+        cluster_connection_state: '',
+        token_renewal_problem: renewalSentence,
+      });
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('ArgoCD Connection Failed')).toBeInTheDocument();
+      expect(screen.getByText('unable to reach apiserver')).toBeInTheDocument();
+      expect(screen.queryByTestId('token-renewal-banner')).not.toBeInTheDocument();
+    });
+
+    it('no renewal problem: no renewal banner', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        argocd_connection_status: 'Successful',
+        cluster_connection_state: 'Successful',
+      });
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('token-renewal-banner')).not.toBeInTheDocument();
+    });
+  });
+
   // V125-1-10.5: per-error-code Test failure rendering. Story 10.3 added
   // typed `error_code` values to the structured 503 envelope returned by
   // POST /api/v1/clusters/{name}/test. The UI must render branch-specific

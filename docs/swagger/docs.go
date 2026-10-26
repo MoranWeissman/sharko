@@ -11068,6 +11068,14 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_models.ClustersResponse": {
             "type": "object",
             "properties": {
+                "argocd_unavailable_reason": {
+                    "description": "ArgocdUnavailableReason is set only when Sharko could not read ArgoCD's\ncluster list for this answer: \"auth_refused\" (ArgoCD said no to\nSharko's login — 401 or 403) or \"unreachable\" (anything else: no\nanswer, a timeout, an answer Sharko could not read). Absent when the\nread worked. While it is set, every cluster from Git is still\nmanaged: true with connection_status \"unknown\", and no cluster is\ncounted as ArgoCD-only.",
+                    "type": "string",
+                    "enum": [
+                        "auth_refused",
+                        "unreachable"
+                    ]
+                },
                 "clusters": {
                     "type": "array",
                     "items": {
@@ -11370,7 +11378,8 @@ const docTemplate = `{
                 "argocd_forbidden",
                 "addon_upgrade_available",
                 "addon_major_update",
-                "addon_version_drift"
+                "addon_version_drift",
+                "cluster_credential_check_failed"
             ],
             "x-enum-varnames": [
                 "CodeGitConnectionBroken",
@@ -11380,7 +11389,8 @@ const docTemplate = `{
                 "CodeArgoForbidden",
                 "CodeAddonUpgradeAvailable",
                 "CodeAddonMajorUpdate",
-                "CodeAddonVersionDrift"
+                "CodeAddonVersionDrift",
+                "CodeClusterCredentialCheckFailed"
             ]
         },
         "github_com_MoranWeissman_sharko_internal_notifications.Notification": {
@@ -14239,6 +14249,10 @@ const docTemplate = `{
                 },
                 "state": {
                     "description": "State is connected, unavailable, not_checked or unknown. \"unknown\" is\nthe B13 answer for a self-managed connection whose Secret does not\nexist: there is no connection for ArgoCD to have an opinion about, so\n\"not checked yet\" would invite a person to wait for a probe of\nnothing. It never overwrites a real probe result.",
+                    "type": "string"
+                },
+                "warning": {
+                    "description": "Warning is set only while State is connected and Sharko could not get\na new EKS sign-in token: ArgoCD's connection still works now, but it\nwill stop when the current token runs out. It is the reconciler's\nfixed renewal sentence — never error text.",
                     "type": "string"
                 }
             }

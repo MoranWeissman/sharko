@@ -271,6 +271,15 @@ var messageTemplates = map[Code]messageTemplate{
 			return "Major version change from " + p.CatalogVersion + " — review for security patches"
 		},
 	},
+	CodeClusterCredentialCheckFailed: {
+		typ:   TypeConnection,
+		needs: []paramField{fieldCluster},
+		id:    func(p Params) string { return "credential-check-" + p.Cluster },
+		title: func(p Params) string { return "Sharko can't read the login for " + p.Cluster },
+		detail: func(_ Params, r Reason) string {
+			return LeadClusterCredentialCheckFailed + " " + r.sentence()
+		},
+	},
 	CodeAddonVersionDrift: {
 		typ:   TypeDrift,
 		needs: []paramField{fieldAddon, fieldCluster, fieldVersion, fieldCatalogVersion},
@@ -281,6 +290,22 @@ var messageTemplates = map[Code]messageTemplate{
 		},
 	},
 }
+
+// LeadClusterCredentialCheckFailed is the first sentence under a
+// CodeClusterCredentialCheckFailed alert. It says what Sharko could not do
+// and where a person fixes it.
+//
+// ep4 round R, R1: it used to say to check Sharko's login in Settings →
+// Secrets Provider. That page cannot change Sharko's AWS login: on AWS, Sharko
+// runs with the login its pod has, which off EKS is an access key in the
+// Kubernetes Secret given to Sharko, read when Sharko starts. The words say so,
+// and stay true on EKS with IRSA, where there is no key.
+const LeadClusterCredentialCheckFailed = "Sharko could not read this cluster's login from your secrets store, " +
+	"so it can't check that the cluster's connection is right. " +
+	"Check the login Sharko uses for your secrets store. " +
+	"On AWS, that is the AWS login Sharko runs with: if it is an access key, " +
+	"update the Kubernetes Secret given to Sharko, then restart Sharko. " +
+	"The docs page \"Give Sharko an AWS login\" shows how."
 
 // New builds a notification whose words Sharko owns.
 //

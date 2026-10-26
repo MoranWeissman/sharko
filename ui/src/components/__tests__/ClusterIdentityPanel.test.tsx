@@ -20,4 +20,12 @@ describe('ClusterIdentityPanel wording', () => {
     expect(text).toContain('Sharko runs with one AWS role. Every EKS cluster that opts in trusts that one role')
     expect(text).not.toMatch(/IAM|hub|spoke/)
   })
+
+  it('says Sharko renews the short-lived token, and not that nothing is stored', () => {
+    render(<ClusterIdentityPanel capabilities={caps as never} loading={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /how identity-based access works/i }))
+    const text = screen.getByTestId('identity-how-it-works').textContent ?? ''
+    expect(text).toContain('it makes a short-lived token and renews it before it runs out.')
+    expect(text).not.toMatch(/on demand|nothing is stored/)
+  })
 })

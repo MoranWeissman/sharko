@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -221,10 +222,16 @@ func repairFixture(t *testing.T, managedYAML string, live *corev1.Secret, vault 
 
 	settingsStore := settings.NewStore(fake.NewSimpleClientset(), "sharko")
 	recon := clusterreconciler.New(clusterreconciler.Deps{
-		GitProvider:  func() gitprovider.GitProvider { return gp },
-		ArgoClient:   argoClient,
-		Vault:        staticVault(vault),
-		AuditFn:      func(audit.Entry) {},
+		GitProvider: func() gitprovider.GitProvider { return gp },
+		ArgoClient:  argoClient,
+		Vault:       staticVault(vault),
+		// The same audit log the request writes to, as in serve.go, so a test
+		// can see every activity line one click produces (ep4 serious 4).
+		AuditFn: func(e audit.Entry) {
+			if l := srv.AuditLog(); l != nil {
+				l.Add(e)
+			}
+		},
 		Namespace:    "argocd",
 		TickInterval: time.Hour, // never auto-fires: these tests drive the endpoint
 		SelfHealFn:   settingsStore.IsManagedClusterSelfHealEnabled,
@@ -2289,5 +2296,88 @@ func TestRepairAuditDetails_NameNoInternalComponent(t *testing.T) {
 
 	if scanned < 20 {
 		t.Fatalf("the guard only looked at %d strings in %s — it has lost its reach and would pass vacuously", scanned, rel)
+	}
+}
+
+// TestRepair_OneClickGivesOneActivityLine pins ep4 serious 4: a single Repair
+// click that rewrites the connection leaves exactly one repair line in the
+// audit trail (the request's own), not a second "Background reconciler" line
+// saying it repaired the connection too.
+func TestRepair_OneClickGivesOneActivityLine(t *testing.T) {
+	srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(), repairFakeVault{})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var view connectionRepairView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if !view.Repaired {
+		t.Fatalf("the repair reported no change on a drifted connection, so this proves nothing: %s", w.Body.String())
+	}
+
+	var repairLines []string
+	for _, e := range srv.AuditLog().List(1000) {
+		switch e.Event {
+		case string(clusterreconciler.EventClusterConnectionRepair), string(clusterreconciler.EventClusterConnectionRepairFailed):
+			repairLines = append(repairLines, e.Event+" source="+e.Source)
+		}
+	}
+	if len(repairLines) != 1 {
+		t.Fatalf("one Repair click left %d repair lines in the activity trail, want exactly 1: %v", len(repairLines), repairLines)
+	}
+	if strings.Contains(repairLines[0], "source=reconciler") {
+		t.Errorf("the one repair line is credited to the background reconciler, but a person clicked Repair: %v", repairLines)
+	}
+}
+
+// TestRepair_LoginReadFailureGivesOneActivityLine pins ep4 round R, R5: a
+// Repair that stops because the cluster's login cannot be read from the
+// credentials source leaves exactly ONE repair line in the activity trail,
+// and that one line still says the failure was about credentials.
+//
+// It used to leave two: the request's own entry, plus a second one written
+// only to carry the failure's category.
+func TestRepair_LoginReadFailureGivesOneActivityLine(t *testing.T) {
+	srv, router, _ := repairFixture(t, backendManagedYAML, driftedOwnedSecret(),
+		repairFakeVault{failWith: errors.New("backend unreachable")})
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, repairReq(comparisonCluster, repairHeadSHA))
+	if w.Code < 400 {
+		t.Fatalf("expected an error status, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	var lines []audit.Entry
+	for _, e := range srv.AuditLog().List(1000) {
+		switch e.Event {
+		case string(clusterreconciler.EventClusterConnectionRepair), string(clusterreconciler.EventClusterConnectionRepairFailed):
+			lines = append(lines, e)
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("one Repair click that could not read the login left %d repair lines, want exactly 1: %+v", len(lines), lines)
+	}
+	e := lines[0]
+	if e.Event != clusterreconciler.EventClusterConnectionRepairFailed {
+		t.Errorf("event = %q, want %q", e.Event, clusterreconciler.EventClusterConnectionRepairFailed)
+	}
+	if e.Result != "failure" || e.Level != "error" {
+		t.Errorf("result/level = %q/%q, want failure/error", e.Result, e.Level)
+	}
+	if e.Changes != audit.ChangesNone {
+		t.Errorf("changes = %q, want none — nothing was written", e.Changes)
+	}
+	if e.Reason != audit.ReasonCredentials {
+		t.Errorf("reason = %q, want %q — the one line must still say it was about credentials", e.Reason, audit.ReasonCredentials)
+	}
+	if e.Error.String() != credsafe.Message {
+		t.Errorf("error = %q, want the fixed safe sentence %q", e.Error.String(), credsafe.Message)
+	}
+	if strings.Contains(e.Detail, "backend unreachable") || strings.Contains(e.Error.String(), "backend unreachable") {
+		t.Errorf("the raw backend error reached the activity line: %+v", e)
 	}
 }

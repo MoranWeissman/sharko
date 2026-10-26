@@ -221,8 +221,17 @@ const MODE_IS_CLASSIFIED: Record<ConnectionReconciliation['management_mode'], bo
  * same distance the plural noun was. A function that can only be called
  * correctly is not fixed; this one is total.
  */
-export function routineChecksSummary(count: number, allConditionsOK: boolean): string {
+export function routineChecksSummary(count: number, allConditionsOK: boolean, checkFinished = true): string {
   if (count <= 0) return 'No routine checks.'
+  // The main check did not finish (for example Sharko could not read the
+  // login it keeps in the secrets store). "All 6 checks passed" would then
+  // be false on the same screen as the sentence saying it did not finish,
+  // so the sentence says what is true: the small ones passed, the check did
+  // not finish. The second sentence is the server's own (generated).
+  if (!checkFinished) {
+    const passed = count === 1 ? '1 other check passed.' : `${count} other checks passed.`
+    return `${passed} ${CONNECTION_SENTENCES.condCheckDidNotFinish}`
+  }
   if (count === 1) return '1 check passed.'
   return allConditionsOK ? `All ${count} checks passed.` : `${count} checks passed.`
 }
@@ -789,14 +798,22 @@ export function ConnectionReconciliationView({
             {qualifier}
           </p>
         )}
-        {view.sync.reason && (
+        {(view.sync.reason || checkFailed) && (
           <p className="text-sm text-[#2a5a7a] dark:text-gray-300" data-testid="recon-sync-reason">
-            {view.sync.reason}
+            {view.sync.reason || CONNECTION_SENTENCES.condCheckDidNotFinish}
           </p>
         )}
         {view.health.state === 'unavailable' && view.health.message && (
           <p className="text-sm text-red-700 dark:text-red-400" data-testid="recon-health-message">
             {view.health.message}
+          </p>
+        )}
+        {/* ArgoCD's connection still works, but Sharko could not get a new
+            sign-in token, so it will stop when the current one runs out.
+            Amber, not red: nothing has failed yet. */}
+        {view.health.state === 'connected' && view.health.warning && (
+          <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="recon-health-warning">
+            {view.health.warning}
           </p>
         )}
         <p className="text-[13px] text-[#5a8aaa] dark:text-gray-500" data-testid="recon-timestamps">
@@ -836,7 +853,7 @@ export function ConnectionReconciliationView({
                 className="inline-flex items-center gap-1.5 text-sm text-[#2a5a7a] hover:underline dark:text-gray-400"
               >
                 <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-500" aria-hidden="true" />
-                {routineChecksSummary(routineConditions.length, allConditionsOK)}
+                {routineChecksSummary(routineConditions.length, allConditionsOK, !checkFailed)}
                 <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
               {routineConditions.map((cond) => (
@@ -852,7 +869,7 @@ export function ConnectionReconciliationView({
               className="inline-flex items-center gap-1.5 text-sm text-[#2a5a7a] hover:underline dark:text-gray-400"
             >
               <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-500" aria-hidden="true" />
-              {routineChecksSummary(routineConditions.length, allConditionsOK)}
+              {routineChecksSummary(routineConditions.length, allConditionsOK, !checkFailed)}
               <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           ))}

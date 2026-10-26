@@ -225,9 +225,11 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
       // V3-CC2: updated hint text
       expect(
         screen.getByText(
-          'Sharko generates a short-lived AWS token on every connection using its own AWS identity — nothing to store or rotate. EKS only; Sharko needs AWS access to the cluster.',
+          'Sharko makes a short-lived AWS token with its own AWS identity and renews it before it runs out. EKS only; Sharko needs AWS access to the cluster.',
         ),
       ).toBeInTheDocument();
+      // The old wording said nothing is stored or rotated. That is false: Sharko stores the token and renews it.
+      expect(screen.queryByText(/nothing to store or rotate/i)).not.toBeInTheDocument();
     });
 
     it('switches the hint when "Paste a kubeconfig" is chosen', async () => {

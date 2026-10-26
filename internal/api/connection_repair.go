@@ -1024,79 +1024,26 @@ func (s *Server) repairAudit(r *http.Request, cluster, event, detail, result str
 	})
 }
 
-// auditRepairCredentialFailure records a credential-backend failure.
+// auditRepairCredentialFailure records a repair that stopped because the
+// cluster's login could not be read from the credentials source.
 //
-// It writes its OWN entry rather than only enriching, because it is the entry
-// that names the CATEGORY of failure — Reason — and the middleware's
-// request-scoped entry does not carry one. Log.Add turns that category into the
-// fixed safe sentence in Error.
+// ONE ACTIVITY LINE, NOT TWO (ep4 round R, R5). This used to call
+// failedRepairAudit to fill the request's own entry AND then write a second
+// entry of its own with s.auditLog.Add, only so that second entry could say
+// WHAT KIND of failure it was (Reason). One Repair click therefore showed up
+// twice in the activity feed. audit.Fields carries Reason now, and the audit
+// middleware copies it onto the request's entry, so the one entry the request
+// writes anyway says everything: failure-shaped event, result "failure",
+// nothing changed, and the credentials category.
 //
-// WHY THIS SECOND ENTRY STILL EXISTS (reviewed 2026-08-19). It does duplicate
-// the middleware's request-scoped entry, and a duplicate in the activity feed
-// is a real cost. It is kept because it is the only one that says what kind of
-// failure this was.
-//
-// NOTE (security story S3): the old reason for keeping it — that it was the
-// only entry that could tell the audit log to hide the raw error text, without
-// which that text would be stored — is gone. No entry can carry error text any
-// more: Entry.Error is a SafeText nothing outside internal/audit can build, and
-// the sink rebuilds it from the entry's Reason on every write. audit.Fields now
-// has a Reason field, so folding this into the middleware entry has become a
-// safe refactor rather than a credential hazard. It is left alone here because
-// that is a behaviour change to the activity feed, which is not this story's to
-// make.
-//
-// What WAS wrong is that the two entries contradicted each other: this one
-// said "cluster_connection_repair" — the past-tense "Connection repaired"
-// title — with Result "failure" and no Changes, on a repair that never
-// happened. Now both entries agree on event, result and changes, and this one
-// simply adds the classified-error fact. A duplicate that says the same thing
-// twice is noise; a duplicate that says two different things is the defect.
-func (s *Server) auditRepairCredentialFailure(r *http.Request, cluster string, err error) {
-	// Keep the request-scoped entry honest too, with no error text in it.
+// The category is stated from WHERE we are, not from the error: the only
+// call site is the failure of ConnectionCredentialSpecForWrite, which IS the
+// credentials-source read. The reconciler passes the provider's error through
+// unmarked, so audit.Classify would answer "upstream_failure" for a failure
+// everyone here knows is about credentials. A wrong constant here costs
+// accuracy, never safety: no entry can carry error text, because Entry.Error
+// is rebuilt from Reason by the sink.
+func (s *Server) auditRepairCredentialFailure(r *http.Request, cluster string, _ error) {
 	s.failedRepairAudit(r, cluster, "failed: could not read the configured credentials source")
-
-	if s == nil || s.auditLog == nil {
-		return
-	}
-	user := r.Header.Get("X-Sharko-User")
-	if user == "" {
-		user = "anonymous"
-	}
-	s.auditLog.Add(audit.Entry{
-		Timestamp: time.Now().UTC(),
-		Level:     "error",
-		// Ruling (f): the failure-shaped event. This used to be
-		// "cluster_connection_repair" — the past-tense "Connection repaired"
-		// title — on a repair that never happened because the credentials
-		// source could not be read.
-		Event:    clusterreconciler.EventClusterConnectionRepairFailed,
-		User:     user,
-		Action:   "repair_connection",
-		Resource: fmt.Sprintf("cluster:%s", cluster),
-		Source:   detectSource(r),
-		Result:   "failure",
-		// Nothing was written: the read that feeds the write never returned.
-		Changes: audit.ChangesNone,
-		// POSITIONAL, NOT TYPE-BASED, AND STILL DELIBERATELY SO.
-		//
-		// This function has exactly one call site: the failure of
-		// ConnectionCredentialSpecForWrite, which IS the credentials-source
-		// read. Anything arriving here is a credentials-backend failure by
-		// construction, so the category is stated from WHERE we are rather
-		// than from what the error turned out to be. The reconciler returns
-		// the provider's error unmarked (repair_credentials.go passes
-		// GetCredentialsWithOptionalRole's error straight through), so
-		// Classify would answer "upstream_failure" for a failure everybody
-		// here knows is about credentials.
-		//
-		// WHAT CHANGED. This used to be a bool that told the sink whether to
-		// sanitise, sitting next to a field holding err.Error(). Getting the
-		// bool wrong meant the raw text was stored. Now the only thing this
-		// line can affect is WHICH catalog sentence a reader gets: there is
-		// no error text on the entry to protect, because Entry.Error cannot
-		// be written from outside package audit at all. A wrong constant
-		// here costs accuracy; it cannot cost safety.
-		Reason: audit.ReasonCredentials,
-	})
+	audit.Enrich(r.Context(), audit.Fields{Reason: audit.ReasonCredentials})
 }

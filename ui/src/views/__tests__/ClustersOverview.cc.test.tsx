@@ -292,8 +292,9 @@ describe('ClustersOverview — V3-CC2: clearer connection-method names', () => {
     // Check the hint text (V3-RW1.2)
     await waitFor(() => {
       expect(
-        screen.getByText(/Sharko generates a short-lived AWS token.*nothing to store or rotate.*EKS only.*Sharko needs AWS access/i)
+        screen.getByText(/Sharko makes a short-lived AWS token.*renews it before it runs out.*EKS only.*Sharko needs AWS access/i)
       ).toBeInTheDocument();
+      expect(screen.queryByText(/nothing to store or rotate/i)).not.toBeInTheDocument();
     });
   });
 
