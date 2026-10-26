@@ -261,6 +261,14 @@ export const CLUSTER_NOT_FOUND_DESCRIPTION =
   'It may have been registered via a pending PR that has not yet merged. ' +
   'Open the Clusters page and look for an open PR under "Pending Registrations" or "Pending Changes".';
 
+/** Where Settings → Secrets Provider lives (Settings.tsx section key). */
+export const SECRETS_PROVIDER_SETTINGS_ROUTE = '/settings?section=secrets-provider';
+/**
+ * The line under the Diagnostics banner when the secrets store is what is
+ * failing. The tech lead swaps in story 1's sentence here at the join.
+ */
+export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
+  "Check Sharko's login to your secrets store in Settings → Secrets Provider.";
 export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
 export function notManagedDescription(name: string): string {
   return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;
@@ -2560,11 +2568,23 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                       ))}
                     </ul>
                     <p className="mt-2 text-sm text-red-700 dark:text-red-400">
-                      The checks below may fail for the same reason.{' '}
-                      <Link to="/settings?section=connections" className="underline hover:text-red-900 dark:hover:text-red-300">
-                        Fix it in Settings → Connections
-                      </Link>
+                      The checks below may fail for the same reason.
+                      {(connHealth.git === 'error' || connHealth.argocd === 'error') && (
+                        <>
+                          {' '}
+                          <Link to="/settings?section=connections" className="underline hover:text-red-900 dark:hover:text-red-300">
+                            Fix it in Settings → Connection
+                          </Link>
+                        </>
+                      )}
                     </p>
+                    {connHealth.vault === 'error' && (
+                      <p className="mt-1 text-sm text-red-700 dark:text-red-400" data-testid="diag-secrets-fix">
+                        <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
+                          {DIAGNOSTICS_SECRETS_FIX_SENTENCE}
+                        </Link>
+                      </p>
+                    )}
                   </div>
                 </div>
               )}

@@ -110,7 +110,7 @@ export function ClusterIdentityPanel({ capabilities, loading }: ClusterIdentityP
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400" data-testid="identity-how-it-works">
           Sharko runs with one AWS role. Every EKS cluster that opts in trusts
           that one role — nothing per-cluster to set up on Sharko's side. When Sharko needs to
-          reach a cluster, it generates a short-lived token on demand; nothing is stored.{' '}
+          reach a cluster, it makes a short-lived token and renews it before it runs out.{' '}
           <a
             href={IDENTITY_DOCS_URL}
             target="_blank"

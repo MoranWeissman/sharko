@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   SecretsProviderSection,
   canonicalizeProviderType,
+  switchBackendWarning,
+  SWITCH_BACKEND_TITLE,
+  SWITCH_BACKEND_UNKNOWN_WARNING,
 } from '@/views/settings/SecretsProviderSection'
 import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
 import { showToast } from '@/components/ToastNotification'
@@ -36,12 +39,14 @@ import { CONNECTION_FAILURE_MESSAGES } from '@/generated/connection-sentences'
 const getProvidersMock = vi.fn()
 const updateConnectionMock = vi.fn()
 const testProviderMock = vi.fn()
+const getClustersMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     getProviders: () => getProvidersMock(),
     updateConnection: (name: string, data: unknown) => updateConnectionMock(name, data),
     testProvider: () => testProviderMock(),
+    getClusters: () => getClustersMock(),
   },
 }))
 
@@ -90,6 +95,8 @@ describe('SecretsProviderSection', () => {
     getProvidersMock.mockReset()
     updateConnectionMock.mockReset()
     testProviderMock.mockReset()
+    getClustersMock.mockReset()
+    getClustersMock.mockResolvedValue({ clusters: [] })
     refreshConnectionsMock.mockReset()
     useConnectionsMock.mockReset()
     vi.mocked(showToast).mockReset()
@@ -1179,5 +1186,110 @@ describe('SecretsProviderSection — ep3 fix 10 (clear, region, card, words)', (
     const names = Array.from(selects[0].querySelectorAll('option')).map((o) => o.textContent)
     expect(names).toContain('Google Secret Manager — not yet supported')
     expect(names).not.toContain('GCP Secret Manager — not yet supported')
+  })
+})
+
+
+/*
+ * Ep4 dry run, finding 8: switching the secrets backend. Clusters whose login
+ * is read from the backend (creds_source "secret-kubeconfig") would be looked
+ * up in the new one. The page names them and asks first. With none, no question.
+ */
+describe('SecretsProviderSection — switching the backend', () => {
+  const awsConn = { ...sampleConnection, provider: { type: 'aws-sm', region: 'eu-west-1' } }
+  const cluster = (name: string, creds_source: string, managed = true) => ({
+    name,
+    labels: {},
+    managed,
+    creds_source,
+    connection_status: 'connected',
+  })
+
+  beforeEach(() => {
+    getProvidersMock.mockReset()
+    updateConnectionMock.mockReset()
+    getClustersMock.mockReset()
+    refreshConnectionsMock.mockReset()
+    useConnectionsMock.mockReset()
+    getProvidersMock.mockResolvedValue({ configured_provider: { type: 'aws-sm', region: 'eu-west-1' }, available_types: [] })
+    updateConnectionMock.mockResolvedValue({})
+  })
+
+  async function switchToK8s() {
+    setupHook([awsConn])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+    const selects = await screen.findAllByRole('combobox')
+    await user.selectOptions(selects[0], 'k8s-secrets')
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    return user
+  }
+
+  it('says the exact warning, names the clusters, and saves only after Switch backend', async () => {
+    getClustersMock.mockResolvedValue({
+      clusters: [
+        cluster('prod-eu', 'secret-kubeconfig'),
+        cluster('stage-us', 'secret-kubeconfig'),
+        cluster('eks-one', 'eks-token'),
+        cluster('pasted', 'inline-kubeconfig'),
+        cluster('not-ours', 'secret-kubeconfig', false),
+      ],
+    })
+    const user = await switchToK8s()
+
+    expect(await screen.findByText(SWITCH_BACKEND_TITLE)).toBeInTheDocument()
+    expect(SWITCH_BACKEND_TITLE).toBe('Switch the secrets backend?')
+    expect(screen.getByText(
+      '2 clusters read their login from the current backend. After you switch, Sharko will look for those logins in the new backend. Copy them there first, or these clusters will stop working the next time Sharko rebuilds their connection.',
+    )).toBeInTheDocument()
+    const list = screen.getByTestId('switch-backend-clusters')
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['prod-eu', 'stage-us'])
+    // Nothing is saved while the question is open.
+    expect(updateConnectionMock).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Switch backend' }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not save when the question is cancelled', async () => {
+    getClustersMock.mockResolvedValue({ clusters: [cluster('prod-eu', 'secret-kubeconfig')] })
+    const user = await switchToK8s()
+    await screen.findByText(SWITCH_BACKEND_TITLE)
+    await user.click(screen.getByRole('button', { name: /cancel/i }))
+    expect(updateConnectionMock).not.toHaveBeenCalled()
+  })
+
+  it('uses the singular sentence for one cluster', () => {
+    expect(switchBackendWarning(1)).toBe(
+      '1 cluster reads its login from the current backend. After you switch, Sharko will look for that login in the new backend. Copy it there first, or this cluster will stop working the next time Sharko rebuilds its connection.',
+    )
+  })
+
+  it('asks no question when no cluster reads its login from the backend', async () => {
+    getClustersMock.mockResolvedValue({
+      clusters: [cluster('eks-one', 'eks-token'), cluster('pasted', 'inline-kubeconfig')],
+    })
+    await switchToK8s()
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText(SWITCH_BACKEND_TITLE)).not.toBeInTheDocument()
+  })
+
+  it('asks no question when the backend is not changed (only the region)', async () => {
+    getClustersMock.mockResolvedValue({ clusters: [cluster('prod-eu', 'secret-kubeconfig')] })
+    setupHook([awsConn])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+    await screen.findAllByRole('combobox')
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    expect(getClustersMock).not.toHaveBeenCalled()
+    expect(screen.queryByText(SWITCH_BACKEND_TITLE)).not.toBeInTheDocument()
+  })
+
+  it('says it could not check, and still asks, when the cluster list fails', async () => {
+    getClustersMock.mockRejectedValue(new Error('boom'))
+    await switchToK8s()
+    expect(await screen.findByText(SWITCH_BACKEND_UNKNOWN_WARNING)).toBeInTheDocument()
+    expect(updateConnectionMock).not.toHaveBeenCalled()
   })
 })

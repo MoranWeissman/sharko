@@ -1830,7 +1830,11 @@ describe('P6 — foreign-owned: the boundary is stated once, and the takeover do
       ] as ConnectionReconciliation['conditions'],
     })
     await waitForView()
-    expect(screen.getByTestId('recon-conditions-compact').textContent).toBe('1 check passed.')
+    // This fixture is a check that did not finish (credential read failed), so
+    // the line also says that. Still exact text, still never "1 checks passed".
+    expect(screen.getByTestId('recon-conditions-compact').textContent).toBe(
+      `1 other check passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`,
+    )
   })
 })
 
@@ -2005,6 +2009,32 @@ describe('the folded routine-successes line never claims a check that did not ha
     expect(routineChecksSummary(1, false)).toBe('1 check passed.')
     expect(routineChecksSummary(6, true)).toBe('All 6 checks passed.')
     expect(routineChecksSummary(5, false)).toBe('5 checks passed.')
+  })
+
+  it('does not say "All N checks passed" when the main check did not finish', () => {
+    expect(routineChecksSummary(6, true, false)).toBe(`6 other checks passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`)
+    expect(routineChecksSummary(1, true, false)).toBe(`1 other check passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`)
+    expect(routineChecksSummary(6, true, false)).not.toContain('All 6')
+    expect(routineChecksSummary(0, true, false)).toBe('No routine checks.')
+  })
+
+  it('the page with a failed credential check says it did not finish, even when the server sent no reason', async () => {
+    renderView(
+      makeView({
+        sync: { headline: CONNECTION_SENTENCES.headlineUnknownCheckFailed, state: 'unknown', verification_scope: 'none', approval_required: false, checked_at: '2026-08-18T10:00:00Z' },
+        conditions: [
+          { id: 'git_definition', status: 'ok', detail: S.condGitOK },
+          { id: 'ownership', status: 'ok', detail: S.condOwnOK },
+          { id: 'argocd_connection', status: 'ok', detail: S.condArgoOK },
+        ],
+        plan: { action: 'none', action_scopes: [] },
+      }),
+    )
+    await waitForView()
+    expect(screen.getByTestId('recon-sync-reason').textContent).toBe(CONNECTION_SENTENCES.condCheckDidNotFinish)
+    const compact = screen.getByTestId('recon-conditions-compact').textContent ?? ''
+    expect(compact).toContain(`3 other checks passed. ${CONNECTION_SENTENCES.condCheckDidNotFinish}`)
+    expect(compact).not.toContain('All 3 checks passed')
   })
 })
 
