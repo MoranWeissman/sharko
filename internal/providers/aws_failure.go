@@ -61,6 +61,21 @@ var awsLoginRefusedCodes = map[string]bool{
 	"AccessDenied":          true,
 }
 
+// isAWSAccessDenied reports whether AWS answered err with its "the login is
+// fine, but it is not allowed to read this" code. Read by AWS's own fixed
+// error CODE, never by the message.
+func isAWSAccessDenied(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.ErrorCode() {
+	case "AccessDeniedException", "AccessDenied":
+		return true
+	}
+	return false
+}
+
 // ClassifyAWSFailure says which AWSFailure err is. nil, and any error that did
 // not come from the AWS SDK, give AWSFailureNone.
 func ClassifyAWSFailure(err error) AWSFailure {

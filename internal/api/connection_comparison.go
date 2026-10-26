@@ -363,6 +363,13 @@ type connectionComparisonView struct {
 	// "could not read" sentence here, while Settings named the real cause).
 	backendAWS providers.AWSFailure
 
+	// backendNotFound is the finished "this cluster's secret is not there"
+	// sentence, naming the secret names Sharko tried (ep4 round S, S3). Set
+	// only with CheckFailureBackendRead, and only when the store's error
+	// says by TYPE that the secret is not there. Like backendAWS it only
+	// changes the words; routing still reads failure.
+	backendNotFound string
+
 	// liveAppliedRevision and liveWrittenAt are joins for the reconciliation
 	// endpoint (connection_reconciliation.go): the live Secret's
 	// sharko.dev/revision and sharko.dev/written-at provenance annotations,
@@ -628,10 +635,11 @@ func (s *Server) compareClusterConnection(parent context.Context, cluster string
 	// given, from the same router call — that is the whole fix. Two different
 	// answers here is exactly how the policy and the enforcement drifted apart.
 	if desired.Entry.ExpectedCredentialsRebuildableWithoutLiveSecret(backendCanProvideStoredFacts) {
-		spec, credFailure, backendAWS := s.expectedConnectionSpec(desired.Entry)
+		spec, credFailure, backendAWS, backendNotFound := s.expectedConnectionSpec(desired.Entry)
 		if credFailure != connectioncompare.CheckFailureNone {
 			req.CheckFailure = credFailure
 			view.backendAWS = backendAWS
+			view.backendNotFound = backendNotFound
 		} else {
 			req.ExpectedSpec = spec
 		}
@@ -695,10 +703,15 @@ func auditResultFor(status connectioncompare.Status) string {
 // The third answer is only set with CheckFailureBackendRead: which of the AWS
 // failures it was, read from the error's types (ep4 round R, R6). It is
 // AWSFailureNone for any other store, and for an AWS failure Sharko cannot name.
-func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argosecrets.ClusterSecretSpec, connectioncompare.CheckFailure, providers.AWSFailure) {
+//
+// The fourth answer is also only set with CheckFailureBackendRead: the
+// finished "this cluster's secret is not there" sentence with the names
+// tried, when the store's error says so by type (ep4 round S, S3). "" for
+// every other failure.
+func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argosecrets.ClusterSecretSpec, connectioncompare.CheckFailure, providers.AWSFailure, string) {
 	router := s.credsRouter()
 	if router == nil {
-		return nil, connectioncompare.CheckFailureCredentialsUnavailable, providers.AWSFailureNone
+		return nil, connectioncompare.CheckFailureCredentialsUnavailable, providers.AWSFailureNone, ""
 	}
 	facts, err := router.StoredFactsIndependentOfArgoCDSecret(entry.CredentialLookupKey(), entry.CredsSource)
 	if err != nil {
@@ -709,13 +722,14 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 			// half, at a narrower scope.
 			slog.Info("[connection-comparison] no independent copy of this cluster's sign-in details — checking the rest of the connection only",
 				"cluster", entry.Name)
-			return nil, connectioncompare.CheckFailureNone, providers.AWSFailureNone
+			return nil, connectioncompare.CheckFailureNone, providers.AWSFailureNone, ""
 		}
 		// The backend error's own text is never passed through or logged — a
 		// provider error can carry credential material in its message.
 		slog.Warn("[connection-comparison] could not read this cluster's configured credentials source",
 			"cluster", entry.Name)
-		return nil, connectioncompare.CheckFailureBackendRead, providers.ClassifyAWSFailure(err)
+		notFound, _ := secretNotFoundSentence(err)
+		return nil, connectioncompare.CheckFailureBackendRead, providers.ClassifyAWSFailure(err), notFound
 	}
 
 	// The role ARN follows the write path's precedence: the cluster's own
@@ -731,7 +745,7 @@ func (s *Server) expectedConnectionSpec(entry models.ManagedClusterEntry) (*argo
 		CertData: base64.StdEncoding.EncodeToString(facts.CertData),
 		KeyData:  base64.StdEncoding.EncodeToString(facts.KeyData),
 		CAData:   base64.StdEncoding.EncodeToString(facts.CAData),
-	}, connectioncompare.CheckFailureNone, providers.AWSFailureNone
+	}, connectioncompare.CheckFailureNone, providers.AWSFailureNone, ""
 }
 
 // finishView copies a comparison result onto the response view.
@@ -753,6 +767,11 @@ func finishView(view connectionComparisonView, res connectioncompare.Result) con
 	// because there is only one assignment and it derives one from the other.
 	view.failure = res.Failure
 	view.FailureReason = connectionFailureSentenceWithCause(res.Failure, view.backendAWS)
+	if res.Failure == connectioncompare.CheckFailureBackendRead && view.backendNotFound != "" {
+		// The secret is not there: say so, with the names tried, instead
+		// of the general "could not read" sentence (ep4 round S, S3).
+		view.FailureReason = view.backendNotFound
+	}
 	view.CheckedFieldCount = res.CheckedFieldCount
 	view.RepairAvailable = res.RepairAvailable
 	view.RepairScope = string(res.RepairScope)

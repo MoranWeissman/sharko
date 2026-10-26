@@ -55,22 +55,36 @@ func TestAWSLookupFailure_KeepsWhyByType(t *testing.T) {
 	unreachable := smOp(&smithyhttp.RequestSendError{Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New(awsWordsSentinel)}})
 	noLogin := smOp(imdsOp(errors.New(awsWordsSentinel)))
 	missing := smOp(&types.ResourceNotFoundException{Message: aws.String(awsWordsSentinel)})
+	denied := smOp(&smithy.GenericAPIError{Code: "AccessDeniedException", Message: awsWordsSentinel})
+	deniedS3Code := smOp(&smithy.GenericAPIError{Code: "AccessDenied", Message: awsWordsSentinel})
 
 	const prefixed = "clusters/fake-cluster"
 	const exact = "fake-cluster"
 
 	cases := []struct {
-		name         string
-		errs         map[string]error
-		wantKind     AWSFailure
-		wantNotFound bool
+		name           string
+		errs           map[string]error
+		wantKind       AWSFailure
+		wantNotFound   bool
+		wantTried      []string
+		wantNotAllowed []string
 	}{
-		{"login refused on both names", map[string]error{prefixed: refused, exact: refused}, AWSFailureLoginRefused, false},
-		{"AWS never answered", map[string]error{prefixed: unreachable, exact: unreachable}, AWSFailureUnreachable, false},
-		{"no AWS login at all", map[string]error{prefixed: noLogin, exact: noLogin}, AWSFailureNoLogin, false},
-		{"secret is not there under either name", map[string]error{prefixed: missing, exact: missing}, AWSFailureNone, true},
-		{"missing with the prefix, refused without it", map[string]error{prefixed: missing, exact: refused}, AWSFailureLoginRefused, false},
-		{"refused with the prefix, missing without it", map[string]error{prefixed: refused, exact: missing}, AWSFailureLoginRefused, false},
+		{"login refused on both names", map[string]error{prefixed: refused, exact: refused}, AWSFailureLoginRefused, false, nil, nil},
+		{"AWS never answered", map[string]error{prefixed: unreachable, exact: unreachable}, AWSFailureUnreachable, false, nil, nil},
+		{"no AWS login at all", map[string]error{prefixed: noLogin, exact: noLogin}, AWSFailureNoLogin, false, nil, nil},
+		{"secret is not there under either name", map[string]error{prefixed: missing, exact: missing}, AWSFailureNone, true, []string{prefixed, exact}, nil},
+		{"missing with the prefix, refused without it", map[string]error{prefixed: missing, exact: refused}, AWSFailureLoginRefused, false, nil, nil},
+		{"refused with the prefix, missing without it", map[string]error{prefixed: refused, exact: missing}, AWSFailureLoginRefused, false, nil, nil},
+		// ep4 round S, S3: the docs' policy only lets Sharko read names under
+		// the prefix. A secret that is really missing then gives "not found"
+		// for the prefixed name and "access denied" for the plain one. That
+		// is a missing secret, not a refused login.
+		{"missing with the prefix, access denied without it", map[string]error{prefixed: missing, exact: denied}, AWSFailureNone, true, []string{prefixed}, []string{exact}},
+		{"missing with the prefix, AccessDenied code without it", map[string]error{prefixed: missing, exact: deniedS3Code}, AWSFailureNone, true, []string{prefixed}, []string{exact}},
+		// Denied on the prefixed name is a real refusal: Sharko should be
+		// allowed to read under its own prefix.
+		{"access denied with the prefix, missing without it", map[string]error{prefixed: denied, exact: missing}, AWSFailureLoginRefused, false, nil, nil},
+		{"access denied on both names", map[string]error{prefixed: denied, exact: denied}, AWSFailureLoginRefused, false, nil, nil},
 	}
 
 	paths := []struct {
@@ -113,10 +127,39 @@ func TestAWSLookupFailure_KeepsWhyByType(t *testing.T) {
 				if !credsafe.Is(err) {
 					t.Error("the error must carry the credsafe mark, so its text is the safe sentence")
 				}
+				tried, notAllowed, ok := SecretNotFoundNames(err)
+				if ok != tc.wantNotFound {
+					t.Errorf("SecretNotFoundNames ok = %v, want %v", ok, tc.wantNotFound)
+				}
+				if strings.Join(tried, "|") != strings.Join(tc.wantTried, "|") {
+					t.Errorf("names not found = %q, want %q", tried, tc.wantTried)
+				}
+				if strings.Join(notAllowed, "|") != strings.Join(tc.wantNotAllowed, "|") {
+					t.Errorf("names not allowed = %q, want %q", notAllowed, tc.wantNotAllowed)
+				}
 				if strings.Contains(err.Error(), awsWordsSentinel) {
 					t.Errorf("AWS's own words reached the error text: %q", err.Error())
 				}
 			})
 		}
+	}
+}
+
+// With no prefix there is only the plain name, so an access denied on it is
+// a real refusal (ep4 round S, S3: the not-found answer needs the prefixed
+// name to have been not found first).
+func TestAWSLookupFailure_NoPrefixDeniedIsStillRefused(t *testing.T) {
+	denied := smOp(&smithy.GenericAPIError{Code: "AccessDeniedException", Message: awsWordsSentinel})
+	client := &perNameSMClient{errs: map[string]error{"fake-cluster": denied}}
+	p := &AWSSecretsManagerProvider{client: client}
+	_, err := p.StoredConnectionFacts("fake-cluster")
+	if got := ClassifyAWSFailure(err); got != AWSFailureLoginRefused {
+		t.Fatalf("ClassifyAWSFailure = %v, want %v", got, AWSFailureLoginRefused)
+	}
+	if credsafe.IsNotFound(err) {
+		t.Fatal("an access denied with no prefix was called not found")
+	}
+	if _, _, ok := SecretNotFoundNames(err); ok {
+		t.Fatal("SecretNotFoundNames answered for an access denied")
 	}
 }

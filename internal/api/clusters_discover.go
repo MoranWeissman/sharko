@@ -379,6 +379,12 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		// error's text alone.
 		safeMsg := credsafe.Sentence(err)
 		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", safeMsg)
+		// The secret is simply not there: say so, with the secret names
+		// Sharko tried, picked by the error's TYPE (ep4 round S, S3). The
+		// names come from the cluster's own settings, never from the store.
+		if sentence, ok := secretNotFoundSentence(err); ok {
+			safeMsg = sentence
+		}
 		result := verify.Result{
 			Success:      false,
 			Stage:        verifyStageCredentials,
