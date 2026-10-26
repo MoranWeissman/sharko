@@ -158,7 +158,14 @@ import (
 // It logs fixed-text messages with the cluster name, the mark, the pull
 // request number and the error. It does not search for credential
 // characters.
-const wantSweptGoFiles = 444
+//
+// 446 since ep4 story 1 added two files for EKS token renewal:
+// internal/argosecrets/token_renewal.go reads a live config and swaps its
+// token; it makes no log call. internal/clusterreconciler/token_renewal.go
+// renews old tokens on the write pass; it logs fixed-text messages with the
+// cluster name, the namespace and a fixed stage word, never an error value.
+// Neither searches for credential characters.
+const wantSweptGoFiles = 446
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by

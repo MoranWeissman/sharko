@@ -437,6 +437,12 @@ type Reconciler struct {
 	// just means the next pass re-notices.
 	driftNotice map[string]connectionDriftState
 
+	// tokenRenewalMu guards tokenRenewal: per cluster, a failing EKS token
+	// renewal and when to try again (token_renewal.go — ep4 serious 1). In
+	// memory only, same as driftNotice.
+	tokenRenewalMu sync.Mutex
+	tokenRenewal   map[string]tokenRenewalState
+
 	// appliedRevMu guards appliedRevision — the commit the last SUCCESSFUL
 	// WRITE to each cluster's secret was built from (P2-C1's
 	// generation/observedGeneration pair). In memory only, keyed by
@@ -1064,6 +1070,12 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, gp gitprovider.GitProvid
 			// one event per drift episode. The repair stays a separate action
 			// somebody asks for.
 			r.noticeConnectionShapeDrift(ctx, name, secret, false)
+
+			// ep4 serious 1: an eks-token connection's token lasts 15
+			// minutes and nothing else replaces it on a Secret that already
+			// exists. Renew it here, on the write pass only — see
+			// token_renewal.go for every rule this keeps.
+			r.renewEKSTokenIfOld(ctx, desired[name], secret)
 
 			// v4 adds one extra question to "are we in sync?". labelsMatch
 			// is a SUBSET check, which is the right question for v3 (off is

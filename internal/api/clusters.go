@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 )
@@ -133,6 +134,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	backendConfigured := s.credProvider() != nil
 	for i := range resp.Clusters {
 		c := &resp.Clusters[i]
+		applyTokenRenewalTrouble(c, s.clusterRecon)
 		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
 		c.ConnectivityStatus = verdict.Status
 		c.ConnectivityDetail = verdict.Detail
@@ -337,6 +339,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	// internally; fetch it again here to avoid threading it through the service
 	// return value (the service layer is deliberately obs-free).
 	// Best-effort: fields stay absent on failure.
+	applyTokenRenewalTrouble(&resp.Cluster, s.clusterRecon)
 	detailApps, detailAppsErr := ac.ListApplications(r.Context())
 	hasHealthyAddon := false
 	if detailAppsErr == nil {
@@ -488,6 +491,12 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	// build the comparison; we call it again here rather than thread the
 	// result through the service layer to avoid coupling service ↔ obs.
 	// Best-effort: fields stay absent on failure.
+	applyTokenRenewalTrouble(&resp.Cluster, s.clusterRecon)
+	if resp.Cluster.ConnectionStatus == "Failed" && resp.ArgocdConnectionStatus == "Successful" &&
+		s.clusterRecon.TokenRenewalFailing(resp.Cluster.Name) {
+		resp.ArgocdConnectionStatus = "Failed"
+		resp.ArgocdConnectionMessage = clusterreconciler.TokenRenewalFailedSentence
+	}
 	compApps, compAppsErr := ac.ListApplications(r.Context())
 	hasHealthyAddon := false
 	if compAppsErr == nil {
