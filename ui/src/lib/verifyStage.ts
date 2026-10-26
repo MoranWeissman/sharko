@@ -47,6 +47,6 @@ export const VERIFY_STAGE_CREDENTIALS = 'credentials'
  * NORMAL case, not a fatal one — skip verification instead of failing the
  * adoption" — with no sub-classification by reason. This matches it exactly.
  */
-export function isCredentialLookupFailure(v: VerifyResult): boolean {
+export function isCredentialLookupFailure(v: Pick<VerifyResult, 'success' | 'stage'> | { success?: boolean; stage?: string }): boolean {
   return v.success === false && v.stage === VERIFY_STAGE_CREDENTIALS
 }

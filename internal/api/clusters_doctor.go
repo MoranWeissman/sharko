@@ -311,6 +311,28 @@ func (s *Server) doctorCheckCredentials(ctx context.Context, name string) (docto
 				Fix:    doctorFixForArgoCDError(argoErr),
 			}, nil
 		}
+		// The store's error names its cause by TYPE (ep4 round T, T3). On
+		// AWS that is no login, the login turned down, or no answer from
+		// AWS; the fix is then the same sentence the Diagnostics page shows,
+		// not "the secret is missing". A secret that is really not there
+		// gets the not-found sentence with the names Sharko tried. Nothing
+		// the store wrote is read or sent.
+		if fix, ok := awsBackendReadSentence(providers.ClassifyAWSFailure(err)); ok {
+			return doctorCheck{
+				ID:     doctorCheckConnectionCredentials,
+				Status: doctorStatusFail,
+				Detail: fmt.Sprintf(doctorCredsStoreReadFailedFmt, name),
+				Fix:    fix,
+			}, nil
+		}
+		if fix, ok := secretNotFoundSentence(err); ok {
+			return doctorCheck{
+				ID:     doctorCheckConnectionCredentials,
+				Status: doctorStatusFail,
+				Detail: fmt.Sprintf(doctorCredsStoreReadFailedFmt, name),
+				Fix:    fix,
+			}, nil
+		}
 		// PUBLIC BOUNDARY. A doctor check's Detail goes straight into the API
 		// response, so a credentials-backend error gets the fixed sentence.
 		return doctorCheck{
@@ -327,6 +349,11 @@ func (s *Server) doctorCheckCredentials(ctx context.Context, name string) (docto
 		Detail: fmt.Sprintf("Sharko can read the connection credentials for cluster %q.", name),
 	}, creds
 }
+
+// doctorCredsStoreReadFailedFmt is check 1's Detail when Sharko could not
+// read the cluster's login from the secrets store for a cause it can name. The
+// Fix then says the cause and what to do.
+const doctorCredsStoreReadFailedFmt = "Sharko could not read the login for cluster %q from your secrets store."
 
 // doctorFixForArgoCDError maps the stable ArgoCDProviderError codes
 // (V2-cleanup-88.2) to a plain-English, non-developer-facing fix.

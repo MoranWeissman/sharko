@@ -283,7 +283,17 @@ Reachable: yes
 Kubernetes version: v1.29.3
 ```
 
-If the cluster is unreachable, the error message from the provider or the Kubernetes API is shown.
+If the cluster does not answer, the command says `Reachable: no` and a short sentence about why.
+
+If Sharko could not read the cluster's login, it never tries the cluster. The command then says:
+
+```
+Reachable: not tested. Sharko could not read this cluster's login, so it did not try to reach the cluster.
+```
+
+The next line says why the login could not be read. For example, AWS turned down Sharko's login, or the secret is not in your secrets store.
+
+The command exits `0` only when the cluster answered. It exits `1` when the cluster did not answer, or when the test could not run.
 
 ### `sharko adopt`
 
