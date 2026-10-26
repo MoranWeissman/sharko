@@ -133,7 +133,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	backendConfigured := s.credProvider() != nil
 	for i := range resp.Clusters {
 		c := &resp.Clusters[i]
-		applyTokenRenewalTrouble(c, s.clusterRecon)
+		if applyTokenRenewalTrouble(c, s.clusterRecon) {
+			moveRenewalTroubleInStats(resp.HealthStats)
+		}
 		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
 		c.ConnectivityStatus = verdict.Status
 		c.ConnectivityDetail = verdict.Detail
@@ -156,6 +158,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		// "Test connection" click — see computeDerivedHealth.
 		hasHealthyAddon := clusterHasHealthyAddon(c.Name, c.ServerURL, allApps)
 		c.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, c.ConnectionStatus)
+		applyTokenRenewalVerdict(c, s.clusterRecon)
 		// V2-cleanup-88.1: pure string/shape derivation, no extra call —
 		// always computed, unlike the ArgoCD-app-dependent fields above.
 		c.TargetPlatform = computeTargetPlatform(c.ServerURL, c.CredsSource)
@@ -350,6 +353,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 		hasHealthyAddon = clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, detailApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
+	applyTokenRenewalVerdict(&resp.Cluster, s.clusterRecon)
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
 	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
 	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)
@@ -507,6 +511,7 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 		hasHealthyAddon = clusterHasHealthyAddon(resp.Cluster.Name, resp.Cluster.ServerURL, compApps)
 		resp.Cluster.DerivedHealthStatus = computeDerivedHealth(hasHealthyAddon, verdict, resp.Cluster.ConnectionStatus)
 	}
+	applyTokenRenewalVerdict(&resp.Cluster, s.clusterRecon)
 	// V2-cleanup-88.1: pure string/shape derivation, no ArgoCD call needed
 	// — set unconditionally, unlike the ArgoCD-app-dependent fields above.
 	resp.Cluster.TargetPlatform = computeTargetPlatform(resp.Cluster.ServerURL, resp.Cluster.CredsSource)

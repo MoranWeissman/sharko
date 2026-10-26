@@ -558,14 +558,17 @@ func (s *Server) handleGetConnectionReconciliation(w http.ResponseWriter, r *htt
 	s.connCredChecks.record(cluster, view)
 
 	healthState, healthMessage, argoUnreachable := s.argoConnectionHealth(r.Context(), cluster)
+	// Only a mark in memory is read; nothing is minted (ep4 round R, R4).
+	renewalTrouble, _ := s.clusterRecon.TokenRenewalTrouble(cluster)
 	selfHealOn := s.settingsStore.GetManagedSecretsSettings(r.Context()).SelfHealEnabled
 
 	out := buildConnectionReconciliationView(connectionReconciliationFacts{
-		view:            view,
-		healthState:     healthState,
-		healthMessage:   healthMessage,
-		argoUnreachable: argoUnreachable,
-		selfHealOn:      selfHealOn,
+		view:                view,
+		healthState:         healthState,
+		healthMessage:       healthMessage,
+		tokenRenewalTrouble: renewalTrouble,
+		argoUnreachable:     argoUnreachable,
+		selfHealOn:          selfHealOn,
 	})
 
 	s.auditSecretResourceRead(r, "cluster:"+cluster,
@@ -623,6 +626,12 @@ type connectionReconciliationFacts struct {
 	// Only meaningful next to healthState not_checked; it picks the honest
 	// condition sentence — "could not ask" vs "never probed".
 	argoUnreachable bool
+	// tokenRenewalTrouble is the reconciler's fixed sentence while this
+	// cluster's EKS token renewal is failing, and empty otherwise. ArgoCD
+	// still says the connection works then, because the old token has not run
+	// out yet — but it will, so the page must not show it as fine (ep4 round
+	// R, R4).
+	tokenRenewalTrouble string
 	// selfHealOn is the live managed_cluster_self_heal setting — whether
 	// slash-free label drift on a v3 Sharko-managed cluster converges by
 	// itself.
@@ -652,6 +661,14 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 	healthMessage := f.healthMessage
 	if healthState != healthStateUnavailable {
 		healthMessage = ""
+	}
+	// A failing EKS token renewal turns "connected" into a problem, with the
+	// renewal sentence as the message. Only "connected" changes: a connection
+	// ArgoCD already cannot use, or never checked, keeps its own word.
+	renewalFailing := f.tokenRenewalTrouble != "" && healthState == healthStateConnected
+	if renewalFailing {
+		healthState = healthStateUnavailable
+		healthMessage = f.tokenRenewalTrouble
 	}
 
 	out := connectionReconciliationView{
@@ -697,6 +714,16 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 	// hide behind not_checked. Passing only one of them would collapse three
 	// different situations into two sentences.
 	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, healthState, f.argoUnreachable)
+	if renewalFailing {
+		// "ArgoCD cannot currently use this connection" is not true yet: it
+		// still can, until the old token runs out. The renewal sentence says
+		// what is really wrong and what to do.
+		for i := range out.Conditions {
+			if out.Conditions[i].ID == conditionArgoCDConnection {
+				out.Conditions[i].Detail = f.tokenRenewalTrouble
+			}
+		}
+	}
 	return out
 }
 

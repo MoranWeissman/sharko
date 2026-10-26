@@ -122,13 +122,47 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 // from showing as "Connected" (ep4 serious 1). ArgoCD keeps reporting the
 // connection as fine until the old token actually runs out, so its word is
 // not enough here. Called before the connectivity verdict is computed.
-func applyTokenRenewalTrouble(c *models.Cluster, recon *clusterreconciler.Reconciler) {
+//
+// It returns true when it changed "Successful" to "Failed", so the cluster
+// list can move that cluster from the Connected count to the Failed count
+// (ep4 round R, R4: the counts were made before this ran).
+func applyTokenRenewalTrouble(c *models.Cluster, recon *clusterreconciler.Reconciler) bool {
 	if recon == nil || !recon.TokenRenewalFailing(c.Name) {
-		return
+		return false
 	}
 	if c.ConnectionStatus == "Successful" {
 		c.ConnectionStatus = "Failed"
+		return true
 	}
+	return false
+}
+
+// applyTokenRenewalVerdict is the second half of applyTokenRenewalTrouble.
+// It runs AFTER the connectivity verdict and the derived health, because both
+// can still come out green from things the status change does not touch: the
+// connectivity-check app is Synced and Healthy, or an addon on the cluster is
+// healthy. While the renewal is failing, the cluster is a problem everywhere
+// on the page (ep4 round R, R4): the check reads failed, with the renewal
+// sentence as its detail, and the health pill reads unknown.
+func applyTokenRenewalVerdict(c *models.Cluster, recon *clusterreconciler.Reconciler) {
+	sentence, failing := recon.TokenRenewalTrouble(c.Name)
+	if !failing {
+		return
+	}
+	c.ConnectivityStatus = "check_failed"
+	c.ConnectivityDetail = sentence
+	c.DerivedHealthStatus = derivedHealthUnknown
+}
+
+// moveRenewalTroubleInStats moves one cluster from Connected to Failed in the
+// list's counts, for a cluster applyTokenRenewalTrouble just changed. The
+// counts are made in the service layer, before the change.
+func moveRenewalTroubleInStats(stats *models.ClusterHealthStats) {
+	if stats == nil || stats.Connected == 0 {
+		return
+	}
+	stats.Connected--
+	stats.Failed++
 }
 
 // applyManagedSecretFields sets the two fields the "Managed cluster secret"
