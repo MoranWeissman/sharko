@@ -63,6 +63,7 @@ import (
 	"sort"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
@@ -201,15 +202,38 @@ const connectionFailureCodeRedirectToHTTP verify.ErrorCode = "ERR_REDIRECT_TO_HT
 // tokens. Kept apart from connectionFailureCodeTokens, which must match
 // internal/verify exactly.
 var connectionFailureExtraCodeTokens = map[verify.ErrorCode]string{
-	connectionFailureCodeNeedsHTTPS:     "NeedsHTTPS",
-	connectionFailureCodeRedirectToHTTP: "RedirectToHTTP",
+	connectionFailureCodeNeedsHTTPS:      "NeedsHTTPS",
+	connectionFailureCodeRedirectToHTTP:  "RedirectToHTTP",
+	connectionFailureCodeAWSLoginRefused: "AWSLoginRefused",
+	connectionFailureCodeAWSUnreachable:  "AWSUnreachable",
 }
+
+// connectionFailureCodeAWSLoginRefused is the extra code for a secrets store
+// test where AWS answered and turned Sharko's login down (ep4, serious 6): a
+// wrong, switched-off or out-of-date access key, or a login that is not allowed
+// to read the secrets. It is picked by providers.ClassifyAWSFailure, which reads
+// AWS's error code and type, never its words.
+//
+// Before, this case had no code of its own and showed the general "Sharko
+// can't reach your secrets store" sentence, which is false: AWS was reached,
+// and it said no.
+const connectionFailureCodeAWSLoginRefused verify.ErrorCode = "ERR_AWS_LOGIN_REFUSED"
+
+// connectionFailureCodeAWSUnreachable is the extra code for a secrets store
+// test where the request never got an answer from AWS.
+const connectionFailureCodeAWSUnreachable verify.ErrorCode = "ERR_AWS_UNREACHABLE"
 
 // connectionFailureExtraPairs is every (kind, extra code) pair the catalog
 // holds. An extra code is only ever valid together with its kind.
 var connectionFailureExtraPairs = []connectionFailureKey{
 	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS},
 	{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP},
+	// The secrets store goes by two kinds (vault and secrets are the same
+	// backend), so each AWS code is valid with both.
+	{kind: connectionKindVault, code: connectionFailureCodeAWSLoginRefused},
+	{kind: connectionKindVault, code: connectionFailureCodeAWSUnreachable},
+	{kind: connectionKindSecrets, code: connectionFailureCodeAWSLoginRefused},
+	{kind: connectionKindSecrets, code: connectionFailureCodeAWSUnreachable},
 }
 
 // normalizeConnectionFailurePair normalizes both parameters together. An
@@ -373,6 +397,32 @@ const argocdRedirectToHTTP = "ArgoCD tried to send Sharko from https to plain ht
 	"Sharko does not follow that, so the ArgoCD token is never sent unencrypted. " +
 	"Check the ArgoCD address and any proxy in front of ArgoCD, then test again."
 
+// awsLoginDocsPage is the title of the docs page on giving Sharko its AWS
+// login, at operator/configuration/#aws-login-outside-eks. The sentences below
+// name it so a person can find it; the browser links it.
+const awsLoginDocsPage = `"Give Sharko an AWS login when it does not run on EKS"`
+
+// secretsAWSLoginRefused is the whole sentence for a secrets store test where
+// AWS answered and turned Sharko's login down (ep4, serious 6).
+//
+// WHY IT IS A WHOLE SENTENCE. The secrets store subject is "Sharko can't reach
+// your secrets store", and here that is false: AWS was reached, and it said no.
+// It names the real place to fix it, Settings → Secrets Provider, and the docs
+// page. It names no key, no account and nothing AWS said.
+//
+// Pinned by exact text in connection_aws_failure_sentence_test.go.
+const secretsAWSLoginRefused = "AWS answered, but it turned down Sharko's login, so Sharko could not read your secrets store. " +
+	"The access key may be wrong or switched off, or it may not be allowed to read these secrets. " +
+	"Check Sharko's AWS login in Settings → Secrets Provider. The docs page " + awsLoginDocsPage + " shows how to set it up."
+
+// secretsAWSUnreachable is the whole sentence for a secrets store test where
+// the request never got an answer from AWS.
+//
+// Pinned by exact text in connection_aws_failure_sentence_test.go.
+const secretsAWSUnreachable = "Sharko could not get an answer from AWS, so it could not read your secrets store. " +
+	"Check that this server can reach AWS over the network, and check the region in Settings → Secrets Provider. " +
+	"The docs page " + awsLoginDocsPage + " shows how to set up Sharko's AWS login."
+
 // connectionTestStatusNotTested is the "status" of a connection-test result
 // for a test that never ran. Every other result is "ok" or "error".
 const connectionTestStatusNotTested = "not_tested"
@@ -396,10 +446,14 @@ const argocdNotTestedBadGitAddress = "ArgoCD was not tested, because Sharko coul
 // ConnectionFailureMessages slice, same generated browser file. Nothing about
 // the contract changes — only where the words come from.
 var connectionFailureWholeSentences = map[connectionFailureKey]string{
-	{kind: connectionKindGit, code: verify.ERR_RBAC}:                        gitPermissionRefusal + " " + gitPermissionNextStep,
-	{kind: connectionKindArgoCD, code: verify.ERR_TLS}:                      argocdCertificateNotTrusted,
-	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS}:     argocdNeedsHTTPS,
-	{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP}: argocdRedirectToHTTP,
+	{kind: connectionKindGit, code: verify.ERR_RBAC}:                          gitPermissionRefusal + " " + gitPermissionNextStep,
+	{kind: connectionKindArgoCD, code: verify.ERR_TLS}:                        argocdCertificateNotTrusted,
+	{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS}:       argocdNeedsHTTPS,
+	{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP}:   argocdRedirectToHTTP,
+	{kind: connectionKindVault, code: connectionFailureCodeAWSLoginRefused}:   secretsAWSLoginRefused,
+	{kind: connectionKindVault, code: connectionFailureCodeAWSUnreachable}:    secretsAWSUnreachable,
+	{kind: connectionKindSecrets, code: connectionFailureCodeAWSLoginRefused}: secretsAWSLoginRefused,
+	{kind: connectionKindSecrets, code: connectionFailureCodeAWSUnreachable}:  secretsAWSUnreachable,
 }
 
 // connectionFailureWholeSentence looks a whole-sentence variant up. Both
@@ -504,12 +558,22 @@ func connectionFailureIDFor(kind connectionKind, code verify.ErrorCode) string {
 // its own code, picked by error TYPE (errors.Is), never by its words.
 // Everything else goes through verify.ClassifyError as before.
 func connectionFailureCodeFor(kind connectionKind, err error) verify.ErrorCode {
-	if normalizeConnectionKind(kind) == connectionKindArgoCD {
+	switch normalizeConnectionKind(kind) {
+	case connectionKindArgoCD:
 		switch {
 		case errors.Is(err, argocd.ErrArgocdNeedsHTTPS):
 			return connectionFailureCodeNeedsHTTPS
 		case errors.Is(err, argocd.ErrArgocdRedirectToHTTP):
 			return connectionFailureCodeRedirectToHTTP
+		}
+	case connectionKindVault, connectionKindSecrets:
+		// AWS's own error code and type say whether AWS turned the login
+		// down or never answered. Nothing AWS wrote is read.
+		switch providers.ClassifyAWSFailure(err) {
+		case providers.AWSFailureLoginRefused:
+			return connectionFailureCodeAWSLoginRefused
+		case providers.AWSFailureUnreachable:
+			return connectionFailureCodeAWSUnreachable
 		}
 	}
 	return verify.ClassifyError(err)
