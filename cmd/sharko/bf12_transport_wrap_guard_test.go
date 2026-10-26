@@ -115,10 +115,10 @@ type bf12Site struct {
 // that ordinary edits above a site do not churn the list. The failure message
 // prints the line.
 var bf12Sites = map[string]bf12Site{
-	// cmd/sharko/client.go:366
-	"cmd/sharko/client.go::apiRequest::Client.Do": {bf12Described, ""},
-	// cmd/sharko/client.go:341
-	"cmd/sharko/client.go::apiRequest::NewRequest": {bf12Described, ""},
+	// cmd/sharko/client.go:398
+	"cmd/sharko/client.go::apiRequestWithTimeout::Client.Do": {bf12Described, ""},
+	// cmd/sharko/client.go:373
+	"cmd/sharko/client.go::apiRequestWithTimeout::NewRequest": {bf12Described, ""},
 	// internal/advisories/artifacthub.go:166
 	"internal/advisories/artifacthub.go::artifactHubSource.fetchPackage::Client.Do": {bf12Raw,
 		"artifacthub.io is a literal in that file; the rest of the address is a " +

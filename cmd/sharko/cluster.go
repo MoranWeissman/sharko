@@ -137,9 +137,9 @@ var addClusterCmd = &cobra.Command{
 Use --creds-source to say how Sharko gets the cluster's credentials. These are
 the same choices as the register dialog in the UI.
 
-  eks-token          Sharko makes a short-lived AWS token each time it connects.
-                     Nothing to store. EKS only. --role-arn and --secret-path
-                     are optional.
+  eks-token          A short-lived token that Sharko makes and renews before it
+                     runs out. You store nothing. EKS only. --role-arn and
+                     --secret-path are optional.
   secret-kubeconfig  Sharko reads a kubeconfig that is kept in your secrets
                      backend. Give its name with --secret-path. --role-arn is
                      optional: it is the AWS role Sharko takes on to read it.
