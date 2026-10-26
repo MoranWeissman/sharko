@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
-	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/events"
 	"github.com/MoranWeissman/sharko/internal/logging"
 )
@@ -97,27 +96,14 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
 	outcome, err := mgr.RepairOwnedConnection(ctx, desired, provenance)
 	if err != nil {
-		// No error text is recorded, here or anywhere else. Whether this
-		// particular error happens to be a safe one stopped mattering: the
-		// audit sink builds its own sentence from the CATEGORY this call
-		// site classifies, and there is no field left for the error's words
-		// to travel in. The words go to the server log line below.
+		// The words go to the server log line below only. No audit entry is
+		// written here, on any path of this function: the person's Repair
+		// click already gets exactly one activity line from the request
+		// (internal/api connection_repair.go), and a second one here said
+		// "Background reconciler" did a repair nobody asked it to do (ep4
+		// serious 4).
 		log.Error("[clusterreconciler] connection repair failed — nothing was written",
 			"cluster", name, "namespace", r.namespace, "error", err)
-		r.audit(audit.Entry{
-			Level: "error",
-			// Ruling (f): a repair that threw is not a repair. The
-			// past-tense event is reserved for work that happened.
-			Event:     EventClusterConnectionRepairFailed,
-			User:      "sharko",
-			Action:    "repair_connection",
-			Resource:  fmt.Sprintf("cluster:%s", name),
-			Source:    "reconciler",
-			Result:    "failure",
-			Changes:   audit.ChangesNone,
-			Reason:    audit.Classify(err),
-			RequestID: logging.RequestID(ctx),
-		})
 		r.recordReconcile(name, OutcomeFailed,
 			"Sharko couldn't repair this cluster's ArgoCD connection: "+err.Error(), nil)
 		return RepairResult{}, err
@@ -136,22 +122,6 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 		// for "what commit was the last write built from".
 		log.Info("[clusterreconciler] connection repair found nothing to change",
 			"cluster", name, "namespace", r.namespace)
-		r.audit(audit.Entry{
-			Level:    "info",
-			Event:    EventClusterConnectionRepair,
-			User:     "sharko",
-			Action:   "repair_connection",
-			Resource: fmt.Sprintf("cluster:%s", name),
-			Source:   "reconciler",
-			Result:   "success",
-			// Ruling (f), C3: THIS is the one case where "no changes made"
-			// is true — the repair ran to completion and deliberately wrote
-			// nothing. It is an ACTION RESULT, not evidence the check
-			// failed, and it used to be the one case a reader never saw.
-			Changes:   audit.ChangesNone,
-			Detail:    "the connection already matched the Git-defined connection; nothing was written",
-			RequestID: logging.RequestID(ctx),
-		})
 		result.AppliedRevision = r.appliedRevisionFor(name)
 		return result, nil
 	}
@@ -161,19 +131,6 @@ func (r *Reconciler) RepairOwnedConnectionSecret(ctx context.Context, desired *c
 		"cluster", name, "namespace", r.namespace,
 		"fields_written", len(outcome.FieldsWritten),
 		"revision", comparedRevision)
-	r.audit(audit.Entry{
-		Level:     "info",
-		Event:     EventClusterConnectionRepair,
-		User:      "sharko",
-		Action:    "repair_connection",
-		Resource:  fmt.Sprintf("cluster:%s", name),
-		Source:    "reconciler",
-		Result:    "success",
-		Changes:   audit.ChangesApplied,
-		Detail:    fmt.Sprintf("rewrote %d owned field(s) to match commit %s", len(outcome.FieldsWritten), comparedRevision),
-		RequestID: logging.RequestID(ctx),
-	})
-
 	// A real write landed. Stamp the applied revision from the commit this
 	// repair was actually built against, not from whatever the last periodic
 	// pass happened to see.

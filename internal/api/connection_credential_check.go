@@ -386,14 +386,19 @@ type connectionCredentialCheckStore struct {
 	// an entry's Error is a SafeText that only the audit sink can build,
 	// and the sink rebuilds it from the entry's Reason every time.
 	auditFn func(audit.Entry)
+	// bell is the server's notification store. When the check can't read a
+	// cluster's login from the secrets store it holds one entry for that
+	// cluster, cleared when the check works again. Nil means no bell.
+	bell credentialCheckBell
 }
 
-func newConnectionCredentialCheckStore(auditFn func(audit.Entry)) *connectionCredentialCheckStore {
+func newConnectionCredentialCheckStore(auditFn func(audit.Entry), bell credentialCheckBell) *connectionCredentialCheckStore {
 	return &connectionCredentialCheckStore{
 		records:        make(map[string]connectionCredentialCheckRecord),
 		driftAnnounced: make(map[string]bool),
 		checkFailing:   make(map[string]bool),
 		auditFn:        auditFn,
+		bell:           bell,
 	}
 }
 
@@ -452,6 +457,8 @@ func (st *connectionCredentialCheckStore) record(cluster string, view connection
 		recovered = true
 	}
 	st.mu.Unlock()
+
+	st.ringBell(cluster, status, view.failure, time.Now().UTC())
 
 	if st.auditFn == nil {
 		return

@@ -20,6 +20,7 @@ export const NOTIFICATION_CODES = {
   addonUpgradeAvailable: "addon_upgrade_available",
   addonMajorUpdate: "addon_major_update",
   addonVersionDrift: "addon_version_drift",
+  clusterCredentialCheckFailed: "cluster_credential_check_failed",
 } as const
 
 // The set of identifiers the server declares. An identifier outside it is one

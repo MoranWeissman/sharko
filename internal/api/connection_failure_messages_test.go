@@ -87,6 +87,10 @@ func TestConnectionFailure_EveryVariantRendersItsSentence(t *testing.T) {
 		{connectionKindVault, verify.ERR_NAMESPACE, "Sharko can't reach your secrets store. Check the connection settings and try again."},
 		{connectionKindVault, verify.ERR_TIMEOUT, "Sharko can't reach your secrets store — the request timed out. Check the URL and network access."},
 		{connectionKindVault, verify.ERR_UNKNOWN, "Sharko can't reach your secrets store. Check the connection settings and try again."},
+		// The two AWS pairs (ep4, serious 6): AWS turned the login down, and
+		// AWS never answered.
+		{connectionKindVault, connectionFailureCodeAWSLoginRefused, "AWS answered, but it turned down Sharko's login, so Sharko could not read your secrets store. The access key may be wrong or switched off, or it may not be allowed to read these secrets. Check Sharko's AWS login in Settings → Secrets Provider. The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how to set it up."},
+		{connectionKindVault, connectionFailureCodeAWSUnreachable, "Sharko could not get an answer from AWS, so it could not read your secrets store. Check that this server can reach AWS over the network, and check the region in Settings → Secrets Provider. The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how to set up Sharko's AWS login."},
 
 		// ── secrets (the same backend as vault, under its other name) ─────
 		{connectionKindSecrets, verify.ERR_NETWORK, "Sharko can't reach your secrets store — the host could not be reached. Check the URL and network access."},
@@ -99,6 +103,8 @@ func TestConnectionFailure_EveryVariantRendersItsSentence(t *testing.T) {
 		{connectionKindSecrets, verify.ERR_NAMESPACE, "Sharko can't reach your secrets store. Check the connection settings and try again."},
 		{connectionKindSecrets, verify.ERR_TIMEOUT, "Sharko can't reach your secrets store — the request timed out. Check the URL and network access."},
 		{connectionKindSecrets, verify.ERR_UNKNOWN, "Sharko can't reach your secrets store. Check the connection settings and try again."},
+		{connectionKindSecrets, connectionFailureCodeAWSLoginRefused, "AWS answered, but it turned down Sharko's login, so Sharko could not read your secrets store. The access key may be wrong or switched off, or it may not be allowed to read these secrets. Check Sharko's AWS login in Settings → Secrets Provider. The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how to set it up."},
+		{connectionKindSecrets, connectionFailureCodeAWSUnreachable, "Sharko could not get an answer from AWS, so it could not read your secrets store. Check that this server can reach AWS over the network, and check the region in Settings → Secrets Provider. The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how to set up Sharko's AWS login."},
 
 		// ── other (the bucket every unrecognised kind renders as) ─────────
 		{connectionKindOther, verify.ERR_NETWORK, "Sharko can't reach this connection — the host could not be reached. Check the URL and network access."},
@@ -211,6 +217,13 @@ func TestConnectionFailure_JoinPunctuation(t *testing.T) {
 		{kind: connectionKindArgoCD, code: verify.ERR_TLS},
 		{kind: connectionKindArgoCD, code: connectionFailureCodeNeedsHTTPS},
 		{kind: connectionKindArgoCD, code: connectionFailureCodeRedirectToHTTP},
+		// ep4, serious 6: AWS turned the login down, or never answered. The
+		// epic asked for one true sentence for each, pointing at Settings →
+		// Secrets Provider and the AWS login docs page.
+		{kind: connectionKindVault, code: connectionFailureCodeAWSLoginRefused},
+		{kind: connectionKindVault, code: connectionFailureCodeAWSUnreachable},
+		{kind: connectionKindSecrets, code: connectionFailureCodeAWSLoginRefused},
+		{kind: connectionKindSecrets, code: connectionFailureCodeAWSUnreachable},
 	}
 	isWholeSentence := map[connectionFailureKey]bool{}
 	for _, key := range wholeSentenceVariants {
@@ -451,14 +464,18 @@ func TestConnectionFailure_OtherKindsKeepTheirPermissionWording(t *testing.T) {
 	// ones: git/ERR_RBAC (2026-08-20), argocd/ERR_TLS (VF-1, video
 	// finding V2, 2026-10-15), argocd/ERR_NEEDS_HTTPS (L7, epic
 	// video-leftovers, 2026-10-18) and argocd/ERR_REDIRECT_TO_HTTP (LO-7 R2,
-	// same epic). Compared as an exact list, never a count.
+	// same epic), plus secrets/vault ERR_AWS_LOGIN_REFUSED and
+	// ERR_AWS_UNREACHABLE (ep4, serious 6, 2026-10-26). Compared as an exact
+	// list, never a count.
 	var names []string
 	for key := range connectionFailureWholeSentences {
 		names = append(names, string(key.kind)+"/"+string(key.code))
 	}
 	sort.Strings(names)
-	if strings.Join(names, ",") != "argocd/ERR_NEEDS_HTTPS,argocd/ERR_REDIRECT_TO_HTTP,argocd/ERR_TLS,git/ERR_RBAC" {
-		t.Errorf("whole-sentence variants: %v — only argocd/ERR_NEEDS_HTTPS, argocd/ERR_REDIRECT_TO_HTTP, argocd/ERR_TLS and git/ERR_RBAC were ruled on. "+
+	if strings.Join(names, ",") != "argocd/ERR_NEEDS_HTTPS,argocd/ERR_REDIRECT_TO_HTTP,argocd/ERR_TLS,git/ERR_RBAC,"+
+		"secrets/ERR_AWS_LOGIN_REFUSED,secrets/ERR_AWS_UNREACHABLE,vault/ERR_AWS_LOGIN_REFUSED,vault/ERR_AWS_UNREACHABLE" {
+		t.Errorf("whole-sentence variants: %v — only argocd/ERR_NEEDS_HTTPS, argocd/ERR_REDIRECT_TO_HTTP, argocd/ERR_TLS, git/ERR_RBAC "+
+			"and the four secrets/vault ERR_AWS_* pairs were ruled on. "+
 			"A new one is a product decision, not a refactor: name it in TestConnectionFailure_JoinPunctuation "+
 			"and write its literal out in TestConnectionFailure_EveryVariantRendersItsSentence.",
 			names)
@@ -697,13 +714,17 @@ func TestConnectionFailure_CatalogCoversEveryPair(t *testing.T) {
 	}
 	// The extra pairs, written out as literals so the list is not checked
 	// against itself.
-	for _, id := range []string{"connectionFailureArgoCDNeedsHTTPS", "connectionFailureArgoCDRedirectToHTTP"} {
+	for _, id := range []string{
+		"connectionFailureArgoCDNeedsHTTPS", "connectionFailureArgoCDRedirectToHTTP",
+		"connectionFailureVaultAWSLoginRefused", "connectionFailureVaultAWSUnreachable",
+		"connectionFailureSecretsAWSLoginRefused", "connectionFailureSecretsAWSUnreachable",
+	} {
 		expected[id] = true
 		if !inCatalog[id] {
 			t.Errorf("%q is not in the catalog", id)
 		}
 	}
-	if len(connectionFailureExtraPairs) != 2 {
+	if len(connectionFailureExtraPairs) != 6 {
 		t.Errorf("connectionFailureExtraPairs has %d pairs; add the new one's identifier above", len(connectionFailureExtraPairs))
 	}
 	for id := range inCatalog {

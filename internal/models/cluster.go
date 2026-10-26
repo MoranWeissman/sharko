@@ -615,7 +615,21 @@ type ClustersResponse struct {
 	// renders these in a dedicated "Cancelled / Orphan Registrations"
 	// section with a per-row Delete cluster Secret button.
 	OrphanRegistrations []OrphanRegistration `json:"orphan_registrations"`
+	// ArgocdUnavailableReason is set only when Sharko could not read ArgoCD's
+	// cluster list for this answer: "auth_refused" (ArgoCD said no to
+	// Sharko's login — 401 or 403) or "unreachable" (anything else: no
+	// answer, a timeout, an answer Sharko could not read). Absent when the
+	// read worked. While it is set, every cluster from Git is still
+	// managed: true with connection_status "unknown", and no cluster is
+	// counted as ArgoCD-only.
+	ArgocdUnavailableReason string `json:"argocd_unavailable_reason,omitempty" enums:"auth_refused,unreachable"`
 }
+
+// Values of ClustersResponse.ArgocdUnavailableReason.
+const (
+	ArgocdUnavailableAuthRefused = "auth_refused"
+	ArgocdUnavailableUnreachable = "unreachable"
+)
 
 // ClusterAddonInfo holds combined information about an addon in a specific cluster.
 type ClusterAddonInfo struct {

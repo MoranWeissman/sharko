@@ -150,6 +150,17 @@ func (m *mockCredProvider) GetCredentials(clusterName string) (*providers.Kubeco
 	return nil, fmt.Errorf("cluster %q not found", clusterName)
 }
 
+// StoredConnectionFacts makes the mock a backend that holds a fixed login
+// (like a stored kubeconfig in AWS SM or a Kubernetes Secret), so a dry run
+// may go on to GetCredentials for its read-only connection preview.
+func (m *mockCredProvider) StoredConnectionFacts(lookupKey string) (*providers.StoredConnectionFacts, error) {
+	c, err := m.GetCredentials(lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	return &providers.StoredConnectionFacts{Server: c.Server, CAData: c.CAData, Token: c.Token}, nil
+}
+
 func (m *mockCredProvider) ListClusters() ([]providers.ClusterInfo, error) {
 	return nil, nil
 }

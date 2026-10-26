@@ -92,6 +92,12 @@ const (
 	// CodeAddonVersionDrift — the version running on a cluster is not the
 	// version the catalog pins.
 	CodeAddonVersionDrift Code = "addon_version_drift"
+
+	// CodeClusterCredentialCheckFailed — Sharko could not read one cluster's
+	// login from the secrets store (for example the store turned Sharko's own
+	// login down), so it could not check that cluster's connection. One
+	// entry per cluster, cleared when the check works again (ep4, serious 5).
+	CodeClusterCredentialCheckFailed Code = "cluster_credential_check_failed"
 )
 
 // declaredCodes is the closed set. A Code outside it is not a Code Sharko
@@ -110,6 +116,7 @@ var declaredCodes = []Code{
 	CodeAddonUpgradeAvailable,
 	CodeAddonMajorUpdate,
 	CodeAddonVersionDrift,
+	CodeClusterCredentialCheckFailed,
 }
 
 // DeclaredCodes returns every code Sharko may emit, in a stable order.

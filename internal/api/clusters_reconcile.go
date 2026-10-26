@@ -109,7 +109,26 @@ func applyLastReconcile(c *models.Cluster, recon *clusterreconciler.Reconciler) 
 			Changed: rec.LabelDrift.Changed,
 		}
 	}
+	// ep4 serious 1: a failing EKS token renewal is a connection problem,
+	// whatever the last pass said about labels.
+	if recon.TokenRenewalFailing(c.Name) {
+		lastRec.Outcome = string(clusterreconciler.OutcomeFailed)
+		lastRec.Message = clusterreconciler.TokenRenewalFailedSentence
+	}
 	c.LastReconcile = lastRec
+}
+
+// applyTokenRenewalTrouble stops a cluster whose EKS token renewal is failing
+// from showing as "Connected" (ep4 serious 1). ArgoCD keeps reporting the
+// connection as fine until the old token actually runs out, so its word is
+// not enough here. Called before the connectivity verdict is computed.
+func applyTokenRenewalTrouble(c *models.Cluster, recon *clusterreconciler.Reconciler) {
+	if recon == nil || !recon.TokenRenewalFailing(c.Name) {
+		return
+	}
+	if c.ConnectionStatus == "Successful" {
+		c.ConnectionStatus = "Failed"
+	}
 }
 
 // applyManagedSecretFields sets the two fields the "Managed cluster secret"

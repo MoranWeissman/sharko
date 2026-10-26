@@ -224,11 +224,22 @@ func (s *ClusterService) listClustersUncached(ctx context.Context, gp gitprovide
 		log.Warn("could not fetch argocd clusters", "error", err)
 		// Continue without ArgoCD data. PendingRegistrations defaults to
 		// a non-nil empty slice — never let a nil array reach the FE.
+		//
+		// ep4 serious 2: the clusters in Git are still Sharko's clusters
+		// when ArgoCD can't be read. Before, they came back without
+		// managed: true, so the page counted every one of them as
+		// ArgoCD-only. Now they stay managed, their ArgoCD state is
+		// "unknown", and the answer says why ArgoCD could not be read.
+		for i := range clusters {
+			clusters[i].Managed = true
+			clusters[i].ConnectionStatus = "unknown"
+		}
 		return &models.ClustersResponse{
-			Clusters:             clusters,
-			HealthStats:          s.computeHealthStats(clusters, nil),
-			PendingRegistrations: []models.PendingRegistration{},
-			OrphanRegistrations:  []models.OrphanRegistration{},
+			Clusters:                clusters,
+			HealthStats:             s.computeHealthStats(clusters, nil),
+			PendingRegistrations:    []models.PendingRegistration{},
+			OrphanRegistrations:     []models.OrphanRegistration{},
+			ArgocdUnavailableReason: argocdUnavailableReason(err),
 		}, nil
 	}
 
@@ -1111,4 +1122,13 @@ func argocdLabelsCopy(labels map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// argocdUnavailableReason sorts a failed ArgoCD cluster-list read into the
+// two answers models.ClustersResponse.ArgocdUnavailableReason carries.
+func argocdUnavailableReason(err error) string {
+	if errors.Is(err, argocd.ErrTokenInvalid) || errors.Is(err, argocd.ErrPermissionDenied) {
+		return models.ArgocdUnavailableAuthRefused
+	}
+	return models.ArgocdUnavailableUnreachable
 }

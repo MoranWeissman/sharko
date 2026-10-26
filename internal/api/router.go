@@ -662,6 +662,9 @@ func NewServer(
 	// One audit log, shared by the request middleware and the
 	// credential-check store's transition-only entries (W3-3).
 	auditLog := audit.NewLog(1000)
+	// One notification store, shared by the bell's API and the credential
+	// check, which holds one entry per cluster whose login it can't read.
+	notificationStore := notifications.NewStore(100, nil)
 
 	return &Server{
 		connSvc:           connSvc,
@@ -676,9 +679,9 @@ func NewServer(
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
 		auditLog:          auditLog,
-		connCredChecks:    newConnectionCredentialCheckStore(auditLog.Add),
+		connCredChecks:    newConnectionCredentialCheckStore(auditLog.Add, notificationStore),
 		connCheckStatus:   newConnectionCheckStatus(),
-		notificationStore: notifications.NewStore(100, nil),
+		notificationStore: notificationStore,
 		changeLogStore:    changelog.NewStore(changelog.DefaultMaxPerCluster, nil),
 		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),

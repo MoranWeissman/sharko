@@ -398,6 +398,44 @@ func (s *Store) Resolve(code Code) {
 	}
 }
 
+// ResolveFor clears the ONE notification of this code about this subject,
+// read or unread, and leaves every other one alone — including other
+// subjects of the same code. Resolve(code) is the wrong tool for a code that
+// is open for many clusters at once: it would clear all of them.
+//
+// The entry is found by the ID the server builds from the code and the
+// checked identifiers, never by its words. Params that do not pass the
+// template's checks clear nothing: their ID is the shared "unclassified" one,
+// which is not this subject's.
+//
+// It writes to the ConfigMap only when something was removed, so a caller
+// may call it on every healthy check without a write each time.
+func (s *Store) ResolveFor(code Code, p Params) {
+	tpl, known := messageTemplates[code]
+	if !known || !p.valid(tpl.needs) {
+		return
+	}
+	id := tpl.id(p)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.notifications[:0]
+	removed := false
+	for _, n := range s.notifications {
+		if n.Code == code && n.ID == id {
+			removed = true
+			continue
+		}
+		kept = append(kept, n)
+	}
+	s.notifications = kept
+	if !removed {
+		return
+	}
+	if err := s.persistLocked(context.Background()); err != nil {
+		slog.Warn("could not persist after resolve", "error", err, "component", "notifications")
+	}
+}
+
 // UnreadCount returns how many notifications have not yet been read.
 func (s *Store) UnreadCount() int {
 	s.mu.RLock()

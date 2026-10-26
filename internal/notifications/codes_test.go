@@ -56,6 +56,7 @@ func TestCodes_WireValuesExact(t *testing.T) {
 		{"CodeAddonUpgradeAvailable", CodeAddonUpgradeAvailable, "addon_upgrade_available"},
 		{"CodeAddonMajorUpdate", CodeAddonMajorUpdate, "addon_major_update"},
 		{"CodeAddonVersionDrift", CodeAddonVersionDrift, "addon_version_drift"},
+		{"CodeClusterCredentialCheckFailed", CodeClusterCredentialCheckFailed, "cluster_credential_check_failed"},
 	}
 
 	for _, tc := range exact {
@@ -157,6 +158,7 @@ func TestCodes_DeclaredCodesCannotBeMutatedByACaller(t *testing.T) {
 var producerFiles = []string{
 	"internal/notifications/connection_poller.go",
 	"internal/notifications/checker.go",
+	"internal/api/connection_credential_check_bell.go",
 }
 
 // codeReferenceFiles are swept for USES of each declared code. It is
@@ -167,6 +169,7 @@ var codeReferenceFiles = []string{
 	"internal/notifications/connection_poller.go",
 	"internal/notifications/checker.go",
 	"cmd/sharko/serve.go",
+	"internal/api/connection_credential_check_bell.go",
 }
 
 // TestCodes_EveryDeclaredCodeIsEmitted fails BY NAME on any declared code that
