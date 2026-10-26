@@ -411,10 +411,14 @@ const argocdRedirectToHTTP = "ArgoCD tried to send Sharko from https to plain ht
 	"Sharko does not follow that, so the ArgoCD token is never sent unencrypted. " +
 	"Check the ArgoCD address and any proxy in front of ArgoCD, then test again."
 
-// awsLoginDocsPage is the title of the docs page on giving Sharko its AWS
-// login, at operator/configuration/#aws-login-outside-eks. The sentences below
-// name it so a person can find it; the browser links it.
-const awsLoginDocsPage = `"Give Sharko an AWS login when it does not run on EKS"`
+// awsLoginDocsPage is the title of the docs section on giving Sharko its AWS
+// login, at operator/configuration/#aws-login. The sentences below name it so
+// a person can find it; the browser links it. It covers both cases: on EKS
+// (an AWS role on Sharko's service account, or EKS Pod Identity) and anywhere
+// else (an access key in a Kubernetes Secret). It used to be called "Give
+// Sharko an AWS login when it does not run on EKS", which sent EKS users to a
+// page that said it was not for them (ep4 round S, S5).
+const awsLoginDocsPage = `"Give Sharko an AWS login"`
 
 // secretsAWSLoginRefused is the whole sentence for a secrets store test where
 // AWS answered and turned Sharko's login down (ep4, serious 6).
@@ -453,7 +457,9 @@ const secretsAWSUnreachable = "Sharko could not get an answer from AWS, so it co
 //
 // Pinned by exact text in connection_aws_failure_sentence_test.go.
 const secretsAWSNoLogin = "Sharko has no AWS login, so it could not read your secrets store. " +
-	"Give Sharko an AWS login, then restart Sharko. " +
+	"On EKS, give Sharko's service account an AWS role (the IRSA annotation), or use EKS Pod Identity. " +
+	"Anywhere else, give Sharko an AWS access key. " +
+	"Then restart Sharko. " +
 	"The docs page " + awsLoginDocsPage + " shows how."
 
 // connectionTestStatusNotTested is the "status" of a connection-test result

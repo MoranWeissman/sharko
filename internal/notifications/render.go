@@ -305,7 +305,7 @@ const LeadClusterCredentialCheckFailed = "Sharko could not read this cluster's l
 	"Check the login Sharko uses for your secrets store. " +
 	"On AWS, that is the AWS login Sharko runs with: if it is an access key, " +
 	"update the Kubernetes Secret given to Sharko, then restart Sharko. " +
-	"The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how."
+	"The docs page \"Give Sharko an AWS login\" shows how."
 
 // New builds a notification whose words Sharko owns.
 //

@@ -339,13 +339,15 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
       expect(fix.textContent).not.toContain(' · ');
     }
     const docs = within(fix).getByRole('link', {
-      name: 'Give Sharko an AWS login when it does not run on EKS',
+      name: 'Give Sharko an AWS login',
     });
     expect(docs).toHaveAttribute(
       'href',
-      'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login-outside-eks',
+      'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login',
     );
     expect(AWS_LOGIN_DOCS_URL).toBe(docs.getAttribute('href'));
+    // ep4 round S, S5: the old title told EKS users the page was not for them.
+    expect(document.body.textContent).not.toContain('when it does not run on EKS');
     // The old wording and the page that does not exist are banned.
     expect(document.body.textContent).not.toContain("can't reach your secrets store");
     expect(document.body.textContent).not.toContain('Settings → Connections');

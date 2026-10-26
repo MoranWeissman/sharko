@@ -281,8 +281,8 @@ export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
   'Check your secrets store settings in Settings → Secrets Provider, then test it there.';
 /** The docs page that shows how to give Sharko an AWS login off EKS. */
 export const AWS_LOGIN_DOCS_URL =
-  'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login-outside-eks';
-export const AWS_LOGIN_DOCS_LINK_TEXT = 'Give Sharko an AWS login when it does not run on EKS';
+  'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login';
+export const AWS_LOGIN_DOCS_LINK_TEXT = 'Give Sharko an AWS login';
 export const NOT_MANAGED_TITLE = "Sharko doesn't manage this cluster yet";
 export function notManagedDescription(name: string): string {
   return `ArgoCD already knows "${name}". Adopt it to bring it under Sharko, or take ownership of its connection.`;

@@ -33,18 +33,24 @@ const (
 		"The login may be wrong or switched off, or it may not be allowed to read these secrets. " +
 		"Check the AWS login Sharko runs with. " +
 		"If it is an access key, the key is in the Kubernetes Secret given to Sharko: update that Secret, then restart Sharko. " +
-		"The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how."
+		"The docs page \"Give Sharko an AWS login\" shows how."
 	wantAWSUnreachableSentence = "Sharko could not get an answer from AWS, so it could not read your secrets store. " +
 		"Check that this server can reach AWS over the network, and check the region in Settings → Secrets Provider. " +
-		"The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how to set up Sharko's AWS login."
+		"The docs page \"Give Sharko an AWS login\" shows how to set up Sharko's AWS login."
 	wantAWSNoLoginSentence = "Sharko has no AWS login, so it could not read your secrets store. " +
-		"Give Sharko an AWS login, then restart Sharko. " +
-		"The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how."
+		"On EKS, give Sharko's service account an AWS role (the IRSA annotation), or use EKS Pod Identity. " +
+		"Anywhere else, give Sharko an AWS access key. " +
+		"Then restart Sharko. " +
+		"The docs page \"Give Sharko an AWS login\" shows how."
 
 	// The old refused-login words (ep4 round R, R1). Settings → Secrets
 	// Provider cannot change Sharko's AWS login, so no AWS login sentence may
 	// send people there for it again.
 	oldAWSLoginInSettingsWords = "Check Sharko's AWS login in Settings → Secrets Provider"
+
+	// The old docs title (ep4 round S, S5). It told EKS users the page was
+	// not for them, so no sentence may name it again.
+	oldAWSLoginDocsTitle = "when it does not run on EKS"
 
 	// What AWS itself said. It must never reach the answer.
 	awsOwnWords = "The security token included in the request is invalid. acct-words-zz9"
@@ -177,7 +183,10 @@ func TestAWSFailureSentence_Wording(t *testing.T) {
 			if strings.Contains(s, oldAWSLoginInSettingsWords) {
 				t.Errorf("%s %s sentence still carries the old words %q", kind, name, oldAWSLoginInSettingsWords)
 			}
-			if !strings.Contains(s, `"Give Sharko an AWS login when it does not run on EKS"`) {
+			if strings.Contains(s, oldAWSLoginDocsTitle) {
+				t.Errorf("%s %s sentence still names the old docs title: %q", kind, name, s)
+			}
+			if !strings.Contains(s, `"Give Sharko an AWS login"`) {
 				t.Errorf("%s %s sentence does not name the docs page: %q", kind, name, s)
 			}
 		}

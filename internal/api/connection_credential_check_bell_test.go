@@ -46,7 +46,7 @@ const wantBellTitle = "Sharko can't read the login for " + comparisonCluster
 const wantBellDetail = "Sharko could not read this cluster's login from your secrets store, so it can't check that the cluster's connection is right. " +
 	"Check the login Sharko uses for your secrets store. " +
 	"On AWS, that is the AWS login Sharko runs with: if it is an access key, update the Kubernetes Secret given to Sharko, then restart Sharko. " +
-	"The docs page \"Give Sharko an AWS login when it does not run on EKS\" shows how. " +
+	"The docs page \"Give Sharko an AWS login\" shows how. " +
 	"The sign-in details Sharko uses were refused, or Sharko could not read them. The server log for this check says which step failed."
 
 func TestCredentialCheckBell_OneEntryPerClusterThenCleared(t *testing.T) {
