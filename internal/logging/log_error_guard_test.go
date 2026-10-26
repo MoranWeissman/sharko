@@ -165,7 +165,14 @@ import (
 // renews old tokens on the write pass; it logs fixed-text messages with the
 // cluster name, the namespace and a fixed stage word, never an error value.
 // Neither searches for credential characters.
-const wantSweptGoFiles = 446
+//
+// 448 since ep4 story 1 added two more. internal/providers/aws_failure.go
+// tells "AWS turned the login down" from "no answer from AWS" by AWS's own
+// error code and the SDK's error types; it makes no log call.
+// internal/api/connection_credential_check_bell.go keeps one bell entry per
+// cluster whose login the credential check can't read; it makes no log call.
+// Neither searches for credential characters.
+const wantSweptGoFiles = 448
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -322,6 +329,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/notifications/store.go", fn: "MarkRead", msg: "could not persist after mark read", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "NewStore", msg: "could not load persisted notifications", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "Resolve", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/notifications/store.go", fn: "ResolveFor", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "extractNotifications", msg: "failed to unmarshal notifications from state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "loadFromCMStore", msg: "could not save the notifications that were kept — the dropped ones are still stored and will be dropped again on the next start", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/observations/store.go", fn: "ListObservations", msg: "skipping malformed observation", carriers: "ident:err", verdict: "sink"},
