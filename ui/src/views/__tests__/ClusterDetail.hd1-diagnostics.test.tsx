@@ -291,7 +291,11 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Diagnostics' }));
 
     const fix = await screen.findByTestId('diag-secrets-fix');
-    expect(fix.textContent).toBe("Check Sharko's login to your secrets store in Settings → Secrets Provider.");
+    expect(fix.textContent).toBe('Check your secrets store settings in Settings → Secrets Provider, then test it there.');
+    // Settings → Secrets Provider holds no login for any store, so the line
+    // must not say to fix a login there (ep4 round R, R1).
+    expect(fix.textContent).not.toContain("Check Sharko's login to your secrets store");
+    expect(fix.textContent).not.toMatch(/login/i);
     expect(within(fix).getByRole('link')).toHaveAttribute('href', '/settings?section=secrets-provider');
     // Nothing here points to the old page that does not exist, and the Git
     // link is not shown when only the secrets store fails.
@@ -299,12 +303,17 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     expect(screen.queryByRole('link', { name: /Fix it in Settings/ })).not.toBeInTheDocument();
   });
 
+  // Only "no answer from AWS" links Settings → Secrets Provider (it asks to
+  // check the region). A refused login or no login at all is fixed outside
+  // Sharko, so those show the docs page only (ep4 round R, R1 and R2).
   it.each([
-    ['connectionFailureVaultAWSLoginRefused'],
-    ['connectionFailureVaultAWSUnreachable'],
-    ['connectionFailureSecretsAWSLoginRefused'],
-    ['connectionFailureSecretsAWSUnreachable'],
-  ] as const)('AWS secrets-store failure %s shows the generated sentence with real links', async (id) => {
+    ['connectionFailureVaultAWSLoginRefused', false],
+    ['connectionFailureVaultAWSUnreachable', true],
+    ['connectionFailureVaultAWSNoLogin', false],
+    ['connectionFailureSecretsAWSLoginRefused', false],
+    ['connectionFailureSecretsAWSUnreachable', true],
+    ['connectionFailureSecretsAWSNoLogin', false],
+  ] as const)('AWS secrets-store failure %s shows the generated sentence with real links (Settings link: %s)', async (id, settingsLink) => {
     mockTestConnection.mockResolvedValue({ git: { status: 'ok' }, argocd: { status: 'ok' } });
     // The server sends the sentence in `message` and its id in `message_id`.
     // The page shows the generated sentence picked by the id.
@@ -319,10 +328,16 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     expect(await screen.findByText(CONNECTION_FAILURE_MESSAGES[id])).toBeInTheDocument();
     expect(screen.queryByText('server words')).not.toBeInTheDocument();
     const fix = screen.getByTestId('diag-aws-fix');
-    expect(within(fix).getByRole('link', { name: 'Open Settings → Secrets Provider' })).toHaveAttribute(
-      'href',
-      '/settings?section=secrets-provider',
-    );
+    if (settingsLink) {
+      expect(within(fix).getByRole('link', { name: 'Open Settings → Secrets Provider' })).toHaveAttribute(
+        'href',
+        '/settings?section=secrets-provider',
+      );
+    } else {
+      expect(within(fix).queryByRole('link', { name: 'Open Settings → Secrets Provider' })).not.toBeInTheDocument();
+      expect(fix.textContent).not.toContain('Settings → Secrets Provider');
+      expect(fix.textContent).not.toContain(' · ');
+    }
     const docs = within(fix).getByRole('link', {
       name: 'Give Sharko an AWS login when it does not run on EKS',
     });
@@ -334,6 +349,7 @@ describe('ClusterDetail — HD1 Diagnostics section (V3)', () => {
     // The old wording and the page that does not exist are banned.
     expect(document.body.textContent).not.toContain("can't reach your secrets store");
     expect(document.body.textContent).not.toContain('Settings → Connections');
+    expect(document.body.textContent).not.toContain("Check Sharko's AWS login in Settings → Secrets Provider");
     expect(screen.queryByTestId('diag-secrets-fix')).not.toBeInTheDocument();
   });
 

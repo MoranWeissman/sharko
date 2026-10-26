@@ -61,7 +61,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
-import { useConnectionHealth, isAWSLoginMessageId } from '@/hooks/useConnectionHealth';
+import { useConnectionHealth, isAWSLoginMessageId, isAWSUnreachableMessageId } from '@/hooks/useConnectionHealth';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseResultView } from '@/components/DiagnoseModal';
@@ -265,10 +265,14 @@ export const CLUSTER_NOT_FOUND_DESCRIPTION =
 export const SECRETS_PROVIDER_SETTINGS_ROUTE = '/settings?section=secrets-provider';
 /**
  * The line under the Diagnostics banner when the secrets store is what is
- * failing. The tech lead swaps in story 1's sentence here at the join.
+ * failing and the server did not say it was an AWS login problem.
+ *
+ * Settings → Secrets Provider holds the store type, the region and the name
+ * prefix. It holds no login for any store, so this line does not say to fix a
+ * login there (ep4 round R, R1).
  */
 export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
-  "Check Sharko's login to your secrets store in Settings → Secrets Provider.";
+  'Check your secrets store settings in Settings → Secrets Provider, then test it there.';
 /** The docs page that shows how to give Sharko an AWS login off EKS. */
 export const AWS_LOGIN_DOCS_URL =
   'https://sharko.readthedocs.io/en/latest/operator/configuration/#aws-login-outside-eks';
@@ -2591,10 +2595,19 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                     )}
                     {connHealth.vault === 'error' && isAWSLoginMessageId(connHealth.vaultMessageId) && (
                       <p className="mt-1 text-sm text-red-700 dark:text-red-400" data-testid="diag-aws-fix">
-                        <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
-                          Open Settings → Secrets Provider
-                        </Link>
-                        {' · '}
+                        {/* Only "no answer from AWS" links Settings → Secrets
+                            Provider: it asks to check the region, and the
+                            region is all that page holds. A refused login or
+                            no login at all is fixed outside Sharko, so those
+                            show the docs page only (ep4 round R, R1). */}
+                        {isAWSUnreachableMessageId(connHealth.vaultMessageId) && (
+                          <>
+                            <Link to={SECRETS_PROVIDER_SETTINGS_ROUTE} className="underline hover:text-red-900 dark:hover:text-red-300">
+                              Open Settings → Secrets Provider
+                            </Link>
+                            {' · '}
+                          </>
+                        )}
                         <a
                           href={AWS_LOGIN_DOCS_URL}
                           target="_blank"

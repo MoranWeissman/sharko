@@ -2,18 +2,34 @@ import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'
 import { CONNECTION_FAILURE_MESSAGES, type ConnectionFailureMessageId } from '@/generated/connection-sentences'
 
-// The four sentences that tell "AWS answered and turned Sharko's login down"
-// apart from "Sharko got no answer from AWS" (ep4 serious 6). The page shows
-// the generated sentence for these ids, so the words live in one place.
+// The sentences that tell "AWS answered and turned Sharko's login down",
+// "Sharko got no answer from AWS" (ep4 serious 6) and "Sharko has no AWS login
+// at all" (ep4 round R, R2) apart. The page shows the generated sentence for
+// these ids, so the words live in one place.
 export const AWS_LOGIN_MESSAGE_IDS = [
   'connectionFailureVaultAWSLoginRefused',
   'connectionFailureVaultAWSUnreachable',
+  'connectionFailureVaultAWSNoLogin',
   'connectionFailureSecretsAWSLoginRefused',
   'connectionFailureSecretsAWSUnreachable',
+  'connectionFailureSecretsAWSNoLogin',
 ] as const satisfies readonly ConnectionFailureMessageId[]
 
 export function isAWSLoginMessageId(id: string | undefined): id is (typeof AWS_LOGIN_MESSAGE_IDS)[number] {
   return id !== undefined && (AWS_LOGIN_MESSAGE_IDS as readonly string[]).includes(id)
+}
+
+// The "no answer from AWS" ids. Only these point at Settings → Secrets
+// Provider, because that page holds the region and nothing else. It cannot
+// change Sharko's AWS login, so a refused login or no login at all does not
+// send people there (ep4 round R, R1).
+export const AWS_UNREACHABLE_MESSAGE_IDS = [
+  'connectionFailureVaultAWSUnreachable',
+  'connectionFailureSecretsAWSUnreachable',
+] as const satisfies readonly ConnectionFailureMessageId[]
+
+export function isAWSUnreachableMessageId(id: string | undefined): boolean {
+  return id !== undefined && (AWS_UNREACHABLE_MESSAGE_IDS as readonly string[]).includes(id)
 }
 
 export type ConnectionHealthState = 'idle' | 'testing' | 'ok' | 'error'
