@@ -296,8 +296,9 @@ func (p *AWSSecretsManagerProvider) getCredentialsWithRoleARN(clusterName, clust
 	// Nothing reads the error's words: the caller asks credsafe.IsNotFound,
 	// which is a type check, and SecretNotFoundNames, which is errors.As.
 	failure := look.failure()
+	tried, notFound := look.names, credsafe.IsNotFound(failure)
 	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups",
-		"tried", strings.Join(look.names, ", "), "notFound", credsafe.IsNotFound(failure))
+		"tried", strings.Join(tried, ", "), "notFound", notFound)
 	return nil, failure
 }
 

@@ -172,7 +172,12 @@ import (
 // internal/api/connection_credential_check_bell.go keeps one bell entry per
 // cluster whose login the credential check can't read; it makes no log call.
 // Neither searches for credential characters.
-const wantSweptGoFiles = 448
+//
+// 449 since ep4 round S added internal/api/connection_secret_not_found.go. It
+// builds the "this cluster's secret is not there" sentence from the secret
+// names Sharko tried; it makes no log call and does not search for
+// credential characters.
+const wantSweptGoFiles = 449
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
