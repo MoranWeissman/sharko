@@ -900,6 +900,12 @@ export interface ConnectionReconciliationHealth {
   state: ConnectionHealthWord
   /** ArgoCD's own failure text — only ever set for a failed connection. */
   message?: string
+  /**
+   * Only set while state is 'connected' and Sharko could not get a new EKS
+   * sign-in token: ArgoCD's connection still works now, but will stop when
+   * the current token runs out. A fixed server sentence.
+   */
+  warning?: string
 }
 
 export interface ConnectionReconciliationCondition {

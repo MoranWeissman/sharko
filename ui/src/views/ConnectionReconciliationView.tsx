@@ -808,6 +808,14 @@ export function ConnectionReconciliationView({
             {view.health.message}
           </p>
         )}
+        {/* ArgoCD's connection still works, but Sharko could not get a new
+            sign-in token, so it will stop when the current one runs out.
+            Amber, not red: nothing has failed yet. */}
+        {view.health.state === 'connected' && view.health.warning && (
+          <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="recon-health-warning">
+            {view.health.warning}
+          </p>
+        )}
         <p className="text-[13px] text-[#5a8aaa] dark:text-gray-500" data-testid="recon-timestamps">
           {view.sync.checked_at ? (
             <>

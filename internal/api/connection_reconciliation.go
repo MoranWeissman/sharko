@@ -439,6 +439,11 @@ type connectionReconciliationHealth struct {
 	// already show today. Never a Go error and never provider SDK text from
 	// Sharko's side.
 	Message string `json:"message,omitempty"`
+	// Warning is set only while State is connected and Sharko could not get
+	// a new EKS sign-in token: ArgoCD's connection still works now, but it
+	// will stop when the current token runs out. It is the reconciler's
+	// fixed renewal sentence — never error text.
+	Warning string `json:"warning,omitempty"`
 }
 
 // connectionReconciliationCondition is one current fact.
@@ -662,13 +667,17 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 	if healthState != healthStateUnavailable {
 		healthMessage = ""
 	}
-	// A failing EKS token renewal turns "connected" into a problem, with the
-	// renewal sentence as the message. Only "connected" changes: a connection
-	// ArgoCD already cannot use, or never checked, keeps its own word.
+	// A failing EKS token renewal does NOT make ArgoCD's connection
+	// unavailable: the token ArgoCD holds still works until it runs out
+	// (ep4 round S, S1). So the word stays "connected" — it is true — and
+	// the renewal sentence rides beside it as a warning that says what is
+	// wrong and that ArgoCD will lose the connection when the token runs
+	// out. Only "connected" gets the warning: a connection ArgoCD already
+	// reports as failing keeps ArgoCD's own word and message, which win.
 	renewalFailing := f.tokenRenewalTrouble != "" && healthState == healthStateConnected
+	healthWarning := ""
 	if renewalFailing {
-		healthState = healthStateUnavailable
-		healthMessage = f.tokenRenewalTrouble
+		healthWarning = f.tokenRenewalTrouble
 	}
 
 	out := connectionReconciliationView{
@@ -683,7 +692,7 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 			AppliedRevision:      v.liveAppliedRevision,
 			CredentialSourceType: v.CredentialSourceType,
 		},
-		Health:              connectionReconciliationHealth{State: healthState, Message: healthMessage},
+		Health:              connectionReconciliationHealth{State: healthState, Message: healthMessage, Warning: healthWarning},
 		Drift:               drift,
 		ValuesNeverReturned: true,
 	}
@@ -715,11 +724,12 @@ func buildConnectionReconciliationView(f connectionReconciliationFacts) connecti
 	// different situations into two sentences.
 	out.Conditions = buildReconciliationConditions(v, mode, out.Sync, out.Plan, healthState, f.argoUnreachable)
 	if renewalFailing {
-		// "ArgoCD cannot currently use this connection" is not true yet: it
-		// still can, until the old token runs out. The renewal sentence says
+		// ArgoCD can still use the connection, but it needs a person's
+		// attention before the old token runs out. The renewal sentence says
 		// what is really wrong and what to do.
 		for i := range out.Conditions {
 			if out.Conditions[i].ID == conditionArgoCDConnection {
+				out.Conditions[i].Status = conditionStatusAttention
 				out.Conditions[i].Detail = f.tokenRenewalTrouble
 			}
 		}

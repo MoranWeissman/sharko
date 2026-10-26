@@ -78,7 +78,11 @@ func TestTokenRenewalFailure_IsAProblemEverywhere(t *testing.T) {
 		}
 	})
 
-	t.Run("connection page shows a problem and does not say ArgoCD cannot use it", func(t *testing.T) {
+	// ep4 round S, S1: the old token still works, so the page must not say
+	// "Unavailable". It says "connected" (true) and carries the renewal
+	// sentence as a warning: the renewal failed and ArgoCD will lose the
+	// connection when the current token runs out.
+	t.Run("connection page says connected, warns about the renewal, and does not say ArgoCD cannot use it", func(t *testing.T) {
 		sentence, failing := recon.TokenRenewalTrouble(name)
 		if !failing {
 			t.Fatal("renewal not marked as failing")
@@ -88,11 +92,25 @@ func TestTokenRenewalFailure_IsAProblemEverywhere(t *testing.T) {
 			healthState:         healthStateConnected,
 			tokenRenewalTrouble: sentence,
 		})
-		if out.Health.State != healthStateUnavailable {
-			t.Errorf("health state = %q, want %q", out.Health.State, healthStateUnavailable)
+		if out.Health.State != healthStateConnected {
+			t.Errorf("health state = %q, want %q: the old token still works, so ArgoCD's connection is not unavailable yet", out.Health.State, healthStateConnected)
 		}
-		if out.Health.Message != clusterreconciler.TokenRenewalFailedSentence {
-			t.Errorf("health message = %q, want the renewal sentence", out.Health.Message)
+		if out.Health.State == healthStateUnavailable {
+			t.Errorf("health state is %q while the old token still works", healthStateUnavailable)
+		}
+		if out.Health.Message != "" {
+			t.Errorf("health message = %q, want none: ArgoCD reported no failure", out.Health.Message)
+		}
+		const wantWarning = "Sharko could not get a new sign-in token for this cluster, so ArgoCD will lose its connection to it soon. Check that Sharko can reach your secrets provider and AWS, then click Refresh EKS connection."
+		if out.Health.Warning != wantWarning {
+			t.Errorf("health warning = %q, want %q", out.Health.Warning, wantWarning)
+		}
+		raw, err := json.Marshal(out.Health)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(raw); got != `{"state":"connected","warning":`+mustJSON(t, wantWarning)+`}` {
+			t.Errorf("health JSON = %s", got)
 		}
 		var found bool
 		for _, c := range out.Conditions {
@@ -104,8 +122,8 @@ func TestTokenRenewalFailure_IsAProblemEverywhere(t *testing.T) {
 				if c.Detail != clusterreconciler.TokenRenewalFailedSentence {
 					t.Errorf("ArgoCD condition detail = %q, want the renewal sentence", c.Detail)
 				}
-				if c.Status == "ok" {
-					t.Errorf("ArgoCD condition status = ok while the renewal is failing")
+				if c.Status != conditionStatusAttention {
+					t.Errorf("ArgoCD condition status = %q, want %q while the renewal is failing", c.Status, conditionStatusAttention)
 				}
 			}
 		}
@@ -118,8 +136,8 @@ func TestTokenRenewalFailure_IsAProblemEverywhere(t *testing.T) {
 			view:        reconView(nil),
 			healthState: healthStateConnected,
 		})
-		if out.Health.State != healthStateConnected || out.Health.Message != "" {
-			t.Fatalf("no trouble: health = %+v, want connected with no message", out.Health)
+		if out.Health.State != healthStateConnected || out.Health.Message != "" || out.Health.Warning != "" {
+			t.Fatalf("no trouble: health = %+v, want connected with no message and no warning", out.Health)
 		}
 
 		// ArgoCD already cannot use it: its own message wins, the renewal
@@ -130,8 +148,16 @@ func TestTokenRenewalFailure_IsAProblemEverywhere(t *testing.T) {
 			healthMessage:       "the server has asked for the client to provide credentials",
 			tokenRenewalTrouble: sentence,
 		})
-		if out.Health.Message != "the server has asked for the client to provide credentials" {
+		if out.Health.State != healthStateUnavailable || out.Health.Message != "the server has asked for the client to provide credentials" {
 			t.Fatalf("ArgoCD's own failure was covered up: %+v", out.Health)
+		}
+		if out.Health.Warning != "" {
+			t.Fatalf("a real ArgoCD failure also got the renewal warning: %+v", out.Health)
+		}
+		for _, c := range out.Conditions {
+			if c.ID == conditionArgoCDConnection && c.Detail != condArgoCDUnavailable {
+				t.Fatalf("real ArgoCD failure: condition detail = %q, want %q", c.Detail, condArgoCDUnavailable)
+			}
 		}
 	})
 }
@@ -174,4 +200,13 @@ func TestListClusters_FailingTokenRenewalIsNotCountedConnected(t *testing.T) {
 		t.Fatalf("row = status %q, check %q (%q), health %q; want Failed, check_failed with the renewal sentence, unknown",
 			row.ConnectionStatus, row.ConnectivityStatus, row.ConnectivityDetail, row.DerivedHealthStatus)
 	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
