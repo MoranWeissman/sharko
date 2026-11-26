@@ -410,6 +410,22 @@ describe('Layout', () => {
       authState.role = undefined
     })
 
+    // Walk 7 finding 5: with the side panel open, the round chat button sat
+    // on top of the panel's Send button.
+    it('hides the round chat button while the assistant panel is open', async () => {
+      mockGetAIStatus.mockResolvedValue({ enabled: true })
+      renderLayout()
+      const toggle = await screen.findByLabelText('Toggle AI Assistant')
+      expect(screen.getByLabelText('Open AI Assistant')).toBeInTheDocument()
+
+      fireEvent.click(toggle)
+      expect(screen.getByText('Sharko AI')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Open AI Assistant')).not.toBeInTheDocument()
+
+      fireEvent.click(toggle)
+      expect(screen.getByLabelText('Open AI Assistant')).toBeInTheDocument()
+    })
+
     // Walk 7 finding 4: after saving or switching off the AI settings, the
     // "Ask AI" button only changed after a page reload.
     it('asks again whether AI is on when the AI settings change', async () => {

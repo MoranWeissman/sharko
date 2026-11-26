@@ -463,7 +463,11 @@ func TestWalkC_TheAnnotateSwitchKeepsTheSavedKeyAndModel(t *testing.T) {
 
 func TestWalkC_AIConfigWithNothingSetUpMarksNothingConfigured(t *testing.T) {
 	srv, h := walkCServer(t, "viewer")
-	srv.aiClient.SetConfig(ai.Config{})
+	// What a default install holds: no provider picked, but the Ollama
+	// address and model filled in from the defaults. The walker saw Ollama
+	// marked "configured" with model llama3.2 on exactly this.
+	srv.aiClient.SetConfig(ai.Config{OllamaURL: "http://localhost:11434", OllamaModel: "llama3.2"})
+	t.Cleanup(func() { srv.aiClient.SetConfig(ai.Config{}) })
 	bob := walkCLogin(t, srv, "bob")
 	rw := walkCCall(t, h, bob, http.MethodGet, "/api/v1/ai/config", nil)
 	var got aiConfigResponse
