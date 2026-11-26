@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -527,14 +528,32 @@ func inferCluster(title, branch string) string {
 		}
 		return strings.Trim(rest, " ,.;:\"'")
 	}
-	// Fallback: branch like "sharko/register-prod" — last segment.
+	// Fallback: a cluster-lifecycle branch like "sharko/register-prod" or
+	// "sharko/register-prod-3fa9c1d2" — the last segment, once the random
+	// suffix Sharko adds to every branch is taken off. Any other kind of
+	// branch (a catalog change, for one) has no cluster in it, so it gets
+	// none: the last segment of those used to be the random suffix, and the
+	// Merged tab showed "30fbe9d6" as the cluster of an add-to-catalog PR.
 	if strings.HasPrefix(branch, "sharko/") {
 		parts := strings.Split(strings.TrimPrefix(branch, "sharko/"), "-")
-		if len(parts) >= 2 {
+		if len(parts) > 0 && branchHashSuffixRe.MatchString(parts[len(parts)-1]) {
+			parts = parts[:len(parts)-1]
+		}
+		if len(parts) >= 2 && clusterLifecycleVerbs[strings.ToLower(parts[0])] {
 			return parts[len(parts)-1]
 		}
 	}
 	return ""
+}
+
+// branchHashSuffixRe matches the random hex suffix Sharko puts on the end of
+// every branch it creates.
+var branchHashSuffixRe = regexp.MustCompile(`^[0-9a-f]{6,}$`)
+
+// clusterLifecycleVerbs are the first words of branches that are about one
+// cluster, where the branch name ends with the cluster's name.
+var clusterLifecycleVerbs = map[string]bool{
+	"register": true, "deregister": true, "adopt": true, "unadopt": true,
 }
 
 // inferAddon pulls an addon name out of a Sharko PR title. Sharko op titles

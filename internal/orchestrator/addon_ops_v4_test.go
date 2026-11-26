@@ -687,3 +687,39 @@ func TestDisableAddonV4_UnknownCluster_ReturnsErrV4ClusterNotFound(t *testing.T)
 		t.Fatalf("expected ErrV4ClusterNotFound, got %T: %v", err, err)
 	}
 }
+
+// Walk 2, finding 11: the preview said "sharko: enable addon reloader on
+// cluster prod-eu" but the pull request that opened carried " (v4)" on the
+// end of the title and in the branch name. The preview must show the title
+// the pull request really gets, and the repo layout is not for a user to read.
+func TestEnableAddonV4_PreviewTitleIsThePullRequestTitle(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+
+	preview, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu", Addon: "cert-manager", DryRun: true,
+	})
+	if err != nil || preview.DryRun == nil {
+		t.Fatalf("preview failed: %v", err)
+	}
+	if _, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu", Addon: "cert-manager", Yes: true,
+	}); err != nil {
+		t.Fatalf("real enable failed: %v", err)
+	}
+	if len(git.prs) != 1 {
+		t.Fatalf("prs = %d, want 1", len(git.prs))
+	}
+	real := git.prs[0].Title
+	if real != preview.DryRun.PRTitle {
+		t.Errorf("preview title %q is not the pull request title %q", preview.DryRun.PRTitle, real)
+	}
+	if strings.Contains(real, "(v4)") {
+		t.Errorf("the pull request title still carries the layout label: %q", real)
+	}
+	for _, b := range git.branches {
+		if strings.Contains(b, "(") || strings.Contains(b, ")") {
+			t.Errorf("branch name %q has brackets in it", b)
+		}
+	}
+}

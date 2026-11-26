@@ -15,7 +15,7 @@ import (
 //
 // Exported because internal/ai's tool executor returns it too and the two
 // must not drift.
-const V4EditorUnsupportedMessage = "this editor doesn't support the v4 layout yet — edit values/global or values/clusters files directly; sharko validate checks them; the v4 editor ships next wave"
+const V4EditorUnsupportedMessage = "Editing values here is not in this version. Change the values file in your Git repo instead: values/global/<add-on>.yaml for every cluster, or values/clusters/<cluster>/<add-on>.yaml for one cluster."
 
 // isV4Repo reports whether the connected repo uses the v4 data-file layout,
 // using the same probe every other v4-aware read path uses: the engine pin

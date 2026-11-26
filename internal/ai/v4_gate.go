@@ -29,13 +29,13 @@ import (
 const V4EnginePinPath = "sharko-engine.yaml"
 
 // v4ValuesUnsupportedMessage is what the values-reading tools return on a
-// v4 repo. Same sentence the HTTP editors answer with (api's
-// V4EditorUnsupportedMessage) so a person hears one story whichever door
-// they came through.
+// v4 repo. These tools only read, so the sentence says what the assistant
+// cannot do and where the files are; it is not the editing sentence the HTTP
+// editors answer with (api's V4EditorUnsupportedMessage).
 //
 // It is returned as an ordinary tool RESULT rather than an error so the
 // model reads it and relays it, instead of retrying or inventing an answer.
-const v4ValuesUnsupportedMessage = "this editor doesn't support the v4 layout yet — edit values/global or values/clusters files directly; sharko validate checks them; the v4 editor ships next wave"
+const v4ValuesUnsupportedMessage = "The assistant cannot read values files in this version. They are in your Git repo: values/global/<add-on>.yaml for every cluster, or values/clusters/<cluster>/<add-on>.yaml for one cluster."
 
 // isV4Repo reports whether the connected repo uses the v4 data-file layout.
 // A read failure of any kind answers false — the v3 behaviour — so a

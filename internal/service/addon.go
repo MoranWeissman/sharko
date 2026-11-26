@@ -946,6 +946,34 @@ func (s *AddonService) GetAddonValues(ctx context.Context, addonName string, gp 
 	}, nil
 }
 
+// getAddonValuesV4ReadOnly is the v4 answer to the values screen: the real
+// content of values/global/<addon>.yaml, as it is in Git, marked read-only.
+// A file that is not there is an empty answer with FileExists false, never an
+// error, so the screen can say so in plain words.
+func (s *AddonService) getAddonValuesV4ReadOnly(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AddonValuesSchemaResponse, error) {
+	path, err := orchestrator.V4GlobalValuesPath(addonName)
+	if err != nil {
+		return nil, err
+	}
+	resp := &models.AddonValuesSchemaResponse{
+		AddonName:  addonName,
+		ReadOnly:   true,
+		ValuesFile: path,
+	}
+	data, err := gp.GetFileContent(ctx, path, s.branch())
+	if err != nil {
+		if isGitFileNotFound(err) {
+			return resp, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(data) > 0 {
+		resp.CurrentValues = string(data)
+		resp.FileExists = true
+	}
+	return resp, nil
+}
+
 // GetAddonValuesAndSchema returns the current global values YAML for an
 // addon plus an optional JSON Schema. The schema is read best-effort from
 // `configuration/addons-global-values/<addonName>.schema.json`; if absent or
@@ -959,6 +987,10 @@ func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName st
 	log := logging.LoggerFromContext(ctx)
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
+	}
+
+	if isV4Repo(ctx, gp, s.branch()) {
+		return s.getAddonValuesV4ReadOnly(ctx, addonName, gp)
 	}
 
 	valuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)

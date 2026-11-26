@@ -83,6 +83,7 @@ import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { AutoMergeNote } from '@/components/AutoMergeNote';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
+import { CLUSTER_VALUES_V4_TITLE } from '@/components/ReadOnlyValues';
 import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
 import { RowActionsMenu } from '@/components/RowActionsMenu';
@@ -1416,7 +1417,7 @@ CLUSTER_NOT_FOUND_DESCRIPTION
   const navSections = [
     {
       items: [
-        { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
+        { key: 'addons', label: 'Addons', badge: data ? allCount : undefined, icon: Package },
         { key: 'config', label: 'Config', icon: FileCode },
         { key: 'history', label: 'Changes', icon: Clock },
         { key: 'diagnostics', label: 'Diagnostics', icon: Activity },
@@ -2542,7 +2543,10 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 />
               )}
               {clusterValuesYaml && (
-                <YamlViewer yaml={clusterValuesYaml} title="Cluster Values" />
+                <YamlViewer
+                  yaml={clusterValuesYaml}
+                  title={repoFormat === 'v4' ? CLUSTER_VALUES_V4_TITLE : 'Cluster Values'}
+                />
               )}
               {configDiff && (
                 <ConfigOverridesPanel

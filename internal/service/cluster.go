@@ -956,6 +956,12 @@ func (s *ClusterService) getClusterValuesV4(ctx context.Context, clusterName str
 			log.Warn("could not parse cluster values file for addon", "addon", addonName, "cluster", clusterName, "error", uErr)
 			continue
 		}
+		if val == nil {
+			// A file with only comments holds no settings. Listing it as
+			// "<addon>: null" made the page show a value that is not in the
+			// file; the per-add-on screen shows the file itself.
+			continue
+		}
 		combined[addonName] = val
 	}
 
@@ -972,6 +978,32 @@ func (s *ClusterService) getClusterValuesV4(ctx context.Context, clusterName str
 		ClusterName: clusterName,
 		ValuesYAML:  valuesYAML,
 	}, nil
+}
+
+// getClusterAddonValuesV4ReadOnly fills resp with the real content of
+// values/clusters/<cluster>/<addon>.yaml, as it is in Git, marked read-only.
+// It also says when the file is wrapped under the add-on's name, which Helm
+// ignores without a word.
+func (s *ClusterService) getClusterAddonValuesV4ReadOnly(ctx context.Context, resp *models.ClusterAddonValuesResponse, gp gitprovider.GitProvider) (*models.ClusterAddonValuesResponse, error) {
+	path, err := orchestrator.V4ClusterValuesPath(resp.ClusterName, resp.AddonName)
+	if err != nil {
+		return nil, err
+	}
+	resp.ReadOnly = true
+	resp.ValuesFile = path
+	data, err := gp.GetFileContent(ctx, path, s.branch())
+	if err != nil {
+		if isGitFileNotFound(err) {
+			return resp, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(data) > 0 {
+		resp.CurrentOverrides = string(data)
+		resp.FileExists = true
+		resp.WrappedUnderAddonName = orchestrator.DetectLegacyWrap(data, resp.AddonName, "")
+	}
+	return resp, nil
 }
 
 // GetClusterAddonValues extracts the YAML for one addon's section in a
@@ -993,6 +1025,10 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	resp := &models.ClusterAddonValuesResponse{
 		ClusterName: clusterName,
 		AddonName:   addonName,
+	}
+
+	if isV4Repo(ctx, gp, s.branch()) {
+		return s.getClusterAddonValuesV4ReadOnly(ctx, resp, gp)
 	}
 
 	clusterPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)

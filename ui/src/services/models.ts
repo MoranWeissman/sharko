@@ -1888,6 +1888,11 @@ export interface AddonValuesSchemaResponse {
   addon_name: string
   current_values: string
   schema?: Record<string, unknown> | null
+  /** True on a v4 repo: Sharko shows the file and does not edit it. */
+  read_only?: boolean
+  /** Path of the file in the Git repo (set with read_only). */
+  values_file?: string
+  file_exists?: boolean
   /**
    * Present when the chart version pinned in `addons-catalog.yaml` is
    * ahead of the version stamped in the values file's smart-values header.
@@ -1918,6 +1923,13 @@ export interface ClusterAddonValuesResponse {
   addon_name: string
   current_overrides: string
   schema?: Record<string, unknown> | null
+  /** True on a v4 repo: Sharko shows the file and does not edit it. */
+  read_only?: boolean
+  /** Path of the file in the Git repo (set with read_only). */
+  values_file?: string
+  file_exists?: boolean
+  /** The file's only setting is a block named after the add-on; Helm ignores it. */
+  wrapped_under_addon_name?: boolean
 }
 
 /**

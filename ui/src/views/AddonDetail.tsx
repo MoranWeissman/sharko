@@ -35,6 +35,7 @@ import { PRLifecycleProgress, PRLink, extractPR } from '@/components/PRFeedback'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse, DryRunResult, V4GitResult } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
+import { ReadOnlyValues } from '@/components/ReadOnlyValues'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { showToast } from '@/components/ToastNotification'
 import { AttributionNudge } from '@/components/AttributionNudge'
@@ -2593,6 +2594,14 @@ export function AddonDetail() {
               </p>
               {valuesSchemaLoading && !valuesSchema ? (
                 <LoadingState message="Loading values..." />
+              ) : valuesSchema?.read_only ? (
+                <ReadOnlyValues
+                  title={`Global Values — ${addon.addon_name}`}
+                  path={valuesSchema.values_file ?? ''}
+                  exists={!!valuesSchema.file_exists}
+                  content={valuesSchema.current_values}
+                  fileURL={valuesFileURL(gitRepoBase, gitDefaultBranch, repoFormat, addon.addon_name)}
+                />
               ) : (
                 <ValuesEditor
                   title={`Global Values — ${addon.addon_name}`}

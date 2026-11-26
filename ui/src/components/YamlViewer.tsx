@@ -10,6 +10,18 @@ interface YamlViewerProps {
 
 type ViewMode = 'raw' | 'tree'
 
+/** What the tree view says for a file that holds only comments or nothing. */
+export const YAML_COMMENTS_ONLY_SENTENCE =
+  'This file has only comments, no settings yet. Showing the file as it is:'
+
+/** True when every line is blank or a comment. */
+export function hasNoSettings(yamlString: string): boolean {
+  return yamlString.split('\n').every((line) => {
+    const t = line.trim()
+    return t === '' || t.startsWith('#')
+  })
+}
+
 function highlightYaml(raw: string): string {
   return raw
     .split('\n')
@@ -230,6 +242,12 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
               <TreeNode key={k} name={k} value={v} defaultExpanded={true} />
             ))}
           </div>
+        ) : hasNoSettings(yamlString) ? (
+          <pre className="font-mono text-xs leading-relaxed text-[#3a6a8a]">
+            {YAML_COMMENTS_ONLY_SENTENCE}
+            {'\n\n'}
+            {yamlString}
+          </pre>
         ) : (
           <pre className="font-mono text-xs leading-relaxed text-[#3a6a8a]">
             Unable to parse YAML for tree view. Showing raw content:{'\n\n'}

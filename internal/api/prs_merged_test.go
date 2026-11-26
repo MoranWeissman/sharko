@@ -33,6 +33,20 @@ func TestInferCluster(t *testing.T) {
 			want:   "prod",
 		},
 		{
+			// Walk 1: the Merged tab showed the random branch suffix as the
+			// "cluster" of an add-to-catalog pull request.
+			name:   "a catalog pull request has no cluster, never the branch hash",
+			title:  "Add reloader to the catalog",
+			branch: "sharko/add-reloader-to-the-catalog-30fbe9d6",
+			want:   "",
+		},
+		{
+			name:   "the random suffix is taken off before the cluster name is read",
+			title:  "Some unrelated title",
+			branch: "sharko/register-prod-30fbe9d6",
+			want:   "prod",
+		},
+		{
 			name:   "returns empty when nothing matches",
 			title:  "Bump dependency",
 			branch: "feature/bump-deps",

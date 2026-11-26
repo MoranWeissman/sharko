@@ -60,6 +60,15 @@ func TestValuesTools_SayV4LayoutIsUnsupported(t *testing.T) {
 			if out != v4ValuesUnsupportedMessage {
 				t.Errorf("result = %q, want the shared plain-words v4 message", out)
 			}
+			const want = "The assistant cannot read values files in this version. They are in your Git repo: values/global/<add-on>.yaml for every cluster, or values/clusters/<cluster>/<add-on>.yaml for one cluster."
+			if out != want {
+				t.Errorf("result = %q, want exactly %q", out, want)
+			}
+			for _, banned := range []string{"next wave", "v4 layout yet", "sharko validate checks them", "Editing values"} {
+				if strings.Contains(out, banned) {
+					t.Errorf("the tool still carries the old wording %q", banned)
+				}
+			}
 			for _, p := range gp.readPaths {
 				if strings.HasPrefix(p, "configuration/addons-") {
 					t.Errorf("the tool still read a v3 values path %q on a v4 repo", p)

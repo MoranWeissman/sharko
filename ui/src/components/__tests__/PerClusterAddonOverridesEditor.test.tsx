@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, waitFor, cleanup } from '@testing-library/react'
+import { render, waitFor, cleanup, screen } from '@testing-library/react'
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor'
 import type { AddonComparisonStatus } from '@/services/models'
 
@@ -239,5 +239,47 @@ describe('PerClusterAddonOverridesEditor — v4.0.4 U9b values-file link', () =>
     )
     await findByText(/cert-manager overrides on spoke-us/i)
     expect(queryByRole('link', { name: /edit in github/i })).toBeNull()
+  })
+})
+
+describe('PerClusterAddonOverridesEditor on a v4 repo (read-only)', () => {
+  it('shows the real file and the plain sentence, with no Submit and no "Save opens a pull request"', async () => {
+    getClusterAddonValuesMock.mockResolvedValue({
+      cluster_name: 'test-cluster',
+      addon_name: 'cert-manager',
+      current_overrides: '# only comments\n',
+      read_only: true,
+      values_file: 'values/clusters/test-cluster/cert-manager.yaml',
+      file_exists: true,
+    })
+    const { container } = render(
+      <PerClusterAddonOverridesEditor clusterName="test-cluster" addons={buildAddons()} />,
+    )
+    await waitFor(() => expect(screen.getByTestId('read-only-values')).toBeInTheDocument())
+    expect(container.textContent).toContain(
+      'Editing values here is not in this version. To change them, edit the file in your Git repo: values/clusters/test-cluster/cert-manager.yaml',
+    )
+    expect(screen.getByTestId('read-only-values-content').textContent).toBe('# only comments\n')
+    expect(screen.queryByRole('button', { name: /submit/i })).toBeNull()
+    for (const banned of ['Save opens a pull request', 'next wave', "doesn't support the v4 layout yet", 'Unable to parse YAML']) {
+      expect(container.textContent).not.toContain(banned)
+    }
+  })
+
+  it('warns when the file is wrapped under the add-on name', async () => {
+    getClusterAddonValuesMock.mockResolvedValue({
+      cluster_name: 'test-cluster',
+      addon_name: 'cert-manager',
+      current_overrides: 'cert-manager:\n  replicaCount: 2\n',
+      read_only: true,
+      values_file: 'values/clusters/test-cluster/cert-manager.yaml',
+      file_exists: true,
+      wrapped_under_addon_name: true,
+    })
+    render(<PerClusterAddonOverridesEditor clusterName="test-cluster" addons={buildAddons()} />)
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByRole('alert').textContent).toBe(
+      'None of the settings in this file take effect. They are all inside a block named "cert-manager:". Move them out of that block so they start at the left edge of the file.',
+    )
   })
 })

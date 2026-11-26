@@ -374,7 +374,7 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 // handleGetAddonValuesSchema godoc
 //
 // @Summary Get addon global values + schema
-// @Description Returns the addon's current global values YAML and an optional JSON Schema (read from `<addon>.schema.json` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode.
+// @Description Returns the addon's current global values YAML and an optional JSON Schema (read from `<addon>.schema.json` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode. On a v4 repo it returns the real values/global/<addon>.yaml as it is in Git, with `read_only: true` and `values_file` set: Sharko does not edit values there yet.
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
@@ -382,7 +382,6 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 // @Success 200 {object} map[string]interface{} "Current values + optional schema"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 502 {object} map[string]interface{} "Git failure"
-// @Failure 409 {object} map[string]interface{} "This editor reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /addons/{name}/values-schema [get]
 func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.list") {
@@ -401,17 +400,17 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// A v4 repo has nothing at configuration/addons-global-values/, so this
-	// would open a blank editor that reads as "this addon has no values" —
-	// and any save from it would write a file the engine never loads. Say
-	// so instead.
-	if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
-		return
-	}
-
+	// On a v4 repo this answers with the real values/global/<addon>.yaml,
+	// marked read_only: Sharko does not edit values there yet, so the screen
+	// shows the file and says where to change it.
 	resp, err := s.addonSvc.GetAddonValuesAndSchema(r.Context(), name, gp)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	if resp != nil && resp.ReadOnly {
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
@@ -461,7 +460,7 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 // handleGetClusterAddonValues godoc
 //
 // @Summary Get per-cluster addon overrides + schema
-// @Description Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. `current_overrides` is empty when no overrides are configured for this addon yet.
+// @Description Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. `current_overrides` is empty when no overrides are configured for this addon yet. On a v4 repo it returns the real values/clusters/<cluster>/<addon>.yaml as it is in Git, with `read_only: true`, `values_file` set and `wrapped_under_addon_name` true when the file is wrapped under the add-on name (Helm ignores a wrapped file).
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -470,7 +469,6 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 // @Success 200 {object} map[string]interface{} "Current overrides + optional schema"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 502 {object} map[string]interface{} "Git failure"
-// @Failure 409 {object} map[string]interface{} "This editor reads a v3-layout values path; the connected repo uses the v4 layout"
 // @Router /clusters/{cluster}/addons/{name}/values [get]
 func (s *Server) handleGetClusterAddonValues(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.detail") {
@@ -494,13 +492,8 @@ func (s *Server) handleGetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Same reasoning as the global values editor: on a v4 repo the
-	// per-cluster overrides live at values/clusters/<cluster>/<addon>.yaml
-	// and this reader would report an empty override set.
-	if s.refuseV3ValuesSurfaceOnV4Repo(r.Context(), w, gp) {
-		return
-	}
-
+	// On a v4 repo this answers with the real
+	// values/clusters/<cluster>/<addon>.yaml, marked read_only.
 	resp, err := s.clusterSvc.GetClusterAddonValues(r.Context(), cluster, addonName, gp)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

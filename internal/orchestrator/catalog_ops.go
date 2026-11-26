@@ -528,6 +528,13 @@ func (o *Orchestrator) buildCatalogEntry(ctx context.Context, in CatalogAddonInp
 		}
 	}
 
+	// A namespace the cluster would refuse must not get as far as a pull
+	// request: it would be approved in Git and then never deploy.
+	if entry.Namespace != "" && !models.IsValidNamespaceName(entry.Namespace) {
+		return config.AddonCatalogEntry{}, fmt.Errorf(
+			"%w: the namespace %q does not fit. %s", ErrCatalogRequestInvalid, entry.Namespace, models.InvalidNamespaceMessage)
+	}
+
 	if entry.RepoURL == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(
 			"%w: addon %q needs a chart repository URL (https:// or oci://)", ErrCatalogEntryIncomplete, in.Name)

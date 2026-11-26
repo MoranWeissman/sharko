@@ -710,3 +710,41 @@ func TestAddToCatalog_DryRunListsValuesScaffolds(t *testing.T) {
 		}
 	}
 }
+
+// Walk 1, finding L1: the namespace was never checked, so "Re Loader!" was
+// accepted and a pull request opened for an add-on that could never deploy.
+func TestAddToCatalog_RefusesANamespaceKubernetesWouldRefuse(t *testing.T) {
+	for _, ns := range []string{"Re Loader!", "UPPER", "-lead", "trail-", "a_b", strings.Repeat("a", 64)} {
+		git := newMockGitProvider()
+		o := newTestOrchestratorForCatalog(t, git)
+		_, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+			Addons: []CatalogAddonInput{
+				{Name: "reloader", RepoURL: "https://x.test", Chart: "reloader", Version: "1.0.0", Namespace: ns},
+			},
+		})
+		if err == nil || !errors.Is(err, ErrCatalogRequestInvalid) {
+			t.Fatalf("namespace %q: want an invalid-request error, got %v", ns, err)
+		}
+		const rule = "A namespace can only use lowercase letters, digits and hyphens. It must start and end with a letter or digit, and be 63 characters at most."
+		if !strings.Contains(err.Error(), rule) {
+			t.Errorf("namespace %q: error %q does not carry the plain rule", ns, err.Error())
+		}
+		if len(git.prs) != 0 {
+			t.Errorf("namespace %q: a pull request was opened", ns)
+		}
+	}
+}
+
+func TestAddToCatalog_AcceptsAGoodNamespace(t *testing.T) {
+	for _, ns := range []string{"reloader", "cert-manager", "a", "a1-b2"} {
+		git := newMockGitProvider()
+		o := newTestOrchestratorForCatalog(t, git)
+		if _, err := o.AddToCatalog(context.Background(), AddToCatalogRequest{
+			Addons: []CatalogAddonInput{
+				{Name: "reloader", RepoURL: "https://x.test", Chart: "reloader", Version: "1.0.0", Namespace: ns},
+			},
+		}); err != nil {
+			t.Errorf("namespace %q was refused: %v", ns, err)
+		}
+	}
+}
