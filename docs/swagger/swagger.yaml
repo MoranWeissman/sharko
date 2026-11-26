@@ -19,6 +19,20 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_audit.AttributionMode'
         description: how the resulting Git commit was attributed
+      auth_type:
+        description: |-
+          AuthType says how the caller proved who they are. It is "api_key" when
+          the call was made with an API key: User is then the NAME OF THE KEY,
+          not a person. It is empty for a logged-in user and for Sharko's own
+          background work. A key can never have the name of a user (the auth
+          store refuses both ways), and this mark is what lets a reader of the
+          log see at a glance that a row was a key.
+
+          A string and not a bool on purpose: no field on Entry is a bool (see
+          TestBreak_TheOldFlagCannotBeSetAtAll).
+        enum:
+        - api_key
+        type: string
       changes:
         description: |-
           Changes says whether this entry's operation ACTUALLY changed anything.
@@ -3450,6 +3464,12 @@ definitions:
         type: array
       current_provider:
         type: string
+      has_api_key:
+        description: |-
+          HasAPIKey says whether a key is saved for the current provider. The
+          key itself is never sent back. The edit form uses this to say "a key
+          is saved, leave the field empty to keep it".
+        type: boolean
     type: object
   internal_api.aiProviderInfo:
     properties:
@@ -4669,6 +4689,19 @@ definitions:
     type: object
   internal_api.meResponse:
     properties:
+      api_key:
+        description: |-
+          APIKey is true when the caller came in with an API key. Username is
+          then the name of the key, not a person.
+        type: boolean
+      auth_type:
+        description: |-
+          AuthType is "api_key" or "session" (a login with user name and
+          password).
+        enum:
+        - api_key
+        - session
+        type: string
       has_github_token:
         type: boolean
       role:
@@ -6200,11 +6233,22 @@ paths:
   /ai/test:
     post:
       description: Tests the currently active AI provider by sending a simple prompt
+        (admin only)
       produces:
       - application/json
       responses:
         "200":
           description: Test result with status and response
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties: true
             type: object
@@ -6227,7 +6271,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Tests an AI provider configuration without saving it
+      description: Tests an AI provider configuration without saving it (admin only).
+        A part that is left out is taken from the saved configuration when the provider
+        is the one in use, so "change only the model" can be tested without typing
+        the key again. The answer of the provider is never passed on word for word.
       parameters:
       - description: AI config to test
         in: body
@@ -6245,6 +6292,16 @@ paths:
             type: object
         "400":
           description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties: true
             type: object
@@ -11505,7 +11562,8 @@ paths:
   /tokens/{name}:
     delete:
       description: Permanently revokes an API token by name. The token stops working
-        immediately — there is no grace period.
+        immediately — there is no grace period. An operator may revoke tokens they
+        own; revoking anyone else's token requires an admin.
       parameters:
       - description: Token name
         in: path

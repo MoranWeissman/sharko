@@ -190,7 +190,9 @@ var tokenRevokeCmd = &cobra.Command{
 
 func init() {
 	tokenCreateCmd.Flags().String("name", "", "Token name (required)")
-	tokenCreateCmd.Flags().String("role", "admin", "Token role (admin, operator, viewer)")
+	// The default is the lowest role, the same as the API and the UI. It
+	// used to be admin: leaving the flag out made a key that can do anything.
+	tokenCreateCmd.Flags().String("role", "viewer", "Token role (admin, operator, viewer)")
 	tokenCreateCmd.Flags().Int("expires-in-days", 0, "How many days the token stays usable, 1-365 (default 90)")
 	tokenRenewCmd.Flags().Int("expires-in-days", 0, "New window in days, 1-365, counted from now (default 90)")
 

@@ -30,6 +30,12 @@ type meResponse struct {
 	Username       string `json:"username"`
 	Role           string `json:"role"`
 	HasGitHubToken bool   `json:"has_github_token"`
+	// APIKey is true when the caller came in with an API key. Username is
+	// then the name of the key, not a person.
+	APIKey bool `json:"api_key"`
+	// AuthType is "api_key" or "session" (a login with user name and
+	// password).
+	AuthType string `json:"auth_type" enums:"api_key,session"`
 }
 
 // handleGetMe godoc
@@ -58,10 +64,19 @@ func (s *Server) handleGetMe(w http.ResponseWriter, r *http.Request) {
 		role = "viewer"
 	}
 
+	apiKey := isAPIKeyRequest(r)
+	authType := authKindLogin
+	if apiKey {
+		authType = authKindAPIKey
+	}
 	resp := meResponse{
-		Username:       username,
-		Role:           role,
-		HasGitHubToken: s.authStore.HasUserGitHubToken(username),
+		Username: username,
+		Role:     role,
+		// A key has no saved personal Git token of its own. The lookup is
+		// by name, so it is skipped for a key on purpose.
+		HasGitHubToken: !apiKey && s.authStore.HasUserGitHubToken(username),
+		APIKey:         apiKey,
+		AuthType:       authType,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

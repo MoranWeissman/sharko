@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -87,6 +88,21 @@ var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 // (cmd/sharko/user.go) carry the same words; tests tie both to this const.
 const InvalidUsernameSentence = "A user name can use letters, numbers, dots, dashes and underscores, with no spaces."
 
+// maxUsernameLen is the longest user name usernamePattern lets through.
+const maxUsernameLen = 63
+
+// UsernameTooLongSentence is the answer for a user name over maxUsernameLen.
+const UsernameTooLongSentence = "A user name can be at most 63 characters long."
+
+// maxPasswordBytes is the longest password bcrypt can hash.
+const maxPasswordBytes = 72
+
+// Sentences UpdatePassword answers a bad new password with.
+const (
+	PasswordTooLongSentence   = "The new password is too long. Use at most 72 characters."
+	PasswordSameAsOldSentence = "The new password is the same as the current one. Pick a different password."
+)
+
 // ErrInvalidUsername is returned by CreateUser when the user name breaks the
 // rule. Callers spot it with errors.Is, never by reading the error text.
 var ErrInvalidUsername error = &InputError{msg: InvalidUsernameSentence}
@@ -111,6 +127,10 @@ func IsInputError(err error) bool {
 	ie, ok := err.(*InputError)
 	return ok && ie != nil
 }
+
+// UserNameTakenByKeySentence is what CreateUser answers when an API key
+// already has the name asked for. The %q is the name.
+const UserNameTakenByKeySentence = "an API key is already named %q. Pick another user name, or revoke that key first."
 
 // UserAccount represents a user account from the ConfigMap.
 type UserAccount struct {
@@ -276,6 +296,14 @@ func (s *Store) UpdatePassword(username, currentPassword, newPassword string) er
 	if len(newPassword) < 12 {
 		return inputErrorf("new password must be at least 12 characters")
 	}
+	// Over 72 bytes the hashing library refuses, and that came back as an
+	// HTTP 500 with the library's own words.
+	if len(newPassword) > maxPasswordBytes {
+		return inputErrorf(PasswordTooLongSentence)
+	}
+	if newPassword == currentPassword {
+		return inputErrorf(PasswordSameAsOldSentence)
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -342,6 +370,8 @@ func (s *Store) ListUsers() []UserAccount {
 	for _, u := range s.users {
 		result = append(result, *u)
 	}
+	// By name, so the list is in the same order on every load.
+	sort.Slice(result, func(i, j int) bool { return result[i].Username < result[j].Username })
 	return result
 }
 
@@ -350,6 +380,11 @@ func (s *Store) ListUsers() []UserAccount {
 func (s *Store) CreateUser(username, role string) (string, error) {
 	if username == "" {
 		return "", inputErrorf("username is required")
+	}
+	// A name that is only too long gets its own sentence. The general one
+	// talks about which letters are allowed, which is not what is wrong.
+	if len(username) > maxUsernameLen {
+		return "", inputErrorf(UsernameTooLongSentence)
 	}
 	if !usernamePattern.MatchString(username) {
 		return "", ErrInvalidUsername
@@ -370,6 +405,13 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 	if _, exists := s.users[username]; exists {
 		s.mu.RUnlock()
 		return "", inputErrorf("user %q already exists", username)
+	}
+	// A user and an API key must never share a name: everything Sharko
+	// writes down about a call (the audit log, who made a pull request)
+	// names the caller, and two callers with one name cannot be told apart.
+	if _, taken := s.tokens[username]; taken {
+		s.mu.RUnlock()
+		return "", inputErrorf(UserNameTakenByKeySentence, username)
 	}
 	s.mu.RUnlock()
 
@@ -612,11 +654,30 @@ func accountsEntry(accountsYAML, username string) (usersAccount, bool) {
 // createUserK8s does. A user list that cannot be read is never written back:
 // that would throw away every other user. Every storage error is returned.
 func (s *Store) UpdateUser(username string, enabled bool, role string) error {
+	return s.UpdateUserFields(username, &enabled, role)
+}
+
+// UpdateUserFields is UpdateUser where each part is optional: a nil enabled
+// keeps the saved on/off state, and an empty role keeps the saved role.
+//
+// This is what the API uses. A request that only changes the role must not
+// touch the on/off state: it used to turn a disabled account back on, because
+// a missing "enabled" was read as true.
+func (s *Store) UpdateUserFields(username string, enabledPtr *bool, role string) error {
 	s.mu.RLock()
 	user, exists := s.users[username]
+	var saved UserAccount
+	if exists {
+		saved = *user
+	}
 	s.mu.RUnlock()
 	if !exists {
 		return inputErrorf("user %q not found", username)
+	}
+	user = &saved
+	enabled := saved.Enabled
+	if enabledPtr != nil {
+		enabled = *enabledPtr
 	}
 
 	if role != "" && role != "admin" && role != "operator" && role != "viewer" {

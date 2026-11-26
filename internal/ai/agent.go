@@ -408,7 +408,7 @@ func (a *Agent) callOllamaChat(ctx context.Context) (*ChatResponse, error) {
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, a.client.httpError("ollama", resp.StatusCode, respBody)
 	}
 
 	var result ollamaChatResponse
@@ -462,7 +462,7 @@ func (a *Agent) callClaudeChat(ctx context.Context) (*ChatResponse, error) {
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("claude returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, a.client.httpError("claude", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -537,7 +537,7 @@ func (a *Agent) callOpenAIChat(ctx context.Context) (*ChatResponse, error) {
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, a.client.httpError("openai", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -626,7 +626,7 @@ func (a *Agent) callCustomOpenAIChat(ctx context.Context) (*ChatResponse, error)
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("custom-openai returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, a.client.httpError("custom-openai", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -864,7 +864,7 @@ func (a *Agent) callGeminiChat(ctx context.Context) (*ChatResponse, error) {
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, a.client.httpError("gemini", resp.StatusCode, respBody)
 	}
 
 	var result struct {

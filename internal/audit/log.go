@@ -14,11 +14,21 @@ import (
 
 // Entry is a single audit log record.
 type Entry struct {
-	ID              string          `json:"id"`
-	Timestamp       time.Time       `json:"timestamp"`
-	Level           string          `json:"level"`    // info, warn, error
-	Event           string          `json:"event"`    // cluster_registered, pr_created, etc.
-	User            string          `json:"user"`     // username or "system"
+	ID        string    `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"` // info, warn, error
+	Event     string    `json:"event"` // cluster_registered, pr_created, etc.
+	User      string    `json:"user"`  // username or "system"
+	// AuthType says how the caller proved who they are. It is "api_key" when
+	// the call was made with an API key: User is then the NAME OF THE KEY,
+	// not a person. It is empty for a logged-in user and for Sharko's own
+	// background work. A key can never have the name of a user (the auth
+	// store refuses both ways), and this mark is what lets a reader of the
+	// log see at a glance that a row was a key.
+	//
+	// A string and not a bool on purpose: no field on Entry is a bool (see
+	// TestBreak_TheOldFlagCannotBeSetAtAll).
+	AuthType        AuthType        `json:"auth_type,omitempty" swaggertype:"string" enums:"api_key"`
 	Action          string          `json:"action"`   // register, remove, update, test
 	Resource        string          `json:"resource"` // cluster:prod-eu, addon:cert-manager
 	Source          string          `json:"source"`   // ui, cli, api, reconciler, webhook
@@ -116,6 +126,12 @@ type Entry struct {
 	// regresses.
 	Changes ChangeResult `json:"changes,omitempty" swaggertype:"string" enums:"not_applicable,none,applied,may_be_applied"`
 }
+
+// AuthType is how the caller of an audited request proved who they are.
+type AuthType string
+
+// AuthAPIKey marks an entry whose call was made with an API key.
+const AuthAPIKey AuthType = "api_key"
 
 // ChangeResult is the "did anything actually change" answer on an Entry.
 type ChangeResult string

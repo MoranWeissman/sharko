@@ -96,7 +96,7 @@ type Client struct {
 
 // NewClient creates a new AI client with the given configuration.
 func NewClient(cfg Config) *Client {
-	return &Client{config: cfg, http: &http.Client{}}
+	return &Client{config: cfg, http: &http.Client{Transport: guardedTransport()}}
 }
 
 // GetConfig returns the current AI configuration.
@@ -193,7 +193,7 @@ func (c *Client) ollamaSummarize(ctx context.Context, prompt string) (string, er
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(respBody))
+		return "", c.httpError("ollama", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -237,7 +237,7 @@ func (c *Client) claudeSummarize(ctx context.Context, prompt string) (string, er
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("claude returned %d: %s", resp.StatusCode, string(respBody))
+		return "", c.httpError("claude", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -286,7 +286,7 @@ func (c *Client) openaiSummarize(ctx context.Context, prompt string) (string, er
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(respBody))
+		return "", c.httpError("openai", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -345,7 +345,7 @@ func (c *Client) geminiSummarize(ctx context.Context, prompt string) (string, er
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("gemini returned %d: %s", resp.StatusCode, string(respBody))
+		return "", c.httpError("gemini", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -414,7 +414,7 @@ func (c *Client) customOpenAISummarize(ctx context.Context, prompt string) (stri
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("custom-openai returned %d: %s", resp.StatusCode, string(respBody))
+		return "", c.httpError("custom-openai", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -484,7 +484,7 @@ func (c *Client) chatOllama(ctx context.Context, messages []ChatMessage, tools [
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, c.httpError("ollama", resp.StatusCode, respBody)
 	}
 
 	var result ollamaChatResponse
@@ -543,7 +543,7 @@ func (c *Client) chatClaude(ctx context.Context, messages []ChatMessage, tools [
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("claude returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, c.httpError("claude", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -613,7 +613,7 @@ func (c *Client) chatOpenAI(ctx context.Context, messages []ChatMessage, tools [
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, c.httpError("openai", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -715,7 +715,7 @@ func (c *Client) chatGemini(ctx context.Context, messages []ChatMessage, tools [
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("gemini returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, c.httpError("gemini", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -798,7 +798,7 @@ func (c *Client) chatCustomOpenAI(ctx context.Context, messages []ChatMessage, t
 
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("custom-openai returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, c.httpError("custom-openai", resp.StatusCode, respBody)
 	}
 
 	var result struct {

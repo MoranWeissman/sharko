@@ -79,6 +79,14 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Named for what it is. With no name the audit log made one up from the
+	// address and wrote every chat message down as "Agent created". The
+	// message itself is not kept.
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:   "ai_chat_message",
+		Changes: audit.ChangesNotApplicable,
+	})
+
 	// Prepend page context to help the agent understand where the user is
 	message := req.Message
 	if req.PageContext != "" {

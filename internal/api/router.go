@@ -1878,6 +1878,92 @@ func countActiveSessions() int {
 	return n
 }
 
+// endSession ends one login right now.
+func endSession(token string) {
+	sessionsMu.Lock()
+	delete(activeSessions, token)
+	sessionsMu.Unlock()
+}
+
+// endSessionsForUser ends every login of username right now, and returns how
+// many it ended. Pass the caller's own token as keep to leave that one login
+// alone (a user who just changed their own password stays logged in where
+// they did it; every other login of theirs ends). Pass "" to end them all.
+//
+// This is what makes "disable", "delete", "reset password", "change password"
+// and "change role" take hold at once. Before it, a login made earlier went on
+// working until its 24 hours ran out.
+func endSessionsForUser(username, keep string) int {
+	if username == "" {
+		return 0
+	}
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
+	n := 0
+	for token, sess := range activeSessions {
+		if sess.Username == username && token != keep {
+			delete(activeSessions, token)
+			n++
+		}
+	}
+	return n
+}
+
+// bearerToken returns the token in the request's Authorization header, or "".
+func bearerToken(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == authHeader {
+		return ""
+	}
+	return token
+}
+
+// Header names the auth middleware stamps on a request it let through. A
+// client can never set them: the middleware removes whatever came in first.
+const (
+	// authKindHeader says how the caller proved who they are.
+	authKindHeader = "X-Sharko-Auth"
+	authKindAPIKey = "api_key"
+	authKindLogin  = "session"
+)
+
+// isAPIKeyRequest reports whether the caller came in with an API key.
+func isAPIKeyRequest(r *http.Request) bool {
+	return r.Header.Get(authKindHeader) == authKindAPIKey
+}
+
+// maxLoginNameInAudit is the longest user name a failed login may leave in
+// the audit log. A real user name is at most 63 characters.
+const maxLoginNameInAudit = 63
+
+// cleanLoginNameForAudit makes the name typed into a FAILED login safe to
+// keep as "Who" in the audit log. Anyone can send a login with any text in the
+// name, with no login of their own, so the text is not trusted: only the
+// characters a real user name can have are kept, every other one becomes "_",
+// and the result is cut to the length of a real user name.
+func cleanLoginNameForAudit(name string) string {
+	if name == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range name {
+		if n >= maxLoginNameInAudit {
+			break
+		}
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+		n++
+	}
+	return b.String()
+}
+
 func generateToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
@@ -1937,7 +2023,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.auditLog.Add(audit.Entry{
 			Level:    "warn",
 			Event:    "login_failed",
-			User:     req.Username,
+			User:     cleanLoginNameForAudit(req.Username),
 			Action:   "login",
 			Resource: "session",
 			Source:   "api",
@@ -2062,6 +2148,8 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		// Strip any client-supplied role header to prevent spoofing.
 		// Only the middleware sets this header (for API key auth).
 		r.Header.Del("X-Sharko-Role")
+		// Same for the header that says "this caller is an API key".
+		r.Header.Del(authKindHeader)
 
 		path := r.URL.Path
 
@@ -2157,11 +2245,18 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, stri
 	}
 	if isValidSession(token) {
 		username := getSessionUser(token)
-		r.Header.Set("X-Sharko-User", username)
-		// Look up user role from the store so authz middleware can enforce RBAC
-		if user := s.authStore.GetUser(username); user != nil {
-			r.Header.Set("X-Sharko-Role", user.Role)
+		// The user is looked up on EVERY call, not only at login. A user who
+		// was disabled or deleted after logging in is refused here, on any
+		// route, and the login is ended. It used to go on working: the role
+		// was read but "disabled" and "gone" were not.
+		user := s.authStore.GetUser(username)
+		if user == nil || !user.Enabled {
+			endSession(token)
+			return false, ""
 		}
+		r.Header.Set("X-Sharko-User", username)
+		r.Header.Set("X-Sharko-Role", user.Role)
+		r.Header.Set(authKindHeader, authKindLogin)
 		return true, ""
 	}
 
@@ -2171,6 +2266,7 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, stri
 		if err == nil {
 			r.Header.Set("X-Sharko-User", username)
 			r.Header.Set("X-Sharko-Role", role)
+			r.Header.Set(authKindHeader, authKindAPIKey)
 			return true, ""
 		}
 		return false, tokenRefusalMessage(err)
@@ -2217,6 +2313,12 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
+	// An API key has no password. Without this an API key could try
+	// passwords for a user.
+	if isAPIKeyRequest(r) {
+		writeError(w, http.StatusForbidden, APIKeyHasNoPasswordSentence)
+		return
+	}
 
 	if err := s.authStore.UpdatePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
 		// Picked by error TYPE, never by the error's words: a wrong current
@@ -2234,12 +2336,21 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every OTHER login of this user ends now. The one that made the change
+	// stays: its owner just proved they know the old password.
+	ended := endSessionsForUser(username, bearerToken(r))
+
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "password_changed",
 		Resource: "user:" + username,
+		Detail:   fmt.Sprintf("other logins ended: %d", ended),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password updated"})
 }
+
+// APIKeyHasNoPasswordSentence is the refusal an API key gets when it asks to
+// change a password.
+const APIKeyHasNoPasswordSentence = "An API key has no password to change. Log in as the user to change that user's password."
 
 // handleHashPassword godoc
 //

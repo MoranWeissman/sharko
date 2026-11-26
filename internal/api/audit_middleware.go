@@ -118,6 +118,7 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			Level:           level,
 			Event:           event,
 			User:            user,
+			AuthType:        auditAuthType(r),
 			Action:          methodToAction(r.Method),
 			Resource:        fields.Resource,
 			Detail:          fields.Detail,
@@ -297,4 +298,13 @@ func deriveEventName(method, path string) string {
 	default:
 		return resource + "_" + strings.ToLower(method)
 	}
+}
+
+// auditAuthType is the audit mark for how the caller came in: "api_key" for
+// an API key, empty for a logged-in user.
+func auditAuthType(r *http.Request) audit.AuthType {
+	if isAPIKeyRequest(r) {
+		return audit.AuthAPIKey
+	}
+	return ""
 }

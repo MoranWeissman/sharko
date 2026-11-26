@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -84,6 +85,40 @@ type TokenExpiredError struct {
 func (e *TokenExpiredError) Error() string {
 	return fmt.Sprintf("API token %q expired on %s", e.Name, e.ExpiredAt.UTC().Format("2006-01-02"))
 }
+
+// TokenOwnerDisabledError is returned by AuthenticateToken when the presented
+// value matched a stored token, but the user who created that token is turned
+// off. A disabled user must not be able to keep working through a key they
+// made earlier. The caller holds the real secret, so naming the token leaks
+// nothing.
+type TokenOwnerDisabledError struct {
+	Name string
+}
+
+func (e *TokenOwnerDisabledError) Error() string {
+	return fmt.Sprintf("API token %q cannot be used: the user who created it is disabled", e.Name)
+}
+
+// TokenNameIsUserError is returned by AuthenticateToken when the presented
+// value matched a stored token whose name is also the name of a user. Such a
+// key would be written down everywhere as that user, so it is refused. New
+// keys cannot get such a name (see CreateTokenFor); this catches a key made
+// before that rule, or a user added by hand later.
+type TokenNameIsUserError struct {
+	Name string
+}
+
+func (e *TokenNameIsUserError) Error() string {
+	return fmt.Sprintf("API token %q cannot be used: a user has the same name. Revoke this token and create one with another name", e.Name)
+}
+
+// TokenNameTakenByUserSentence is what CreateTokenFor answers when a user
+// already has the name asked for. The %q is the name.
+const TokenNameTakenByUserSentence = "a user is already named %q. Pick another name for the API key."
+
+// InvalidTokenNameSentence is the exact sentence shown when an API key name
+// breaks the rule. The rule is the same one user names follow.
+const InvalidTokenNameSentence = "An API key name can use letters, numbers, dots, dashes and underscores, with no spaces, up to 63 characters."
 
 // APIToken represents an API key for automation.
 //
@@ -178,6 +213,11 @@ func (s *Store) CreateTokenFor(owner, name, role string, expiresInDays int) (str
 	if name == "" {
 		return "", fmt.Errorf("token name is required")
 	}
+	// Same letters as a user name. A key name is printed in the audit log, in
+	// tables and in the command line, so it has to be short and plain.
+	if !usernamePattern.MatchString(name) {
+		return "", errors.New(InvalidTokenNameSentence)
+	}
 	if role == "" {
 		role = "viewer"
 	}
@@ -195,6 +235,12 @@ func (s *Store) CreateTokenFor(owner, name, role string, expiresInDays int) (str
 	if _, exists := s.tokens[name]; exists {
 		s.mu.RUnlock()
 		return "", fmt.Errorf("token %q already exists", name)
+	}
+	// A key must never share a name with a user: it would be written down
+	// everywhere as that user.
+	if _, isUser := s.users[name]; isUser {
+		s.mu.RUnlock()
+		return "", fmt.Errorf(TokenNameTakenByUserSentence, name)
 	}
 	s.mu.RUnlock()
 
@@ -226,6 +272,10 @@ func (s *Store) CreateTokenFor(owner, name, role string, expiresInDays int) (str
 	if _, exists := s.tokens[name]; exists {
 		s.mu.Unlock()
 		return "", fmt.Errorf("token %q already exists", name)
+	}
+	if _, isUser := s.users[name]; isUser {
+		s.mu.Unlock()
+		return "", fmt.Errorf(TokenNameTakenByUserSentence, name)
 	}
 	s.tokens[name] = token
 	// Write through to durable storage (no-op when persistence is off).
@@ -296,6 +346,8 @@ func (s *Store) ListTokens() []APIToken {
 	for _, t := range s.tokens {
 		result = append(result, t.view(now))
 	}
+	// By name, so the list is in the same order on every load.
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
 }
 
@@ -373,11 +425,12 @@ func (s *Store) AuthenticateToken(plaintext string) (username string, role strin
 		name      string
 		hash      string
 		role      string
+		createdBy string
 		expiresAt *time.Time
 	}
 	candidates := make([]candidate, 0, len(s.tokens))
 	for _, t := range s.tokens {
-		c := candidate{name: t.Name, hash: t.Hash, role: t.Role}
+		c := candidate{name: t.Name, hash: t.Hash, role: t.Role, createdBy: t.CreatedBy}
 		if t.ExpiresAt != nil {
 			exp := *t.ExpiresAt
 			c.expiresAt = &exp
@@ -394,6 +447,21 @@ func (s *Store) AuthenticateToken(plaintext string) (username string, role strin
 		// Matched. Enforce the expiry before handing out any access.
 		if c.expiresAt != nil && now.After(*c.expiresAt) {
 			return "", "", &TokenExpiredError{Name: c.name, ExpiredAt: *c.expiresAt}
+		}
+		// A key that carries a user's name would act, and be written down,
+		// as that user. Refuse it.
+		s.mu.RLock()
+		_, nameIsUser := s.users[c.name]
+		owner, ownerKnown := s.users[c.createdBy]
+		ownerDisabled := c.createdBy != "" && ownerKnown && !owner.Enabled
+		s.mu.RUnlock()
+		if nameIsUser {
+			return "", "", &TokenNameIsUserError{Name: c.name}
+		}
+		// A disabled user can do nothing, and that includes through a key
+		// they made before they were turned off.
+		if ownerDisabled {
+			return "", "", &TokenOwnerDisabledError{Name: c.name}
 		}
 		// Update LastUsed. Deliberately NOT written through to durable
 		// storage here — persisting on every authenticated request would
@@ -435,4 +503,53 @@ func (s *Store) ValidateToken(plaintext string) (username string, role string, o
 		return "", "", false
 	}
 	return username, role, true
+}
+
+// TokenCreator returns who is recorded as having created the named token, or
+// "" when the token is unknown or nobody is recorded.
+func (s *Store) TokenCreator(name string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if tok, ok := s.tokens[name]; ok {
+		return tok.CreatedBy
+	}
+	return ""
+}
+
+// RevokeTokensCreatedBy revokes every token that username created and returns
+// their names, sorted. It is called when a user is deleted: a deleted user
+// must not keep working through a key they made earlier. On a storage failure
+// nothing is revoked and the error is returned.
+func (s *Store) RevokeTokensCreatedBy(username string) ([]string, error) {
+	if username == "" {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	removed := make(map[string]*APIToken)
+	for name, tok := range s.tokens {
+		if tok.CreatedBy == username {
+			removed[name] = tok
+		}
+	}
+	if len(removed) == 0 {
+		return nil, nil
+	}
+	for name := range removed {
+		delete(s.tokens, name)
+	}
+	if err := s.persistTokensLocked(context.Background()); err != nil {
+		for name, tok := range removed {
+			s.tokens[name] = tok
+		}
+		return nil, fmt.Errorf("the API keys %q created were not revoked: %w", username, err)
+	}
+	names := make([]string, 0, len(removed))
+	for name := range removed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	slog.Info("API tokens revoked with their creator", "created_by", username, "count", len(names))
+	return names, nil
 }

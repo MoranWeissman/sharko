@@ -1473,7 +1473,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tests the currently active AI provider by sending a simple prompt",
+                "description": "Tests the currently active AI provider by sending a simple prompt (admin only)",
                 "produces": [
                     "application/json"
                 ],
@@ -1484,6 +1484,20 @@
                 "responses": {
                     "200": {
                         "description": "Test result with status and response",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1513,7 +1527,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tests an AI provider configuration without saving it",
+                "description": "Tests an AI provider configuration without saving it (admin only). A part that is left out is taken from the saved configuration when the provider is the one in use, so \"change only the model\" can be tested without typing the key again. The answer of the provider is never passed on word for word.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1545,6 +1559,20 @@
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8687,7 +8715,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permanently revokes an API token by name. The token stops working immediately — there is no grace period.",
+                "description": "Permanently revokes an API token by name. The token stops working immediately — there is no grace period. An operator may revoke tokens they own; revoking anyone else's token requires an admin.",
                 "produces": [
                     "application/json"
                 ],
@@ -9814,6 +9842,13 @@
                         {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_audit.AttributionMode"
                         }
+                    ]
+                },
+                "auth_type": {
+                    "description": "AuthType says how the caller proved who they are. It is \"api_key\" when\nthe call was made with an API key: User is then the NAME OF THE KEY,\nnot a person. It is empty for a logged-in user and for Sharko's own\nbackground work. A key can never have the name of a user (the auth\nstore refuses both ways), and this mark is what lets a reader of the\nlog see at a glance that a row was a key.\n\nA string and not a bool on purpose: no field on Entry is a bool (see\nTestBreak_TheOldFlagCannotBeSetAtAll).",
+                    "type": "string",
+                    "enum": [
+                        "api_key"
                     ]
                 },
                 "changes": {
@@ -13655,6 +13690,10 @@
                 },
                 "current_provider": {
                     "type": "string"
+                },
+                "has_api_key": {
+                    "description": "HasAPIKey says whether a key is saved for the current provider. The\nkey itself is never sent back. The edit form uses this to say \"a key\nis saved, leave the field empty to keep it\".",
+                    "type": "boolean"
                 }
             }
         },
@@ -14890,6 +14929,18 @@
         "internal_api.meResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "APIKey is true when the caller came in with an API key. Username is\nthen the name of the key, not a person.",
+                    "type": "boolean"
+                },
+                "auth_type": {
+                    "description": "AuthType is \"api_key\" or \"session\" (a login with user name and\npassword).",
+                    "type": "string",
+                    "enum": [
+                        "api_key",
+                        "session"
+                    ]
+                },
                 "has_github_token": {
                     "type": "boolean"
                 },
