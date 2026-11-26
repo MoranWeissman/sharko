@@ -223,7 +223,9 @@ func ClassifyReason(err error) Reason {
 		return ReasonTLS
 	case audit.ReasonTimeout, audit.ReasonCanceled:
 		return ReasonTimeout
-	case audit.ReasonUpstream:
+	case audit.ReasonUpstream, audit.ReasonRateLimited:
+		// A host that is limiting Sharko is a service that refused the call:
+		// same answer a probe gave before the limit had its own category.
 		return ReasonUpstream
 	default:
 		// audit's conflict / invalid-data / not-converged / unspecified

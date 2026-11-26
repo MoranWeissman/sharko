@@ -9909,6 +9909,8 @@ const docTemplate = `{
                         "canceled",
                         "not_converged",
                         "upstream_failure",
+                        "rate_limited",
+                        "not_allowed",
                         "unspecified"
                     ]
                 },

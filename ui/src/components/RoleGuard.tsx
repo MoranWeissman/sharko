@@ -9,6 +9,17 @@ interface RoleGuardProps {
   fallback?: ReactNode // rendered instead of children when access denied
 }
 
+/**
+ * The roles that may change things Sharko manages: register or adopt a
+ * cluster, turn an add-on on or off, add an add-on to the catalog. The
+ * server's rule table (internal/authz) gives these to an operator as well as
+ * an admin; only removing, un-adopting, taking over, users, keys and the
+ * settings switches are admin-only. Screens that offer one of the operator
+ * actions use this list, so the button is there for everyone the API lets
+ * press it.
+ */
+export const OPERATOR_AND_UP = ['admin', 'operator']
+
 export function RoleGuard({ children, roles, adminOnly, fallback }: RoleGuardProps) {
   const ctx = useContext(AuthContext)
   // Outside AuthProvider — deny access (safe default for security boundary)

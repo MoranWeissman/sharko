@@ -125,4 +125,44 @@ describe('useConnectionHealth', () => {
     }
     expect(isAWSUnreachableMessageId(undefined)).toBe(false)
   })
+
+  // Walks 5 and 10: a refusal (viewer) or Sharko's own request limit used to
+  // turn every connection red and send people to Settings.
+  it('a refused check (403) is "unchecked", not failing, and not a Settings fix', async () => {
+    mockedApi.testConnection.mockRejectedValue(
+      Object.assign(new Error("action 'connection.test' requires role 'operator', you have 'viewer'"), { status: 403 }),
+    )
+    mockedApi.testProvider.mockRejectedValue(
+      Object.assign(new Error("action 'provider.test' requires role 'operator', you have 'viewer'"), { status: 403 }),
+    )
+    const { result } = renderHook(() => useConnectionHealth(true))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.git).toBe('unchecked')
+    expect(result.current.vault).toBe('unchecked')
+    expect(result.current.anyFailing).toBe(false)
+    expect(result.current.failingMessages).toEqual([])
+    expect(result.current.uncheckedMessage).toBe('Your role is not allowed to do this. Ask an operator or an admin.')
+  })
+
+  it("Sharko's own request limit (429) is \"unchecked\", not failing", async () => {
+    const limited = Object.assign(new Error('rate limit exceeded'), { status: 429, code: 'sharko_rate_limit' })
+    mockedApi.testConnection.mockRejectedValue(limited)
+    mockedApi.testProvider.mockRejectedValue(limited)
+    const { result } = renderHook(() => useConnectionHealth(true))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.anyFailing).toBe(false)
+    expect(result.current.uncheckedMessage).toBe(
+      'Sharko is getting too many requests from your address right now. Try again in a moment.',
+    )
+  })
+
+  it('a real network failure is still failing', async () => {
+    mockedApi.testConnection.mockRejectedValue(new Error('Failed to fetch'))
+    mockedApi.testProvider.mockResolvedValue({ status: 'connected' })
+    const { result } = renderHook(() => useConnectionHealth(true))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.git).toBe('error')
+    expect(result.current.anyFailing).toBe(true)
+    expect(result.current.uncheckedMessage).toBeNull()
+  })
 })

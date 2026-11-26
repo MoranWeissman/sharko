@@ -1730,6 +1730,17 @@ func maxBodySize(next http.Handler, maxBytes int64) http.Handler {
 	})
 }
 
+// The two 429 sentences, and the codes the browser reads to tell them apart.
+// They are the exact words every page shows, so they live in one place and a
+// test pins them. The own-limit one says whose limit it is: Sharko counts
+// changes per address, so people behind one proxy can reach it together.
+const (
+	SharkoRateLimitMessage   = "Sharko is getting too many requests from your address right now. Try again in a moment."
+	UpstreamRateLimitMessage = "GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment."
+	CodeSharkoRateLimit      = "sharko_rate_limit"
+	CodeUpstreamRateLimit    = "upstream_rate_limit"
+)
+
 // --- Rate limiter (shared) ---
 
 // rateLimiter is a sliding-window, per-key rate limiter.
@@ -1804,7 +1815,11 @@ func writeRateLimiter(limit int, window time.Duration, resolveIP func(*http.Requ
 					return
 				}
 				if !rl.Allow(resolveIP(r)) {
-					writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+					w.Header().Set("Retry-After", "60")
+					writeJSON(w, http.StatusTooManyRequests, errorResponse{
+						Error: SharkoRateLimitMessage,
+						Code:  CodeSharkoRateLimit,
+					})
 					return
 				}
 			}
@@ -2782,8 +2797,17 @@ func safeStatusErrorCause(statusErr *apierrors.StatusError) string {
 func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 	slog.Error("server error", "op", op, "status", status, "error", err)
 	_, cause, hint, code := shapeError(err, http.StatusText(status))
+	headline := http.StatusText(status)
+	if status == http.StatusTooManyRequests {
+		// A service Sharko uses (GitHub most often) turned the call down for
+		// asking too often. Say that, in words a person can act on, instead
+		// of the bare "Too Many Requests" every page used to show.
+		headline = UpstreamRateLimitMessage
+		code = CodeUpstreamRateLimit
+		hint = ""
+	}
 	body := map[string]string{
-		"error": http.StatusText(status),
+		"error": headline,
 		"op":    op,
 	}
 	if cause != "" {
@@ -2864,6 +2888,12 @@ func classifyUpstreamError(err error) int {
 			return http.StatusTooManyRequests
 		}
 		return http.StatusInternalServerError
+	}
+
+	// 429 — the Git host's own typed "you asked too often" answer. Read by
+	// type first, so it is a 429 even when a wrapper hides the usual words.
+	if gitprovider.IsRateLimited(err) {
+		return http.StatusTooManyRequests
 	}
 
 	// 429 — upstream rate limit. The phrasing is normalised to lower case

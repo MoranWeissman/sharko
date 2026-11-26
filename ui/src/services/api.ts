@@ -54,6 +54,7 @@ import type {
   VersionMatrixResponse,
 } from './models'
 import { getToken, clearSession } from '@/lib/authStorage'
+import { NOT_ALLOWED_SENTENCE } from '@/lib/apiFailure'
 
 const BASE_URL = '/api/v1'
 
@@ -202,7 +203,14 @@ export class ApiError extends Error {
   body: ApiErrorBody
 
   constructor(status: number, body: ApiErrorBody, fallbackMessage: string) {
-    super(body.error || fallbackMessage)
+    // The server's role refusal reads "action 'x' requires role 'operator', you
+    // have 'viewer'": an internal action name. A person gets the plain
+    // sentence; the raw text stays in `body` for anyone who needs it.
+    super(
+      status === 403 && /^action '[^']*' requires role /.test(body.error ?? '')
+        ? NOT_ALLOWED_SENTENCE
+        : body.error || fallbackMessage,
+    )
     this.name = 'ApiError'
     this.status = status
     this.code = typeof body.code === 'string' ? body.code : undefined
@@ -219,6 +227,10 @@ export class ApiError extends Error {
  * fallback the six call sites below all duplicated before this) and throws
  * an ApiError built from it. Never returns.
  */
+// The sentence the server sends for a wrong current password (internal/auth,
+// ErrCurrentPasswordIncorrect). The browser only compares against it.
+export const CURRENT_PASSWORD_INCORRECT_ERROR = 'current password is incorrect'
+
 async function throwApiError(res: Response): Promise<never> {
   const body = (await res.json().catch(() => ({ error: res.statusText }))) as ApiErrorBody
   throw new ApiError(res.status, body, res.statusText)
@@ -285,7 +297,7 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
 }
 
 /** What the server answers (with a 401) when the current password is wrong. */
-const WRONG_CURRENT_PASSWORD = 'current password is incorrect'
+const WRONG_CURRENT_PASSWORD = CURRENT_PASSWORD_INCORRECT_ERROR
 
 /** What the password form shows for it. */
 export const WRONG_CURRENT_PASSWORD_MESSAGE = 'The current password is wrong. Nothing was changed.'
@@ -309,7 +321,9 @@ async function updatePassword(currentPassword: string, newPassword: string): Pro
   if (res.status === 401) {
     const body = (await res.json().catch(() => ({}))) as { error?: string }
     if (body.error === WRONG_CURRENT_PASSWORD) {
-      throw new Error(WRONG_CURRENT_PASSWORD_MESSAGE)
+      // An ApiError, so callers can still see it was a 401; the message is the
+      // plain sentence, and the login stays.
+      throw new ApiError(401, { ...body, error: WRONG_CURRENT_PASSWORD_MESSAGE }, WRONG_CURRENT_PASSWORD_MESSAGE)
     }
     clearSession()
     window.location.reload()
@@ -517,11 +531,12 @@ export async function testClusterConnection(
         hint: body.hint,
       }
     }
-    throw new Error(body.error || 'Service unavailable')
+    throw new ApiError(res.status, body, 'Service unavailable')
   }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error((body as { error?: string }).error || res.statusText)
+    // An ApiError, so the page can tell "your role may not run this" (403)
+    // and "too many requests" (429) apart from a cluster that really failed.
+    await throwApiError(res)
   }
   return res.json()
 }
@@ -1424,6 +1439,8 @@ export interface InitStatus {
  *   - "no_connection"       — no active Git connection is configured.
  *   - "not_bootstrapped"    — the repo is reachable but genuinely not set up.
  *   - "connection_error"    — the Git repo could not be reached/verified.
+ *   - "git_rate_limited"   — the Git host said Sharko has asked too often.
+ *     Nothing is broken; it clears by itself.
  *   - "error"               — the HTTP probe itself failed client-side.
  *   - "bootstrap_unreachable" — ArgoCD can't reach/evaluate the Git repo.
  *   - "bootstrap_degraded"  — the engine app is missing or genuinely degraded.
@@ -1436,6 +1453,7 @@ export type RepoStatusReason =
   | 'no_connection'
   | 'not_bootstrapped'
   | 'connection_error'
+  | 'git_rate_limited'
   | 'error'
   | 'bootstrap_unreachable'
   | 'bootstrap_degraded'
@@ -1754,6 +1772,10 @@ export const api = {
 
 
   // Auth
+  // A wrong CURRENT password comes back as 401 too, but it is the answer to the
+  // form, not a sign the login ended (walk 5, L3). updatePassword() above keeps
+  // the login for that one answer and gives the form a plain sentence; every
+  // other 401 still ends the session.
   updatePassword: (currentPassword: string, newPassword: string) => updatePassword(currentPassword, newPassword),
 
   // My account (tiered attribution)

@@ -50,15 +50,17 @@ describe('UserManagement — sentences that are true', () => {
     render(<UserManagement />)
     await waitFor(() => expect(screen.getByText('bob')).toBeInTheDocument())
     expect(
-      screen.getByText('— adds and changes clusters and add-ons; cannot remove them, manage users or change settings'),
+      screen.getByText(
+        '— register and adopt clusters, turn addons on and off, add addons to the catalog. Cannot remove things, change settings or manage users',
+      ),
     ).toBeInTheDocument()
     expect(screen.queryByText(/all except user management/)).not.toBeInTheDocument()
   })
 
-  it('a key that was never used says Never', async () => {
+  it('a key that was never used says Never used', async () => {
     render(<UserManagement />)
     await waitFor(() => expect(screen.getByText('never-used')).toBeInTheDocument())
-    expect(screen.getByText('Never')).toBeInTheDocument()
+    expect(screen.getByText('Never used')).toBeInTheDocument()
     expect(screen.queryByText(/Jan 1, 1$/)).not.toBeInTheDocument()
   })
 

@@ -80,7 +80,7 @@ type Entry struct {
 	// reason, because those nine entries have no error to classify and
 	// inventing a category for them would be a worse lie than saying
 	// nothing.
-	Reason Reason `json:"reason,omitempty" swaggertype:"string" enums:"credentials_source,secret_value_source,not_found,permission_denied,conflict,invalid_data,unreachable,tls,timed_out,canceled,not_converged,upstream_failure,unspecified"`
+	Reason Reason `json:"reason,omitempty" swaggertype:"string" enums:"credentials_source,secret_value_source,not_found,permission_denied,conflict,invalid_data,unreachable,tls,timed_out,canceled,not_converged,upstream_failure,rate_limited,not_allowed,unspecified"`
 
 	// Changes says whether this entry's operation ACTUALLY changed anything.
 	//

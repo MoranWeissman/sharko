@@ -13,6 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import type { APIToken } from '@/services/models'
+import { formatLastUsed } from '@/lib/time'
 
 // Every new key gets an expiry date. The server default is 90 days; anything
 // picked here must stay between 1 and 365 days.
@@ -250,7 +251,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   )}
                 </td>
                 <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
-                  {formatDate(token.last_used_at)}
+                  {formatLastUsed(token.last_used_at)}
                 </td>
                 <td className="px-6 py-3">
                   <div className="flex items-center gap-2">

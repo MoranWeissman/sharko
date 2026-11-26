@@ -20,3 +20,18 @@ export function relativeTime(isoString: string | null | undefined): string {
   const months = Math.floor(days / 30);
   return `${months}mo ago`;
 }
+
+/** Shown in the "Last used" column of a key that has never been used. Pinned by exact text. */
+export const NEVER_USED = 'Never used';
+
+/**
+ * formatLastUsed — the "Last used" cell of an API key. The server writes the
+ * Go zero time (year 1) for a key nobody has used, which a browser prints as
+ * "Jan 1, 1". That is not a date anyone used the key; say "Never used".
+ */
+export function formatLastUsed(iso: string | null | undefined): string {
+  if (!iso) return NEVER_USED;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() <= 1) return NEVER_USED;
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}

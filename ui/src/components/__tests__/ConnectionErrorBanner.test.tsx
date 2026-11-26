@@ -18,6 +18,21 @@ function renderBanner(reason?: RepoStatusReason, onOpenRepair = vi.fn()) {
 }
 
 describe('ConnectionErrorBanner', () => {
+  it('git_rate_limited — says the Git host is limiting Sharko; not a connection, TLS or certificate problem; no Settings link', () => {
+    const { container } = renderBanner('git_rate_limited')
+    expect(screen.getByText("Your Git host is limiting Sharko's requests right now.")).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'GitHub, or the Git host you use, says Sharko has asked too often. Nothing is broken, and nothing in Settings needs changing. It clears by itself. Try again in a moment.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /review and repair/i })).not.toBeInTheDocument()
+    const text = container.textContent ?? ''
+    expect(text).not.toMatch(/TLS|certificate|can't reach your Git connection/i)
+  })
+
+
   it('no_connection — heading matches "no connection configured", not a failed reach attempt (L17)', () => {
     renderBanner('no_connection')
     expect(screen.getByText('No Git connection is set up.')).toBeInTheDocument()

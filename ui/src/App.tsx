@@ -27,6 +27,7 @@ const LegacySecretDetailRedirect = lazy(() => import('@/views/LegacySecretRedire
 const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
+const NotFound = lazy(() => import('@/views/NotFound'))
 const AuditViewer = lazy(() => import('@/views/AuditViewer'))
 
 // V2-cleanup-61.1 (A1): plain `<Navigate to="..." replace />` drops the
@@ -81,7 +82,7 @@ function PageLoader() {
  * re-bootstrap wizard. It belongs in Settings → Connections, surfaced via a
  * non-blocking banner.
  */
-export const CONNECTION_ERROR_REASONS = ['connection_error', 'no_connection', 'error'] as const
+export const CONNECTION_ERROR_REASONS = ['connection_error', 'git_rate_limited', 'no_connection', 'error'] as const
 
 export function isConnectionErrorReason(reason?: string): boolean {
   return reason != null && (CONNECTION_ERROR_REASONS as readonly string[]).includes(reason)
@@ -361,6 +362,8 @@ export function ConnectedApp() {
           <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
           <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />
           <Route path="user" element={<UserInfo />} />
+          {/* An address Sharko does not have: say so inside the app, with the menu, instead of a blank screen. */}
+          <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
       </div>

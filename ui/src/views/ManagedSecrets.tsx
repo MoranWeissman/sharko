@@ -383,6 +383,7 @@ import type {
 } from '@/services/models'
 import { CONNECTION_HEALTH_WORDS, connectionHealthWord } from './connectionHealthWords'
 import { InfoHint } from '@/components/InfoHint'
+import { apiFailureSentence } from '@/lib/apiFailure'
 import { RoleGuard } from '@/components/RoleGuard'
 import { AuthContext } from '@/hooks/useAuth'
 import { RowActionsMenu, type RowAction } from '@/components/RowActionsMenu'
@@ -2840,9 +2841,18 @@ function GroupHeaderRow({ group, expanded, onToggle }: { group: RowGroup; expand
 // one place that owns the polling rule.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Said when the Secrets list could not be read and no reason is known. Pinned by exact text. */
+export const SECRETS_LOAD_FAILED_SENTENCE = 'Sharko could not read the Secrets list just now. Try again in a moment.'
+/** Starts the line shown above a list that is the last one Sharko read. Pinned by exact text. */
+export const SECRETS_STALE_PREFIX = 'Showing what Sharko read last.'
+
 export function useManagedSecretsData() {
   const [data, setData] = useState<ManagedSecretsResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  // Why the LAST read failed, in plain words; null when it worked. A failed
+  // read never wipes what the page already shows: zeros and "No secrets" would
+  // say the secrets are gone, when Sharko only could not ask just now.
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // L13 (code review): latest-wins request sequencing. Two load() calls can
   // be in flight at the same time — the 30-second background tick and an
@@ -2856,10 +2866,13 @@ export function useManagedSecretsData() {
     const seq = ++loadSeqRef.current
     return getManagedSecrets()
       .then((res) => {
-        if (loadSeqRef.current === seq) setData(res)
+        if (loadSeqRef.current !== seq) return
+        setData(res)
+        setLoadError(null)
       })
-      .catch(() => {
-        if (loadSeqRef.current === seq) setData(null)
+      .catch((err: unknown) => {
+        if (loadSeqRef.current !== seq) return
+        setLoadError(apiFailureSentence(err) ?? SECRETS_LOAD_FAILED_SENTENCE)
       })
       .finally(() => {
         if (loadSeqRef.current === seq) setLoading(false)
@@ -2901,7 +2914,7 @@ export function useManagedSecretsData() {
     }
   }, [load])
 
-  return { data, loading, load }
+  return { data, loading, load, loadError }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2972,7 +2985,8 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
   // with: git". The addon-secrets subpage keeps "Compared with" — there the
   // answer is real and differs per row.
   const healthColumn = area === 'connections'
-  const { data, loading, load } = useManagedSecretsData()
+  const { data, loading, load, loadError } = useManagedSecretsData()
+  const loadFailedNoData = !loading && data === null && loadError !== null
   // SSF-9 — the table's own scroll container (see the "max-h-[65vh]
   // overflow-y-auto" wrapper below), so openRowDetail can read its current
   // scrollTop before navigating away and the restore effect further down
@@ -3584,7 +3598,7 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
       {area && <SecretsSubnav />}
 
       {/* Engines quiet strip — see the block comment on EngineStat above. */}
-      <div className="flex flex-wrap items-start justify-between gap-3 border-y border-[#6aade0] py-2 dark:border-gray-800">
+      <div className={`flex flex-wrap items-start justify-between gap-3 border-y border-[#6aade0] py-2 dark:border-gray-800${loadFailedNoData ? ' hidden' : ''}`}>
         <div className="flex flex-wrap divide-x divide-[#6aade0] dark:divide-gray-800">
           {/* SN-3: each subpage shows only its own engine — the other
               engine's stats belong to the other subpage now. Legacy
@@ -3827,9 +3841,19 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
         </div>
       </div>
 
+      {loadError && data !== null && (
+        <p data-testid="secrets-stale-note" className="text-sm text-amber-700 dark:text-amber-400">
+          {SECRETS_STALE_PREFIX} {loadError}
+        </p>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-24">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6aade0] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
+        </div>
+      ) : loadFailedNoData ? (
+        <div data-testid="secrets-load-error" className="rounded-xl border border-border bg-card p-6 text-center text-sm text-[#3a6a8a] shadow-sm dark:text-gray-500">
+          {loadError}
         </div>
       ) : sorted.length === 0 ? (
         <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-[#3a6a8a] shadow-sm dark:text-gray-500">
@@ -3971,11 +3995,13 @@ export function ManagedSecrets({ area }: { area?: SecretsArea } = {}) {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-[#3a6a8a] dark:text-gray-400" data-testid="secrets-summary">
-          {secretsSummary}
-        </span>
-      </div>
+      {!loadFailedNoData && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-[#3a6a8a] dark:text-gray-400" data-testid="secrets-summary">
+            {secretsSummary}
+          </span>
+        </div>
+      )}
 
       <ConfirmationModal
         open={syncTarget !== null}

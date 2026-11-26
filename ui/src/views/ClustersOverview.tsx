@@ -52,7 +52,8 @@ import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { ErrorDetail } from '@/components/ErrorDetail';
 import { getCached, setCached } from '@/lib/viewCache';
-import { RoleGuard } from '@/components/RoleGuard';
+import { RoleGuard, OPERATOR_AND_UP } from '@/components/RoleGuard';
+import { testNotRunOf, isTestNotRun, type TestNotRun } from '@/lib/apiFailure';
 import {
   WhoseConnectionLabel,
   ARGOCD_CONN_TOOLTIP,
@@ -324,6 +325,7 @@ export function latestTestOf(r: unknown, at?: string): ClusterLatestTest | undef
 function latestTestResultOf(r: unknown): ClusterLatestTest | undefined {
   if (!r || r === 'testing' || typeof r !== 'object') return undefined;
   if (isTestClusterUnavailable(r as never)) return undefined;
+  if (isTestNotRun(r)) return undefined;
   // Sharko could not read the cluster's sign-in details: nothing was
   // tested. The Adopt dialog calls the same answer "Not verified", so this
   // page says so too, not "Test failing".
@@ -526,7 +528,7 @@ export function ClustersOverview() {
       if (next) pageRunRef.current[c.name] = next;
     }
   }, []);
-  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | 'testing'>>({});
+  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | TestNotRun | 'testing'>>({});
 
   // Expanded test steps per cluster
   const [expandedTestSteps, setExpandedTestSteps] = useState<Record<string, boolean>>({});
@@ -1151,7 +1153,10 @@ export function ClustersOverview() {
       setTestResults((prev) => ({ ...prev, [name]: result }));
     } catch (err) {
       notePageRun(name);
-      setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
+      // Refused (role) or turned away (request limit): the test did not run,
+      // so nothing is said about the cluster.
+      const notRun = testNotRunOf(err);
+      setTestResults((prev) => ({ ...prev, [name]: notRun ?? { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
     }
   }, [notePageRun]);
 
@@ -1165,6 +1170,13 @@ export function ClustersOverview() {
     if (!testResult || testResult === 'testing') return null;
     // Render "test unavailable" distinctly — do NOT show the cluster as
     // "Unreachable" when only the test feature itself is unavailable.
+    if (isTestNotRun(testResult)) {
+      return (
+        <span data-testid="test-not-run" className="inline-flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+          {testResult.error}
+        </span>
+      );
+    }
     if (isTestClusterUnavailable(testResult)) {
       return (
         <span className="inline-flex items-center gap-1 text-sm text-amber-700 dark:text-amber-300" title={testResult.error}>
@@ -1741,7 +1753,7 @@ export function ClustersOverview() {
           {discoveredClusters.length > 0 && !argocdUnavailableReason && (
             <p data-testid="argocd-known-hint" className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
               <RoleGuard
-                adminOnly
+                roles={OPERATOR_AND_UP}
                 fallback={
                   <span>
                     {discoveredClusters.length} cluster{discoveredClusters.length === 1 ? '' : 's'} ArgoCD already knows
@@ -1773,7 +1785,7 @@ export function ClustersOverview() {
           >
             <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
-          <RoleGuard adminOnly>
+          <RoleGuard roles={OPERATOR_AND_UP}>
             <button
               type="button"
               onClick={() => openAddCluster()}
@@ -2900,6 +2912,7 @@ export function ClustersOverview() {
                       </td>
                       <td className="px-6 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
+                          <RoleGuard roles={OPERATOR_AND_UP}>
                           <button
                             type="button"
                             onClick={(e) => handleTestCluster(cluster.name, e)}
@@ -2923,6 +2936,7 @@ export function ClustersOverview() {
                             text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
                             label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
                           />
+                          </RoleGuard>
                           {cluster.adopted && (
                             <RoleGuard
                               adminOnly
@@ -2976,6 +2990,7 @@ export function ClustersOverview() {
                       </span>
                     </h3>
                     <div className="flex items-center gap-1">
+                      <RoleGuard roles={OPERATOR_AND_UP}>
                       <button
                         type="button"
                         onClick={(e) => handleTestCluster(cluster.name, e)}
@@ -2991,6 +3006,7 @@ export function ClustersOverview() {
                         text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
                         label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
                       />
+                      </RoleGuard>
                     </div>
                   </div>
                   {testResult && testResult !== 'testing' && (

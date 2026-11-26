@@ -24,7 +24,12 @@ import type { RepoStatusReason } from '@/services/api'
  * established AttributionNudge / DriftAlertsPanel inline-banner pattern.
  */
 
-type BannerAction = 'settings' | 'repair'
+/** Words of the bar shown while the Git host is limiting Sharko. Pinned by exact text. */
+export const GIT_LIMIT_BANNER_HEADING = "Your Git host is limiting Sharko's requests right now."
+export const GIT_LIMIT_BANNER_BODY =
+  'GitHub, or the Git host you use, says Sharko has asked too often. Nothing is broken, and nothing in Settings needs changing. It clears by itself. Try again in a moment.'
+
+type BannerAction = 'settings' | 'repair' | 'none'
 
 interface BannerContent {
   heading: string
@@ -40,6 +45,14 @@ function bannerContent(reason?: RepoStatusReason): BannerContent {
         heading: "Sharko can't reach your Git connection right now.",
         body: "Sharko reached your Git host but couldn't verify it — often a TLS or certificate problem (for example a corporate proxy that inspects traffic).",
         action: 'settings',
+      }
+    case 'git_rate_limited':
+      // The Git host answered, and said Sharko asked too often. Nothing is
+      // broken and nothing in Settings fixes it: it clears by itself.
+      return {
+        heading: GIT_LIMIT_BANNER_HEADING,
+        body: GIT_LIMIT_BANNER_BODY,
+        action: 'none',
       }
     case 'no_connection':
       // Review findings r1, L17: the old heading ("can't reach your Git
@@ -135,7 +148,7 @@ export function ConnectionErrorBanner({
             <Wrench className="h-3 w-3" />
             Review and repair
           </button>
-        ) : (
+        ) : action === 'none' ? null : (
           <Link
             to="/settings?section=connections"
             className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-amber-100 px-3 py-1 text-xs font-medium hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900 dark:hover:bg-amber-800"

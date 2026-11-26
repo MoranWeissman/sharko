@@ -9,6 +9,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { testClusterConnection, isTestClusterUnavailable } from '@/services/api';
+import { apiFailureSentence } from '@/lib/apiFailure';
 import { isCredentialLookupFailure } from '@/lib/verifyStage';
 import type { TestClusterUnavailable } from '@/services/api';
 import type { VerifyStep } from '@/services/models';
@@ -109,21 +110,33 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
   const [result, setResult] = useState<TestResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The test was refused (role) or turned away (request limit): it did not
+  // run, so the window says that in plain words and draws no failure.
+  const [notRun, setNotRun] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       setResult(null);
       setError(null);
+      setNotRun(null);
       return;
     }
     setLoading(true);
     setError(null);
+    setNotRun(null);
     testClusterConnection(clusterName)
       .then((r) => {
         setResult(r);
         onResult?.(r);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Test failed'))
+      .catch((e) => {
+        const refused = apiFailureSentence(e);
+        if (refused) {
+          setNotRun(refused);
+          return;
+        }
+        setError(e instanceof Error ? e.message : 'Test failed');
+      })
       .finally(() => setLoading(false));
     // onResult is a stable useCallback from the parent; excluded to keep this
     // effect keyed only on open+clusterName (the fetch trigger).
@@ -159,6 +172,12 @@ export function TestConnectionModal({ clusterName, open, onClose, onSuggestionSe
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-[#2a5a7a] dark:text-gray-400" />
             <span className="ml-2 text-sm text-[#2a5a7a] dark:text-gray-400">Testing connection...</span>
+          </div>
+        )}
+
+        {notRun && !loading && (
+          <div data-testid="test-not-run" className="rounded-md bg-[#f0f7ff] p-4 text-sm text-[#0a3a5a] ring-1 ring-[#6aade0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
+            {notRun}
           </div>
         )}
 
