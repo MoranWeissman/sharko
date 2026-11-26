@@ -583,20 +583,6 @@ func TestWalkC_CreateUserAnswerShowsTheRoleGiven(t *testing.T) {
 	}
 }
 
-// Walk 5 L2: a 200-letter user name got the sentence about allowed letters.
-func TestWalkC_ALongUserNameGetsItsOwnSentence(t *testing.T) {
-	srv, h := walkCServer(t, "viewer")
-	admin := walkCLogin(t, srv, "root-admin")
-	rw := walkCCall(t, h, admin, http.MethodPost, "/api/v1/users", map[string]string{"username": strings.Repeat("a", 200), "role": "viewer"})
-	if rw.Code != http.StatusBadRequest {
-		t.Fatalf("got %d, want 400", rw.Code)
-	}
-	const want = "A user name can be at most 63 characters long."
-	if got := walkCError(rw); got != want {
-		t.Errorf("error = %q, want %q", got, want)
-	}
-}
-
 // Walk 5 L13: a password over 72 bytes gave HTTP 500 with the hashing
 // library's words, and the same password again was accepted.
 func TestWalkC_PasswordRules(t *testing.T) {

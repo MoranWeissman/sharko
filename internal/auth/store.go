@@ -88,12 +88,6 @@ var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
 // (cmd/sharko/user.go) carry the same words; tests tie both to this const.
 const InvalidUsernameSentence = "A user name can use letters, numbers, dots, dashes and underscores, with no spaces."
 
-// maxUsernameLen is the longest user name usernamePattern lets through.
-const maxUsernameLen = 63
-
-// UsernameTooLongSentence is the answer for a user name over maxUsernameLen.
-const UsernameTooLongSentence = "A user name can be at most 63 characters long."
-
 // maxPasswordBytes is the longest password bcrypt can hash.
 const maxPasswordBytes = 72
 
@@ -380,11 +374,6 @@ func (s *Store) ListUsers() []UserAccount {
 func (s *Store) CreateUser(username, role string) (string, error) {
 	if username == "" {
 		return "", inputErrorf("username is required")
-	}
-	// A name that is only too long gets its own sentence. The general one
-	// talks about which letters are allowed, which is not what is wrong.
-	if len(username) > maxUsernameLen {
-		return "", inputErrorf(UsernameTooLongSentence)
 	}
 	if !usernamePattern.MatchString(username) {
 		return "", ErrInvalidUsername

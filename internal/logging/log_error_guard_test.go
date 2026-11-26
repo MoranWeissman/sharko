@@ -177,7 +177,15 @@ import (
 // builds the "this cluster's secret is not there" sentence from the secret
 // names Sharko tried; it makes no log call and does not search for
 // credential characters.
-const wantSweptGoFiles = 449
+//
+// 451 since the pre-release fix round (story C) added two files in
+// internal/ai. address.go decides which addresses Sharko will call for an AI
+// provider. provider_errors.go builds Sharko's own sentence for a provider's
+// error answer and takes anything that looks like a key out of it. Neither
+// makes a log call. provider_errors.go looks for "*" in a provider's answer
+// (that is how providers mask a key), which is not one of the credential
+// characters this guard is about.
+const wantSweptGoFiles = 451
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
