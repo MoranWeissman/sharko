@@ -47,11 +47,19 @@ describe('AIAssistant', () => {
       screen.getByText('Is everything healthy right now?'),
     ).toBeInTheDocument()
     expect(
-      screen.getByText('Compare datadog versions across clusters'),
+      screen.getByText('Which addon versions differ between my clusters?'),
     ).toBeInTheDocument()
     expect(
-      screen.getByText('Should I upgrade istio-base to the latest version?'),
+      screen.getByText('Which addons have a newer version available?'),
     ).toBeInTheDocument()
+    expect(
+      screen.getByText('Which clusters have addons that are not healthy?'),
+    ).toBeInTheDocument()
+    // Walk 7 finding 6: no example may name an add-on or a cluster. The old
+    // ones named things most installs do not have.
+    for (const gone of [/datadog/i, /istio-base/i, /devops-automation/i, /-eks/i]) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument()
+    }
   })
 
   it('renders the input area', async () => {

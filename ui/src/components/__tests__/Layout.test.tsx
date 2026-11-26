@@ -59,7 +59,11 @@ vi.mock('@/hooks/useTheme', () => ({
 
 // Mutable so individual tests (A6: non-admin Settings visibility) can flip
 // the role without re-declaring the whole mock module.
-const authState = vi.hoisted(() => ({ isAdmin: true }))
+const authState = vi.hoisted(() => ({
+  isAdmin: true,
+  username: undefined as string | undefined,
+  role: undefined as string | undefined,
+}))
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
@@ -68,6 +72,8 @@ vi.mock('@/hooks/useAuth', () => ({
     logout: vi.fn(),
     isAuthenticated: true,
     isAdmin: authState.isAdmin,
+    username: authState.username,
+    role: authState.role,
     loading: false,
     error: null,
   }),
@@ -385,6 +391,40 @@ describe('Layout', () => {
       await waitFor(() => {
         expect(screen.getByTitle('1 unread problem')).toBeInTheDocument()
       })
+    })
+  })
+
+  // Pre-release fix round 2026-11-26, story C.
+  describe('walk findings: who is logged in, and AI switched on without a reload', () => {
+    // Walk 5 L18: the app never showed who is logged in.
+    it('the user menu says who is signed in', async () => {
+      authState.username = 'walk5-operator'
+      authState.role = 'operator'
+      const user = userEvent.setup()
+      renderLayout()
+      await user.click(screen.getByLabelText('User menu'))
+      await waitFor(() => {
+        expect(screen.getByTestId('signed-in-as')).toHaveTextContent('Signed in as walk5-operator (operator)')
+      })
+      authState.username = undefined
+      authState.role = undefined
+    })
+
+    // Walk 7 finding 4: after saving or switching off the AI settings, the
+    // "Ask AI" button only changed after a page reload.
+    it('asks again whether AI is on when the AI settings change', async () => {
+      mockGetAIStatus.mockResolvedValue({ enabled: false })
+      renderLayout()
+      await waitFor(() => expect(mockGetAIStatus).toHaveBeenCalledTimes(1))
+      expect(screen.queryByLabelText('Toggle AI Assistant')).not.toBeInTheDocument()
+
+      mockGetAIStatus.mockResolvedValue({ enabled: true })
+      window.dispatchEvent(new Event('sharko:ai-config-changed'))
+      await waitFor(() => expect(screen.getByLabelText('Toggle AI Assistant')).toBeInTheDocument())
+
+      mockGetAIStatus.mockResolvedValue({ enabled: false })
+      window.dispatchEvent(new Event('sharko:ai-config-changed'))
+      await waitFor(() => expect(screen.queryByLabelText('Toggle AI Assistant')).not.toBeInTheDocument())
     })
   })
 })

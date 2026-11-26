@@ -14,12 +14,15 @@ interface ChatMessage {
 // Suggested prompts
 // ---------------------------------------------------------------------------
 
-const SUGGESTED_PROMPTS = [
+// Every question here has to make sense on ANY install. Three of them used to
+// name an add-on or a cluster (datadog, istio-base, one cluster by name) that
+// the user's setup most likely does not have.
+export const SUGGESTED_PROMPTS = [
   'What addons are deployed across my clusters?',
   'Is everything healthy right now?',
-  'Compare datadog versions across clusters',
-  'Should I upgrade istio-base to the latest version?',
-  'Show me the config overrides for devops-automation-dev-eks',
+  'Which addon versions differ between my clusters?',
+  'Which addons have a newer version available?',
+  'Which clusters have addons that are not healthy?',
   'Which clusters have the most addons?',
 ]
 

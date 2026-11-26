@@ -8,6 +8,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { api } from '@/services/api'
+import { announceAIConfigChanged } from '@/lib/aiEvents'
 import type { AIConfigResponse, AIProviderInfo } from '@/services/models'
 
 const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
@@ -15,6 +16,12 @@ const inputCls =
   'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
 const selectCls =
   'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
+
+/** Shown under the key field when a key is already saved for this provider. */
+export const KEY_IS_SAVED_HINT = 'A key is already saved. Leave this empty to keep it.'
+
+/** Shown when the switch could not be saved. */
+export const ANNOTATE_SAVE_FAILED = 'The switch could not be saved. Try again.'
 
 export function AIConfigSection() {
   const [aiConfig, setAiConfig] = useState<AIConfigResponse | null>(null)
@@ -51,7 +58,7 @@ export function AIConfigSection() {
 
   const fetchConfig = useCallback(() => {
     setLoading(true)
-    api.getAIConfig()
+    return api.getAIConfig()
       .then(setAiConfig)
       .catch(() => setAiConfig(null))
       .finally(() => setLoading(false))
@@ -67,20 +74,26 @@ export function AIConfigSection() {
   // reports the effective state.
   const annotateOnSeed = aiConfig?.annotate_on_seed ?? true
   const [annotateBusy, setAnnotateBusy] = useState(false)
+  const [annotateError, setAnnotateError] = useState<string | null>(null)
   const handleToggleAnnotate = async (next: boolean) => {
+    // Never send the switch without a provider that is really in use: the
+    // server would read that as "set up this provider from nothing".
+    const provider = aiConfig?.current_provider
+    if (!provider || provider === 'none') return
     setAnnotateBusy(true)
+    setAnnotateError(null)
     try {
-      // Preserve the active provider — the saveAIConfig handler treats
-      // the request as a full replace except for the explicit
-      // annotate_on_seed sentinel. We only send the toggle field; the
-      // backend keeps the existing API key + model.
+      // Only the provider and the switch are sent. The server keeps every
+      // part that is left out (key, model, address) when the provider is the
+      // one in use. It used to erase them: one click here deleted the saved
+      // key and model.
       await api.saveAIConfig({
-        provider: aiConfig?.current_provider || 'none',
+        provider,
         annotate_on_seed: next,
       })
-      fetchConfig()
+      await fetchConfig()
     } catch {
-      // Silent failure surfaces in the disabled state — user can retry.
+      setAnnotateError(ANNOTATE_SAVE_FAILED)
     } finally {
       setAnnotateBusy(false)
     }
@@ -134,7 +147,9 @@ export function AIConfigSection() {
       })
       setShowForm(false)
       setFormTestStatus('idle')
-      fetchConfig()
+      setTestResult(null)
+      await fetchConfig()
+      announceAIConfigChanged()
     } catch (err) {
       setFormTestStatus('error')
       setFormTestMsg(err instanceof Error ? err.message : 'Save failed')
@@ -144,7 +159,9 @@ export function AIConfigSection() {
   const handleDisable = async () => {
     try {
       await api.saveAIConfig({ provider: 'none' })
-      fetchConfig()
+      setTestResult(null)
+      await fetchConfig()
+      announceAIConfigChanged()
     } catch { /* ignore */ }
   }
 
@@ -154,6 +171,7 @@ export function AIConfigSection() {
       setFormProvider(activeProvider.id)
       setFormModel(activeProvider.model || '')
     }
+    setFormBaseURL('')
     setFormApiKey('')
     setFormTestStatus('idle')
     setFormTestMsg('')
@@ -254,6 +272,10 @@ export function AIConfigSection() {
         </div>
       )}
 
+      {annotateError && (
+        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">{annotateError}</p>
+      )}
+
       {/* Configure Form */}
       {showForm && (
         <div className="mt-4 rounded-lg border border-purple-200 bg-purple-50/50 p-4 dark:border-purple-800 dark:bg-purple-950/20">
@@ -283,6 +305,9 @@ export function AIConfigSection() {
                 <label className={labelCls}>API Key</label>
                 <input className={inputCls} type="password" value={formApiKey} onChange={(e) => { setFormApiKey(e.target.value); setFormTestStatus('idle') }}
                   placeholder={formProvider === 'gemini' ? 'AIzaSy...' : formProvider === 'claude' ? 'sk-ant-...' : 'sk-...'} />
+                {aiConfig?.has_api_key && formProvider === aiConfig.current_provider && (
+                  <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">{KEY_IS_SAVED_HINT}</p>
+                )}
               </div>
             )}
             <div>
@@ -313,14 +338,14 @@ export function AIConfigSection() {
               </div>
             )}
           </div>
-          <div className="mt-3 flex items-center gap-3">
+          <div className="mt-3 flex items-start gap-3">
             <button onClick={handleFormTest} disabled={formTestStatus === 'testing'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
               {formTestStatus === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
               Test AI
             </button>
             {formTestStatus === 'ok' && <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400"><CheckCircle className="h-3.5 w-3.5" /> Connected</span>}
-            {formTestStatus === 'error' && <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400"><XCircle className="h-3.5 w-3.5" /> {formTestMsg}</span>}
+            {formTestStatus === 'error' && <span className="flex min-w-0 items-start gap-1 break-words text-sm text-red-600 dark:text-red-400"><XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {formTestMsg}</span>}
           </div>
           <div className="mt-4 flex items-center gap-3">
             <button onClick={handleSave} disabled={saving || formTestStatus !== 'ok'}

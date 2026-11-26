@@ -281,6 +281,43 @@ async function postJSON<T>(path: string, body?: unknown): Promise<T> {
   return unwrapAttribution<T>(await res.json())
 }
 
+/** What the server answers (with a 401) when the current password is wrong. */
+const WRONG_CURRENT_PASSWORD = 'current password is incorrect'
+
+/** What the password form shows for it. */
+export const WRONG_CURRENT_PASSWORD_MESSAGE = 'The current password is wrong. Nothing was changed.'
+
+/**
+ * updatePassword — POST /auth/update-password.
+ *
+ * It does NOT go through postJSON, because of one case: the server answers a
+ * wrong current password with a 401, and postJSON treats every 401 as "your
+ * login ended" (clears it and reloads the page). A typing mistake in the
+ * current password threw the user out to the login screen with no message.
+ * Here that one answer becomes a normal error the form shows. Any other 401
+ * still means the login ended.
+ */
+async function updatePassword(currentPassword: string, newPassword: string): Promise<{ status: string }> {
+  const res = await fetch(`${BASE_URL}/auth/update-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  })
+  if (res.status === 401) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string }
+    if (body.error === WRONG_CURRENT_PASSWORD) {
+      throw new Error(WRONG_CURRENT_PASSWORD_MESSAGE)
+    }
+    clearSession()
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    await throwApiError(res)
+  }
+  return (await res.json()) as { status: string }
+}
+
 async function putJSON<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'PUT',
@@ -1714,7 +1751,7 @@ export const api = {
 
 
   // Auth
-  updatePassword: (currentPassword: string, newPassword: string) => postJSON<{ status: string }>('/auth/update-password', { current_password: currentPassword, new_password: newPassword }),
+  updatePassword: (currentPassword: string, newPassword: string) => updatePassword(currentPassword, newPassword),
 
   // My account (tiered attribution)
   getMe: () => fetchJSON<import('./models').MeResponse>('/users/me'),

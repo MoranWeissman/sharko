@@ -1291,6 +1291,8 @@ export interface AIConfigResponse {
   // is configured; the Save handler stamps the explicit value going
   // forward so subsequent reads are authoritative.
   annotate_on_seed?: boolean
+  /** Whether a key is saved for the current provider. The key itself is never sent. */
+  has_api_key?: boolean
 }
 
 // Secret-leak guard match (redacted, never carries the raw secret value).
@@ -1832,6 +1834,8 @@ export interface AuditEntry {
   level: string
   event: string
   user: string
+  /** 'api_key' when the call was made with an API key; `user` is then the key's name. */
+  auth_type?: string
   action: string
   resource: string
   source: string
@@ -1877,6 +1881,9 @@ export interface MeResponse {
   username: string
   role: string
   has_github_token: boolean
+  /** True when the caller came in with an API key; `username` is then the key's name. */
+  api_key?: boolean
+  auth_type?: 'api_key' | 'session'
 }
 
 /**
