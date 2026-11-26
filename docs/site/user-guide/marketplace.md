@@ -42,7 +42,7 @@ Use the sidebar to filter by **Category**, **Curated by** (e.g. `cncf-graduated`
 
 Filters are persisted in the URL, so `?mp_cat=security&mp_tier=strong` deep-links you to a specific slice.
 
-Each card shows the chart name, a one-line description, the OpenSSF score badge, the license, the maintainers, and a docs link when one's published. If a card's chart is **already in your catalog**, an **In catalog** badge appears in the corner with a quick link to `/addons/<name>` so you don't accidentally open a no-op PR.
+Each card shows the chart name, a one-line description, the OpenSSF score badge, the license, the maintainers, and a docs link when one's published. If a card's chart is **already in your catalog**, an **In your catalog** badge appears in the corner with a quick link to `/addons/<name>` so you don't accidentally open a no-op PR.
 
 OpenSSF scores refresh once a day at 04:00 UTC against the public [Scorecard API](https://api.scorecard.dev). Scores are cached in-memory; on a fresh pod restart the catalog falls back to the bundled baseline scores until the next 04:00 UTC tick. If the Scorecard API is unreachable, the previous score sticks (no zeroing) and a warning is logged. The current refresh status is exposed via the Prometheus metrics `sharko_scorecard_refresh_total{status}` and `sharko_scorecard_last_refresh_timestamp`.
 

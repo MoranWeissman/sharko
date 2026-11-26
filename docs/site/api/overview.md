@@ -97,4 +97,4 @@ Use this endpoint for liveness probes and external monitoring.
 
 ## Rate Limiting
 
-Authentication endpoints are rate-limited. Other endpoints are not currently rate-limited. See [Security](../operator/security.md#rate-limiting) for trusted proxy configuration.
+Authentication endpoints are rate-limited. Calls that change something are limited to 30 per minute per address; over that, Sharko answers HTTP 429 with the code "sharko_rate_limit", `Retry-After: 60` and "Sharko is getting too many requests from your address right now. Try again in a moment." When a Git host limits Sharko, the answer is HTTP 429 with the code "upstream_rate_limit" and "GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment." See [Security](../operator/security.md#rate-limiting) for trusted proxy configuration.

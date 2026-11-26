@@ -21,7 +21,7 @@ sharko login --server https://sharko.your-domain.com --username admin --password
 | `--username <user>` | Username (prompted if not provided) |
 | `--password <pass>` | Password (prompted if not provided) |
 
-The saved token belongs to the server you logged in to. If you give another address with `--server`, the CLI does not send the token there. It tells you to log in to that server first.
+The saved token belongs to the server you logged in to. If you give another address with `--server`, the CLI does not send the token there. It stops with: "you are not logged in to ADDRESS. The saved login belongs to another Sharko server and is never sent anywhere else. Run 'sharko login --server ADDRESS' first."
 
 ### `sharko version`
 
@@ -78,8 +78,8 @@ sharko validate path/to/repo      # looks for path/to/repo/configuration/...
 
 Exits 0 on valid, 1 on schema errors.
 
-!!! warning "On a v4 repo this command checks nothing"
-    A v4 repo has no `configuration/` folder. `sharko validate` prints `[SKIP]` for both files and exits `0`, even if a file in the repo is broken. Use [`sharko validate-config`](#sharko-validate-config) below for a v4 repo. Run it on the repo folder to check `catalog.yaml`, `managed-clusters.yaml`, `cluster-addons/` and the YAML in the values files.
+!!! warning "On a v4 repo this command fails and points you to validate-config"
+    A v4 repo has no `configuration/` folder. When `sharko validate` finds neither file it exits `1` and says: "nothing was checked: neither configuration/addons-catalog.yaml nor configuration/managed-clusters.yaml was found. Give the folder that holds the configuration folder, not a file. For a repo in the v4 layout, use: sharko validate-config". Use [`sharko validate-config`](#sharko-validate-config) below for a v4 repo. Run it on the repo folder to check `catalog.yaml`, `managed-clusters.yaml`, `cluster-addons/` and the values files.
 
 ### `sharko validate-config`
 
@@ -313,9 +313,11 @@ sharko adopt <cluster1> [cluster2] ... [flags]
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
-| `--dry-run` | Preview what would happen without making changes. Says `would adopt` for each cluster that is ready, and prints per-file the exact diff the pull request would contain |
+| `--dry-run` | Preview what would happen without making changes. Says `would adopt` for each cluster that is ready (or `would finish an earlier adopt`), and prints per-file the exact diff the pull request would contain |
 | `--acknowledge <id,id,...>` | Ids of the warnings you have read. `--yes` does not skip warnings. `--dry-run` shows them |
 | `--auto-merge` | Auto-merge the adoption PR (overrides the server default) |
+
+A cluster that is already adopted is not adopted twice. The command prints `<name>: already adopted, nothing to do` and opens no pull request. If an earlier adopt was cut off, run the command again: it records the open pull request again, or, when that pull request already merged, takes over the ArgoCD connection without a new pull request.
 
 ### `sharko unadopt-cluster`
 
@@ -330,9 +332,11 @@ sharko unadopt-cluster <name>
 | `-y`, `--yes` | Skip the confirmation prompt |
 | `--dry-run` | Preview what would happen without making changes — prints per-file the exact diff the pull request would contain |
 
+A name Sharko does not know is answered with a plain "not found" (HTTP 404).
+
 ### `sharko list-clusters`
 
-List all registered clusters.
+List all registered clusters. A cluster that ArgoCD knows and Sharko does not manage shows `not managed yet`.
 
 ```bash
 sharko list-clusters
@@ -420,7 +424,7 @@ sharko configure-addon prometheus --self-heal=false
 
 ### `sharko describe-addon`
 
-Show the full details of an addon, including its catalog defaults.
+Show the full details of an addon, including its catalog defaults and how many ArgoCD applications it has, by health.
 
 ```bash
 sharko describe-addon <name>
@@ -428,60 +432,60 @@ sharko describe-addon <name>
 
 ### `sharko upgrade-addon`
 
-Upgrade an addon version, globally or per-cluster.
+Upgrade an addon version, on all clusters or on one cluster.
 
 ```bash
-sharko upgrade-addon <name> --version <ver> [--cluster <name>]
+sharko upgrade-addon <name> --version <ver> [--cluster <name>] [--dry-run] [--auto-merge]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--version <ver>` | Target version (required) |
-| `--cluster <name>` | Upgrade only this cluster (omit for global) |
+| `--cluster <name>` | Upgrade on this one cluster only (the other clusters stay as they are) |
+| `--dry-run` | Show the files the pull request would change, without opening it |
+| `--auto-merge` | Auto-merge the PR (overrides the server default; only sent when you pass this flag) |
 
 Examples:
 
 ```bash
-# Global upgrade
+# All clusters
 sharko upgrade-addon cert-manager --version 1.15.0
 
-# Per-cluster upgrade
+# One cluster
 sharko upgrade-addon cert-manager --version 1.15.0 --cluster staging
 ```
 
-**Repo format awareness.** Before doing anything, this command checks whether the connected repo
-is on the v3 or v4 data-file format (`GET /api/v1/migration/status`):
+`sharko upgrade-addon <name> --version X` upgrades the add-on on ALL clusters in one pull request. It changes the version in `catalog.yaml`. A cluster that had its own version for this add-on goes back to following the catalog. A cluster that is already on a newer version is left as it is.
 
-- **v3 repo** (or the format check itself couldn't be answered) — works exactly as shown above,
-  no change in behavior.
-- **v4 repo, with `--cluster`** — v4 pins addon versions per cluster rather than in a global
-  catalog entry, so this command transparently routes the request through
-  [`sharko upgrade-clusters`](#sharko-upgrade-clusters) instead of the old (v3-only) upgrade route,
-  and says so on stdout.
-- **v4 repo, without `--cluster`** — there is no "global version" concept on a v4 repo, so the
-  command refuses with a plain-English explanation and prints the exact `sharko upgrade-clusters`
-  command to run once you've picked the clusters.
-- **Mixed repo** (both layouts present) — the server's own migration-status message is shown
-  as-is; finish the migration first.
+`sharko upgrade-addon <name> --version X --cluster <c>` moves only that cluster; the catalog and the other clusters stay.
+
+The version must exist in the add-on's chart repository. If it does not, nothing is opened:
+
+```text
+Version 99.0.0 of podinfo was not found in its chart repository (<address>). Nothing was changed. Pick a version that the repository lists.
+```
+
+If Sharko cannot reach the chart repository, the command stops and says so; it does not blame the version.
+
+The output reads `Upgrading addon podinfo to 6.8.0 on all clusters... done` (or `on cluster spoke-1` for one cluster), followed by a `Warning: ...` line for each warning from the server. See [Upgrades](../user-guide/upgrades.md) for what the warnings mean.
 
 ### `sharko upgrade-addons`
 
-Batch upgrade multiple addons in a single PR.
+Upgrade several add-ons on all clusters in one pull request.
 
 ```bash
 sharko upgrade-addons cert-manager=1.15.0,metrics-server=0.7.1
 ```
 
-Same repo-format check as `upgrade-addon`. On a v4 repo there is no batch route — the command
-refuses and prints one `sharko upgrade-clusters` command per addon in the batch instead. On a
-mixed repo, the server's migration-status message is shown.
+Every version is checked the same way as in `upgrade-addon` before the pull request opens. `--auto-merge` works here too.
 
 ### `sharko upgrade-clusters`
 
-Bump one addon's version pin on a chosen subset of clusters, in a single pull request (v4 format
-only). This is the fleet-upgrade route the UI uses. Clusters left out of `--cluster` are
-untouched — the diff is one small block per selected cluster. Every selected cluster must
-already have the addon enabled; this never enables an addon as a side effect of upgrading it.
+Move one addon to a version on the clusters you choose, in a single pull request. The catalog
+version is left alone. Clusters left out of `--cluster` are untouched — the diff is one small
+block per selected cluster. Every selected cluster must already have the addon enabled; this
+never enables an addon as a side effect of upgrading it. The version must exist in the addon's
+chart repository.
 
 ```bash
 sharko upgrade-clusters <addon> --version <ver> --cluster <name> [--cluster <name> ...] [flags]
@@ -604,6 +608,9 @@ Same acknowledge-then-rerun pattern as `takeover`: every warning must be named i
 Read-only. Reads out, one by one, what unregistering this cluster will do — what leaves the
 repo, what happens to its ArgoCD connection, what is deployed there today, and which
 ApplicationSets may react to labels a takeover carried over. Writes nothing and deletes nothing.
+A name Sharko does not know is answered with a plain "not found" (HTTP 404).
+
+The list ends with: "Sharko only sees what ArgoCD deploys. Anything that runs on the cluster in some other way is not on this list, and taking the cluster out of Sharko does not touch it."
 
 ```bash
 sharko unregister-consequences <cluster>
@@ -654,6 +661,10 @@ sharko disable-addon <cluster> <addon> [flags]
 | `-y`, `--yes` | Skip confirmation prompt |
 | `--auto-merge` | Auto-merge the PR (overrides the server default; only sent when you set this flag) |
 
+A name that is not in the catalog and not on that cluster is refused: "X is not in your catalog and is not turned on for CLUSTER, so there is nothing to turn off. Check the name."
+
+The pull request keeps the header comment lines of `cluster-addons/<cluster>.yaml`. Its title is `sharko: disable addon X on cluster Y` (and `sharko: enable addon X on cluster Y` for `enable-addon`).
+
 ---
 
 ## Catalog Commands
@@ -669,7 +680,7 @@ sharko add-to-catalog <name> [flags]
 | Flag | Description |
 |------|-------------|
 | `--chart <name>` | Chart name in the repo (required unless `--from-marketplace`) |
-| `--repo <url>` | Chart repository URL, `https://` or `oci://` (required unless `--from-marketplace`) |
+| `--repo <url>` | Chart repository URL. It must start with `https://`, `oci://` or `http://`; anything else is refused (required unless `--from-marketplace`) |
 | `--version <ver>` | Chart version (always required) |
 | `--namespace <ns>` | Namespace to install into |
 | `--from-marketplace` | Copy the chart location, namespace, and needed-secrets list from the Marketplace entry of the same name |
@@ -680,6 +691,12 @@ Example:
 ```bash
 sharko add-to-catalog cert-manager --from-marketplace --version 1.14.5
 ```
+
+The version must exist in the chart repository. A version that is not there is refused before any pull request, with the same sentence as in [`upgrade-addon`](#sharko-upgrade-addon). If Sharko cannot reach the chart repository, the add still goes through, with a warning: "Sharko could not reach the chart repository of metrics-server, so it did not check that version 3.12.1 exists. If the version is wrong, ArgoCD will not be able to install it."
+
+If the addon is already in the catalog with the same chart, version and namespace, nothing is opened: "X is already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened." With a different version the command opens a pull request that updates the entry.
+
+The namespace is checked: "A namespace can only use lowercase letters, digits and hyphens. It must start and end with a letter or digit, and be 63 characters at most."
 
 ### `sharko validate-catalog`
 
@@ -754,7 +771,7 @@ Use this when a cluster's ArgoCD Secret has drifted from what Sharko wrote to Gi
 
 ### `sharko refresh-secrets`
 
-Trigger an immediate secrets reconcile for **all clusters**. Useful after changing a secret's value in your provider. The command takes no cluster name. To refresh one cluster, call `POST /api/v1/clusters/{name}/secrets/refresh`.
+Trigger an immediate secrets reconcile for **all clusters**. Useful after changing a secret's value in your provider. The command takes no cluster name. If you give one, it stops with: "refresh-secrets does not take a cluster name. It refreshes the add-on secrets of every cluster. Run it with no name." To refresh one cluster, call `POST /api/v1/clusters/{name}/secrets/refresh`.
 
 ```bash
 sharko refresh-secrets
@@ -785,7 +802,7 @@ sharko token create --name <name> --role <role> [--expires-in-days <n>]
 | Flag | Description |
 |------|-------------|
 | `--name <name>` | Key name for identification (required) |
-| `--role <role>` | `admin`, `operator`, or `viewer`. **If you leave it out, the CLI makes an `admin` key.** The UI and the API default to `viewer`. Always pass `--role`. |
+| `--role <role>` | `admin`, `operator`, or `viewer`. If you leave it out, the key is a `viewer` key, the same as in the UI and the API. |
 | `--expires-in-days <n>` | How long the key stays usable, 1–365. Leave it out for the default of 90 days. |
 
 Output includes the plaintext key — shown once only — plus the expiry date.
@@ -857,7 +874,9 @@ sharko user update <username>             # update a user's role or enabled stat
 
 `sharko user update` takes `--role admin|operator|viewer` and `--enabled=true|false`. Changing only the role leaves a switched-off account switched off. Pass `--enabled=true` to switch it on again.
 
-There is no command to change a user's password. An admin resets it in **Settings → Users**, or through the API.
+There is no command to change a user's password. An admin resets it in **Settings → Users**, or through the API. A reset logs the user out everywhere.
+
+`sharko user delete` also logs the user out and revokes the API keys they created. A disabled user is refused on every call, and so are the keys they created, until the user is enabled again.
 
 ### `sharko reset-admin`
 

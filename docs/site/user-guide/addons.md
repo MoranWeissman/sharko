@@ -86,16 +86,18 @@ sharko list-addons --show-config
 In the UI, the **Addons** page shows:
 
 - Every addon in the catalog with its current version
-- Deployment stats (how many clusters have it enabled)
+- Deployment stats (how many clusters have it enabled). On the addon's page the **Clusters enabled** card is the number of clusters that have it turned on, out of all managed clusters.
 - Drift indicators (clusters running a different version)
 
-The **Version Matrix** view shows an addon × cluster grid, making it easy to see which clusters are behind.
+The **Version Matrix** view shows an addon × cluster grid, making it easy to see which clusters are on another version than the catalog. A cluster that is on a newer version is marked as ahead of the catalog, not as behind.
 
 ## Adding an Addon to the Catalog
 
 ### Preview Changes Before a PR Opens
 
-Before submitting an addon addition (or removal, or configuration change), the UI offers a **"Preview changes"** button. Clicking it shows exactly what the PR would contain: which files would be written or deleted, the actual line-by-line change inside each file (added/removed lines), the PR title, and the names of any secrets it would create. Secret values are redacted (shown as `<redacted>`) while keys and structure remain visible. This dry-run costs nothing (no branch, no commit, no PR) and gives you full transparency before confirming.
+Before submitting an addon addition (or removal, or configuration change), the UI offers a **"Preview changes"** button. For a new addon the preview shows the real `values/global/<add-on>.yaml` (the chart's values), without its comment lines and with values that look like passwords hidden. A note says so: "Values files are shown here without their comment lines, and values that look like passwords are hidden. The pull request writes the whole file." When AI notes are on, a second note says the pull request will also carry short explanations written by the AI assistant, which the preview leaves out.
+
+Clicking the button works like this. Clicking it shows exactly what the PR would contain: which files would be written or deleted, the actual line-by-line change inside each file (added/removed lines), the PR title, and the names of any secrets it would create. Secret values are redacted (shown as `<redacted>`) while keys and structure remain visible. This dry-run costs nothing (no branch, no commit, no PR) and gives you full transparency before confirming.
 
 This preview feature works on all addon operations: adding to the catalog, removing an addon, turning addons on or off for a cluster, and saving default addons. See [Preview Changes](clusters.md#preview-changes-before-a-pr-opens) for details, including a diff example and API usage.
 
@@ -133,7 +135,7 @@ Flags:
 There are two doors, and both end in one pull request.
 
 - **From the Marketplace:** open **Addons**, then the **Marketplace** tab, pick an addon, choose a version, and use the **Add to catalog** panel. The same panel is on the page of an addon you found through ArtifactHub search.
-- **Your own chart:** on **Addons**, click **Add addon manually**. The dialog is called **Add your own chart**. Fill in the name, the namespace (optional), the chart repository address, the chart and the version.
+- **Your own chart:** on **Addons**, click **Add addon manually**. The dialog is called **Add your own chart**. Fill in the name, the namespace (optional), the chart repository address, the chart and the version. The namespace is checked: "A namespace can only use lowercase letters, digits and hyphens. It must start and end with a letter or digit, and be 63 characters at most." The version must exist in the chart repository; a version that is not there is refused before any pull request opens. An addon that is already in the catalog with the same chart, version and namespace is not added twice, and no pull request is opened.
 
 Both forms have an optional field, **Also enable on a cluster (optional)**. It starts on **Don't enable yet**. Pick a cluster there and the one pull request adds the addon to the catalog **and** turns it on for that cluster, so the reviewer sees the whole change in one place.
 
@@ -317,7 +319,7 @@ The `ai_summary` field is also available as a query parameter on `GET /api/v1/ad
 
 ## Upgrading Addons
 
-See [Upgrades](upgrades.md) for global and per-cluster upgrade workflows.
+See [Upgrades](upgrades.md) for upgrading on all clusters and on chosen clusters.
 
 ## Checking Addon Health
 

@@ -92,7 +92,8 @@ func TestDocsWalksFPins(t *testing.T) {
 		{"docs/site/user-guide/clusters.md", "Its addon file, `cluster-addons/<name>.yaml`, is created the first time you turn an addon on for it"},
 		{"docs/site/user-guide/clusters.md", "--add-addon cert-manager,metrics-server"},
 		{"docs/site/user-guide/clusters.md", "In the UI, an adopted cluster has an **Un-adopt** button on the **Clusters** page."},
-		{"docs/site/user-guide/clusters.md", "It does not stop you from adopting a cluster that is already in `managed-clusters.yaml`."},
+		// Moved at the join: story E made adopt say so and open nothing.
+		{"docs/site/user-guide/clusters.md", "If the cluster is already adopted, Sharko says \"X is already adopted. Nothing to do, and no pull request was opened.\""},
 		// drift-and-sync.md
 		{"docs/site/user-guide/drift-and-sync.md", "!!! danger \"Taking an addon label off by hand uninstalls the addon\""},
 		{"docs/site/user-guide/drift-and-sync.md", "**The self-heal setting does not change this**: it is on even when `managed_cluster_self_heal` is off."},
@@ -108,9 +109,12 @@ func TestDocsWalksFPins(t *testing.T) {
 		{"docs/site/user-guide/secrets-provider.md", "The message lists more names than Sharko supports. Only `aws-sm` and `k8s-secrets` work for addon secret values today."},
 		// CLI reference
 		{"docs/site/cli/commands.md", "Stores the session token in `~/.sharko/config` (a file with no extension, readable only by you)."},
-		{"docs/site/cli/commands.md", "!!! warning \"On a v4 repo this command checks nothing\""},
+		// Moved at the join: story E made validate fail when it found neither file.
+		{"docs/site/cli/commands.md", "!!! warning \"On a v4 repo this command fails and points you to validate-config\""},
+		{"docs/site/cli/commands.md", "nothing was checked: neither configuration/addons-catalog.yaml nor configuration/managed-clusters.yaml was found."},
 		{"docs/site/cli/commands.md", "# Server: https://sharko.your-domain.com (connected, 4.0.8, Kubernetes)"},
-		{"docs/site/cli/commands.md", "**If you leave it out, the CLI makes an `admin` key.**"},
+		// Moved at the join: story C changed the default role of token create to viewer.
+		{"docs/site/cli/commands.md", "If you leave it out, the key is a `viewer` key, the same as in the UI and the API."},
 		{"docs/site/cli/commands.md", "The command takes no cluster name."},
 		{"docs/site/cli/commands.md", "!!! warning \"Not for a v4 repo\""},
 		{"docs/site/cli/commands.md", "`sharko pr wait <id>` keeps checking and exits `0` when the pull request is merged, `1` when it is closed without a merge, and `2` when the wait runs out."},
@@ -153,6 +157,12 @@ func TestDocsWalksFPins(t *testing.T) {
 		{"docs/site/cli/commands.md", "# CLI: v2.0.1"},
 		{"docs/site/cli/commands.md", "# Server: v2.0.1"},
 		{"docs/site/cli/commands.md", "| `--role <role>` | `admin`, `operator`, or `viewer` |"},
+		// Banned at the join: true before stories C and E, false after them.
+		{"docs/site/cli/commands.md", "the CLI makes an `admin` key"},
+		{"docs/site/cli/commands.md", "On a v4 repo this command checks nothing"},
+		{"docs/site/cli/commands.md", "prints `[SKIP]` for both files and exits `0`"},
+		{"docs/site/user-guide/clusters.md", "It does not stop you from adopting a cluster that is already in `managed-clusters.yaml`."},
+		{"docs/site/user-guide/clusters.md", "the pull request it opens has no changes. Close it."},
 		{"docs/site/cli/commands.md", "(defaults to addon name)"},
 		{"docs/site/cli/commands.md", "`--git-token <token>` | PAT or access token (required)"},
 		{"docs/site/user-guide/clusters.md", "Edit Addons"},

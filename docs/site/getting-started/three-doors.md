@@ -135,7 +135,7 @@ The response includes the pull request URL:
 {
   "pr_url": "https://github.com/your-org/your-repo/pull/51",
   "pr_id": 51,
-  "branch": "sharko/enable-addon-datadog-on-cluster-dev-us-(v4)-f7522a80",
+  "branch": "sharko/enable-addon-datadog-on-cluster-dev-us-f7522a80",
   "merged": false
 }
 ```

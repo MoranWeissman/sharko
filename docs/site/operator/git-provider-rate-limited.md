@@ -8,7 +8,9 @@ Before you start, set up the shell variables from [First checks](troubleshooting
 
 ## What you see
 
-- API calls that read from Git answer with HTTP 429. Sharko uses 429 when the host's error mentions "rate limit", "too many requests" or "429".
+- API calls that read from Git answer with HTTP 429 and the code "upstream_rate_limit": "GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment." Sharko uses 429 when the host's error mentions "rate limit", "too many requests" or "429".
+- `GET /api/v1/repo/status` answers with the reason `git_rate_limited`. The yellow bar in the UI then says "Your Git host is limiting Sharko's requests right now." and "GitHub, or the Git host you use, says Sharko has asked too often. Nothing is broken, and nothing in Settings needs changing. It clears by itself. Try again in a moment."
+- This is not Sharko's own limit. Sharko's own limit of 30 changing calls per minute per address answers HTTP 429 with the code "sharko_rate_limit", the header `Retry-After: 60`, and: "Sharko is getting too many requests from your address right now. Try again in a moment."
 - Actions that write to Git fail with HTTP 502, and the message holds the host's rate-limit error.
 - Reading files from GitHub fails in the logs:
 

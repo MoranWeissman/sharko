@@ -26,7 +26,7 @@ For a Sharko-managed cluster, Sharko works out which addon labels the cluster sh
 
 **What does NOT get compared:** Secret Data (the actual kubeconfig), annotations, or non-addon labels. Drift detection is scoped to addon labels only.
 
-**The pill shows the last check, not this second.** Sharko checks in the background on its own schedule. **Synced** and **No differences** describe the state at the last check. The page says when that check ran (the **Last sync** line). A label changed a few seconds ago may not show yet, and on a v4 repo a changed addon label is usually put back before you can look at it (see below).
+**The pill shows the last check, not this second.** Sharko checks in the background on its own schedule. **Synced** and **No differences** describe the state at the last check. The pill says so itself ("as of the last check, <when>"), and the field **Last checked** shows when that check ran. The **Diff** also shows when the check ran. For operators and admins, opening the Diff starts a new check. When nothing differs it says "No differences found at the last check — this secret's addon labels matched Git." A label changed a few seconds ago may not show yet, and on a v4 repo a changed addon label is usually put back before you can look at it (see below).
 
 !!! danger "Taking an addon label off by hand uninstalls the addon"
     The label `addons.sharko.dev/<addon>=enabled` on the cluster Secret is what tells ArgoCD to run the addon on that cluster. If you remove it (or change `enabled` to anything else) with `kubectl`, ArgoCD deletes the addon's Application and its pods almost at once. On a v4 repo Sharko puts the label back on its next check, and ArgoCD then installs the addon again from scratch, with a new pod. To turn an addon off on purpose, switch it off in Git (`sharko disable-addon`, or **Add addon** and the toggles on the cluster page), not on the Secret.
@@ -44,7 +44,7 @@ The drift diff uses the same rendering style as the [Preview Changes](clusters.m
 
 **Secret values are never shown.** The diff only exposes label keys and values — no secret Data, no kubeconfig, no credentials.
 
-**Who can see what:** The sync status pill and read-only drift diff are visible to all users (including viewers). Only the **Sync now** action button is restricted to admins and operators — viewers can see when a cluster is OutOfSync and what drifted, but cannot trigger the sync.
+**Who can see what:** The sync status pill and read-only drift diff are visible to all users (including viewers). Only the **Sync now** action button is restricted to admins and operators — viewers can see when a cluster is OutOfSync and what drifted, but cannot trigger the sync. A viewer's Diff shows the answer of the last check and does not start a new one.
 
 ## The Sync action
 

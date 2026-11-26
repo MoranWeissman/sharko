@@ -44,7 +44,7 @@ import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import { RoleGuard } from '@/components/RoleGuard'
+import { RoleGuard, OPERATOR_AND_UP } from '@/components/RoleGuard'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
 
 /** Returns true if target is a strictly lower semver than current. Fails open (returns false) if either can't be parsed. */
@@ -1333,7 +1333,7 @@ function PerClusterUpgradeRow({
               Upgrading...
             </span>
           ) : (
-            <RoleGuard adminOnly>
+            <RoleGuard roles={OPERATOR_AND_UP}>
               <button
                 type="button"
                 onClick={() => setState('confirm')}
@@ -2655,9 +2655,10 @@ export function AddonDetail() {
                 )}
               </div>
 
-              {/* Upgrade chosen clusters only — one action, one PR. Admin-only,
+              {/* Upgrade chosen clusters only — one action, one PR. For an
+                * operator and an admin, the roles the server lets upgrade,
                 * like the per-cluster rows above it. */}
-              <RoleGuard adminOnly>
+              <RoleGuard roles={OPERATOR_AND_UP}>
                 <SubsetUpgradePanel
                   addonName={addon.addon_name}
                   catalogVersion={addon.version}

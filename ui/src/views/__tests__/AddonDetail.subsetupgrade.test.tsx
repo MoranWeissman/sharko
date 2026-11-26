@@ -99,6 +99,7 @@ const adminCtx = {
 }
 
 const viewerCtx = { ...adminCtx, role: 'viewer', username: 'viewer', isAdmin: false }
+const operatorCtx = { ...adminCtx, role: 'operator', username: 'operator', isAdmin: false }
 
 function renderUpgradeTab(ctx: typeof adminCtx) {
   return render(
@@ -121,7 +122,15 @@ describe('AddonDetail — Upgrade tab, per-cluster part (pre-release walk 4)', (
     vi.clearAllMocks()
   })
 
-  it('is hidden entirely from a non-admin', async () => {
+  // The server lets an operator upgrade (internal/authz: addon.update-catalog
+  // and addon.upgrade-clusters). The screen used to hide both from them.
+  it('an operator gets the panel and the row upgrade buttons', async () => {
+    renderUpgradeTab(operatorCtx)
+    await screen.findByText(PANEL_TITLE)
+    expect(screen.getAllByRole('button', { name: 'Upgrade to 4.8.0' })).toHaveLength(2)
+  })
+
+  it('is hidden entirely from a viewer', async () => {
     renderUpgradeTab(viewerCtx)
     await waitFor(() => expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThanOrEqual(1))
     expect(screen.queryByText(PANEL_TITLE)).not.toBeInTheDocument()

@@ -96,7 +96,7 @@ Write endpoints need the `operator` role or higher. The ones that reach past the
 |--------|------|-------------|
 | `POST` | `/api/v1/addons` | Add addon to catalog |
 | `DELETE` | `/api/v1/addons/{name}?confirm=true` | Remove addon from catalog and all clusters |
-| `POST` | `/api/v1/addons/{name}/upgrade` | Upgrade addon (global or per-cluster) |
+| `POST` | `/api/v1/addons/{name}/upgrade` | Upgrade addon (all clusters, or one with `cluster`) |
 | `POST` | `/api/v1/addons/upgrade-batch` | Upgrade multiple addons in one PR |
 | `POST` | `/api/v1/upgrade/ai-summary` | Generate an AI summary of an addon's upgrade impact (body: `{"addon_name": "...", "target_version": "..."}`) |
 
@@ -188,6 +188,21 @@ curl -X POST https://sharko.your-domain.com/api/v1/addons/cert-manager/upgrade \
     "version": "1.15.0"
   }'
 ```
+
+The body takes `version`, and optionally `cluster` (move one cluster only), `dry_run` and `auto_merge`. Without `cluster` the upgrade is for all clusters: one pull request that changes the version in `catalog.yaml`.
+
+The answer can carry `warnings`, a list of plain sentences (for example a cluster that was left on a newer version, or values that still belong to the old chart).
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `version_not_found` | 400 | The version is not in the addon's chart repository. Nothing was changed. |
+| `nothing_to_change` | 400 | The addon is already on that version. |
+| `chart_repo_unreadable` | 502 | Sharko could not reach the chart repository, so it could not check the version. Nothing was changed. |
+| (none) | 404 | The addon is not in the catalog. |
+
+`POST /api/v1/addons/upgrade-batch` and `POST /api/v1/addons/{name}/upgrade-clusters` use the same codes.
+
+The `POST /api/v1/upgrade/check` answer has a list `follows_default`: settings in the global values file that move with the chart on an all-clusters upgrade. They are not conflicts. Version matrix cells have a field `ahead_of_catalog`, and ArgoCD application data has `synced_revision` (the version ArgoCD really deployed last).
 
 ### Batch Upgrade
 
@@ -286,6 +301,10 @@ curl -X DELETE https://sharko.your-domain.com/api/v1/tokens/ci-pipeline \
 Revoking is immediate. There is no grace period and no undo — make a new key
 if you need one.
 
+#### Key names
+
+"An API key name can use letters, numbers, dots, dashes and underscores, with no spaces, up to 63 characters." A key cannot have the name of a user, and a user cannot have the name of a key.
+
 #### What a refused key looks like
 
 An **expired** key gets a `401` that names it, because whoever sent it already
@@ -303,14 +322,24 @@ A key that was **revoked, mistyped, or never existed** gets a flat `401`:
 
 That difference is deliberate: someone guessing at key names learns nothing.
 
+Two more refusals name the key (both `401`):
+
+- `API token "NAME" cannot be used: the user who created it is disabled`. The key works again when the user is enabled again. When a user is deleted, the keys they created are revoked; the `DELETE /users/{name}` answer lists them in `revoked_api_keys`.
+- `API token "NAME" cannot be used: a user has the same name. Revoke this token and create one with another name`.
+
+An API key cannot change a password. `POST /auth/update-password` with a key answers `403`: "An API key has no password to change. Log in as the user to change that user's password."
+
+`GET /users/me` has the fields `api_key` (true or false) and `auth_type` (`api_key` or `session`). With a key, `username` is the name of the key.
+
 #### Who can do what
 
 | Action | Minimum role |
 |--------|--------------|
 | List keys | viewer |
 | Create a key | operator |
-| Renew a key | operator |
-| Revoke a key | admin |
+| Renew a key you own | operator |
+| Revoke a key you own | operator |
+| Renew or revoke anyone else's key | admin |
 
 ### Poll an Operation
 

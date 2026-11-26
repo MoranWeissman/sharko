@@ -260,9 +260,11 @@ sharko adopt my-cluster
 
 What the adopt command does:
 
-1. Checks that the cluster is in ArgoCD. It does not stop you from adopting a cluster that is already in `managed-clusters.yaml`. If you do, the pull request it opens has no changes. Close it. `sharko takeover-preflight` tells you whether Sharko already owns the connection.
+1. Checks that the cluster is in ArgoCD. If the cluster is already adopted, Sharko says "X is already adopted. Nothing to do, and no pull request was opened." (`X: already adopted, nothing to do` on the command line).
 2. Looks for things you should read first, the same way take over does. For example, an ApplicationSet that could delete what it installed. If there are any, nothing is adopted. Sharko prints each warning with an id. Read them, then run the command again with `--acknowledge <id>`. `--yes` does not skip warnings. `--dry-run` prints them too, and says "would adopt" for each cluster that is ready.
 3. Opens a pull request that adds the cluster to `managed-clusters.yaml` and creates an empty `cluster-addons/<name>.yaml` for it. The command says "PR opened, waiting for merge" and gives the link.
+
+**If an adopt was cut off.** If the tab is closed while Sharko says "Adopting...", Sharko finishes the work anyway. If an earlier adopt did not finish, run the adopt again. When its pull request is still open, Sharko records that pull request again. When the pull request already merged, Sharko takes over the ArgoCD connection without a new pull request. A dry run tells you which it is: "Sharko already has X in its list, from an earlier adopt that did not finish. Adopting it again takes over its ArgoCD connection. No pull request is opened." The command line shows `would finish an earlier adopt`.
 4. While the pull request is open, nothing is adopted. Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later.
 5. When the pull request is merged, Sharko takes over the ArgoCD connection (the old labels stay) and marks the cluster as adopted. If the pull request is closed without a merge, Sharko takes its mark off and changes nothing else.
 

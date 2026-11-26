@@ -39,6 +39,65 @@ Use the **Test** button in Settings → AI to check that Sharko can reach the
 provider with the saved settings. **Test AI** in the form checks the
 settings you are typing before you save them.
 
+Both tests are for admins only (`POST /api/v1/ai/test` and
+`POST /api/v1/ai/test-config`). Activity History records them as
+`ai_tested` ("tested the AI provider") and `ai_config_tested` ("tested AI
+settings before saving"). A message to the assistant is recorded as
+`ai_chat_message` ("sent a message to the AI assistant"), and
+`ai_config_updated` carries `provider=NAME` in its detail.
+
+When you edit a saved provider, the form says "A key is already saved. Leave
+this empty to keep it." A key, model or address that you leave out is kept as
+long as the provider stays the same. A different provider gets nothing
+carried over. To remove a saved key, turn AI off with **Disable**. After
+**Save** or **Disable** the assistant buttons appear or go away without a
+page reload.
+
+## Which addresses Sharko will call
+
+Only an admin can make Sharko call an AI address.
+
+- A self-hosted address in a private network or on localhost is allowed. A
+  self-hosted Ollama lives there.
+- Addresses starting with `169.254` or `fe80:` are never called.
+- An address must start with `http://` or `https://`.
+- An address may not hold a user name or password.
+
+What Sharko says when an address is refused:
+
+- "The address must start with http:// or https://."
+- "Take the user name and password out of the address. If the provider needs a key, put it in the API key field."
+- "Sharko does not call this address. Addresses that start with 169.254 (and fe80:) belong to the machine's own network setup, and no AI provider lives there."
+- "Enter the address of the provider first."
+
+What it says about a key before it calls anything:
+
+- "Enter an API key first."
+- "The API key has a space or a line break in it. Paste the key again, on one line."
+- "The API key is too long to be a real key. Paste the key again."
+
+## What a provider error looks like
+
+Sharko never passes a provider's answer on as it came. It writes its own
+sentence, and a key is never shown in it, not even masked. The shape is:
+
+```text
+openai returned 401: the provider refused the API key. The provider said: "..."
+```
+
+| Provider answer | Sharko says |
+| --- | --- |
+| 401 or 403 | "the provider refused the API key." (Ollama: "the server refused the request.") |
+| 404 | "the provider did not find the model or the address." (Ollama: "this address does not answer like an Ollama server, or the model is not there.") |
+| 429 | "the provider's request limit or spending limit was reached." |
+| 500 and above | "the provider had a problem of its own." |
+| Anything else | "the provider did not accept the request." |
+
+The assistant cannot read values files on the current repo layout. It says:
+"The assistant cannot read values files in this version. They are in your Git
+repo: values/global/<add-on>.yaml for every cluster, or
+values/clusters/<cluster>/<add-on>.yaml for one cluster."
+
 ## The "Annotate values on generate" switch
 
 This switch in Settings → AI decides whether the AI adds notes when you
