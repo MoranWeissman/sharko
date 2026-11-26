@@ -697,13 +697,13 @@ func TestEnableAddonV4_PreviewTitleIsThePullRequestTitle(t *testing.T) {
 	orch := newV4TestOrchestrator(t, git)
 
 	preview, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
-		Cluster: "prod-eu", Addon: "cert-manager", DryRun: true,
+		Cluster: "prod-eu", Addon: "metrics-server", DryRun: true,
 	})
 	if err != nil || preview.DryRun == nil {
 		t.Fatalf("preview failed: %v", err)
 	}
 	if _, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
-		Cluster: "prod-eu", Addon: "cert-manager", Yes: true,
+		Cluster: "prod-eu", Addon: "metrics-server", Yes: true,
 	}); err != nil {
 		t.Fatalf("real enable failed: %v", err)
 	}
