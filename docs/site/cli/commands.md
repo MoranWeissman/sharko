@@ -694,7 +694,7 @@ sharko add-to-catalog cert-manager --from-marketplace --version 1.14.5
 
 The version must exist in the chart repository. A version that is not there is refused before any pull request, with the same sentence as in [`upgrade-addon`](#sharko-upgrade-addon). If Sharko cannot reach the chart repository, the add still goes through, with a warning: "Sharko could not reach the chart repository of metrics-server, so it did not check that version 3.12.1 exists. If the version is wrong, ArgoCD will not be able to install it."
 
-If the addon is already in the catalog with the same chart, version and namespace, nothing is opened: "X is already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened." With a different version the command opens a pull request that updates the entry.
+If the addon is already in the catalog with the same chart, version and namespace, nothing is opened: "X is already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened." With a different version the command opens a pull request that updates the entry. Everything else in the entry that you did not name (settings, secrets, extra sources, extra Helm values) is kept. The same pull request moves the values Sharko copied from the old chart in `values/global/<addon>.yaml` to the new chart's defaults, the same way [`upgrade-addon`](#sharko-upgrade-addon) does.
 
 The namespace is checked: "A namespace can only use lowercase letters, digits and hyphens. It must start and end with a letter or digit, and be 63 characters at most."
 

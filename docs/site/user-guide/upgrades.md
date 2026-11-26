@@ -133,6 +133,7 @@ Chart repositories whose address starts with `oci://` are not checked, because S
 When you add an addon, Sharko writes `values/global/<addon>.yaml` with the chart's own values in it. Some of those belong to one chart version. The image tag is the usual one.
 
 - **Upgrade on all clusters.** When Sharko made that file, the upgrade moves the settings nobody changed to the new chart's values, in the same pull request. A setting you changed stays. A file you wrote yourself is not changed. Lists and multi-line texts are not moved; the result names them.
+- **Changing the version another way.** Editing the version of a catalog entry (`PATCH /api/v1/catalog/addons/{name}`), or adding an addon that is already in the catalog with another version, moves the chart on all clusters too. Sharko treats the values file the same way as in an upgrade on all clusters.
 - **Upgrade on chosen clusters.** The global values file is shared by every cluster, so Sharko does not change it. If that file still sets the old image tag, the chosen clusters get the new chart with the old image, and Sharko says so in a warning:
 
 ```text

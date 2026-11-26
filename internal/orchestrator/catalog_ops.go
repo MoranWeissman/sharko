@@ -220,6 +220,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	// Resolve every entry first — no git reads, no writes, so a bad
 	// request costs nothing.
 	entries := make(map[string]config.AddonCatalogEntry, len(req.Addons))
+	inputs := make(map[string]CatalogAddonInput, len(req.Addons))
 	names := make([]string, 0, len(req.Addons))
 	for _, in := range req.Addons {
 		if in.Name == "" {
@@ -240,6 +241,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 			return nil, err
 		}
 		entries[in.Name] = entry
+		inputs[in.Name] = in
 		names = append(names, in.Name)
 	}
 	sort.Strings(names)
@@ -277,9 +279,25 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	// Then there is nothing to approve: no pull request is opened (walk 1,
 	// L10: a second add of the same addon opened a pull request with no
 	// changes in it and said "added").
+	//
+	// An addon that is already in the catalog keeps every part of its entry
+	// this request did not set. The entry used to be replaced whole by one
+	// built from the request, so adding an addon a second time deleted its
+	// settings, its secrets (with the push block), its extra sources and its
+	// extra Helm values, and the compare below called that a change.
 	allAlreadyThere := true
+	// versionMoves lists the addons this request moves to another chart
+	// version, with the entry as it was. Their global values file follows.
+	versionMoves := make(map[string]config.AddonCatalogEntry)
 	for name, entry := range entries {
 		old, there := spec.Addons[name]
+		if there {
+			entry = keepUnsetCatalogFields(old, entry, inputs[name])
+			entries[name] = entry
+			if entry.Version != old.Version && entry.RepoURL == old.RepoURL && entry.Chart == old.Chart {
+				versionMoves[name] = old
+			}
+		}
 		if !there || !reflect.DeepEqual(old, entry) {
 			allAlreadyThere = false
 		}
@@ -348,6 +366,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		content []byte
 	}
 	var globalScaffolds []valuesScaffold
+	var movedValues []valuesVersionMove
 	// gPathByName is kept around for the combo's cluster-values seeding
 	// below, so it can find each addon's global-values commit path
 	// without recomputing it — and, more importantly, so it can look at
@@ -370,6 +389,19 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 			return nil, err
 		}
 		if exists {
+			// The file is there already. It is only touched when this
+			// request moves the addon to another chart version: then the
+			// settings Sharko copied from the old chart follow the new one,
+			// the same way an upgrade does it. Without this the chart moved
+			// and the old image tag in this file kept the old image running.
+			if before, moved := versionMoves[name]; moved {
+				move := o.globalValuesAfterVersionMove(ctx, name, entries[name], before.Version, entries[name].Version)
+				warnings = append(warnings, move.warnings...)
+				if move.changed {
+					files[gPath] = move.updated
+					movedValues = append(movedValues, move)
+				}
+			}
 			continue
 		}
 		entry := entries[name]
@@ -464,6 +496,13 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 				Path:   s.path,
 				Action: "create",
 				Diff:   o.buildFileDiff(s.path, nil, s.content, "create"),
+			})
+		}
+		for _, m := range movedValues {
+			previews = append(previews, FilePreview{
+				Path:   m.path,
+				Action: "update",
+				Diff:   o.buildFileDiff(m.path, m.original, m.updated, "update"),
 			})
 		}
 		if req.EnableOnCluster != "" {
@@ -735,4 +774,78 @@ func (o *Orchestrator) readCatalog(ctx context.Context) (config.AddonCatalogSpec
 		return config.AddonCatalogSpec{}, fmt.Errorf("%w: %s", ErrCatalogFileEmpty, CatalogFileEmptyMessage)
 	}
 	return config.LoadAddonCatalog(data)
+}
+
+// keepUnsetCatalogFields is what makes a second add of an addon safe. old is
+// the entry already in catalog.yaml, built is the entry made from the request
+// (with anything the Marketplace filled in), in is the request itself. Every
+// part the REQUEST did not set comes back from old; a part the request did set
+// wins.
+//
+// The Marketplace fill-ins count as "not set": they are Sharko's guess for a
+// brand-new entry and must not overwrite what the catalog already says, and
+// a second add must not quietly move the version to the newest one.
+func keepUnsetCatalogFields(old, built config.AddonCatalogEntry, in CatalogAddonInput) config.AddonCatalogEntry {
+	if in.RepoURL == "" {
+		built.RepoURL = old.RepoURL
+	}
+	if in.Chart == "" {
+		built.Chart = old.Chart
+	}
+	if in.Version == "" {
+		built.Version = old.Version
+	}
+	if in.Namespace == "" {
+		built.Namespace = old.Namespace
+	}
+	if in.Settings == nil {
+		built.Settings = old.Settings
+	}
+	if len(in.Secrets) == 0 {
+		built.Secrets = old.Secrets
+	}
+	if len(in.AdditionalSources) == 0 {
+		built.AdditionalSources = old.AdditionalSources
+	}
+	if len(in.ExtraHelmValues) == 0 {
+		built.ExtraHelmValues = old.ExtraHelmValues
+	}
+	return built
+}
+
+// valuesVersionMove is what happened to an addon's global values file when
+// its catalog version was moved by a door other than the upgrade.
+type valuesVersionMove struct {
+	path     string
+	original []byte
+	updated  []byte
+	changed  bool
+	warnings []string
+}
+
+// globalValuesAfterVersionMove runs the upgrade's "values follow the chart
+// defaults" step (followDefaultsInGlobalValues) for a version change made
+// through catalog edit or add-to-catalog. Those two doors move the chart for
+// every cluster exactly like an upgrade does, so they owe the same care: a
+// setting Sharko copied from the old chart moves to the new chart's default,
+// a setting a person changed is kept and named in a warning, and a file
+// Sharko did not write is never edited.
+func (o *Orchestrator) globalValuesAfterVersionMove(ctx context.Context, addon string, entry config.AddonCatalogEntry, oldVersion, newVersion string) valuesVersionMove {
+	gPath, err := v4GlobalValuesPath(addon)
+	if err != nil {
+		return valuesVersionMove{}
+	}
+	state := &upgradeV4State{
+		valuesOriginal: map[string][]byte{},
+		valuesCurrent:  map[string][]byte{},
+	}
+	o.followDefaultsInGlobalValues(ctx, state, addon, entry, oldVersion, newVersion)
+	move := valuesVersionMove{
+		path:     gPath,
+		original: state.valuesOriginal[gPath],
+		updated:  state.valuesCurrent[gPath],
+		warnings: state.warnings,
+	}
+	move.changed = move.updated != nil && !bytes.Equal(move.original, move.updated)
+	return move
 }
