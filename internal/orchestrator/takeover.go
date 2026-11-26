@@ -141,6 +141,10 @@ func (o *Orchestrator) TakeoverClusterGit(ctx context.Context, req TakeoverClust
 		if !req.DryRun {
 			// Put the waiting mark back in case the first try could not
 			// (S7).
+			if trackErr := o.retrackJoinPR(ctx, open, req.Name, fmt.Sprintf("Take over cluster %s", req.Name),
+				&ClusterFollowUp{Finish: FinishTakeover, PreserveLegacyLabels: req.PreserveLegacyLabels}); trackErr != nil {
+				return result, fmt.Errorf("%w: %v", ErrPRNotRecorded, trackErr)
+			}
 			if markErr := o.putJoinMark(ctx, AnnotationTakeoverPendingPR, req.Name, open.ID, open.URL, &keep); markErr != nil {
 				return result, fmt.Errorf("%w: %v", ErrMarkNotWritten, markErr)
 			}
@@ -463,4 +467,38 @@ func (o *Orchestrator) takeoverFilePreviews(b *takeoverFilesBuild) []FilePreview
 			Diff:   o.buildFileDiff(b.clusterPath, b.existingClusterAddons, b.updatedClusterAddons, clusterAction),
 		},
 	}
+}
+
+// retrackJoinPR records an open adopt or take over pull request in the PR
+// tracker when it is not recorded yet. An earlier try can be cut off between
+// opening the pull request and recording it (the person closed the tab); then
+// the merge would never finish the job. A pull request that is already
+// recorded is left alone. With no tracker this does nothing.
+func (o *Orchestrator) retrackJoinPR(ctx context.Context, pr *gitprovider.PullRequest, cluster, title string, followUp *ClusterFollowUp) error {
+	if o.prTracker == nil || pr == nil {
+		return nil
+	}
+	if l, ok := o.prTracker.(PRTrackLookup); ok {
+		tracked, err := l.IsTracked(ctx, pr.ID)
+		if err != nil {
+			return err
+		}
+		if tracked {
+			return nil
+		}
+	}
+	return o.prTracker.TrackPR(ctx, TrackedPR{
+		PRID:       pr.ID,
+		PRUrl:      pr.URL,
+		PRBranch:   pr.SourceBranch,
+		PRTitle:    title,
+		PRBase:     o.gitops.BaseBranch,
+		Cluster:    cluster,
+		Operation:  "adopt-cluster",
+		User:       "system",
+		Source:     "api",
+		CreatedAt:  time.Now(),
+		LastStatus: "open",
+		FollowUp:   followUp,
+	})
 }

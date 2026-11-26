@@ -101,7 +101,7 @@ func (o *Orchestrator) refuseOnMixedLayout(ctx context.Context) error {
 // V4CatalogWriteDoor is the sentence every legacy catalog writer hands back
 // on a v4 repo. One constant so a person reads the same pointer whichever
 // door they came through, and so the UI can match on it if it ever needs to.
-const V4CatalogWriteDoor = `this repo keeps its approved addons in catalog.yaml, and the only way in is the approval pull request — use "Add to catalog" in the UI, or POST /api/v1/catalog/addons`
+const V4CatalogWriteDoor = "this repo keeps its approved addons in catalog.yaml, and the only way in is the approval pull request — use \"Add to catalog\" in the UI, \"sharko add-to-catalog\" on the command line, or POST /api/v1/catalog/addons"
 
 // V4EnableDoor is the same pointer for switching an addon on or off.
 const V4EnableDoor = "this repo switches addons on per cluster in cluster-addons/<cluster>.yaml — use POST /api/v1/v4/clusters/{cluster}/addons/{addon} (and the addon has to be in catalog.yaml first)"

@@ -14,7 +14,8 @@ func init() {
 
 var refreshSecretsCmd = &cobra.Command{
 	Use:   "refresh-secrets",
-	Short: "Trigger secret reconciliation",
+	Short: "Trigger secret reconciliation (every cluster, every add-on)",
+	Args:  refreshSecretsArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, status, err := apiPost("/api/v1/secrets/reconcile", nil)
 		if err != nil {
@@ -26,6 +27,19 @@ var refreshSecretsCmd = &cobra.Command{
 		fmt.Println("Secret reconciliation triggered.")
 		return nil
 	},
+}
+
+// RefreshSecretsTakesNoNameMessage is what refresh-secrets says when it is
+// given a cluster name. The command refreshes everything; a name used to be
+// ignored, so "refresh-secrets nonexist" said "triggered" (walk 8, L02).
+// Exported so tests pin it by exact text.
+const RefreshSecretsTakesNoNameMessage = "refresh-secrets does not take a cluster name. It refreshes the add-on secrets of every cluster. Run it with no name."
+
+func refreshSecretsArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("%s", RefreshSecretsTakesNoNameMessage)
+	}
+	return nil
 }
 
 var secretStatusCmd = &cobra.Command{

@@ -363,6 +363,12 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 		}
 	}
 
+	// The cluster was found in Sharko's own list, so it is managed. The list
+	// call says managed: true for it; this call said false, so the same
+	// cluster looked managed in one answer and not in the other (walk 2,
+	// finding 10; walk 8, L08).
+	cluster.Managed = true
+
 	// Get enabled addons for this cluster
 	addons := s.parser.GetEnabledAddons(*cluster, repoCfg.Addons)
 

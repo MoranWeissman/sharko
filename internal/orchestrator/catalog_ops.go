@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -89,6 +90,13 @@ type AddToCatalogResult struct {
 	*GitResult
 	// Added names the addons written into catalog.yaml, sorted.
 	Added []string `json:"added"`
+	// AlreadyInCatalog names the addons that were already in catalog.yaml
+	// exactly as asked. When it is set nothing was written and no pull
+	// request was opened.
+	AlreadyInCatalog []string `json:"already_in_catalog,omitempty"`
+	// Message is a plain sentence for the caller when there is something to
+	// say that the other fields do not (today: AlreadyInCatalog).
+	Message string `json:"message,omitempty"`
 	// Enabled names the addons also switched on, and on which cluster.
 	// Empty when the request was catalog-only.
 	Enabled []string `json:"enabled,omitempty"`
@@ -105,6 +113,15 @@ type AddToCatalogResult struct {
 	// a durable result at that point, and DryRunResult.FilesToWrite already
 	// shows the pin in the diff.
 	ResolvedVersions map[string]string `json:"resolved_versions,omitempty"`
+}
+
+// AlreadyInCatalogMessage is what an add says when the addon is already in
+// the catalog exactly as asked. Exported so tests pin it by exact text.
+func AlreadyInCatalogMessage(names []string) string {
+	if len(names) == 1 {
+		return fmt.Sprintf("%s is already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened.", names[0])
+	}
+	return fmt.Sprintf("%s are already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened.", strings.Join(names, ", "))
 }
 
 // The error sentinels below are the machine-readable half of the
@@ -256,6 +273,17 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	if spec.Addons == nil {
 		spec.Addons = make(map[string]config.AddonCatalogEntry)
 	}
+	// Is every entry in this request already in the catalog exactly as asked?
+	// Then there is nothing to approve: no pull request is opened (walk 1,
+	// L10: a second add of the same addon opened a pull request with no
+	// changes in it and said "added").
+	allAlreadyThere := true
+	for name, entry := range entries {
+		old, there := spec.Addons[name]
+		if !there || !reflect.DeepEqual(old, entry) {
+			allAlreadyThere = false
+		}
+	}
 	for name, entry := range entries {
 		spec.Addons[name] = entry
 	}
@@ -392,6 +420,21 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 
 	title := addToCatalogTitle(names, req.EnableOnCluster)
 
+	// Nothing would change: every entry is already there as asked, no new
+	// values file is needed, and (for add-and-enable) the cluster already has
+	// the addon on. Say so and open nothing.
+	if allAlreadyThere && len(globalScaffolds) == 0 && len(clusterValuesScaffolds) == 0 &&
+		(req.EnableOnCluster == "" || bytes.Equal(existingClusterAddons, updatedClusterAddons)) {
+		return &AddToCatalogResult{
+			GitResult:        &GitResult{Warnings: warnings},
+			Added:            []string{},
+			AlreadyInCatalog: names,
+			Message:          AlreadyInCatalogMessage(names),
+			Enabled:          nil,
+			Cluster:          req.EnableOnCluster,
+		}, nil
+	}
+
 	if req.DryRun {
 		previews := []FilePreview{{
 			Path:   config.AddonCatalogPath,
@@ -467,6 +510,15 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	}, nil
 }
 
+// chartRepoSchemeOK reports whether a chart repository address starts with a
+// scheme Helm can pull from: https, oci, or plain http (an in-house chart
+// museum). ftp://, file://, ssh:// and the like were accepted and opened a pull
+// request that could never install (walk 8, L01).
+func chartRepoSchemeOK(repo string) bool {
+	r := strings.ToLower(strings.TrimSpace(repo))
+	return strings.HasPrefix(r, "https://") || strings.HasPrefix(r, "oci://") || strings.HasPrefix(r, "http://")
+}
+
 // enabledNames returns names when a cluster was named, nil otherwise.
 func enabledNames(names []string, cluster string) []string {
 	if cluster == "" {
@@ -531,6 +583,11 @@ func (o *Orchestrator) buildCatalogEntry(ctx context.Context, in CatalogAddonInp
 	if entry.RepoURL == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(
 			"%w: addon %q needs a chart repository URL (https:// or oci://)", ErrCatalogEntryIncomplete, in.Name)
+	}
+	if !chartRepoSchemeOK(entry.RepoURL) {
+		return config.AddonCatalogEntry{}, fmt.Errorf(
+			"%w: addon %q has a chart repository address that is not one Sharko can use. It must start with https:// or oci://",
+			ErrCatalogEntryIncomplete, in.Name)
 	}
 	if entry.Chart == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(

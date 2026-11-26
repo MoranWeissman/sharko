@@ -1023,6 +1023,15 @@ func (r *Reconciler) planPushes(ctx context.Context, gr GitReader) (pushPlan, er
 		return r.planV4(ctx, gr, v4Data)
 	}
 
+	// Neither catalog file exists yet. That is a fresh repo that has not had
+	// its first add-on added, not a failure: there is nothing to push. It used
+	// to be recorded as an error every five minutes ("could not work out which
+	// secrets to push") until the first add-on arrived (walk 1, L17; walk 8,
+	// L07). A file that is there but cannot be read is still an error.
+	if errors.Is(v3Err, gitprovider.ErrFileNotFound) && errors.Is(v4Err, gitprovider.ErrFileNotFound) {
+		return pushPlan{}, nil
+	}
+
 	return pushPlan{}, fmt.Errorf(
 		"no addon catalog could be read on branch %q, so no addon secrets can be pushed: %s: %v; %s: %v",
 		r.baseBranch,

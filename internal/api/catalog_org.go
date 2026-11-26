@@ -213,6 +213,7 @@ func (s *Server) handleGetOrgCatalogAddon(w http.ResponseWriter, r *http.Request
 // @Security BearerAuth
 // @Param body body orchestrator.AddToCatalogRequest true "Addons to add"
 // @Success 201 {object} orchestrator.AddToCatalogResult "Pull request opened"
+// @Success 200 {object} orchestrator.AddToCatalogResult "Every addon was already in the catalog as asked: nothing written, no pull request (already_in_catalog and message are set)"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not registered (code cluster_not_found)"
@@ -302,6 +303,19 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 	result, err := orch.AddToCatalog(ctx, req)
 	if err != nil {
 		writeAddToCatalogError(w, err)
+		return
+	}
+
+	// Everything asked for was already in the catalog: nothing was written,
+	// so say 200 (not 201 "created") and keep the log honest.
+	if len(result.AlreadyInCatalog) > 0 {
+		audit.Enrich(ctx, audit.Fields{
+			Event:    "catalog_addons_added",
+			Resource: "catalog:" + joinNames(result.AlreadyInCatalog),
+			Detail:   "already in the catalog, nothing opened",
+			Changes:  audit.ChangesNone,
+		})
+		writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
 		return
 	}
 

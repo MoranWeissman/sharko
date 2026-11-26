@@ -98,6 +98,7 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 				Status       string `json:"status"`
 				Error        string `json:"error"`
 				Message      string `json:"message"`
+				AlreadyDone  bool   `json:"already_done"`
 				Verification *struct {
 					Success      bool   `json:"success"`
 					ErrorCode    string `json:"error_code,omitempty"`
@@ -169,6 +170,12 @@ question; it does not skip warnings. --dry-run prints the warnings too.`,
 		}
 		for _, cr := range result.Results {
 			switch {
+			case cr.Status == "success" && cr.AlreadyDone:
+				fmt.Printf("  %s: already adopted, nothing to do\n", cr.Name)
+			case dryRun && cr.Status == "success" && cr.Git == nil && cr.Message != "":
+				// An earlier try that was cut off: the answer says what
+				// adopting would do, so "would adopt" would say less.
+				fmt.Printf("  %s: would finish an earlier adopt\n", cr.Name)
 			case dryRun && cr.Status == "success":
 				fmt.Printf("  %s: would adopt\n", cr.Name)
 			case cr.Status == "success" && cr.Git != nil && prWaiting(cr.Git.PRUrl, cr.Git.Merged):

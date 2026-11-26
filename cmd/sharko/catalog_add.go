@@ -79,6 +79,18 @@ in one diff.`,
 			fmt.Println("failed")
 			return err
 		}
+		// 200 is "already there, nothing opened"; 201 is a pull request.
+		if status == 200 {
+			var already struct {
+				AlreadyInCatalog []string `json:"already_in_catalog"`
+				Message          string   `json:"message"`
+			}
+			if json.Unmarshal(respBody, &already) == nil && len(already.AlreadyInCatalog) > 0 {
+				fmt.Println("nothing to do")
+				fmt.Println(already.Message)
+				return nil
+			}
+		}
 		if status != 201 {
 			fmt.Println("failed")
 			return printAPIError(respBody, status)
