@@ -90,6 +90,10 @@ type cliGitResult struct {
 	CommitSHA  string           `json:"commit_sha,omitempty"`
 	ValuesFile string           `json:"values_file,omitempty"`
 	DryRun     *cliDryRunResult `json:"dry_run,omitempty"`
+	// Warnings are plain sentences from the server about things the
+	// change does NOT do (for an upgrade: settings that stay on the old
+	// chart's values). They are printed for a preview and for a real run.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // printGitResult prints a cliGitResult the same way every v4 write command
@@ -99,6 +103,11 @@ func printGitResult(g *cliGitResult) {
 	if g == nil {
 		return
 	}
+	defer func() {
+		for _, w := range g.Warnings {
+			fmt.Printf("  Warning: %s\n", w)
+		}
+	}()
 	if g.DryRun != nil {
 		printDryRun(g.DryRun)
 		return
