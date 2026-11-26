@@ -248,13 +248,19 @@ func sourceTextAt(line string, col int, n *yaml.Node) (string, bool) {
 		if c == "" || !strings.HasPrefix(rest, c) {
 			continue
 		}
-		tail := strings.TrimRight(rest[len(c):], " \t\r")
-		if tail == "" || strings.HasPrefix(strings.TrimLeft(rest[len(c):], " \t"), "#") {
+		// What follows the value on its line must be nothing, or a YAML
+		// comment. Anything else (a flow-style "}" for one) means this is
+		// not a plain "key: value" line and it is left alone.
+		tail := strings.TrimLeft(strings.TrimRight(rest[len(c):], " \t\r"), " \t")
+		if tail == "" || tail[0] == yamlCommentMarker {
 			return c, true
 		}
 	}
 	return "", false
 }
+
+// yamlCommentMarker starts a YAML comment.
+const yamlCommentMarker byte = '#'
 
 // followDefaultsEditIsExact proves the edited file is the original with
 // exactly the moved settings changed to the new defaults, and nothing else.

@@ -98,12 +98,12 @@ func (o *Orchestrator) checkChartVersion(ctx context.Context, addon, repoURL, ch
 		return nil
 	}
 	if err != nil {
-		// The cause goes to the log in the safe form only: the raw error of
-		// a chart download repeats the whole address, sign-in details and
-		// all.
+		// The error goes to the log as a VALUE, never as text: the log sink
+		// replaces its words with the error's class, because the raw error
+		// of a chart download repeats the whole address, sign-in details
+		// and all.
 		slog.Warn("chart version check: could not read the chart repository",
-			"addon", addon, "chart", chart, "version", version,
-			"repo", credsafe.SafeRepoURL(repoURL), "cause", credsafe.LogClass(err))
+			"addon", addon, "chart", chart, "version", version, "error", err)
 		return newUserFacingError(ErrChartVersionLookupFailed, ChartVersionLookupFailedMessage(addon, version, repoURL))
 	}
 	if !found {

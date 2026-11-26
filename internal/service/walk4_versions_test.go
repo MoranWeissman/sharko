@@ -39,7 +39,7 @@ func TestVersionNotLoadedIssue(t *testing.T) {
 		SyncedRevision:       "6.9.0",
 		Conditions: []models.AppCondition{{
 			Type:    "ComparisonError",
-			Message: `chart "podinfo" version "99.0.0" not found in https://user:hunter2@charts.example repository`,
+			Message: `chart "podinfo" version "99.0.0" not found in https://charts.example/repo?access_token=hunter2 repository`,
 		}},
 	}
 	got := versionNotLoadedIssue(app, "99.0.0")

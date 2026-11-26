@@ -313,7 +313,7 @@ func TestUpgrade_V4_ChartRepositoryUnreachable_DoesNotBlameTheVersion(t *testing
 	orch := seedPodinfoV4Repo(t, git, "6.7.1")
 	seedClusterAddonsEntry(t, git, "spoke-1", "podinfo", models.ClusterAddonsAddon{Enabled: true})
 	orch.SetChartVersionCheck(func(context.Context, string, string, string) (bool, bool, error) {
-		return false, true, errors.New(`Get "https://user:hunter2@stefanprodan.github.io/podinfo/index.yaml": dial tcp: no such host`)
+		return false, true, errors.New(`Get "https://stefanprodan.github.io/podinfo/index.yaml?access_token=hunter2": dial tcp: no such host`)
 	})
 
 	_, err := orch.UpgradeAddon(context.Background(), UpgradeAddonRequest{Addon: "podinfo", Version: "6.8.0"})
