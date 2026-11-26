@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'
+import { apiFailureSentence } from '@/lib/apiFailure'
 import { CONNECTION_FAILURE_MESSAGES, type ConnectionFailureMessageId } from '@/generated/connection-sentences'
 
 // The sentences that tell "AWS answered and turned Sharko's login down",
@@ -32,7 +33,10 @@ export function isAWSUnreachableMessageId(id: string | undefined): boolean {
   return id !== undefined && (AWS_UNREACHABLE_MESSAGE_IDS as readonly string[]).includes(id)
 }
 
-export type ConnectionHealthState = 'idle' | 'testing' | 'ok' | 'error'
+// 'unchecked' = the check was refused (the person's role may not run it) or
+// turned away by a request limit. It says nothing about the connection, so it
+// is never counted as failing and never sends anyone to Settings.
+export type ConnectionHealthState = 'idle' | 'testing' | 'ok' | 'error' | 'unchecked'
 
 export interface ConnectionHealth {
   git: ConnectionHealthState
@@ -48,6 +52,11 @@ export interface ConnectionHealth {
   anyFailing: boolean
   /** Plain-words messages for every connection currently failing. */
   failingMessages: string[]
+  /**
+   * Set when a check was refused or turned away (not allowed, or a request
+   * limit) instead of run. One plain sentence; null when every check ran.
+   */
+  uncheckedMessage: string | null
   refresh: () => void
 }
 
@@ -74,12 +83,16 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
   const [vaultMessage, setVaultMessage] = useState<string | undefined>()
   const [vaultMessageId, setVaultMessageId] = useState<string | undefined>()
   const [loading, setLoading] = useState(enabled)
+  const [uncheckedGit, setUncheckedGit] = useState<string | undefined>()
+  const [uncheckedVault, setUncheckedVault] = useState<string | undefined>()
 
   const refresh = useCallback(() => {
     setLoading(true)
     setGit('testing')
     setArgocd('testing')
     setVault('testing')
+    setUncheckedGit(undefined)
+    setUncheckedVault(undefined)
 
     api
       .testConnection()
@@ -90,6 +103,13 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
         setArgocdMessage(res.argocd.message)
       })
       .catch((err: unknown) => {
+        const refused = apiFailureSentence(err)
+        if (refused) {
+          setGit('unchecked')
+          setArgocd('unchecked')
+          setUncheckedGit(refused)
+          return
+        }
         setGit('error')
         setArgocd('error')
         const msg = err instanceof Error ? err.message : undefined
@@ -105,6 +125,12 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
         setVaultMessageId(res.message_id)
       })
       .catch((err: unknown) => {
+        const refused = apiFailureSentence(err)
+        if (refused) {
+          setVault('unchecked')
+          setUncheckedVault(refused)
+          return
+        }
         setVault('error')
         setVaultMessage(err instanceof Error ? err.message : undefined)
         setVaultMessageId(undefined)
@@ -147,6 +173,7 @@ export function useConnectionHealth(enabled = true): ConnectionHealth {
     loading,
     anyFailing: failingMessages.length > 0,
     failingMessages,
+    uncheckedMessage: uncheckedGit ?? uncheckedVault ?? null,
     refresh,
   }
 }

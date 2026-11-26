@@ -147,7 +147,8 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
     });
 
     openDiff();
-    expect(screen.getByText(/No differences — this secret's addon labels match Git/)).toBeInTheDocument();
+    expect(screen.getByText("No differences found at the last check — this secret's addon labels matched Git.")).toBeInTheDocument();
+    expect(screen.queryByText("No differences — this secret's addon labels match Git.")).not.toBeInTheDocument();
     expect(screen.queryByText(/Label Drift Detected/)).not.toBeInTheDocument();
   });
 
@@ -168,7 +169,8 @@ describe('ClusterDetail — label drift diff (V3 G2)', () => {
     });
 
     openDiff();
-    expect(screen.getByText(/No differences — this secret's addon labels match Git/)).toBeInTheDocument();
+    expect(screen.getByText("No differences found at the last check — this secret's addon labels matched Git.")).toBeInTheDocument();
+    expect(screen.queryByText("No differences — this secret's addon labels match Git.")).not.toBeInTheDocument();
     expect(screen.queryByText(/Label Drift Detected/)).not.toBeInTheDocument();
   });
 

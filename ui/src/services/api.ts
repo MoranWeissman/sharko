@@ -54,6 +54,7 @@ import type {
   VersionMatrixResponse,
 } from './models'
 import { getToken, clearSession } from '@/lib/authStorage'
+import { NOT_ALLOWED_SENTENCE } from '@/lib/apiFailure'
 
 const BASE_URL = '/api/v1'
 
@@ -199,7 +200,14 @@ export class ApiError extends Error {
   body: ApiErrorBody
 
   constructor(status: number, body: ApiErrorBody, fallbackMessage: string) {
-    super(body.error || fallbackMessage)
+    // The server's role refusal reads "action 'x' requires role 'operator', you
+    // have 'viewer'": an internal action name. A person gets the plain
+    // sentence; the raw text stays in `body` for anyone who needs it.
+    super(
+      status === 403 && /^action '[^']*' requires role /.test(body.error ?? '')
+        ? NOT_ALLOWED_SENTENCE
+        : body.error || fallbackMessage,
+    )
     this.name = 'ApiError'
     this.status = status
     this.code = typeof body.code === 'string' ? body.code : undefined
@@ -216,6 +224,10 @@ export class ApiError extends Error {
  * fallback the six call sites below all duplicated before this) and throws
  * an ApiError built from it. Never returns.
  */
+// The sentence the server sends for a wrong current password (internal/auth,
+// ErrCurrentPasswordIncorrect). The browser only compares against it.
+export const CURRENT_PASSWORD_INCORRECT_ERROR = 'current password is incorrect'
+
 async function throwApiError(res: Response): Promise<never> {
   const body = (await res.json().catch(() => ({ error: res.statusText }))) as ApiErrorBody
   throw new ApiError(res.status, body, res.statusText)
@@ -477,11 +489,12 @@ export async function testClusterConnection(
         hint: body.hint,
       }
     }
-    throw new Error(body.error || 'Service unavailable')
+    throw new ApiError(res.status, body, 'Service unavailable')
   }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error((body as { error?: string }).error || res.statusText)
+    // An ApiError, so the page can tell "your role may not run this" (403)
+    // and "too many requests" (429) apart from a cluster that really failed.
+    await throwApiError(res)
   }
   return res.json()
 }
@@ -1384,6 +1397,8 @@ export interface InitStatus {
  *   - "no_connection"       — no active Git connection is configured.
  *   - "not_bootstrapped"    — the repo is reachable but genuinely not set up.
  *   - "connection_error"    — the Git repo could not be reached/verified.
+ *   - "git_rate_limited"   — the Git host said Sharko has asked too often.
+ *     Nothing is broken; it clears by itself.
  *   - "error"               — the HTTP probe itself failed client-side.
  *   - "bootstrap_unreachable" — ArgoCD can't reach/evaluate the Git repo.
  *   - "bootstrap_degraded"  — the engine app is missing or genuinely degraded.
@@ -1396,6 +1411,7 @@ export type RepoStatusReason =
   | 'no_connection'
   | 'not_bootstrapped'
   | 'connection_error'
+  | 'git_rate_limited'
   | 'error'
   | 'bootstrap_unreachable'
   | 'bootstrap_degraded'
@@ -1714,7 +1730,29 @@ export const api = {
 
 
   // Auth
-  updatePassword: (currentPassword: string, newPassword: string) => postJSON<{ status: string }>('/auth/update-password', { current_password: currentPassword, new_password: newPassword }),
+  // A wrong CURRENT password comes back as 401 too, but it is the answer to the
+  // form, not a sign the login ended. Treating it like a lost session logged
+  // the person out with no message (walk 5, L3). Only the other 401s end the
+  // session here.
+  updatePassword: async (currentPassword: string, newPassword: string) => {
+    const res = await fetch(`${BASE_URL}/auth/update-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    })
+    if (res.status === 401) {
+      const body = (await res.clone().json().catch(() => ({}))) as { error?: string }
+      if (body.error !== CURRENT_PASSWORD_INCORRECT_ERROR) {
+        clearSession()
+        window.location.reload()
+        throw new Error('Session expired')
+      }
+    }
+    if (!res.ok) {
+      await throwApiError(res)
+    }
+    return unwrapAttribution<{ status: string }>(await res.json())
+  },
 
   // My account (tiered attribution)
   getMe: () => fetchJSON<import('./models').MeResponse>('/users/me'),

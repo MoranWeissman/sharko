@@ -18,6 +18,7 @@ import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { apiFailureSentence } from '@/lib/apiFailure'
 import { ErrorDetail } from '@/components/ErrorDetail'
 import { ARGOCD_TOKEN_HELP, ARGOCD_TOKEN_HELP_URL } from '@/components/argocdTokenHelp'
 
@@ -39,9 +40,12 @@ interface TestStatus {
   argocdAuth?: string
 }
 
+// 'unchecked' = the check was refused (the role may not run it) or turned away
+// by a request limit. It is not a result: the mark stays grey and a sentence
+// says why, so a healthy connection never shows a red cross.
 interface LiveStatus {
-  git: 'idle' | 'testing' | 'ok' | 'error'
-  argocd: 'idle' | 'testing' | 'ok' | 'error'
+  git: 'idle' | 'testing' | 'ok' | 'error' | 'unchecked'
+  argocd: 'idle' | 'testing' | 'ok' | 'error' | 'unchecked'
 }
 
 const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
@@ -72,6 +76,7 @@ export function ConnectionSection() {
   const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({ git: 'idle', argocd: 'idle' })
   const [justSaved, setJustSaved] = useState(false)
+  const [liveNote, setLiveNote] = useState<string | null>(null)
 
   const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; reason?: string } | null>(null)
   const [initState, setInitState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
@@ -109,6 +114,7 @@ export function ConnectionSection() {
 
   const fetchLiveStatus = useCallback(() => {
     setLiveStatus({ git: 'testing', argocd: 'testing' })
+    setLiveNote(null)
     api
       .testConnection()
       .then((res) => {
@@ -117,7 +123,15 @@ export function ConnectionSection() {
           argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
         })
       })
-      .catch(() => setLiveStatus({ git: 'error', argocd: 'error' }))
+      .catch((err: unknown) => {
+        const refused = apiFailureSentence(err)
+        if (refused) {
+          setLiveStatus({ git: 'unchecked', argocd: 'unchecked' })
+          setLiveNote(refused)
+          return
+        }
+        setLiveStatus({ git: 'error', argocd: 'error' })
+      })
   }, [])
 
   const fetchRepoStatus = useCallback(() => {
@@ -367,7 +381,7 @@ export function ConnectionSection() {
               {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
               {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
               {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-              {liveStatus.git === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+              {(liveStatus.git === 'idle' || liveStatus.git === 'unchecked') && <span className="text-[#3a6a8a]">—</span>}
             </span>
             <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
               <Server className="h-3.5 w-3.5" />
@@ -375,10 +389,15 @@ export function ConnectionSection() {
               {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
               {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
               {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-              {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+              {(liveStatus.argocd === 'idle' || liveStatus.argocd === 'unchecked') && <span className="text-[#3a6a8a]">—</span>}
             </span>
           </div>
         </div>
+      )}
+      {isEdit && liveNote && (
+        <p data-testid="connection-live-note" className="text-xs text-[#2a5a7a] dark:text-gray-400">
+          {liveNote}
+        </p>
       )}
 
       <form

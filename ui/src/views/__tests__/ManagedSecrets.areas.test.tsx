@@ -364,3 +364,55 @@ describe('the detail routes load directly (SN-4)', () => {
     expect(screen.getByTestId('secret-detail-back')).toHaveAttribute('href', '/secrets/addons?state=in_sync')
   })
 })
+
+// Walk 6: with a request limit hit the Secrets page showed all zeros and "No
+// secrets", as if Sharko had lost them. Reading failed; nothing was lost.
+describe('a Secrets list that cannot be read (walk 6)', () => {
+  it('first read refused: says why, shows no zeros and no "No cluster connection Secrets yet"', async () => {
+    mockGetManagedSecrets.mockRejectedValue(
+      Object.assign(new Error('Too Many Requests'), { status: 429, code: 'upstream_rate_limit' }),
+    )
+    renderApp(['/secrets/connections'])
+    const box = await screen.findByTestId('secrets-load-error')
+    expect(box.textContent).toBe(
+      'GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment.',
+    )
+    expect(screen.queryByText('No cluster connection Secrets yet.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^No secrets/)).not.toBeInTheDocument()
+  })
+
+  it('an unknown failure still says it plainly', async () => {
+    mockGetManagedSecrets.mockRejectedValue(new Error('boom'))
+    renderApp(['/secrets/connections'])
+    const box = await screen.findByTestId('secrets-load-error')
+    expect(box.textContent).toBe('Sharko could not read the Secrets list just now. Try again in a moment.')
+  })
+
+  it('a failed refresh keeps the last list on screen and says it is the last one read', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderApp(['/secrets/connections'])
+      await waitFor(() => expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument())
+      mockGetManagedSecrets.mockRejectedValue(
+        Object.assign(new Error('rate limit exceeded'), { status: 429, code: 'sharko_rate_limit' }),
+      )
+      await vi.advanceTimersByTimeAsync(31_000)
+      const note = await screen.findByTestId('secrets-stale-note')
+      expect(note.textContent).toBe(
+        'Showing what Sharko read last. Sharko is getting too many requests from your address right now. Try again in a moment.',
+      )
+      expect(screen.getByTestId('secret-row-connection-prod-eu')).toBeInTheDocument()
+      expect(screen.queryByTestId('secrets-load-error')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the detail page says the list could not be read instead of "this secret is gone"', async () => {
+    mockGetManagedSecrets.mockRejectedValue(new Error('boom'))
+    renderApp(['/secrets/connections/prod-eu'])
+    const msg = await screen.findByTestId('secret-detail-load-error')
+    expect(msg.textContent).toBe('Sharko could not read the Secrets list just now. Try again in a moment.')
+    expect(screen.queryByText("This secret isn't in the current list")).not.toBeInTheDocument()
+  })
+})

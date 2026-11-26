@@ -85,6 +85,7 @@ export type { ArrowStatus, RepoStatus, ArrowVerdict } from '@/lib/repoHealth'
 export { deriveSharkoRepoArrow, deriveArgoRepoArrow } from '@/lib/repoHealth'
 import type { ArrowStatus, RepoStatus } from '@/lib/repoHealth'
 import { deriveSharkoRepoArrow, deriveArgoRepoArrow } from '@/lib/repoHealth'
+import { apiFailureSentence } from '@/lib/apiFailure'
 
 /**
  * Arrow 3 (per cluster) — Sharko's own direct connection / test state.
@@ -373,9 +374,17 @@ function ClusterStatusLine({
 // The page
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Pill text on the cluster cards when the cluster list could not be read. Pinned by exact text. */
+export const SYSTEM_NOT_CHECKED_LABEL = 'Not checked just now'
+/** Card text when the cluster list could not be read and no reason is known. Pinned by exact text. */
+export const SYSTEM_CLUSTERS_UNREAD_SENTENCE = 'Sharko could not read the cluster list just now. Try again in a moment.'
+
 export function SystemView() {
   const [repoStatus, setRepoStatus] = useState<RepoStatus | null>(null)
   const [clusters, setClusters] = useState<Cluster[]>([])
+  // Why the cluster list could not be read (null when it could). While it is
+  // set the cluster cards say "not checked just now", never "No clusters yet".
+  const [clustersError, setClustersError] = useState<string | null>(null)
   const [alertDescriptions, setAlertDescriptions] = useState<Record<string, string>>({})
   const [argocdVersion, setArgocdVersion] = useState<string | undefined>(undefined)
   const [capabilities, setCapabilities] = useState<SystemCapabilitiesResponse | null>(null)
@@ -402,7 +411,12 @@ export function SystemView() {
     ]).then(([repoRes, clustersRes, notifRes, obsRes, capsRes, homeRes, healthRes, fleetRes]) => {
       if (cancelled) return
       if (repoRes.status === 'fulfilled') setRepoStatus(repoRes.value)
-      if (clustersRes.status === 'fulfilled') setClusters(clustersRes.value.clusters ?? [])
+      if (clustersRes.status === 'fulfilled') {
+        setClusters(clustersRes.value.clusters ?? [])
+        setClustersError(null)
+      } else {
+        setClustersError(apiFailureSentence(clustersRes.reason) ?? SYSTEM_CLUSTERS_UNREAD_SENTENCE)
+      }
       if (notifRes.status === 'fulfilled') {
         const map: Record<string, string> = {}
         for (const n of notifRes.value.notifications ?? []) {
@@ -554,28 +568,28 @@ export function SystemView() {
             from="Sharko"
             to="Managed Clusters"
             caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{SHARKO_CONN_LABEL}</span>}
-            status={sharkoClusterAgg.status}
+            status={clustersError ? 'unknown' : sharkoClusterAgg.status}
             // The count ("N of M healthy") only lives on the pill when
             // there are no clusters to show a ClusterStatusLine for —
             // otherwise that line is the one place the count is said.
-            statusLabel={managedClusters.length === 0 ? sharkoClusterAgg.label : undefined}
-            detail={SHARKO_CONN_TOOLTIP}
+            statusLabel={clustersError ? SYSTEM_NOT_CHECKED_LABEL : managedClusters.length === 0 ? sharkoClusterAgg.label : undefined}
+            detail={clustersError ?? SHARKO_CONN_TOOLTIP}
             actionTo="/clusters"
             actionLabel="Open the Managed Clusters page"
           >
-            <ClusterStatusLine clusters={managedClusters} derive={deriveSharkoClusterStatus} />
+            {!clustersError && <ClusterStatusLine clusters={managedClusters} derive={deriveSharkoClusterStatus} />}
           </ArrowCard>
           <ArrowCard
             from="ArgoCD"
             to="Managed Clusters"
             caption={<span className="text-xs font-medium text-[#5a8aaa] dark:text-gray-500">{ARGOCD_CONN_LABEL}</span>}
-            status={argoClusterAgg.status}
-            statusLabel={managedClusters.length === 0 ? argoClusterAgg.label : undefined}
-            detail={ARGOCD_CONN_TOOLTIP}
+            status={clustersError ? 'unknown' : argoClusterAgg.status}
+            statusLabel={clustersError ? SYSTEM_NOT_CHECKED_LABEL : managedClusters.length === 0 ? argoClusterAgg.label : undefined}
+            detail={clustersError ?? ARGOCD_CONN_TOOLTIP}
             actionTo="/clusters"
             actionLabel="Open the Managed Clusters page"
           >
-            <ClusterStatusLine clusters={managedClusters} derive={deriveArgoClusterStatus} />
+            {!clustersError && <ClusterStatusLine clusters={managedClusters} derive={deriveArgoClusterStatus} />}
           </ArrowCard>
         </div>
       </section>

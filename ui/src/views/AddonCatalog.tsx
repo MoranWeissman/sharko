@@ -40,7 +40,7 @@ import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import { RoleGuard } from '@/components/RoleGuard'
+import { RoleGuard, OPERATOR_AND_UP } from '@/components/RoleGuard'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
 import { VersionPicker } from '@/components/VersionPicker'
 import {
@@ -1454,7 +1454,7 @@ export function AddonCatalog() {
             above does exactly the same thing, so the CTA was a redundant
             second door to the same place. "Add addon manually" stays as
             the secondary path for charts not in the Marketplace. */}
-        <RoleGuard adminOnly>
+        <RoleGuard roles={OPERATOR_AND_UP}>
           <button
             type="button"
             onClick={openAddAddon}
@@ -2038,7 +2038,7 @@ export function AddonCatalog() {
                   <Store className="h-4 w-4" />
                   Browse the Marketplace
                 </button>
-                <RoleGuard adminOnly>
+                <RoleGuard roles={OPERATOR_AND_UP}>
                   <button
                     type="button"
                     onClick={openAddAddon}

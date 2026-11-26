@@ -15,6 +15,10 @@ export interface RepoStatus {
   reason?: RepoStatusReason
 }
 
+/** Said on the System page while the Git host is limiting Sharko. Pinned by exact text. */
+export const GIT_LIMIT_ARROW_DETAIL =
+  "Can't check right now: the Git host says Sharko has asked too often. Nothing is broken. Try again in a moment."
+
 export interface ArrowVerdict {
   status: ArrowStatus
   detail: string
@@ -30,6 +34,9 @@ export function deriveSharkoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
       status: 'degraded',
       detail: 'No Git connection is configured. Sharko needs one for every commit and pull request.',
     }
+  }
+  if (repo.reason === 'git_rate_limited') {
+    return { status: 'unknown', detail: GIT_LIMIT_ARROW_DETAIL }
   }
   if (repo.reason === 'connection_error' || repo.reason === 'error') {
     return {
@@ -53,6 +60,9 @@ export function deriveSharkoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
 export function deriveArgoRepoArrow(repo: RepoStatus | null): ArrowVerdict {
   if (!repo) {
     return { status: 'unknown', detail: "Couldn't determine ArgoCD's repo sync status." }
+  }
+  if (repo.reason === 'git_rate_limited') {
+    return { status: 'unknown', detail: GIT_LIMIT_ARROW_DETAIL }
   }
   if (!repo.initialized) {
     return {

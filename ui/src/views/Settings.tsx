@@ -15,6 +15,22 @@ import { InlineCredentialsSection } from '@/views/settings/InlineCredentialsSect
 import { AddonValuesEngineSection } from '@/views/settings/AddonValuesEngineSection'
 import { useAuth } from '@/hooks/useAuth'
 
+// Every part the page can show. An address that names any other part (a typo,
+// an old link) falls back to the first one instead of an empty right side.
+const KNOWN_SECTIONS = new Set([
+  'connections',
+  'secrets-provider',
+  'gitops',
+  'ai',
+  'my-account',
+  'users',
+  'api-keys',
+  'catalog-sources',
+  'probe-mode',
+  'inline-credentials',
+  'addon-values-engine',
+])
+
 const ALLOWED_NON_ADMIN = new Set([
   'connections',
   'secrets-provider',
@@ -30,7 +46,7 @@ export function Settings() {
   const setSection = (s: string) => setSearchParams({ section: s }, { replace: true })
 
   useEffect(() => {
-    if (!isAdmin && !ALLOWED_NON_ADMIN.has(section)) {
+    if (!KNOWN_SECTIONS.has(section) || (!isAdmin && !ALLOWED_NON_ADMIN.has(section))) {
       setSearchParams({ section: 'connections' }, { replace: true })
     }
   }, [isAdmin, section, setSearchParams])
