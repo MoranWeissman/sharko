@@ -480,7 +480,17 @@ func detectWrappedClusterValuesFile(path string, body []byte) (addon string, wra
 		return "", false
 	}
 	addon = strings.TrimSuffix(file, ext)
-	if orchestrator.DetectLegacyWrap(body, addon, "") {
+	// Some charts really have a top block with their own name (reloader,
+	// datadog, loki), and a file that uses it is correct. So the add-on's
+	// global values file, next to the clusters folder, is asked what the
+	// chart's top settings are. When it is not there the answer is "cannot
+	// tell", and the file is not failed.
+	globalDir := filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(path))), "global")
+	globalValues, err := os.ReadFile(filepath.Join(globalDir, addon+".yaml")) // #nosec G304 -- a sibling of the file the operator asked this command to check, in their own checkout
+	if err != nil {
+		globalValues, _ = os.ReadFile(filepath.Join(globalDir, addon+".yml")) // #nosec G304 -- same as above
+	}
+	if orchestrator.ClusterValuesWrapped(body, globalValues, addon) {
 		return addon, true
 	}
 	return "", false

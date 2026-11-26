@@ -1021,7 +1021,18 @@ func (s *ClusterService) getClusterAddonValuesV4ReadOnly(ctx context.Context, re
 	if len(data) > 0 {
 		resp.CurrentOverrides = string(data)
 		resp.FileExists = true
-		resp.WrappedUnderAddonName = orchestrator.DetectLegacyWrap(data, resp.AddonName, "")
+		// "Wrapped" is decided against the chart's own top settings, read
+		// from the add-on's global values file. Some charts (reloader,
+		// datadog, loki) really have a top block with their own name, and a
+		// file that uses it is correct. A global file that cannot be read
+		// means "cannot tell", and then nothing is said.
+		var globalValues []byte
+		if gPath, gErr := orchestrator.V4GlobalValuesPath(resp.AddonName); gErr == nil {
+			if g, readErr := gp.GetFileContent(ctx, gPath, s.branch()); readErr == nil {
+				globalValues = g
+			}
+		}
+		resp.WrappedUnderAddonName = orchestrator.ClusterValuesWrapped(data, globalValues, resp.AddonName)
 	}
 	return resp, nil
 }

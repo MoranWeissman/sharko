@@ -47,6 +47,8 @@ When the file is not in Git yet, the tab says "There is no file at `<path>` in y
 
 When a per-cluster file is wrapped under the addon's name, the cluster page warns: "None of the settings in this file take effect. They are all inside a block named "`<addon>`:". Move them out of that block so they start at the left edge of the file."
 
+Some charts really have a top block with the addon's own name. Reloader is one (`reloader:` then `deployment:` then `replicas: 2` is correct), and so are datadog, loki, tempo, falco and opencost. Such a file is not wrapped, and Sharko does not warn about it. Sharko tells the two apart by looking at the top settings in `values/global/<addon>.yaml`. When that file is missing or holds no settings, Sharko cannot tell and gives no warning, on the cluster page and in `sharko validate-config`.
+
 ## Changing values: edit the file in Git
 
 1. Open the file in your addons repository: `values/global/<addon>.yaml` for every cluster, or `values/clusters/<cluster>/<addon>.yaml` for one cluster. If the cluster file does not exist yet, create it.
