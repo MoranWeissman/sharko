@@ -866,7 +866,7 @@ function InlineUpgradeResults({
                   Upgrade {addonName} to {targetVersion} on all clusters?
                 </p>
               )}
-              <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">This opens one pull request. Every cluster that has {addonName} switched on moves to {targetVersion} once it merges.</p>
+              <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">This opens one pull request. Every cluster that has {addonName} switched on moves to {targetVersion} once it merges. A cluster that is already on a newer version stays there.</p>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"

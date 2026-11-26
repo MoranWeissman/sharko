@@ -416,6 +416,37 @@ func TestUpgrade_V4_GoingDown_IsTitledDowngrade(t *testing.T) {
 	}
 }
 
+// "Upgrade all clusters to 6.8.0" must not move a cluster that is already on
+// 6.9.0 back down. It keeps its own version and is named in a warning.
+func TestUpgradeAddon_V4_AllClusters_NeverMovesAClusterDown(t *testing.T) {
+	git := newMockGitProvider()
+	orch := seedPodinfoV4Repo(t, git, "6.7.1")
+	seedClusterAddonsEntry(t, git, "spoke-1", "podinfo", models.ClusterAddonsAddon{Enabled: true})
+	seedClusterAddonsEntry(t, git, "spoke-2", "podinfo", models.ClusterAddonsAddon{Enabled: true, Version: "6.9.0"})
+	spoke2Before := string(git.files[assignPath(t, "spoke-2")])
+
+	result, err := orch.UpgradeAddon(context.Background(), UpgradeAddonRequest{Addon: "podinfo", Version: "6.8.0"})
+	if err != nil {
+		t.Fatalf("UpgradeAddon: %v", err)
+	}
+	if got := catalogVersionOf(t, git, "podinfo"); got != "6.8.0" {
+		t.Errorf("catalog version = %q, want 6.8.0", got)
+	}
+	if got := string(git.files[assignPath(t, "spoke-2")]); got != spoke2Before {
+		t.Errorf("spoke-2 is on 6.9.0, newer than 6.8.0 — its file must not change:\n%s", got)
+	}
+	want := "These clusters already run a newer version of podinfo than 6.8.0 and were left as they are: spoke-2 (6.9.0)."
+	found := false
+	for _, w := range result.Warnings {
+		if w == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %q, want one to be exactly %q", result.Warnings, want)
+	}
+}
+
 // The same version again changes nothing and opens nothing.
 func TestUpgrade_V4_SameVersion_SaysNothingToChange(t *testing.T) {
 	git := newMockGitProvider()

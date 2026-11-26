@@ -29,7 +29,8 @@ const UpgradeAddonLong = `Upgrades one addon in one pull request.
 
 Without --cluster the addon is upgraded for ALL clusters: the version in the
 catalog changes, and a cluster that had its own version for this addon goes
-back to following the catalog.
+back to following the catalog. A cluster that is already on a newer version
+is left as it is.
 
 With --cluster only that cluster moves. The catalog and the other clusters
 stay as they are. To move several clusters at once, use 'sharko

@@ -125,7 +125,7 @@ describe('AddonDetail — the main Upgrade button (pre-release walk 4)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Upgrade to 6\.8\.0/ }))
     expect(await screen.findByText('Upgrade podinfo to 6.8.0 on all clusters?')).toBeInTheDocument()
     expect(
-      screen.getByText('This opens one pull request. Every cluster that has podinfo switched on moves to 6.8.0 once it merges.'),
+      screen.getByText('This opens one pull request. Every cluster that has podinfo switched on moves to 6.8.0 once it merges. A cluster that is already on a newer version stays there.'),
     ).toBeInTheDocument()
     // The old text did not say which clusters.
     expect(screen.queryByText('Upgrade podinfo to 6.8.0?')).not.toBeInTheDocument()

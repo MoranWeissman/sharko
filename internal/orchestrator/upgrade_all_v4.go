@@ -14,7 +14,10 @@
 //     without its own pin runs;
 //  2. removes the addon's own version pin from every cluster that has it
 //     switched on, so "all clusters" really means all of them, and a cluster
-//     that was moved ahead earlier does not stay behind on its old pin;
+//     that was moved ahead earlier does not stay behind on its old pin. One
+//     exception: a cluster whose own pin is NEWER than the version asked
+//     for keeps it, and is named in a warning — an upgrade never moves a
+//     cluster down;
 //  3. moves the settings in values/global/<addon>.yaml that are still the old
 //     chart's defaults to the new chart's defaults (values_follow_defaults.go)
 //     — only in a file Sharko generated, and never a setting a person changed.
@@ -261,16 +264,29 @@ func (o *Orchestrator) planUpgradeAddonV4(ctx context.Context, state *upgradeV4S
 	oldVersion := entry.Version
 
 	// Which clusters carry their own pin for this addon while it is on?
+	//
+	// A cluster whose own pin is NEWER than the version asked for keeps it.
+	// "Upgrade all clusters to 6.8.0" must not quietly move a cluster that
+	// somebody already put on 6.9.0 back down; that cluster is named in a
+	// warning instead. Going down on purpose is still possible: the
+	// some-clusters upgrade does it behind a typed confirmation.
 	type pinned struct{ path, cluster string }
 	var pins []pinned
+	var keptAhead []string
 	for _, p := range sortedByteMapKeys(state.clusterCurrent) {
 		spec, err := models.LoadClusterAddons(state.clusterCurrent[p])
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", p, err)
 		}
-		if a, has := spec.Addons[addon]; has && a.Enabled && a.Version != "" {
-			pins = append(pins, pinned{path: p, cluster: state.clusterNames[p]})
+		a, has := spec.Addons[addon]
+		if !has || !a.Enabled || a.Version == "" {
+			continue
 		}
+		if cmp, ok := compareChartVersions(a.Version, version); ok && cmp > 0 {
+			keptAhead = append(keptAhead, fmt.Sprintf("%s (%s)", state.clusterNames[p], a.Version))
+			continue
+		}
+		pins = append(pins, pinned{path: p, cluster: state.clusterNames[p]})
 	}
 
 	if oldVersion == version && len(pins) == 0 {
@@ -312,6 +328,10 @@ func (o *Orchestrator) planUpgradeAddonV4(ctx context.Context, state *upgradeV4S
 	// 3. the seeded global values file follows the chart's defaults.
 	if oldVersion != version {
 		o.followDefaultsInGlobalValues(ctx, state, addon, entry, oldVersion, version)
+	}
+
+	if len(keptAhead) > 0 {
+		state.warnings = append(state.warnings, ClustersKeptAheadWarning(addon, version, keptAhead))
 	}
 
 	state.planned = append(state.planned, plannedUpgrade{addon: addon, oldVersion: oldVersion, newVersion: version, unpinned: unpinned})
@@ -376,6 +396,14 @@ func (o *Orchestrator) followDefaultsInGlobalValues(ctx context.Context, state *
 	if len(res.Kept) > 0 {
 		state.warnings = append(state.warnings, ValuesKeptOldDefaultsWarning(gPath, res.Kept))
 	}
+}
+
+// ClustersKeptAheadWarning names the clusters an all-clusters upgrade did not
+// touch because they already run something newer.
+func ClustersKeptAheadWarning(addon, version string, clusters []string) string {
+	return fmt.Sprintf(
+		"These clusters already run a newer version of %s than %s and were left as they are: %s.",
+		addon, version, strings.Join(clusters, ", "))
 }
 
 // ValuesNotComparedWarning is said when the old and new chart could not be

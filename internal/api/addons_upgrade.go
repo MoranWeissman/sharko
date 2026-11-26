@@ -14,7 +14,7 @@ import (
 // handleUpgradeAddon godoc
 //
 // @Summary Upgrade addon
-// @Description Upgrades an addon to a new version, for all clusters or for one cluster, in one pull request. For all clusters (no "cluster" in the body): sets the addon's version in the catalog, removes the addon's own version pin from every cluster that has it switched on, and moves the settings in the addon's generated global values file that are still the old chart's defaults to the new chart's defaults (a setting somebody changed is never touched). For one cluster: sets that cluster's own version pin. The version must exist in the addon's chart repository; a version that is not there is refused before any pull request (400, code version_not_found). Send dry_run=true to get the exact files and diffs without opening a pull request.
+// @Description Upgrades an addon to a new version, for all clusters or for one cluster, in one pull request. For all clusters (no "cluster" in the body): sets the addon's version in the catalog, removes the addon's own version pin from every cluster that has it switched on (a cluster already on a newer version is left as it is and named in warnings), and moves the settings in the addon's generated global values file that are still the old chart's defaults to the new chart's defaults (a setting somebody changed is never touched). For one cluster: sets that cluster's own version pin. The version must exist in the addon's chart repository; a version that is not there is refused before any pull request (400, code version_not_found). Send dry_run=true to get the exact files and diffs without opening a pull request.
 // @Tags addons
 // @Accept json
 // @Produce json
