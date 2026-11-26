@@ -248,6 +248,11 @@ type VersionMatrixCell struct {
 	Version          string `json:"version"`            // Deployed or configured version
 	Health           string `json:"health"`             // Healthy, Degraded, Progressing, Unknown, missing, not_enabled
 	DriftFromCatalog bool   `json:"drift_from_catalog"` // True if version differs from catalog default
+	// AheadOfCatalog is true when this cluster's version is NEWER than the
+	// catalog's — a cluster that was upgraded on its own, ahead of the
+	// rest. It differs from the catalog, but it is not "behind" and must
+	// never be offered a downgrade as if it were.
+	AheadOfCatalog bool `json:"ahead_of_catalog,omitempty"`
 }
 
 // VersionMatrixRow represents one addon across all clusters.

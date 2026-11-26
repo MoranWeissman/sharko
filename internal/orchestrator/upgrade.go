@@ -9,6 +9,50 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
+// UpgradeAddonRequest is the one request shape behind POST
+// /addons/{name}/upgrade, the main Upgrade button and `sharko upgrade-addon`.
+// Cluster empty means "for all clusters".
+type UpgradeAddonRequest struct {
+	Addon     string
+	Version   string
+	Cluster   string
+	DryRun    bool
+	AutoMerge *bool
+}
+
+// UpgradeAddon upgrades one addon, for all clusters or for one, on whichever
+// layout the repo has. On a v4 repo it supports DryRun (the exact files the
+// pull request would carry); the older layout has no preview for this call
+// and refuses a DryRun rather than writing.
+func (o *Orchestrator) UpgradeAddon(ctx context.Context, req UpgradeAddonRequest) (*GitResult, error) {
+	if req.Addon == "" {
+		return nil, newUserFacingError(ErrUpgradeRequestInvalid, "addon name is required")
+	}
+	if strings.TrimSpace(req.Version) == "" {
+		return nil, newUserFacingError(ErrUpgradeRequestInvalid, "version is required")
+	}
+	v4, err := o.isV4Repo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("Sharko stopped before upgrading %s: %w", req.Addon, err)
+	}
+	if v4 {
+		if req.Cluster != "" {
+			return o.UpgradeAddonClustersV4(ctx, UpgradeAddonClustersV4Request{
+				Addon: req.Addon, Clusters: []string{req.Cluster}, Version: req.Version,
+				DryRun: req.DryRun, Yes: true, AutoMerge: req.AutoMerge,
+			})
+		}
+		return o.UpgradeAddonsV4(ctx, []UpgradeAddonV4Request{{Addon: req.Addon, Version: req.Version}}, req.DryRun, req.AutoMerge)
+	}
+	if req.DryRun {
+		return nil, newUserFacingError(ErrUpgradeRequestInvalid, "a preview of this upgrade is not available on this repo layout")
+	}
+	if req.Cluster != "" {
+		return o.UpgradeAddonCluster(ctx, req.Addon, req.Cluster, req.Version, req.AutoMerge)
+	}
+	return o.UpgradeAddonGlobal(ctx, req.Addon, req.Version, req.AutoMerge)
+}
+
 // UpgradeAddonGlobal changes the version in the addons-catalog.yaml.
 // Affects every cluster using the global version.
 func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVersion string, autoMerge *bool) (*GitResult, error) {
@@ -18,11 +62,16 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 	if newVersion == "" {
 		return nil, fmt.Errorf("new version is required")
 	}
-	// This writes the v3 addons-catalog.yaml — see refuseV3ShapedWriteOnV4Repo.
-	// Refuse before any read on a v4 repo, whose real version pin lives in
-	// cluster-addons/<cluster>.yaml instead.
-	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "upgrading an addon's global version through this endpoint", V4UpgradeDoor); err != nil {
-		return nil, err
+	// On a v4 repo this is the all-clusters upgrade (upgrade_all_v4.go).
+	// The code below writes the v3 addons-catalog.yaml, which a v4 repo does
+	// not have and must never get. An unanswerable layout probe stops here
+	// (fail closed), for the reason refuseV3ShapedWriteOnV4Repo gives.
+	v4, err := o.isV4Repo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("Sharko stopped before upgrading %s: %w", addonName, err)
+	}
+	if v4 {
+		return o.UpgradeAddonsV4(ctx, []UpgradeAddonV4Request{{Addon: addonName, Version: newVersion}}, false, autoMerge)
 	}
 
 	catalogPath := o.paths.Catalog
@@ -61,10 +110,18 @@ func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clust
 	if newVersion == "" {
 		return nil, fmt.Errorf("new version is required")
 	}
-	// This writes the v3 per-cluster values file — see
-	// refuseV3ShapedWriteOnV4Repo. Refuse before any read on a v4 repo.
-	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "upgrading an addon's version on a cluster through this endpoint", V4UpgradeDoor); err != nil {
-		return nil, err
+	// On a v4 repo this is a one-cluster upgrade: the version pin in that
+	// cluster's cluster-addons file (upgrade_v4.go). The code below writes
+	// the v3 per-cluster values file, which a v4 repo does not read. An
+	// unanswerable layout probe stops here (fail closed).
+	v4, err := o.isV4Repo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("Sharko stopped before upgrading %s on %s: %w", addonName, clusterName, err)
+	}
+	if v4 {
+		return o.UpgradeAddonClustersV4(ctx, UpgradeAddonClustersV4Request{
+			Addon: addonName, Clusters: []string{clusterName}, Version: newVersion, Yes: true, AutoMerge: autoMerge,
+		})
 	}
 
 	valuesPath := path.Join(o.paths.ClusterValues, clusterName+".yaml")
@@ -93,10 +150,19 @@ func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]st
 	if len(upgrades) == 0 {
 		return nil, fmt.Errorf("at least one addon upgrade is required")
 	}
-	// This writes the v3 addons-catalog.yaml — see refuseV3ShapedWriteOnV4Repo.
-	// Refuse before any read on a v4 repo.
-	if err := o.refuseV3ShapedWriteOnV4Repo(ctx, "batch-upgrading addons through this endpoint", V4UpgradeDoor); err != nil {
-		return nil, err
+	// On a v4 repo this is several all-clusters upgrades in ONE pull request
+	// (upgrade_all_v4.go). The code below writes the v3 addons-catalog.yaml.
+	// An unanswerable layout probe stops here (fail closed).
+	v4, v4Err := o.isV4Repo(ctx)
+	if v4Err != nil {
+		return nil, fmt.Errorf("Sharko stopped before upgrading addons: %w", v4Err)
+	}
+	if v4 {
+		reqs := make([]UpgradeAddonV4Request, 0, len(upgrades))
+		for addonName, newVersion := range upgrades {
+			reqs = append(reqs, UpgradeAddonV4Request{Addon: addonName, Version: newVersion})
+		}
+		return o.UpgradeAddonsV4(ctx, reqs, false, autoMerge)
 	}
 
 	// Read the catalog once, apply all version changes, commit as single PR.

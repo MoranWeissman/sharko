@@ -286,6 +286,9 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 	// none on purpose — so the server fills in the newest version it knows
 	// and that resolved pin is what lands in the pull request diff.
 	orch.SetLatestVersionResolver(s.resolveLatestChartVersion)
+	// A version that is not in the chart repository is refused before the
+	// pull request, on the preview too (chart_version_check.go).
+	s.wireChartChecks(orch)
 	// Smart-values generation (v4 smartvalues wave): AddToCatalog fetches
 	// each entry's official chart values.yaml itself, once chart+version
 	// are final (which for a from_marketplace entry only happens after
@@ -388,6 +391,12 @@ func writeAddToCatalogError(w http.ResponseWriter, err error) {
 	var missing *catalog.MissingRequiredFieldError
 	var unsupportedRepo *credsafe.UnsupportedRepoURLError
 	switch {
+	case errors.Is(err, orchestrator.ErrChartVersionNotFound):
+		// The chart repository was read and does not have this version:
+		// the caller's to fix, before any pull request.
+		writeCodedError(w, http.StatusBadRequest, CodeVersionNotFound, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrChartVersionLookupFailed):
+		writeCodedError(w, http.StatusBadGateway, CodeChartRepoUnreadable, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
 		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrV4ClusterNotFound):
@@ -481,6 +490,7 @@ func (s *Server) handleEditOrgCatalogAddon(w http.ResponseWriter, r *http.Reques
 	}
 
 	orch := s.attachPRTracker(orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil))
+	s.wireChartChecks(orch)
 	result, err := orch.EditCatalogEntry(ctx, req)
 	if err != nil {
 		writeEditCatalogEntryError(w, err)
@@ -508,6 +518,12 @@ func writeEditCatalogEntryError(w http.ResponseWriter, err error) {
 	var missing *catalog.MissingRequiredFieldError
 	var unsupportedRepo *credsafe.UnsupportedRepoURLError
 	switch {
+	case errors.Is(err, orchestrator.ErrChartVersionNotFound):
+		// The chart repository was read and does not have this version:
+		// the caller's to fix, before any pull request.
+		writeCodedError(w, http.StatusBadRequest, CodeVersionNotFound, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrChartVersionLookupFailed):
+		writeCodedError(w, http.StatusBadGateway, CodeChartRepoUnreadable, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
 		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrV4AddonNotInCatalog):

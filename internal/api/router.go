@@ -340,6 +340,13 @@ type Server struct {
 	authStore        *auth.Store
 	aiConfigStore    *config.AIConfigStore
 
+	// chartVersionCheckFn and chartDefaultsFn are the chart-repository
+	// lookups an upgrade and a catalog add make before opening a pull
+	// request (chart_version_seams.go). nil means the real, network-backed
+	// ones; a test sets them so it never reaches the network.
+	chartVersionCheckFn orchestrator.ChartVersionCheckFn
+	chartDefaultsFn     orchestrator.ChartDefaultsFn
+
 	// Write API dependencies (optional — set via SetWriteAPIDeps).
 	//
 	// Two typed configs cover the provider surface. Handlers that need

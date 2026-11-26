@@ -2028,7 +2028,7 @@ rule — they are three declared codes with three server-owned templates:
 |------|-------|-------------|
 | `addon_upgrade_available` | `<addon> <version> available` | `Upgrade from <catalogVersion> to <version>` |
 | `addon_major_update` | `Major update: <addon> <version>` | `Major version change from <catalogVersion> — review for security patches` |
-| `addon_version_drift` | `Version drift: <addon> on <cluster>` | `Running <version>, catalog has <catalogVersion>` |
+| `addon_version_drift` | `Version drift: <addon> on <cluster>` | `Set to <version>, catalog has <catalogVersion>` |
 
 The five connection codes (`git_connection_broken`, `argocd_repo_broken`,
 `argocd_auth_failed`, `argocd_unreachable`, `argocd_forbidden`) take a fixed

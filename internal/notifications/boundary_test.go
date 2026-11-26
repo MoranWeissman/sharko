@@ -67,7 +67,7 @@ func TestBoundary_TheThreeAddonMessagesAreExact(t *testing.T) {
 			code:            CodeAddonVersionDrift,
 			wantID:          "drift-cert-manager-spoke-eu",
 			wantTitle:       "Version drift: cert-manager on spoke-eu",
-			wantDescription: "Running 2.0.0, catalog has 1.4.2",
+			wantDescription: "Set to 2.0.0, catalog has 1.4.2",
 			wantType:        "drift",
 		},
 	}

@@ -14,12 +14,16 @@ type ArgocdCluster struct {
 
 // ArgocdApplication represents an ArgoCD application.
 type ArgocdApplication struct {
-	Name                 string          `json:"name"`
-	Namespace            string          `json:"namespace"`
-	Project              string          `json:"project"`
-	SourceRepoURL        string          `json:"source_repo_url"`
-	SourcePath           string          `json:"source_path,omitempty"`
-	SourceTargetRevision string          `json:"source_target_revision"`
+	Name                 string `json:"name"`
+	Namespace            string `json:"namespace"`
+	Project              string `json:"project"`
+	SourceRepoURL        string `json:"source_repo_url"`
+	SourcePath           string `json:"source_path,omitempty"`
+	SourceTargetRevision string `json:"source_target_revision"`
+	// SyncedRevision is the revision ArgoCD last really deployed (for a Helm
+	// chart: the chart version). SourceTargetRevision is only what was asked
+	// for. Empty when nothing has been deployed yet.
+	SyncedRevision       string          `json:"synced_revision,omitempty"`
 	DestinationServer    string          `json:"destination_server"`
 	DestinationName      string          `json:"destination_name,omitempty"`
 	DestinationNamespace string          `json:"destination_namespace"`

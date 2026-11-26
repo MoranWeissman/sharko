@@ -1041,7 +1041,9 @@ type argocdApplicationItem struct {
 	} `json:"spec"`
 	Status struct {
 		Sync struct {
-			Status string `json:"status"`
+			Status    string   `json:"status"`
+			Revision  string   `json:"revision"`
+			Revisions []string `json:"revisions"`
 		} `json:"sync"`
 		Health struct {
 			Status             string `json:"status"`
@@ -1101,12 +1103,18 @@ func (a argocdApplicationItem) toModel() models.ArgocdApplication {
 	targetRevision := a.Spec.Source.TargetRevision
 	chart := a.Spec.Source.Chart
 
+	// sourceIdx is which entry of spec.sources the fields above describe.
+	// -1 means the single spec.source. ArgoCD reports what it deployed as
+	// one revision per source, in the same order, so this index is what
+	// picks the right one below.
+	sourceIdx := -1
 	if repoURL == "" && len(a.Spec.Sources) > 0 {
-		for _, src := range a.Spec.Sources {
+		for i, src := range a.Spec.Sources {
 			if src.Chart != "" {
 				repoURL = src.RepoURL
 				chart = src.Chart
 				targetRevision = src.TargetRevision
+				sourceIdx = i
 				break
 			}
 		}
@@ -1115,7 +1123,37 @@ func (a argocdApplicationItem) toModel() models.ArgocdApplication {
 			repoURL = a.Spec.Sources[0].RepoURL
 			path = a.Spec.Sources[0].Path
 			targetRevision = a.Spec.Sources[0].TargetRevision
+			sourceIdx = 0
 		}
+	}
+
+	pickRevision := func(single string, multi []string) string {
+		if sourceIdx >= 0 && sourceIdx < len(multi) {
+			return multi[sourceIdx]
+		}
+		if single != "" {
+			return single
+		}
+		if sourceIdx < 0 && len(multi) > 0 {
+			return multi[0]
+		}
+		return ""
+	}
+	// What is really deployed: the revision of the last sync that finished
+	// (the newest history entry). spec.source.targetRevision is only what
+	// was ASKED for — a version that does not exist is asked for and never
+	// deployed. An app with no history that ArgoCD reports as Synced is
+	// running what it compared against.
+	syncedRevision := ""
+	newestID := -1
+	for _, h := range a.Status.History {
+		if h.ID >= newestID {
+			newestID = h.ID
+			syncedRevision = pickRevision(h.Revision, h.Revisions)
+		}
+	}
+	if syncedRevision == "" && a.Status.Sync.Status == "Synced" {
+		syncedRevision = pickRevision(a.Status.Sync.Revision, a.Status.Sync.Revisions)
 	}
 
 	app := models.ArgocdApplication{
@@ -1125,6 +1163,7 @@ func (a argocdApplicationItem) toModel() models.ArgocdApplication {
 		SourceRepoURL:        repoURL,
 		SourcePath:           path,
 		SourceTargetRevision: targetRevision,
+		SyncedRevision:       syncedRevision,
 		SourceChart:          chart,
 		DestinationServer:    a.Spec.Destination.Server,
 		DestinationName:      a.Spec.Destination.Name,

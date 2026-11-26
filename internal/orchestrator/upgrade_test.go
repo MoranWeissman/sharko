@@ -192,53 +192,45 @@ func upgradeGuardCases() []upgradeGuardCase {
 	}
 }
 
-// TestUpgradeWriters_RefuseOnV4Repo is the VERIFY-story-4 pin: "old v3
-// upgrade endpoints not v4-gated" (flagged from the PR #642-era review).
-// Before this fix, none of these three had a v4 check at all — they read
-// and rewrote configuration/addons-catalog.yaml or
+// TestUpgradeWriters_NeverWriteTheV3ShapeOnV4Repo keeps the half of the old
+// VERIFY-story-4 pin that still matters. These three used to read and
+// rewrite configuration/addons-catalog.yaml or
 // configuration/addons-clusters-values/<cluster>.yaml (the v3 shape) even
-// on an already-v4 repo, whose real version pin lives in
-// cluster-addons/<cluster>.yaml. That write would land in a file nothing
-// v4-aware reads, so the caller would see a merged "successful" upgrade
-// that changed nothing the fleet runs — the same class of bug the sibling
-// write paths (EnableAddon, AddAddon, ...) were already gated against.
-func TestUpgradeWriters_RefuseOnV4Repo(t *testing.T) {
+// on an already-v4 repo — a write into files nothing v4-aware reads, and
+// one that can bring a second cluster registry to life.
+//
+// For a while the answer was to REFUSE on a v4 repo ("operation not
+// supported on a v4 repo"). Pre-release walk 4 found that this left the
+// main Upgrade button, `sharko upgrade-addon` and the API with no working
+// upgrade at all. They now do the v4 upgrade instead (upgrade_all_v4.go,
+// upgrade_v4.go; proven in upgrade_all_v4_test.go). What must stay true is
+// what this test checks: whatever they do on a v4 repo, the v3 files are
+// never created and never changed.
+func TestUpgradeWriters_NeverWriteTheV3ShapeOnV4Repo(t *testing.T) {
+	const v3ClusterValues = "configuration/addons-clusters-values/prod-eu.yaml"
 	for _, tc := range upgradeGuardCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			git := newMockGitProvider()
 			git.files[EnginePinPath] = []byte(v4EnginePinYAML) // makes isV4Repo true
-			// Populate the v3 files too, so a bug that skips the gate would
-			// otherwise succeed and prove nothing.
+			// Populate the v3 files too, so a bug that takes the old path
+			// would find them and rewrite them.
 			git.files[catalogPath] = sampleCatalog()
-			git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte(
-				"cert-manager:\n  enabled: true\n  version: 1.14.0\n")
+			v3Values := []byte("cert-manager:\n  enabled: true\n  version: 1.14.0\n")
+			git.files[v3ClusterValues] = v3Values
 			orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
-			beforeFiles := len(git.files)
-			err := tc.call(context.Background(), orch)
-			if err == nil {
-				t.Fatalf("%s returned nil on a v4 repo — it would have written the v3 shape", tc.name)
-			}
-			if !IsV4RepoUnsupported(err) {
-				t.Fatalf("%s error = %v, want an ErrV4RepoUnsupported refusal", tc.name, err)
-			}
-			if !strings.Contains(err.Error(), "writes files this repo does not use") {
-				t.Errorf("%s message = %q, want the plain-words v4 refusal", tc.name, err.Error())
-			}
+			_ = tc.call(context.Background(), orch)
 
-			// Zero writes: no new/changed files, no branch, no PR. The two
-			// v3 fixture files must be byte-identical to what was seeded.
-			if len(git.files) != beforeFiles {
-				t.Errorf("%s changed the file count despite refusing", tc.name)
-			}
 			if string(git.files[catalogPath]) != string(sampleCatalog()) {
-				t.Errorf("%s mutated %s despite refusing", tc.name, catalogPath)
+				t.Errorf("%s rewrote %s on a v4 repo", tc.name, catalogPath)
 			}
-			if len(git.branches) != 0 {
-				t.Errorf("%s created branches %v despite refusing", tc.name, git.branches)
+			if string(git.files[v3ClusterValues]) != string(v3Values) {
+				t.Errorf("%s rewrote %s on a v4 repo", tc.name, v3ClusterValues)
 			}
-			if len(git.prs) != 0 {
-				t.Errorf("%s opened %d PR(s) despite refusing", tc.name, len(git.prs))
+			for p := range git.files {
+				if strings.HasPrefix(p, "configuration/") && p != catalogPath && p != v3ClusterValues {
+					t.Errorf("%s created a v3 file on a v4 repo: %s", tc.name, p)
+				}
 			}
 		})
 	}

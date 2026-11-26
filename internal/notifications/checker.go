@@ -84,7 +84,30 @@ func (c *Checker) check() {
 		return
 	}
 
+	// No answer at all (no Git or ArgoCD connection yet) is not "there are
+	// no addons". Nothing is raised and nothing is cleared.
+	if infos == nil {
+		return
+	}
+
 	now := time.Now()
+
+	// live collects the ID of every addon note that is still true this
+	// round. Whatever addon note is NOT in it afterwards is about something
+	// that is no longer so — an upgrade that was done, a cluster that caught
+	// up, an addon that was removed — and is cleared (pre-release walk 4:
+	// five notes stayed on the bell after the addons were gone, and drift
+	// notes kept naming a version that was rolled back).
+	live := map[string]bool{}
+	// unknownLatest holds addons whose newest version could not be read
+	// this round. Their upgrade notes are left alone: "could not check" is
+	// not "no longer true".
+	var unknownLatest []string
+	raise := func(code Code, p Params) {
+		n := New(code, "", p, now)
+		live[n.ID] = true
+		c.store.Add(n)
+	}
 
 	for _, info := range infos {
 		// The checker names the SUBJECT of each alert — which addon, which
@@ -93,39 +116,60 @@ func (c *Checker) check() {
 		// the server composes the words. A version or a name that is not the
 		// shape it claims to be is not interpolated at all.
 
+		if info.LatestVersion == "" {
+			unknownLatest = append(unknownLatest, info.AddonName)
+		}
+
 		// Check for upgrades (major/minor only).
 		if info.LatestVersion != "" && info.LatestVersion != info.CatalogVersion {
 			if isMajorOrMinorUpgrade(info.CatalogVersion, info.LatestVersion) {
-				c.store.Add(New(CodeAddonUpgradeAvailable, "", Params{
+				raise(CodeAddonUpgradeAvailable, Params{
 					Addon:          info.AddonName,
 					Version:        info.LatestVersion,
 					CatalogVersion: info.CatalogVersion,
-				}, now))
+				})
 			}
 
 			// Check for security-relevant versions: flag major version bumps as
 			// potentially security-relevant since they often include breaking CVE fixes.
 			if isMajorUpgrade(info.CatalogVersion, info.LatestVersion) {
-				c.store.Add(New(CodeAddonMajorUpdate, "", Params{
+				raise(CodeAddonMajorUpdate, Params{
 					Addon:          info.AddonName,
 					Version:        info.LatestVersion,
 					CatalogVersion: info.CatalogVersion,
-				}, now))
+				})
 			}
 		}
 
 		// Check for drift between cluster version and catalog version.
 		for clusterName, clusterVersion := range info.ClusterVersions {
 			if clusterVersion != info.CatalogVersion && clusterVersion != "" {
-				c.store.Add(New(CodeAddonVersionDrift, "", Params{
+				raise(CodeAddonVersionDrift, Params{
 					Addon:          info.AddonName,
 					Cluster:        clusterName,
 					Version:        clusterVersion,
 					CatalogVersion: info.CatalogVersion,
-				}, now))
+				})
 			}
 		}
 	}
+
+	c.store.ResolveExcept(
+		[]Code{CodeAddonUpgradeAvailable, CodeAddonMajorUpdate, CodeAddonVersionDrift},
+		func(n Notification) bool {
+			if live[n.ID] {
+				return true
+			}
+			if n.Code == CodeAddonVersionDrift {
+				return false
+			}
+			for _, addon := range unknownLatest {
+				if strings.HasPrefix(n.ID, "upgrade-"+addon+"-") || strings.HasPrefix(n.ID, "security-"+addon+"-") {
+					return true
+				}
+			}
+			return false
+		})
 }
 
 // isMajorOrMinorUpgrade returns true when the latest version differs from

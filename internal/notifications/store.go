@@ -436,6 +436,37 @@ func (s *Store) ResolveFor(code Code, p Params) {
 	}
 }
 
+// ResolveExcept clears every notification of the given codes that keep does
+// not vouch for, read or unread, and leaves every other code alone. It is
+// for codes that are open for many subjects at once (one per addon, one per
+// cluster): the caller says which ones are still true and the rest go.
+//
+// It writes to the ConfigMap only when something was removed.
+func (s *Store) ResolveExcept(codes []Code, keep func(Notification) bool) {
+	inScope := make(map[Code]bool, len(codes))
+	for _, c := range codes {
+		inScope[c] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.notifications[:0]
+	removed := false
+	for _, n := range s.notifications {
+		if inScope[n.Code] && !keep(n) {
+			removed = true
+			continue
+		}
+		kept = append(kept, n)
+	}
+	s.notifications = kept
+	if !removed {
+		return
+	}
+	if err := s.persistLocked(context.Background()); err != nil {
+		slog.Warn("could not persist after resolve", "error", err, "component", "notifications")
+	}
+}
+
 // UnreadCount returns how many notifications have not yet been read.
 func (s *Store) UnreadCount() int {
 	s.mu.RLock()

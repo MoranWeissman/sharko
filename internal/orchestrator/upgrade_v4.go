@@ -63,15 +63,16 @@ type clusterAddonsWrite struct {
 // surface.
 func (o *Orchestrator) UpgradeAddonClustersV4(ctx context.Context, req UpgradeAddonClustersV4Request) (*GitResult, error) {
 	if req.Addon == "" {
-		return nil, fmt.Errorf("addon name is required")
+		return nil, newUserFacingError(ErrUpgradeRequestInvalid, "addon name is required")
 	}
+	req.Version = strings.TrimSpace(req.Version)
 	if req.Version == "" {
-		return nil, fmt.Errorf("version is required")
+		return nil, newUserFacingError(ErrUpgradeRequestInvalid, "version is required")
 	}
 
 	clusters := dedupSortedClusters(req.Clusters)
 	if len(clusters) == 0 {
-		return nil, fmt.Errorf("at least one cluster is required")
+		return nil, newUserFacingError(ErrUpgradeRequestInvalid, "at least one cluster is required")
 	}
 
 	// Same half-converted-repo refusal as EnableAddonV4 (review F4).
@@ -79,24 +80,41 @@ func (o *Orchestrator) UpgradeAddonClustersV4(ctx context.Context, req UpgradeAd
 		return nil, err
 	}
 
+	// The catalog entry says where the chart lives and which version a
+	// cluster with no pin of its own runs. An addon that is switched on
+	// somewhere but missing from catalog.yaml (a hand edit) still upgrades
+	// the way it always did; only the checks that need the entry are
+	// skipped for it.
+	entry, entryErr := o.catalogAddonForV4(ctx, req.Addon)
+	inCatalog := entryErr == nil
+
 	writes := make([]clusterAddonsWrite, 0, len(clusters))
+	// currentVersions holds the version each chosen cluster runs today.
+	currentVersions := make(map[string]string, len(clusters))
 	for _, cluster := range clusters {
 		clusterPath, err := v4ClusterAddonsPath(cluster)
 		if err != nil {
-			return nil, err
+			return nil, newUserFacingError(ErrUpgradeRequestInvalid, err.Error())
 		}
 		existing, ok := o.readFileIfExists(ctx, clusterPath)
 		if !ok {
-			return nil, fmt.Errorf("cluster %q has no assignment file at %s — nothing to upgrade", cluster, clusterPath)
+			return nil, newUserFacingError(ErrUpgradeRequestInvalid,
+				fmt.Sprintf("cluster %q has no assignment file at %s — nothing to upgrade", cluster, clusterPath))
 		}
 		spec, err := models.LoadClusterAddons(existing)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", clusterPath, err)
 		}
-		entry, hasAddon := spec.Addons[req.Addon]
-		if !hasAddon || !entry.Enabled {
-			return nil, fmt.Errorf("addon %q is not enabled on cluster %q — enable it there first", req.Addon, cluster)
+		addonEntry, hasAddon := spec.Addons[req.Addon]
+		if !hasAddon || !addonEntry.Enabled {
+			return nil, newUserFacingError(ErrUpgradeRequestInvalid,
+				fmt.Sprintf("addon %q is not enabled on cluster %q — enable it there first", req.Addon, cluster))
 		}
+		current := addonEntry.Version
+		if current == "" && inCatalog {
+			current = entry.Version
+		}
+		currentVersions[cluster] = current
 
 		version := req.Version
 		updated, err := gitops.SetClusterAddonsAddon(existing, cluster, req.Addon, true, &version, nil)
@@ -106,7 +124,37 @@ func (o *Orchestrator) UpgradeAddonClustersV4(ctx context.Context, req UpgradeAd
 		writes = append(writes, clusterAddonsWrite{cluster: cluster, path: clusterPath, existing: existing, updated: updated})
 	}
 
-	title := fmt.Sprintf("Upgrade %s to %s on %d cluster(s)", req.Addon, req.Version, len(clusters))
+	var warnings []string
+	if inCatalog {
+		// Every chosen cluster already runs this version: there is no
+		// change to make, and an empty pull request helps nobody.
+		allSame := true
+		for _, cluster := range clusters {
+			if currentVersions[cluster] != req.Version {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
+			return nil, newUserFacingError(ErrUpgradeNothingToDo, UpgradeClustersNothingToDoMessage(req.Addon, req.Version, clusters))
+		}
+
+		// The version has to exist before anything is written.
+		if err := o.checkChartVersion(ctx, req.Addon, entry.RepoURL, entry.Chart, req.Version); err != nil {
+			return nil, err
+		}
+
+		warnings = append(warnings, o.sharedValuesWarnings(ctx, req.Addon, entry.RepoURL, entry.Chart, currentVersions, req.Version)...)
+	}
+
+	verb := "Upgrade"
+	if allClustersGoDown(currentVersions, req.Version) {
+		verb = "Downgrade"
+	}
+	title := fmt.Sprintf("%s %s to %s on %d cluster(s)", verb, req.Addon, req.Version, len(clusters))
+	// One text for the preview title, the commit message and the real pull
+	// request title, so the preview never promises a different title.
+	operation := fmt.Sprintf("%s addon %s to %s on clusters %s", strings.ToLower(verb), req.Addon, req.Version, strings.Join(clusters, ", "))
 
 	if req.DryRun {
 		previews := make([]FilePreview, 0, len(writes))
@@ -121,9 +169,10 @@ func (o *Orchestrator) UpgradeAddonClustersV4(ctx context.Context, req UpgradeAd
 			DryRun: &DryRunResult{
 				EffectiveAddons: []string{req.Addon},
 				FilesToWrite:    previews,
-				PRTitle:         fmt.Sprintf("%s upgrade addon %s to %s on %s", o.gitops.CommitPrefix, req.Addon, req.Version, strings.Join(clusters, ", ")),
+				PRTitle:         o.gitops.CommitPrefix + " " + operation,
 				SecretsToCreate: []string{},
 			},
+			Warnings: warnings,
 		}, nil
 	}
 
@@ -139,13 +188,110 @@ func (o *Orchestrator) UpgradeAddonClustersV4(ctx context.Context, req UpgradeAd
 	// Cluster left "" on the tracked PR metadata (like UpgradeAddons'
 	// multi-addon batch) because this PR spans multiple clusters — Addon
 	// plus the PR body/title already disambiguate which upgrade this is.
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil,
-		fmt.Sprintf("upgrade addon %s to %s on clusters %s (v4)", req.Addon, req.Version, strings.Join(clusters, ", ")),
-		o.prMeta(req.AutoMerge, "addon-upgrade", title, "", req.Addon))
+	// One cluster is named, so the cluster page can show its pending PR.
+	metaCluster := ""
+	if len(clusters) == 1 {
+		metaCluster = clusters[0]
+	}
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, operation,
+		o.prMeta(req.AutoMerge, "addon-upgrade", title, metaCluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing subset upgrade: %w", err)
 	}
+	gitResult.Warnings = append(gitResult.Warnings, warnings...)
 	return gitResult, nil
+}
+
+// UpgradeClustersNothingToDoMessage is said when every chosen cluster already
+// runs the asked-for version.
+func UpgradeClustersNothingToDoMessage(addon, version string, clusters []string) string {
+	if len(clusters) == 1 {
+		return fmt.Sprintf("%s is already on version %s on %s. Nothing to change.", addon, version, clusters[0])
+	}
+	return fmt.Sprintf("%s is already on version %s on every chosen cluster. Nothing to change.", addon, version)
+}
+
+// allClustersGoDown reports whether the change lowers the version on every
+// chosen cluster — the only case the pull request is called a downgrade.
+func allClustersGoDown(current map[string]string, target string) bool {
+	if len(current) == 0 {
+		return false
+	}
+	for _, cur := range current {
+		cmp, ok := compareChartVersions(target, cur)
+		if !ok || cmp >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// sharedValuesWarnings covers the one thing a some-clusters upgrade cannot
+// fix by itself. values/global/<addon>.yaml is shared by EVERY cluster, so it
+// cannot follow the new chart's defaults while other clusters still run the
+// old chart. When that file still sets one of the old chart's defaults (the
+// image tag is the usual one), the chosen clusters get the new chart with the
+// OLD setting — and Sharko says so here instead of reporting a clean upgrade.
+func (o *Orchestrator) sharedValuesWarnings(ctx context.Context, addon, repoURL, chart string, currentVersions map[string]string, target string) []string {
+	if o.chartDefaultsFn == nil {
+		return nil
+	}
+	gPath, err := v4GlobalValuesPath(addon)
+	if err != nil {
+		return nil
+	}
+	global, exists := o.readFileIfExists(ctx, gPath)
+	if !exists || yamlDocRoot(global) == nil {
+		return nil
+	}
+	newDefaults, err := o.chartDefaultsFn(ctx, repoURL, chart, target)
+	if err != nil {
+		return []string{ValuesNotComparedWarning(addon, gPath)}
+	}
+	// One comparison per distinct version the chosen clusters run today.
+	seen := map[string]bool{}
+	byPath := map[string]KeptDefault{}
+	for _, cur := range currentVersions {
+		if cur == "" || cur == target || seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		oldDefaults, oldErr := o.chartDefaultsFn(ctx, repoURL, chart, cur)
+		if oldErr != nil {
+			return []string{ValuesNotComparedWarning(addon, gPath)}
+		}
+		for _, k := range staleDefaultsReport(global, oldDefaults, newDefaults) {
+			byPath[k.Path] = k
+		}
+	}
+	if len(byPath) == 0 {
+		return nil
+	}
+	kept := make([]KeptDefault, 0, len(byPath))
+	for _, k := range byPath {
+		kept = append(kept, k)
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].Path < kept[j].Path })
+	return []string{SharedValuesKeepOldDefaultsWarning(gPath, addon, kept)}
+}
+
+// SharedValuesKeepOldDefaultsWarning is the sentence for sharedValuesWarnings.
+func SharedValuesKeepOldDefaultsWarning(valuesPath, addon string, kept []KeptDefault) string {
+	const maxListed = 5
+	parts := make([]string, 0, maxListed)
+	for i, k := range kept {
+		if i == maxListed {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s, new chart default %s)", k.Path, k.Old, k.New))
+	}
+	more := ""
+	if len(kept) > maxListed {
+		more = fmt.Sprintf(" and %d more", len(kept)-maxListed)
+	}
+	return fmt.Sprintf(
+		"%s is shared by every cluster and still sets the old chart's value for: %s%s. The chosen clusters get the new chart but keep these old values. To move them too, upgrade %s for all clusters, or set them in the cluster's own values file.",
+		valuesPath, strings.Join(parts, ", "), more, addon)
 }
 
 // dedupSortedClusters drops empty/duplicate entries and sorts the rest, so

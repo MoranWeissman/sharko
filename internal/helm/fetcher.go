@@ -736,3 +736,31 @@ func guessGitHubRepo(repoURL, chartName string) string {
 
 	return ""
 }
+
+// HasVersion answers one question: does this chart repository publish this
+// exact chart version?
+//
+// It uses the same matching rule every download in this file uses
+// (resolveChartVersion: the string as written, then the same string with one
+// leading "v" added or removed), so "the check said yes" and "the download
+// works" can never disagree. resolved is the spelling the repository
+// publishes.
+//
+// The three outcomes are kept apart on purpose, because a person has to be
+// told three different things:
+//
+//   - found == true: the version is there.
+//   - found == false, err == nil: Sharko read the repository and the version
+//     is not in it. That is the caller's mistake (a typo, "abc", a version
+//     that was never released).
+//   - err != nil: Sharko could not read the repository at all. Nothing is
+//     known about the version, so nobody should be told the version is
+//     wrong. An oci:// address answers ErrOCIVersionCheckUnsupported here.
+func (f *Fetcher) HasVersion(ctx context.Context, repoURL, chartName, version string) (resolved string, found bool, err error) {
+	versions, err := f.ListVersions(ctx, repoURL, chartName)
+	if err != nil {
+		return "", false, err
+	}
+	resolved, _, ok := resolveChartVersion(versions, version)
+	return resolved, ok, nil
+}
