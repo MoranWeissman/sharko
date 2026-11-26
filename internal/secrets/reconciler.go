@@ -1418,8 +1418,8 @@ func (r *Reconciler) reconcileSecret(
 		return ItemOutcomeUnchanged, nil
 	}
 
-	// Hashes differ — rotate.
-	log.Warn("[secrets] secret rotated, updating",
+	// Hashes differ — apply the store value.
+	log.Warn("[secrets] the value in the store is different from the Secret on the cluster, updating",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	updateProvenance := remoteclient.ValuesProvenanceAnnotations(addonName, r.sourceType, time.Now())
