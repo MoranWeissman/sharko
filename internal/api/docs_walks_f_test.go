@@ -109,6 +109,7 @@ func TestDocsWalksFPins(t *testing.T) {
 		// CLI reference
 		{"docs/site/cli/commands.md", "Stores the session token in `~/.sharko/config` (a file with no extension, readable only by you)."},
 		{"docs/site/cli/commands.md", "!!! warning \"On a v4 repo this command checks nothing\""},
+		{"docs/site/cli/commands.md", "# Server: https://sharko.your-domain.com (connected, 4.0.8, Kubernetes)"},
 		{"docs/site/cli/commands.md", "**If you leave it out, the CLI makes an `admin` key.**"},
 		{"docs/site/cli/commands.md", "The command takes no cluster name."},
 		{"docs/site/cli/commands.md", "!!! warning \"Not for a v4 repo\""},
@@ -150,6 +151,7 @@ func TestDocsWalksFPins(t *testing.T) {
 		{"docs/site/cli/commands.md", "sharko refresh-secrets prod-eu"},
 		{"docs/site/cli/commands.md", "~/.sharko/config.yaml"},
 		{"docs/site/cli/commands.md", "# CLI: v2.0.1"},
+		{"docs/site/cli/commands.md", "# Server: v2.0.1"},
 		{"docs/site/cli/commands.md", "| `--role <role>` | `admin`, `operator`, or `viewer` |"},
 		{"docs/site/cli/commands.md", "(defaults to addon name)"},
 		{"docs/site/cli/commands.md", "`--git-token <token>` | PAT or access token (required)"},

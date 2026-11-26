@@ -30,7 +30,7 @@ Show the CLI version and the server version.
 ```bash
 sharko version
 # Sharko CLI: 4.0.8
-# Server: 4.0.8
+# Server: https://sharko.your-domain.com (connected, 4.0.8, Kubernetes)
 ```
 
 ---
