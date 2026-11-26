@@ -992,9 +992,12 @@ func (s *AddonService) getAddonValuesV4ReadOnly(ctx context.Context, addonName s
 		}
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	// The read worked, so the file is there, also when it has nothing in it.
+	// A zero-byte file used to be reported as "no file", and the page then
+	// told the user to create a file that already exists.
+	resp.FileExists = true
 	if len(data) > 0 {
 		resp.CurrentValues = string(data)
-		resp.FileExists = true
 	}
 	return resp, nil
 }

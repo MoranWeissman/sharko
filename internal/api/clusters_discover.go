@@ -314,6 +314,13 @@ func newTestClusterResponse(name string, result verify.Result) testClusterRespon
 // handleTestCluster handles POST /api/v1/clusters/{name}/test — test connectivity to a cluster.
 func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.test") {
+		// A refused test is still a test. With no name set here the audit
+		// row took its name from the route and read "clusters_created",
+		// as if the caller had tried to create a cluster.
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_tested",
+			Resource: fmt.Sprintf("cluster:%s", r.PathValue("name")),
+		})
 		return
 	}
 

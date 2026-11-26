@@ -1018,9 +1018,10 @@ func (s *ClusterService) getClusterAddonValuesV4ReadOnly(ctx context.Context, re
 		}
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	// The read worked, so the file is there, also when it has nothing in it.
+	resp.FileExists = true
 	if len(data) > 0 {
 		resp.CurrentOverrides = string(data)
-		resp.FileExists = true
 		// "Wrapped" is decided against the chart's own top settings, read
 		// from the add-on's global values file. Some charts (reloader,
 		// datadog, loki) really have a top block with their own name, and a

@@ -136,5 +136,8 @@ func ClearClusterAddonsAddonVersion(data []byte, addonName string) ([]byte, erro
 	}
 	entry.Version = ""
 	spec.Addons[addonName] = entry
-	return models.SaveClusterAddons(spec)
+	// The comments at the top of the file are kept, the same way turn on,
+	// turn off and remove keep them. An upgrade for all clusters used to
+	// drop them from every cluster file it took a version out of.
+	return saveClusterAddonsKeepingHeader(data, spec)
 }

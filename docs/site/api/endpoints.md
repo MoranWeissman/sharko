@@ -303,7 +303,7 @@ if you need one.
 
 #### Key names
 
-"An API key name can use letters, numbers, dots, dashes and underscores, with no spaces, up to 63 characters." A key cannot have the name of a user, and a user cannot have the name of a key.
+"An API key name can use letters, numbers, dots, dashes and underscores, with no spaces, up to 63 characters." A key cannot have the name of a user, and a user cannot have the name of a key. The names Sharko uses for its own work are refused for keys and for users, in any mix of capital letters: `sharko`, `sharko-bot`, `system`, `anonymous`, `unknown`, `ai-agent` and `webhook`. The answer is 400, for example "The name "system" is kept for Sharko's own work. Pick another name."
 
 #### What a refused key looks like
 

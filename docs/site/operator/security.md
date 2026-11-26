@@ -225,7 +225,10 @@ key cannot change a password.
 and it cannot be the same as the current one. When an admin creates a user or
 resets a password, Sharko shows a temporary password once: "Share this with
 the user. They should change it after they log in, on the Account page."
-Sharko does not force the change. A reset logs the user out everywhere. After
+Sharko does not force the change. A reset logs the user out everywhere. A
+reset does not touch the API keys the user created: they keep working. If you
+reset a password because someone else may have used the account, also look at
+that user's keys in Settings, API Keys, and revoke the ones you do not know. After
 a user changes their own password they stay logged in where they made the
 change, and every other place where they were logged in is logged out. A
 wrong current password changes nothing and does not end the login.

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2901,13 +2902,22 @@ func classifyUpstreamError(err error) int {
 	low := strings.ToLower(err.Error())
 	if strings.Contains(low, "rate limit") ||
 		strings.Contains(low, "too many requests") ||
-		strings.Contains(low, "429") {
+		statusNumber429.MatchString(low) {
 		return http.StatusTooManyRequests
 	}
 
 	// Default — opaque internal failure.
 	return http.StatusInternalServerError
 }
+
+// statusNumber429 finds "429" written as a number on its own, the way an
+// upstream writes an HTTP status ("status: 429", "replied 429", "(429)").
+//
+// It used to be a plain search for the three characters. Then any error text
+// that happened to hold them was answered as "asked too often": pull request
+// #429, a commit hash with 429 in it, port 4290, version 1.429.0. The user
+// was told to wait for a limit that was never hit.
+var statusNumber429 = regexp.MustCompile(`(^|[^0-9a-z#./_-])429($|[^0-9a-z._-])`)
 
 // writeUpstreamError classifies the error first, then funnels through
 // writeServerError so the response body stays sanitized (no leak of

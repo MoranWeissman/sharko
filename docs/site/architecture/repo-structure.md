@@ -238,7 +238,7 @@ All Git operations go through a mutex — one PR at a time, no concurrent writes
 | `sharko add-cluster` | Adds the cluster to `managed-clusters.yaml`, opens PR. Does not create `cluster-addons/<cluster>.yaml`. |
 | `sharko enable-addon` | Sets `enabled: true` in `cluster-addons/<cluster>.yaml` (creating the file the first time), optionally writes `values/clusters/<cluster>/<addon>.yaml`, opens PR |
 | `sharko disable-addon` | Sets `enabled: false` in `cluster-addons/<cluster>.yaml`, opens PR |
-| `sharko upgrade-addon` | Without `--cluster`: changes the version in `catalog.yaml`, removes each cluster's own version for that addon from `cluster-addons/<cluster>.yaml`, and moves values in `values/global/<addon>.yaml` that are still the old chart's values. With `--cluster`: sets the version in that cluster's `cluster-addons/<cluster>.yaml`. Opens PR |
+| `sharko upgrade-addon` | Without `--cluster`: changes the version in `catalog.yaml`, removes each cluster's own version for that addon from `cluster-addons/<cluster>.yaml` (a cluster that already runs a newer version is left as it is), and moves values in `values/global/<addon>.yaml` that are still the old chart's values. With `--cluster`: sets the version in that cluster's `cluster-addons/<cluster>.yaml`. Opens PR |
 | `sharko upgrade-clusters` | Updates version pins in `cluster-addons/<cluster>.yaml` for selected clusters, opens PR |
 | `sharko remove-cluster` | Deletes the cluster's entry from `managed-clusters.yaml`, its `cluster-addons/<cluster>.yaml` and the files under `values/clusters/<cluster>/`, opens PR |
 | `sharko takeover` | Adds the cluster to `managed-clusters.yaml` and creates an empty `cluster-addons/<cluster>.yaml`, opens PR |

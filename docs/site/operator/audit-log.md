@@ -50,6 +50,8 @@ run it as a formula.
 
 A connection test is recorded as "tested cluster connectivity", with
 `cluster:<name>` as the resource. Its result is `failed` when the test failed.
+A test that was refused because of the caller's role is recorded the same way,
+with the result `rejected`.
 A test of the AI provider is `ai_tested` or `ai_config_tested`.
 
 ### Why a call failed or was refused

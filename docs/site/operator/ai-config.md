@@ -49,7 +49,11 @@ settings before saving"). A message to the assistant is recorded as
 When you edit a saved provider, the form says "A key is already saved. Leave
 this empty to keep it." A key, model or address that you leave out is kept as
 long as the provider stays the same. A different provider gets nothing
-carried over. To remove a saved key, turn AI off with **Disable**. After
+carried over. The saved key is only used with the saved address: when you
+change the address of a self-hosted provider and leave the key empty, Sharko
+does not send the saved key to the new address. Save and Test both answer
+"The saved API key is only used with the saved address. This is a different
+address, so type the API key again." To remove a saved key, turn AI off with **Disable**. After
 **Save** or **Disable** the assistant buttons appear or go away without a
 page reload.
 

@@ -40,10 +40,10 @@ Each addon has its own file, so there is nothing to wrap. The Config tab of the 
 
 ## Looking at the values in Sharko
 
-- **Global values:** open the addon (Addons, then the addon's name) and choose the **Values** tab. It shows `values/global/<addon>.yaml` as it is in Git, including the comments. A file that holds only comments is shown as it is ("This file has only comments, no settings yet. Showing the file as it is:"). An empty file reads "This file is empty."
+- **Global values:** open the addon (Addons, then the addon's name) and choose the **Values** tab. It shows `values/global/<addon>.yaml` as it is in Git, including the comments. A file that holds only comments is shown as it is ("This file has only comments, no settings yet. Showing the file as it is:"). An empty file reads "This file is empty.", also when it has no bytes in it at all. When Sharko cannot read the file from Git the tab says "Sharko could not read the values file from Git just now. Nothing was changed." with a **Try Again** button; it does not show an editor.
 - **Per-cluster overrides:** open the cluster (Clusters, then the cluster's name), choose the **Config** tab, and pick the addon.
 
-When the file is not in Git yet, the tab says "There is no file at `<path>` in your Git repo yet. Create it there to set values."
+When the file is not in Git yet, the tab says "There is no file at `<path>` in your Git repo yet. Create it there to set values." The link **Open the file in your Git host** is only shown when the file is there.
 
 When a per-cluster file is wrapped under the addon's name, the cluster page warns: "None of the settings in this file take effect. They are all inside a block named "`<addon>`:". Move them out of that block so they start at the left edge of the file."
 

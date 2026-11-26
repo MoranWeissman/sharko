@@ -84,4 +84,31 @@ describe('ReadOnlyValues', () => {
     )
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  it('links to the file on the Git host only when the file is there', () => {
+    const url = 'https://git.example.com/acme/gitops/blob/main/values/global/reloader.yaml'
+    const { rerender } = render(
+      <ReadOnlyValues title="t" path="values/global/reloader.yaml" exists content={'a: 1\n'} fileURL={url} />,
+    )
+    expect(screen.getByRole('link', { name: 'Open the file in your Git host' })).toHaveAttribute('href', url)
+
+    // The file is not in Git: the link would open "not found" on the Git host.
+    rerender(
+      <ReadOnlyValues title="t" path="values/global/reloader.yaml" exists={false} content="" fileURL={url} />,
+    )
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(
+      screen.getByText(
+        'There is no file at values/global/reloader.yaml in your Git repo yet. Create it there to set values.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('says a file with nothing in it is empty, not missing', () => {
+    const { container } = render(
+      <ReadOnlyValues title="t" path="values/global/reloader.yaml" exists content="" />,
+    )
+    expect(screen.getByText('This file is empty.')).toBeInTheDocument()
+    expect(container.textContent).not.toContain('There is no file at')
+  })
 })

@@ -60,7 +60,8 @@ export function ReadOnlyValues({
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">{title}</h3>
-        {fileURL && (
+        {/* No link to a file that is not there: it would open "not found". */}
+        {fileURL && exists && (
           <a
             href={fileURL}
             target="_blank"

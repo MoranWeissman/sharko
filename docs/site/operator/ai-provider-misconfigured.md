@@ -92,7 +92,7 @@ To change only the key, open **Edit** and paste the new key. Then test and save.
 
 ### 3. Or set it up with the API
 
-`POST /api/v1/ai/config` saves the AI setting. When the provider in the request is the one in use, an `api_key`, `model`, `base_url` or `ollama_url` that you leave out is kept. A different provider gets nothing carried over, so send its key and model. To remove a saved key, turn AI off (provider `none`). `POST /api/v1/ai/test-config` works the same way, so you can test "change only the model" without sending the key. Both calls, and `POST /api/v1/ai/test`, need an admin token. Allowed `provider` values are `openai`, `claude`, `gemini`, `ollama`, `custom-openai` and `none`.
+`POST /api/v1/ai/config` saves the AI setting. When the provider in the request is the one in use, an `api_key`, `model`, `base_url` or `ollama_url` that you leave out is kept. A different provider gets nothing carried over, so send its key and model. The saved key is never carried over to another address: a request with a `base_url` or `ollama_url` that is not the saved one and with no `api_key` is refused with 400 "The saved API key is only used with the saved address. This is a different address, so type the API key again." To remove a saved key, turn AI off (provider `none`). `POST /api/v1/ai/test-config` works the same way, so you can test "change only the model" without sending the key. Both calls, and `POST /api/v1/ai/test`, need an admin token. Allowed `provider` values are `openai`, `claude`, `gemini`, `ollama`, `custom-openai` and `none`.
 
 First test the setting without saving it. Use the real key in place of `<your key>`:
 
