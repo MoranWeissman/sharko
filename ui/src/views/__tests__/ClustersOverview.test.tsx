@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { StrictMode } from 'react';
 import { ClustersOverview, CLUSTERS_CACHE_KEY } from '@/views/ClustersOverview';
 import { setCached } from '@/lib/viewCache';
+import { AuthContext } from '@/hooks/useAuth';
 
 const mockNavigate = vi.fn();
 const mockLocationState: { state?: Record<string, unknown> } = {};
@@ -90,11 +91,20 @@ const clustersResponseAtThreshold = {
   },
 };
 
+// The Test connection button is for operators and admins only (the server
+// refuses a viewer), so these tests are an operator looking at the page.
+const operatorAuth = {
+  token: 't', username: 'op', role: 'operator', login: vi.fn(), logout: vi.fn(),
+  isAuthenticated: true, isAdmin: false, loading: false, error: null,
+};
+
 function renderView() {
   return render(
-    <MemoryRouter>
-      <ClustersOverview />
-    </MemoryRouter>,
+    <AuthContext.Provider value={operatorAuth}>
+      <MemoryRouter>
+        <ClustersOverview />
+      </MemoryRouter>
+    </AuthContext.Provider>,
   );
 }
 
