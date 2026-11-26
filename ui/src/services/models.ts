@@ -1138,6 +1138,9 @@ export interface VersionMatrixCell {
   version: string
   health: string
   drift_from_catalog: boolean
+  /** True when this cluster is on a NEWER version than the catalog. It
+   *  differs from the catalog but it is not "behind". */
+  ahead_of_catalog?: boolean
 }
 
 export interface VersionMatrixRow {
@@ -2049,6 +2052,10 @@ export interface UpgradeCheckResponse {
   removed: ValueDiffEntry[]
   changed: ValueDiffEntry[]
   conflicts: ConflictCheckEntry[]
+  /** Settings in the generated global values file that are still the old
+   *  chart's defaults and move to the new chart's defaults with an upgrade
+   *  for all clusters. Not conflicts. */
+  follows_default?: ValueDiffEntry[]
   release_notes?: string
   baseline_unavailable?: boolean
   baseline_note?: string

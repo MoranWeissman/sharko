@@ -77,6 +77,9 @@ export interface PRWriteResult {
   /** Set when status is "failed" or "partial" — what went wrong. */
   error?: string
   attribution_warning?: 'no_per_user_pat'
+  /** Plain sentences about what the change does NOT do — for an upgrade,
+   *  settings that stay on the old chart's values. */
+  warnings?: string[]
   result?: {
     pr_url?: string
     pr_id?: number

@@ -272,6 +272,24 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		}
 	}
 
+	// Every version this request adds has to exist in its chart repository
+	// (chart_version_check.go) — on the preview as well, so a preview never
+	// passes what the real call would refuse. A repository Sharko cannot
+	// reach does NOT stop an add: Sharko may simply have no route to a
+	// repository that ArgoCD can reach, and the add never depended on that
+	// route before. It is said out loud instead.
+	var versionWarnings []string
+	for _, name := range names {
+		entry := spec.Addons[name]
+		if err := o.checkChartVersion(ctx, name, entry.RepoURL, entry.Chart, entry.Version); err != nil {
+			if errors.Is(err, ErrChartVersionLookupFailed) {
+				versionWarnings = append(versionWarnings, CatalogAddVersionNotCheckedWarning(name, entry.Version))
+				continue
+			}
+			return nil, err
+		}
+	}
+
 	catalogBody, reformatted, err := writeCatalogFile(existingCatalog, spec, entries, names)
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", config.AddonCatalogPath, err)
@@ -279,7 +297,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 
 	files := map[string][]byte{config.AddonCatalogPath: catalogBody}
 
-	var warnings []string
+	warnings := versionWarnings
 	if reformatted {
 		warnings = append(warnings, CatalogRewriteNote)
 	}
@@ -623,6 +641,14 @@ func (o *Orchestrator) checkEnableReady(ctx context.Context, clusterName, addonN
 		return nil, &V4SemanticValidationError{Cluster: clusterName, Addon: addonName, Problems: problems}
 	}
 	return warnings, nil
+}
+
+// CatalogAddVersionNotCheckedWarning is said when an addon is added while
+// Sharko cannot reach its chart repository to confirm the version.
+func CatalogAddVersionNotCheckedWarning(addon, version string) string {
+	return fmt.Sprintf(
+		"Sharko could not reach the chart repository of %s, so it did not check that version %s exists. If the version is wrong, ArgoCD will not be able to install it.",
+		addon, version)
 }
 
 // readCatalog reads and parses the org's catalog.yaml. A file that does not

@@ -408,7 +408,7 @@ var comparisonGuard = map[string][]providerSourcedField{
 		{field: "ArgocdApplicationName", reason: "ArgoCD's metadata.name — a Kubernetes object name, so RFC 1123 characters only; it cannot hold a userinfo section and it is not free-form text"},
 		{field: "ArgocdSyncStatus", routed: true, reason: "credsafe.SafeSyncStatus — echoed only when it is a value Sharko knows"},
 		{field: "ArgocdHealthStatus", routed: true, reason: "credsafe.SafeHealthStatus — echoed only when it is a value Sharko knows"},
-		{field: "ArgocdDeployedVersion", reason: "ArgoCD's spec.source.targetRevision — a Git ref or chart version; it is not a URL and it is not error text"},
+		{field: "ArgocdDeployedVersion", reason: "the revision of ArgoCD's last finished sync (status.history) — a commit id or chart version; it is not a URL and it is not error text"},
 		{field: "ArgocdNamespace", reason: "ArgoCD's spec.destination.namespace — a Kubernetes namespace name"},
 		{field: "ArgocdSourceRepoURL", routed: true, reason: "credsafe.SafeRepoURL — this is B7"},
 		{field: "ArgocdSourcePath", reason: "a path INSIDE the repository; the credential lives in the URL's userinfo, which a path has no room for"},

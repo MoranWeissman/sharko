@@ -566,7 +566,10 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			// on its way onto the response (B7, B8). See safeAddonFailure.
 			comp.ArgocdSyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
 			comp.ArgocdHealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
-			comp.ArgocdDeployedVersion = app.SourceTargetRevision
+			// The version that really runs, never the one that was only
+			// asked for (pre-release walk 4: "Running 99.0.0" for a chart
+			// version that does not exist).
+			comp.ArgocdDeployedVersion = app.SyncedRevision
 			comp.ArgocdNamespace = app.DestinationNamespace
 			comp.ArgocdSourceRepoURL = credsafe.SafeRepoURL(app.SourceRepoURL)
 			comp.ArgocdDestinationServer = credsafe.SafeRepoURL(app.DestinationServer)
@@ -583,6 +586,9 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 				// token and all, on an ordinary 200 response.
 				comp.Issues = append(comp.Issues, credsafe.ArgocdSyncFailureShort)
 				comp.ArgocdOperationMessage = safeAddonFailure(app)
+			}
+			if reason := versionNotLoadedIssue(app, declaredVersionOf(comp)); reason != "" {
+				comp.Issues = append(comp.Issues, reason)
 			}
 			switch comp.Status {
 			case "healthy":
@@ -627,7 +633,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 				ArgocdApplicationName:   app.Name,
 				ArgocdSyncStatus:        credsafe.SafeSyncStatus(app.SyncStatus),
 				ArgocdHealthStatus:      credsafe.SafeHealthStatus(app.HealthStatus),
-				ArgocdDeployedVersion:   app.SourceTargetRevision,
+				ArgocdDeployedVersion:   app.SyncedRevision,
 				ArgocdNamespace:         app.DestinationNamespace,
 				ArgocdSourceRepoURL:     credsafe.SafeRepoURL(app.SourceRepoURL),
 				ArgocdDestinationServer: credsafe.SafeRepoURL(app.DestinationServer),
@@ -1062,6 +1068,51 @@ func classifyAddonApp(app models.ArgocdApplication) (status string, syncFailing 
 
 	// 3. Existing health mapping.
 	return classifyHealth(health, ""), false
+}
+
+// versionNotLoadedIssue is the reason shown when ArgoCD cannot work out what
+// to deploy for the version Git asks for, while an older version (or
+// nothing) keeps running. Before this the row said "Error" with no reason
+// anywhere in Sharko.
+//
+// The sentence is Sharko's own and carries only the two version strings.
+// ArgoCD's own condition text is not passed on: it quotes the repository
+// address, which can carry an access token.
+func versionNotLoadedIssue(app models.ArgocdApplication, declaredVersion string) string {
+	if declaredVersion == "" || declaredVersion == app.SyncedRevision {
+		return ""
+	}
+	comparisonFailed := false
+	for _, c := range app.Conditions {
+		if c.Type == "ComparisonError" {
+			comparisonFailed = true
+			break
+		}
+	}
+	if !comparisonFailed {
+		return ""
+	}
+	return VersionNotLoadedIssue(declaredVersion, app.SyncedRevision)
+}
+
+// declaredVersionOf is the version Git asks for on this cluster — the same
+// pick the cluster page's "Declared (Git)" column makes.
+func declaredVersionOf(comp models.AddonComparisonStatus) string {
+	if comp.HasVersionOverride && comp.CustomVersion != "" {
+		return comp.CustomVersion
+	}
+	if comp.EnvironmentVersion != "" {
+		return comp.EnvironmentVersion
+	}
+	return comp.GitVersion
+}
+
+// VersionNotLoadedIssue is the sentence itself, exported so tests pin it.
+func VersionNotLoadedIssue(declaredVersion, runningVersion string) string {
+	if runningVersion == "" {
+		return fmt.Sprintf("ArgoCD could not load version %s. Check that this version exists in the chart repository. Nothing is running yet.", declaredVersion)
+	}
+	return fmt.Sprintf("ArgoCD could not load version %s. Check that this version exists in the chart repository. Version %s is still running.", declaredVersion, runningVersion)
 }
 
 // safeAddonFailure is what argocd_operation_message carries now: Sharko's own

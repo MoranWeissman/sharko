@@ -329,6 +329,18 @@ type Orchestrator struct {
 	// per-instance test seam per go-expert.md convention (default real,
 	// override in test via SetChartProbe).
 	chartProbeFn ChartProbeFunc
+
+	// chartVersionCheckFn asks the chart repository whether a version
+	// exists, before an upgrade or a catalog add opens a pull request
+	// (chart_version_check.go). Wired via SetChartVersionCheck; nil means
+	// the check is skipped.
+	chartVersionCheckFn ChartVersionCheckFn
+
+	// chartDefaultsFn downloads a chart version's own values.yaml so an
+	// upgrade can tell which settings in a seeded values file are still the
+	// old chart's defaults (values_follow_defaults.go). Wired via
+	// SetChartDefaultsFetcher; nil means that comparison is skipped.
+	chartDefaultsFn ChartDefaultsFn
 }
 
 // LatestVersionFn resolves the newest version Sharko knows for a chart.

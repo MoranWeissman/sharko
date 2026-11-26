@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,19 +133,40 @@ func (p *ServiceProvider) fetchLatestVersion(ctx context.Context, repoURL, chart
 
 	// Helm repo index entries are sorted newest-first by convention, but we
 	// sort by semver to be safe.
+	return latestStableVersion(versions), nil
+}
+
+// latestStableVersion picks the newest RELEASED version. A pre-release
+// ("3.0.0-beta.6", "2.0.0-rc.1") is never "the latest version": the bell
+// used to announce a beta as "Major update ... review for security patches"
+// right after somebody installed the newest stable release (pre-release
+// walk 1 L2, walk 4 finding 4). No released version at all means nothing to
+// announce.
+func latestStableVersion(versions []helm.ChartVersion) string {
 	sorted := make([]string, 0, len(versions))
 	for _, v := range versions {
-		if v.Version != "" {
-			sorted = append(sorted, v.Version)
+		if v.Version == "" || isPreRelease(v.Version) {
+			continue
 		}
+		sorted = append(sorted, v.Version)
 	}
 	if len(sorted) == 0 {
-		return "", nil
+		return ""
 	}
 	sort.Slice(sorted, func(i, j int) bool {
 		return semverGreater(sorted[i], sorted[j])
 	})
-	return sorted[0], nil
+	return sorted[0]
+}
+
+// isPreRelease reports whether a version carries a pre-release suffix
+// ("-beta.6", "-rc.1", "-alpha"). Build metadata ("+build.5") is not one.
+func isPreRelease(version string) bool {
+	v := strings.TrimPrefix(version, "v")
+	if i := strings.Index(v, "+"); i >= 0 {
+		v = v[:i]
+	}
+	return strings.Contains(v, "-")
 }
 
 // getFetcher returns a cached helm.Fetcher for the given repoURL. A new

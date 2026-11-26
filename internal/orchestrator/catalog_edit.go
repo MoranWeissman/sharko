@@ -125,6 +125,7 @@ func (o *Orchestrator) EditCatalogEntry(ctx context.Context, req EditCatalogEntr
 		return nil, fmt.Errorf("%w: %s is not in your catalog — add it first", ErrV4AddonNotInCatalog, req.Name)
 	}
 
+	before := entry
 	if req.RepoURL != nil {
 		entry.RepoURL = *req.RepoURL
 	}
@@ -159,6 +160,15 @@ func (o *Orchestrator) EditCatalogEntry(ctx context.Context, req EditCatalogEntr
 		return nil, err
 	}
 	spec.Addons[req.Name] = entry
+
+	// A changed version (or a changed chart address, which changes what the
+	// version means) has to exist before the pull request opens
+	// (chart_version_check.go).
+	if entry.Version != before.Version || entry.RepoURL != before.RepoURL || entry.Chart != before.Chart {
+		if err := o.checkChartVersion(ctx, req.Name, entry.RepoURL, entry.Chart, entry.Version); err != nil {
+			return nil, err
+		}
+	}
 
 	catalogBody, reformatted, err := writeCatalogFile(
 		existingCatalog, spec,

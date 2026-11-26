@@ -185,7 +185,21 @@ import (
 // makes a log call. provider_errors.go looks for "*" in a provider's answer
 // (that is how providers mask a key), which is not one of the credential
 // characters this guard is about.
-const wantSweptGoFiles = 451
+//
+// 455 since the pre-release walk fixes (upgrades, story A) added four files.
+// internal/orchestrator/chart_version_check.go asks whether a chart version
+// exists before a pull request opens; it logs one fixed-text message with the
+// addon, chart, version and the error VALUE (never its text, and never the
+// repository address). internal/orchestrator/upgrade_all_v4.go
+// is the all-clusters upgrade on the v4 layout, and
+// internal/orchestrator/values_follow_defaults.go moves the settings a
+// generated values file copied from the old chart to the new chart's
+// defaults; neither makes a log call. internal/api/chart_version_seams.go
+// holds the two chart-repository lookups behind them and the upgrade error
+// mapping; it makes no log call. None of the four searches for credential
+// characters: values_follow_defaults.go looks at one byte for a YAML comment
+// marker in a values FILE line, never in an address.
+const wantSweptGoFiles = 455
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -342,6 +356,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/notifications/store.go", fn: "MarkRead", msg: "could not persist after mark read", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "NewStore", msg: "could not load persisted notifications", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "Resolve", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/notifications/store.go", fn: "ResolveExcept", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "ResolveFor", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "extractNotifications", msg: "failed to unmarshal notifications from state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "loadFromCMStore", msg: "could not save the notifications that were kept — the dropped ones are still stored and will be dropped again on the next start", carriers: "ident:err", verdict: "sink"},
@@ -359,6 +374,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/adopt_v4.go", fn: "adoptSingleClusterV4", msg: "failed to take ownership of the ArgoCD cluster secret during v4 adoption", carriers: "ident:swapErr", verdict: "sink"},
 	{file: "internal/orchestrator/ai_annotate.go", fn: "AnnotateValues", msg: "ai annotate fell through to heuristic-only", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/ai_annotate.go", fn: "AnnotateValues", msg: "ai annotate response parse failed; using heuristic only", carriers: "ident:parseErr", verdict: "sink"},
+	{file: "internal/orchestrator/chart_version_check.go", fn: "checkChartVersion", msg: "chart version check: could not read the chart repository", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: PR opened but auto-merge failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: could not read the cluster registry — refusing to rewrite it from scratch", carriers: "ident:clusterAddonsErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster dry run: could not read the cluster registry", carriers: "ident:clusterAddonsErr", verdict: "sink"},

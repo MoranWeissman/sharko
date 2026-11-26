@@ -354,7 +354,7 @@ func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.Gi
 					// word comes back out.
 					dep.SyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
 					dep.HealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
-					dep.DeployedVersion = app.SourceTargetRevision
+					dep.DeployedVersion = app.SyncedRevision
 					dep.ApplicationName = app.Name
 
 					dep.Status, _ = classifyAddonApp(app)
@@ -517,7 +517,7 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 				// B10 — same as the v3 branch above.
 				dep.SyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
 				dep.HealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
-				dep.DeployedVersion = app.SourceTargetRevision
+				dep.DeployedVersion = app.SyncedRevision
 				dep.ApplicationName = app.Name
 
 				dep.Status, _ = classifyAddonApp(app)
@@ -760,6 +760,7 @@ func (s *AddonService) getVersionMatrixUncached(ctx context.Context, gp gitprovi
 			cell := models.VersionMatrixCell{
 				Version:          version,
 				DriftFromCatalog: version != addon.Version,
+				AheadOfCatalog:   versionIsNewer(version, addon.Version),
 			}
 
 			if !enabled {
@@ -864,6 +865,7 @@ func (s *AddonService) getVersionMatrixV4(ctx context.Context, gp gitprovider.Gi
 			cell := models.VersionMatrixCell{
 				Version:          version,
 				DriftFromCatalog: version != addon.Version,
+				AheadOfCatalog:   versionIsNewer(version, addon.Version),
 			}
 
 			if !ca.Enabled {

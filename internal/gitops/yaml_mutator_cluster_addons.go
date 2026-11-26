@@ -105,3 +105,23 @@ func loadOrBootstrapClusterAddons(data []byte, clusterName string) (models.Clust
 	}
 	return models.LoadClusterAddons(data)
 }
+
+// ClearClusterAddonsAddonVersion removes addonName's own version pin from a
+// cluster-addons/<cluster-name>.yaml document and leaves everything else in
+// the entry (enabled, settings) as it is. With no pin the cluster runs the
+// version catalog.yaml names — which is what an "upgrade for all clusters"
+// needs: SetClusterAddonsAddon cannot do it, because its nil version means
+// "leave the pin alone". Returns an error if the addon has no entry.
+func ClearClusterAddonsAddonVersion(data []byte, addonName string) ([]byte, error) {
+	spec, err := models.LoadClusterAddons(data)
+	if err != nil {
+		return nil, fmt.Errorf("ClearClusterAddonsAddonVersion: %w", err)
+	}
+	entry, ok := spec.Addons[addonName]
+	if !ok {
+		return nil, fmt.Errorf("ClearClusterAddonsAddonVersion: addon %q has no entry for cluster %q", addonName, spec.Cluster)
+	}
+	entry.Version = ""
+	spec.Addons[addonName] = entry
+	return models.SaveClusterAddons(spec)
+}
