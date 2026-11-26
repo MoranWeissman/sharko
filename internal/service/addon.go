@@ -390,7 +390,10 @@ func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.Gi
 			deployments = append(deployments, dep)
 		}
 
-		item.TotalClusters = len(deployments)
+		// "total" is every managed cluster, so "turned on / total" can fall
+		// below 100%. It used to be the number of clusters the addon is on
+		// for, which made the ratio read 100% whatever the fleet looked like.
+		item.TotalClusters = totalClusters
 		item.EnabledClusters = enabledCount
 		item.HealthyApplications = healthyCount
 		item.DegradedApplications = degradedCount
@@ -417,6 +420,30 @@ func (s *AddonService) getCatalogUncached(ctx context.Context, gp gitprovider.Gi
 		TotalClusters:   totalClusters,
 		AddonsOnlyInGit: addonsOnlyInGit,
 	}, nil
+}
+
+// countV4ManagedClusters is how many clusters Sharko manages on a v4 repo:
+// the entries in managed-clusters.yaml. A cluster with no cluster-addons file
+// yet (nothing turned on for it) still counts. If the registry cannot be
+// read, it falls back to the number of assignment files, which is what this
+// answer used to be.
+func (s *AddonService) countV4ManagedClusters(ctx context.Context, gp gitprovider.GitProvider, clusterAddons map[string]models.ClusterAddonsSpec) int {
+	data, err := gp.GetFileContent(ctx, orchestrator.V4ManagedClustersPath, s.branch())
+	if err != nil || len(data) == 0 {
+		return len(clusterAddons)
+	}
+	clusters, perr := s.parser.ParseClusterAddons(data)
+	if perr != nil {
+		return len(clusterAddons)
+	}
+	names := make(map[string]struct{}, len(clusters)+len(clusterAddons))
+	for _, c := range clusters {
+		names[c.Name] = struct{}{}
+	}
+	for n := range clusterAddons {
+		names[n] = struct{}{}
+	}
+	return len(names)
 }
 
 // getCatalogV4 is GetCatalog's v4-repo branch. It builds the same
@@ -468,6 +495,7 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 	envList := loadEnvironments()
 	items := make([]models.AddonCatalogItem, 0, len(addonNames))
 	addonsOnlyInGit := 0
+	totalClusters := s.countV4ManagedClusters(ctx, gp, clusterAddons)
 
 	for _, addonName := range addonNames {
 		addon := merged[addonName]
@@ -546,7 +574,8 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 			deployments = append(deployments, dep)
 		}
 
-		item.TotalClusters = len(deployments)
+		// Every managed cluster, not only the ones this addon is on for.
+		item.TotalClusters = totalClusters
 		item.EnabledClusters = enabledCount
 		item.HealthyApplications = healthyCount
 		item.DegradedApplications = degradedCount
@@ -565,7 +594,7 @@ func (s *AddonService) getCatalogV4(ctx context.Context, gp gitprovider.GitProvi
 	return &models.AddonCatalogResponse{
 		Addons:          items,
 		TotalAddons:     len(items),
-		TotalClusters:   len(clusterAddons),
+		TotalClusters:   totalClusters,
 		AddonsOnlyInGit: addonsOnlyInGit,
 	}, nil
 }
@@ -942,6 +971,34 @@ func (s *AddonService) GetAddonValues(ctx context.Context, addonName string, gp 
 	}, nil
 }
 
+// getAddonValuesV4ReadOnly is the v4 answer to the values screen: the real
+// content of values/global/<addon>.yaml, as it is in Git, marked read-only.
+// A file that is not there is an empty answer with FileExists false, never an
+// error, so the screen can say so in plain words.
+func (s *AddonService) getAddonValuesV4ReadOnly(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AddonValuesSchemaResponse, error) {
+	path, err := orchestrator.V4GlobalValuesPath(addonName)
+	if err != nil {
+		return nil, err
+	}
+	resp := &models.AddonValuesSchemaResponse{
+		AddonName:  addonName,
+		ReadOnly:   true,
+		ValuesFile: path,
+	}
+	data, err := gp.GetFileContent(ctx, path, s.branch())
+	if err != nil {
+		if isGitFileNotFound(err) {
+			return resp, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(data) > 0 {
+		resp.CurrentValues = string(data)
+		resp.FileExists = true
+	}
+	return resp, nil
+}
+
 // GetAddonValuesAndSchema returns the current global values YAML for an
 // addon plus an optional JSON Schema. The schema is read best-effort from
 // `configuration/addons-global-values/<addonName>.schema.json`; if absent or
@@ -955,6 +1012,10 @@ func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName st
 	log := logging.LoggerFromContext(ctx)
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
+	}
+
+	if isV4Repo(ctx, gp, s.branch()) {
+		return s.getAddonValuesV4ReadOnly(ctx, addonName, gp)
 	}
 
 	valuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)

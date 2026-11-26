@@ -918,7 +918,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the addon's current global values YAML and an optional JSON Schema (read from `\u003caddon\u003e.schema.json` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode.",
+                "description": "Returns the addon's current global values YAML and an optional JSON Schema (read from `\u003caddon\u003e.schema.json` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode. On a v4 repo it returns the real values/global/\u003caddon\u003e.yaml as it is in Git, with `read_only: true` and `values_file` set: Sharko does not edit values there yet.",
                 "produces": [
                     "application/json"
                 ],
@@ -945,13 +945,6 @@
                     },
                     "400": {
                         "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "This editor reads a v3-layout values path; the connected repo uses the v4 layout",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2827,7 +2820,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. `current_overrides` is empty when no overrides are configured for this addon yet.",
+                "description": "Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. `current_overrides` is empty when no overrides are configured for this addon yet. On a v4 repo it returns the real values/clusters/\u003ccluster\u003e/\u003caddon\u003e.yaml as it is in Git, with `read_only: true`, `values_file` set and `wrapped_under_addon_name` true when the file is wrapped under the add-on name (Helm ignores a wrapped file).",
                 "produces": [
                     "application/json"
                 ],
@@ -2861,13 +2854,6 @@
                     },
                     "400": {
                         "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "This editor reads a v3-layout values path; the connected repo uses the v4 layout",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

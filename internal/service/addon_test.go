@@ -1221,3 +1221,62 @@ applicationsets:
 		})
 	}
 }
+
+// TestGetCatalog_V4TotalClustersCountsEveryManagedCluster pins the walk 2
+// finding: the add-on page said "2 / 2 Clusters enabled" with three
+// managed clusters, because the total only counted the clusters the add-on
+// is on for. The total must be every managed cluster, including one that
+// has no cluster-addons file yet.
+func TestGetCatalog_V4TotalClustersCountsEveryManagedCluster(t *testing.T) {
+	on, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "spoke-1",
+		Addons:  map[string]models.ClusterAddonsAddon{"podinfo": {Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := models.SaveClusterAddons(models.ClusterAddonsSpec{
+		Cluster: "spoke-2",
+		Addons:  map[string]models.ClusterAddonsAddon{"podinfo": {Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta, err := config.SaveAddonCatalog(config.AddonCatalogSpec{
+		Addons: map[string]config.AddonCatalogEntry{
+			"podinfo": {RepoURL: "https://stefanprodan.github.io/podinfo", Chart: "podinfo", Version: "6.7.1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{files: map[string][]byte{
+		orchestrator.EnginePinPath:    []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"),
+		"cluster-addons/spoke-1.yaml": on,
+		"cluster-addons/spoke-2.yaml": off,
+		config.AddonCatalogPath:       delta,
+		// legacy-1 is managed but has no assignment file.
+		orchestrator.V4ManagedClustersPath: []byte("apiVersion: sharko.dev/v1\nkind: ManagedClusters\nclusters:\n  - name: spoke-1\n  - name: spoke-2\n  - name: legacy-1\n"),
+	}}
+	svc := NewAddonService("")
+	resp, err := svc.GetCatalog(context.Background(), gp, argocd.NewClient(ts.URL, "t", false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.TotalClusters != 3 {
+		t.Errorf("response total_clusters = %d, want 3 (every managed cluster)", resp.TotalClusters)
+	}
+	if len(resp.Addons) != 1 {
+		t.Fatalf("addons = %d, want 1", len(resp.Addons))
+	}
+	it := resp.Addons[0]
+	if it.EnabledClusters != 2 || it.TotalClusters != 3 {
+		t.Errorf("podinfo enabled/total = %d/%d, want 2/3", it.EnabledClusters, it.TotalClusters)
+	}
+}

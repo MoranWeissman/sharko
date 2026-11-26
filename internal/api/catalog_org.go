@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
@@ -295,18 +296,31 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 	// are final (which for a from_marketplace entry only happens after
 	// the resolver above runs) — see ChartValuesFetcherFn's doc comment
 	// for why this can't be a pre-fetch at the request edge the way v3's
-	// AddAddon does it. Skip on dry-run for the same reason the v3 door
-	// skips its pre-fetch: the preview shows only paths + create/update
-	// actions, so the fetch (and the AI annotate pass below) can't change
-	// what it shows, and skipping avoids burning registry/LLM quota on a
-	// request that writes nothing.
-	if !req.DryRun {
-		orch.SetChartValuesFetcher(s.fetchChartValuesForV4Catalog)
-	}
+	// AddAddon does it.
+	//
+	// The preview (dry run) fetches too. It used to skip the fetch, so the
+	// preview showed a three-line comment stub for values/global/<addon>.yaml
+	// while the real pull request wrote the whole chart values file (421
+	// lines in the walk) — a reviewer approved one thing and merged another.
+	// Only the AI comment pass is skipped on a preview: it costs model quota
+	// and its output differs from run to run, so it could not be "exactly
+	// what the pull request writes" anyway. When AI comments are switched
+	// on, the preview says so in its warnings.
+	orch.SetChartValuesFetcher(func(fctx context.Context, addonName, repoURL, chart, version string) (orchestrator.ChartValuesFetchResult, error) {
+		return s.fetchChartValuesForV4CatalogOpts(fctx, addonName, repoURL, chart, version, req.DryRun)
+	})
 	result, err := orch.AddToCatalog(ctx, req)
 	if err != nil {
 		writeAddToCatalogError(w, err)
 		return
+	}
+	if req.DryRun {
+		if previewHasValuesFile(result) {
+			result.Warnings = append(result.Warnings, PreviewValuesFileNote)
+		}
+		if s.previewMissesAIComments(result) {
+			result.Warnings = append(result.Warnings, PreviewMissesAICommentsNote)
+		}
 	}
 
 	// Everything asked for was already in the catalog: nothing was written,
@@ -704,4 +718,47 @@ func joinNames(names []string) string {
 		out += n
 	}
 	return out
+}
+
+// PreviewMissesAICommentsNote is the one sentence a preview carries when the
+// pull request will add AI explanations to the values file that the preview
+// itself cannot show.
+const PreviewMissesAICommentsNote = "The values file in the pull request will also carry short explanations written by the AI assistant. The preview shows the file without them."
+
+// previewMissesAIComments reports whether this preview lists a new global
+// values file AND the AI comment pass is switched on, so the real pull
+// request would add comments the preview left out.
+func (s *Server) previewMissesAIComments(result *orchestrator.AddToCatalogResult) bool {
+	if result == nil || result.GitResult == nil || result.DryRun == nil {
+		return false
+	}
+	if s.aiClient == nil || !s.aiClient.AnnotateOnSeedEnabled() {
+		return false
+	}
+	for _, f := range result.DryRun.FilesToWrite {
+		if strings.HasPrefix(f.Path, orchestrator.V4GlobalValuesDir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// PreviewValuesFileNote is the one sentence a preview carries when it lists a
+// values file. The preview leaves the comment lines out and hides values that
+// look like passwords, so that nothing secret is ever put on screen; the pull
+// request itself writes the whole file.
+const PreviewValuesFileNote = "Values files are shown here without their comment lines, and values that look like passwords are hidden. The pull request writes the whole file."
+
+// previewHasValuesFile reports whether the preview lists any file under
+// values/.
+func previewHasValuesFile(result *orchestrator.AddToCatalogResult) bool {
+	if result == nil || result.GitResult == nil || result.DryRun == nil {
+		return false
+	}
+	for _, f := range result.DryRun.FilesToWrite {
+		if strings.HasPrefix(f.Path, "values/") {
+			return true
+		}
+	}
+	return false
 }

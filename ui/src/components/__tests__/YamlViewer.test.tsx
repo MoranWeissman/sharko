@@ -39,3 +39,22 @@ describe('YamlViewer', () => {
     expect(copyButton).toBeInTheDocument();
   });
 });
+
+describe('YamlViewer with a file that holds only comments', () => {
+  const commentsOnly =
+    '# Helm values for reloader on spoke-1 only.\n# An empty file means no cluster-specific overrides.\n'
+
+  it('says the file has only comments and shows it as it is, never "Unable to parse YAML"', () => {
+    const { container } = render(<YamlViewer yaml={commentsOnly} defaultView="tree" />);
+    expect(container.textContent).toContain(
+      'This file has only comments, no settings yet. Showing the file as it is:',
+    );
+    expect(container.textContent).toContain('# An empty file means no cluster-specific overrides.');
+    expect(container.textContent).not.toContain('Unable to parse YAML');
+  });
+
+  it('still says "Unable to parse YAML" for a file that really is broken', () => {
+    const { container } = render(<YamlViewer yaml={'a: [unclosed\n'} defaultView="tree" />);
+    expect(container.textContent).toContain('Unable to parse YAML');
+  });
+});

@@ -171,6 +171,12 @@ type ItemRecord struct {
 	// count over at 0, which only delays (never falsifies) the "the last N
 	// checks failed in a row" panel line reaching 3.
 	ConsecutiveFailures int
+	// Push is the catalog's definition of this secret as of the last check
+	// or push: the Secret's name, its namespace, and which store path each
+	// key comes from. It is what lets the Secrets page list a delivered
+	// Secret by name, because the catalog in Git is the only place these
+	// definitions live. In memory only, like the rest of the record.
+	Push models.AddonSecretRef
 }
 
 // ItemAuditFunc is invoked once per addon-values secret that was actually
@@ -517,6 +523,51 @@ func (r *Reconciler) LastItemConsecutiveFailures(cluster, addon string) (count i
 	return rec.ConsecutiveFailures, true
 }
 
+// KnownItem is one addon-values secret the engine has a record for: which
+// cluster and add-on it is for, and the catalog's definition of it.
+type KnownItem struct {
+	Cluster    string
+	Addon      string
+	SecretName string
+	Namespace  string
+	// Keys maps each key in the Secret to the store path it is read from.
+	Keys map[string]string
+}
+
+// KnownItems lists every addon-values secret the engine holds a record for,
+// sorted by cluster then add-on. Items whose definition is incomplete (no
+// Secret name or no namespace) are left out: there is nothing to show for
+// them. It is how the Secrets page finds the Secrets Sharko delivers, since
+// their definitions live in the catalog in Git and nowhere else.
+func (r *Reconciler) KnownItems() []KnownItem {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	out := make([]KnownItem, 0, len(r.itemRecords))
+	for k, rec := range r.itemRecords {
+		if rec.Push.SecretName == "" || rec.Push.Namespace == "" {
+			continue
+		}
+		keys := make(map[string]string, len(rec.Push.Keys))
+		for kk, v := range rec.Push.Keys {
+			keys[kk] = v
+		}
+		out = append(out, KnownItem{
+			Cluster: k.Cluster, Addon: k.Addon,
+			SecretName: rec.Push.SecretName, Namespace: rec.Push.Namespace, Keys: keys,
+		})
+	}
+	r.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Cluster != out[j].Cluster {
+			return out[i].Cluster < out[j].Cluster
+		}
+		return out[i].Addon < out[j].Addon
+	})
+	return out
+}
+
 // KnownItemCount reports how many cluster+addon pairs this engine holds a
 // record for — the real blast radius of one CheckAll (P3-F1), so the audit
 // entry a "Refresh all" writes can state how much it actually covered
@@ -695,7 +746,7 @@ func (r *Reconciler) reconcile() {
 		outcome, err := r.reconcileSecret(ctx, &stats, w.clusterName, w.credLookup, w.addon, w.push)
 
 		key := ItemKey{Cluster: w.clusterName, Addon: w.addon}
-		rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome}
+		rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Push: w.push}
 		if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
 			rec.ChangedAt = rec.LastChecked
 		} else if prev, ok := prevItems[key]; ok {
@@ -1376,8 +1427,8 @@ func (r *Reconciler) reconcileSecret(
 		return ItemOutcomeUnchanged, nil
 	}
 
-	// Hashes differ — rotate.
-	log.Warn("[secrets] secret rotated, updating",
+	// Hashes differ — apply the store value.
+	log.Warn("[secrets] the value in the store is different from the Secret on the cluster, updating",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	updateProvenance := remoteclient.ValuesProvenanceAnnotations(addonName, r.sourceType, time.Now())
@@ -1444,7 +1495,7 @@ func (r *Reconciler) findWork(ctx context.Context, clusterName, addonName string
 // ItemRecord with ConsecutiveFailures left at its zero value, so a row
 // stuck failing on manual Refresh (or on CheckAll — see checkWork) never
 // crossed the fight-detection threshold the periodic pass uses.
-func (r *Reconciler) recordItemCheck(cluster, addon string, outcome ItemOutcome, errMsg string) {
+func (r *Reconciler) recordItemCheck(cluster, addon string, push models.AddonSecretRef, outcome ItemOutcome, errMsg string) {
 	key := ItemKey{Cluster: cluster, Addon: addon}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1457,6 +1508,7 @@ func (r *Reconciler) recordItemCheck(cluster, addon string, outcome ItemOutcome,
 		Outcome:     outcome,
 		ChangedAt:   prev.ChangedAt,
 		Error:       errMsg,
+		Push:        push,
 	}
 	if errMsg != "" {
 		rec.ConsecutiveFailures = prev.ConsecutiveFailures + 1
@@ -1604,7 +1656,7 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 	if missing := w.push.MissingFields(); len(missing) > 0 {
 		checkErr := fmt.Errorf("the secret definition in the catalog has no %s — fill that in before Sharko can check it",
 			strings.Join(missing, " and no "))
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeSkipped, checkErr.Error())
+		r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeSkipped, checkErr.Error())
 		return "", checkErr
 	}
 
@@ -1622,7 +1674,7 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 		// found. recordItemCheck(..., ItemOutcomeError, ...) is what makes
 		// this failure visible on the page and to LastItemConsecutiveFailures
 		// (L10), same as a periodic-pass failure already is.
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, credsafe.Sentence(checkErr))
+		r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeError, credsafe.Sentence(checkErr))
 		return "", checkErr
 	}
 
@@ -1633,25 +1685,25 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 	// a refusal every five minutes. Asked before the client is built and
 	// before any value is fetched from the secrets store.
 	if tlsErr := remoteclient.CheckDestinationTLS(creds.Raw); tlsErr != nil {
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, tlsErr.Error())
+		r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeError, tlsErr.Error())
 		return "", tlsErr
 	}
 
 	client, err := r.remoteClientFn(creds.Raw)
 	if err != nil {
 		checkErr := fmt.Errorf("connecting to cluster %q: %w", clusterName, err)
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+		r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeError, checkErr.Error())
 		return "", checkErr
 	}
 
 	existing, err := client.CoreV1().Secrets(w.push.Namespace).Get(ctx, w.push.SecretName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			r.recordItemCheck(clusterName, addonName, ItemOutcomeMissing, "")
+			r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeMissing, "")
 			return ItemOutcomeMissing, nil
 		}
 		checkErr := fmt.Errorf("checking the existing secret on cluster %q: %w", clusterName, err)
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+		r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeError, checkErr.Error())
 		return "", checkErr
 	}
 
@@ -1659,7 +1711,7 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 	// secrets store: there is no reason to fetch a value Sharko is never
 	// going to write.
 	if !remoteclient.IsManagedBySharko(existing) {
-		r.recordItemCheck(clusterName, addonName, ItemOutcomeForeign, "")
+		r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeForeign, "")
 		return ItemOutcomeForeign, nil
 	}
 
@@ -1668,7 +1720,7 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 		val, valErr := r.secretProvider.GetSecretValue(ctx, providerPath)
 		if valErr != nil {
 			checkErr := fmt.Errorf("fetching %q from the secrets provider: %w", providerPath, valErr)
-			r.recordItemCheck(clusterName, addonName, ItemOutcomeError, checkErr.Error())
+			r.recordItemCheck(clusterName, addonName, w.push, ItemOutcomeError, checkErr.Error())
 			return "", checkErr
 		}
 		desiredData[key] = val
@@ -1678,7 +1730,7 @@ func (r *Reconciler) checkWork(ctx context.Context, w secretWork) (ItemOutcome, 
 	if hashSecretData(existing.Data) != hashSecretData(desiredData) {
 		outcome = ItemOutcomeOutOfSync
 	}
-	r.recordItemCheck(clusterName, addonName, outcome, "")
+	r.recordItemCheck(clusterName, addonName, w.push, outcome, "")
 	return outcome, nil
 }
 

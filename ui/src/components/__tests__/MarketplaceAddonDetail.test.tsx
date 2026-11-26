@@ -548,3 +548,33 @@ describe('MarketplaceAddonDetail — project README fetch attaches the Bearer to
     })
   })
 })
+
+// Walk 1 finding L1: the namespace was never checked, so "Re Loader!" was
+// accepted and a pull request opened for an add-on that could never deploy.
+describe('MarketplaceAddonDetail — the namespace is checked', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+    localStorage.clear()
+  })
+
+  const RULE =
+    'A namespace can only use lowercase letters, digits and hyphens. It must start and end with a letter or digit, and be 63 characters at most.'
+
+  it('says the rule in plain words and holds the add button for a bad namespace', async () => {
+    renderDetail()
+    await waitForActionPanel()
+    fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: 'Re Loader!' } })
+    expect(screen.getByRole('alert').textContent).toBe(RULE)
+    expect(screen.getByRole('button', { name: /add to catalog/i })).toBeDisabled()
+    expect(mockAddToCatalog).not.toHaveBeenCalled()
+  })
+
+  it('lets a good namespace through with no complaint', async () => {
+    renderDetail()
+    await waitForActionPanel()
+    fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: 'cert-manager' } })
+    expect(screen.queryByText(RULE)).toBeNull()
+    expect(screen.getByRole('button', { name: /add to catalog/i })).toBeEnabled()
+  })
+})

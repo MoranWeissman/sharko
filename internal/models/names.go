@@ -41,6 +41,23 @@ func IsValidResourceName(name string) bool {
 // endpoint the caller hit.
 const InvalidResourceNameMessage = "must be letters, digits and hyphens only, starting with a letter or digit"
 
+// NamespacePattern is what Kubernetes accepts as a namespace name: lowercase
+// letters, digits and hyphens, starting and ending with a letter or digit,
+// 63 characters at most. A namespace outside it is refused by the cluster,
+// so the add-on would be approved in Git and then never deploy.
+const NamespacePattern = `^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`
+
+var namespaceRe = regexp.MustCompile(NamespacePattern)
+
+// IsValidNamespaceName reports whether ns is a namespace Kubernetes accepts.
+func IsValidNamespaceName(ns string) bool {
+	return namespaceRe.MatchString(ns)
+}
+
+// InvalidNamespaceMessage is the plain-English rule every caller (and the
+// add-on form on screen) gives for a rejected namespace.
+const InvalidNamespaceMessage = "A namespace can only use lowercase letters, digits and hyphens. It must start and end with a letter or digit, and be 63 characters at most."
+
 // LooksLikePathSegmentEscape reports whether name contains anything that
 // could make it escape the directory it is about to be joined into: a
 // forward slash, a backslash, or "..". This is the second, structural half

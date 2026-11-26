@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	sharkoschema "github.com/MoranWeissman/sharko/internal/schema"
 )
 
@@ -278,6 +279,21 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 		}
 	}
 	if !enveloped {
+		// A per-cluster values file is plain Helm values, not a Sharko
+		// envelope. The one mistake worth a verdict is wrapping every setting
+		// under the add-on's name: Helm does not look inside that block, so
+		// the file does nothing, and nothing else in the chain says so.
+		if addon, wrapped := detectWrappedClusterValuesFile(path, body); wrapped {
+			return fileVerdict{
+				path:   path,
+				kind:   "fail",
+				reason: fmt.Sprintf("none of the settings in this file take effect: they are all inside a block named %q", addon+":"),
+				details: []string{fmt.Sprintf(
+					"Move the settings out of the %q block so they start at the left edge of the file. Helm does not look inside a block named after the add-on.",
+					addon+":",
+				)},
+			}
+		}
 		return fileVerdict{path: path, kind: "skip", reason: "not a Sharko-enveloped file"}
 	}
 
@@ -447,6 +463,27 @@ func detectClusterAddonsFilenameMismatch(path string, body []byte) (gotCluster, 
 		return clusterVal.Value, want, 0, false
 	}
 	return clusterVal.Value, want, clusterKey.Line, true
+}
+
+// detectWrappedClusterValuesFile reports whether path is a per-cluster values
+// file (…/values/clusters/<cluster>/<addon>.yaml) whose only setting is a
+// block named after the add-on. It returns the add-on name when it is.
+func detectWrappedClusterValuesFile(path string, body []byte) (addon string, wrapped bool) {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	n := len(parts)
+	if n < 4 || parts[n-2] == "" || parts[n-3] != "clusters" || parts[n-4] != "values" {
+		return "", false
+	}
+	file := parts[n-1]
+	ext := filepath.Ext(file)
+	if ext != ".yaml" && ext != ".yml" {
+		return "", false
+	}
+	addon = strings.TrimSuffix(file, ext)
+	if orchestrator.DetectLegacyWrap(body, addon, "") {
+		return addon, true
+	}
+	return "", false
 }
 
 // looksLikeGoTemplate reports whether body appears to be a Go/Helm

@@ -1,3 +1,4 @@
+import { isValidNamespace, NAMESPACE_RULE_SENTENCE } from '@/lib/namespaceName'
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
@@ -556,9 +557,12 @@ export function MarketplaceAddonDetail({
   const versionInvalid =
     versionTouched && !!version && versionsResp !== null && !versionInList
 
+  const namespaceInvalid = namespace.trim().length > 0 && !isValidNamespace(namespace.trim())
+
   const formValid =
     trimmedName.length > 0 &&
     namespace.trim().length > 0 &&
+    !namespaceInvalid &&
     version.trim().length > 0 &&
     !versionInvalid &&
     !inCatalog &&
@@ -948,8 +952,14 @@ export function MarketplaceAddonDetail({
                   type="text"
                   value={namespace}
                   onChange={(e) => setNamespace(e.target.value)}
+                  aria-invalid={namespaceInvalid || undefined}
                   className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                 />
+                {namespaceInvalid && (
+                  <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    {NAMESPACE_RULE_SENTENCE}
+                  </p>
+                )}
               </Field>
             </div>
 
