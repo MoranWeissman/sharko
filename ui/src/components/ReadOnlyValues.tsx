@@ -21,6 +21,10 @@ export const CLUSTER_VALUES_V4_TITLE =
 
 export const VALUES_FILE_EMPTY_SENTENCE = 'This file is empty.'
 
+/** Shown in place of the file when reading it from Git failed. */
+export const VALUES_READ_FAILED_SENTENCE =
+  'Sharko could not read the values file from Git just now. Nothing was changed.'
+
 export const VALUES_FILE_WRAPPED_SENTENCE = (addon: string) =>
   `None of the settings in this file take effect. They are all inside a block named "${addon}:". Move them out of that block so they start at the left edge of the file.`
 

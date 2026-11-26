@@ -295,6 +295,12 @@ export function diffCheckedAt(when: string): string {
   return `Checked ${when}. Labels changed since then show up at the next check.`;
 }
 export const DIFF_NO_DIFFERENCES = "No differences found at the last check — this secret's addon labels matched Git.";
+/** Diff panel, when the last check failed: it compared nothing, so "no differences" would be false. */
+export const DIFF_LAST_CHECK_FAILED =
+  "The last check failed, so Sharko does not know whether this secret's addon labels match Git.";
+/** Diff panel, when the last check was skipped (for example the Secret is not there yet). */
+export const DIFF_LAST_CHECK_SKIPPED =
+  "The last check did not compare this secret's addon labels with Git.";
 export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
   'Check your secrets store settings in Settings → Secrets Provider, then test it there.';
 /** The docs page that shows how to give Sharko an AWS login off EKS. */
@@ -2085,6 +2091,17 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 )}
                 {!lastRec ? (
                   <p className="text-sm text-[#3a6a8a] dark:text-gray-400">Sharko hasn't checked this secret against Git yet — click Refresh to check now.</p>
+                ) : !hasDrift && lastRec.outcome !== 'succeeded' ? (
+                  // A failed or skipped check carries no list of differences.
+                  // "No list" is not "no differences": nothing was compared.
+                  <div data-testid="diff-not-compared">
+                    <p className="text-sm font-medium text-[#2a5a7a] dark:text-gray-300">
+                      {lastRec.outcome === 'failed' ? DIFF_LAST_CHECK_FAILED : DIFF_LAST_CHECK_SKIPPED}
+                    </p>
+                    {lastRec.message && (
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">{lastRec.message}</p>
+                    )}
+                  </div>
                 ) : !hasDrift ? (
                   <div className="flex items-center gap-2">
                     <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />

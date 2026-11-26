@@ -122,8 +122,11 @@ function PerClusterAddonOverridesEditorImpl({
   return (
     <div className="space-y-4">
       {/* Read-only (v4 repo): the editing sentence is inside the panel, so
-        * the "Save opens a pull request" line must not show here. */}
-      {!data?.read_only && (
+        * the "Save opens a pull request" line must not show here.
+        * It is also not shown while loading or after a failed read: until a
+        * good answer says this file can be saved from here, the page does not
+        * know that it can. */}
+      {!loading && !error && data && !data.read_only && (
         <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
           These values apply only to <span className="font-mono">{clusterName}</span>. Save
           opens a pull request.{' '}
@@ -177,7 +180,7 @@ function PerClusterAddonOverridesEditorImpl({
         />
       )}
 
-      {!loading && !error && selected && !data?.read_only && (
+      {!loading && !error && selected && data && !data.read_only && (
         <ValuesEditor
           key={`${clusterName}/${selected}`}
           title={`${selected} overrides on ${clusterName}`}

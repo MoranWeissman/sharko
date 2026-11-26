@@ -52,6 +52,13 @@ const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
 const inputCls =
   'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
 
+/** Settings, Connection: the Git host is limiting Sharko, so the repo was not looked at. */
+export const REPO_NOT_CHECKED_GIT_LIMIT =
+  'Sharko could not check the repository just now, because GitHub, or the Git host you use, says Sharko has asked too often. Nothing in Settings needs changing. It clears by itself.'
+/** Settings, Connection: the repo could not be read, so Sharko does not know if it is set up. */
+export const REPO_NOT_CHECKED =
+  'Sharko could not read the Git repository just now, so it does not know whether the repository is set up.'
+
 export function ConnectionSection() {
   const { connections, loading, error, refreshConnections } = useConnections()
 
@@ -257,10 +264,34 @@ export function ConnectionSection() {
   if (loading) return <LoadingState message="Loading connection..." />
   if (error) return <ErrorState message={error} onRetry={refreshConnections} />
 
+  // "Not initialized" is only true when the server read the repo and found
+  // no Sharko files in it (reason not_bootstrapped). Every other
+  // not-initialized answer means Sharko could not look. An answer with no
+  // reason at all comes from an older server, which only ever meant "empty".
+  const showInitBox =
+    initState !== 'idle' || !repoStatus?.reason || repoStatus.reason === 'not_bootstrapped'
+
   return (
     <div className="space-y-6">
-      {/* Repo not initialized banner */}
-      {existingConn && repoStatus && !repoStatus.initialized && (
+      {/* Sharko could not look at the repo (the Git host is limiting it, or
+        * the read failed). That is not "never set up", so there is no
+        * Initialize button here: starting an init on a repo that is already
+        * set up would be wrong, and it could not run right now anyway. */}
+      {existingConn && repoStatus && !repoStatus.initialized && !showInitBox && (
+        <div
+          data-testid="repo-not-checked-note"
+          className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/30"
+        >
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            {repoStatus.reason === 'git_rate_limited' ? REPO_NOT_CHECKED_GIT_LIMIT : REPO_NOT_CHECKED}
+          </p>
+        </div>
+      )}
+
+      {/* Repo not initialized banner — only when Sharko read the repo and
+        * found it empty (or while an init started here is still running). */}
+      {existingConn && repoStatus && !repoStatus.initialized && showInitBox && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-700 dark:bg-amber-950/30">
           <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
           <div className="flex-1 min-w-0">

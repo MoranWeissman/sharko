@@ -35,7 +35,7 @@ import { PRLifecycleProgress, PRLink, extractPR } from '@/components/PRFeedback'
 import { DryRunPreview } from '@/components/AddAddonFlow'
 import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse, DryRunResult, V4GitResult } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
-import { ReadOnlyValues } from '@/components/ReadOnlyValues'
+import { ReadOnlyValues, VALUES_READ_FAILED_SENTENCE } from '@/components/ReadOnlyValues'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { showToast } from '@/components/ToastNotification'
 import { AttributionNudge } from '@/components/AttributionNudge'
@@ -1401,6 +1401,10 @@ export function AddonDetail() {
   // proactive AttributionNudge. Fetched lazily when the user opens the tab.
   const [valuesSchema, setValuesSchema] = useState<AddonValuesSchemaResponse | null>(null)
   const [valuesSchemaLoading, setValuesSchemaLoading] = useState(false)
+  // Set when reading the values file failed. The tab then says so and offers
+  // to try again. It must not fall back to the editor: on a failed read the
+  // page does not know yet whether this repo can be edited from here at all.
+  const [valuesSchemaError, setValuesSchemaError] = useState<string | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [gitRepoBase, setGitRepoBase] = useState<string>('')
   // v4.0.4 U4: which remove door to use. Same detection as ClusterDetail —
@@ -1600,7 +1604,7 @@ export function AddonDetail() {
   useEffect(() => {
     if (!name) return
     if (activeSection !== 'values') return
-    if (valuesSchema || valuesSchemaLoading) return
+    if (valuesSchema || valuesSchemaLoading || valuesSchemaError !== null) return
     setValuesSchemaLoading(true)
     api
       .getAddonValuesSchema(name)
@@ -1611,13 +1615,14 @@ export function AddonDetail() {
           setValuesYaml(res.current_values)
         }
       })
-      .catch(() => {
-        // Schema fetch is best-effort; the editor falls back to whatever
-        // valuesYaml we already have.
-        setValuesSchema({ addon_name: name, current_values: valuesYaml ?? '', schema: null })
+      .catch((e) => {
+        // A failed read is shown as a failed read. It used to be turned into
+        // an empty editor with a Submit button, which on a repo that is
+        // read-only here could only be refused.
+        setValuesSchemaError(e instanceof Error ? e.message : '')
       })
       .finally(() => setValuesSchemaLoading(false))
-  }, [name, activeSection, valuesSchema, valuesSchemaLoading, valuesYaml])
+  }, [name, activeSection, valuesSchema, valuesSchemaLoading, valuesSchemaError])
 
   // Auto-refresh every 30s
   useEffect(() => {
@@ -2686,7 +2691,19 @@ export function AddonDetail() {
               </p>
               {valuesSchemaLoading && !valuesSchema ? (
                 <LoadingState message="Loading values..." />
-              ) : valuesSchema?.read_only ? (
+              ) : !valuesSchema ? (
+                // No good answer yet (the read failed, or has not started):
+                // never the editor.
+                valuesSchemaError !== null ? (
+                  <ErrorState
+                    message={VALUES_READ_FAILED_SENTENCE}
+                    detail={valuesSchemaError || undefined}
+                    onRetry={() => setValuesSchemaError(null)}
+                  />
+                ) : (
+                  <LoadingState message="Loading values..." />
+                )
+              ) : valuesSchema.read_only ? (
                 <ReadOnlyValues
                   title={`Global Values — ${addon.addon_name}`}
                   path={valuesSchema.values_file ?? ''}
