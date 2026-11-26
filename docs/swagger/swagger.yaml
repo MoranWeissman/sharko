@@ -5636,10 +5636,12 @@ paths:
       - addons
   /addons/{name}/values-schema:
     get:
-      description: Returns the addon's current global values YAML and an optional
+      description: 'Returns the addon''s current global values YAML and an optional
         JSON Schema (read from `<addon>.schema.json` next to the values file). The
         schema is omitted when none has been published; the UI then falls back to
-        plain YAML mode.
+        plain YAML mode. On a v4 repo it returns the real values/global/<addon>.yaml
+        as it is in Git, with `read_only: true` and `values_file` set: Sharko does
+        not edit values there yet.'
       parameters:
       - description: Addon name
         in: path
@@ -5656,12 +5658,6 @@ paths:
             type: object
         "400":
           description: Bad request
-          schema:
-            additionalProperties: true
-            type: object
-        "409":
-          description: This editor reads a v3-layout values path; the connected repo
-            uses the v4 layout
           schema:
             additionalProperties: true
             type: object
@@ -7055,9 +7051,12 @@ paths:
       - clusters
   /clusters/{cluster}/addons/{name}/values:
     get:
-      description: Returns the YAML for a single addon's section in a cluster's overrides
-        file, plus an optional JSON Schema. `current_overrides` is empty when no overrides
-        are configured for this addon yet.
+      description: 'Returns the YAML for a single addon''s section in a cluster''s
+        overrides file, plus an optional JSON Schema. `current_overrides` is empty
+        when no overrides are configured for this addon yet. On a v4 repo it returns
+        the real values/clusters/<cluster>/<addon>.yaml as it is in Git, with `read_only:
+        true`, `values_file` set and `wrapped_under_addon_name` true when the file
+        is wrapped under the add-on name (Helm ignores a wrapped file).'
       parameters:
       - description: Cluster name
         in: path
@@ -7079,12 +7078,6 @@ paths:
             type: object
         "400":
           description: Bad request
-          schema:
-            additionalProperties: true
-            type: object
-        "409":
-          description: This editor reads a v3-layout values path; the connected repo
-            uses the v4 layout
           schema:
             additionalProperties: true
             type: object

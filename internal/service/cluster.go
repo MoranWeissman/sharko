@@ -348,6 +348,10 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 	if cluster == nil {
 		return nil, nil
 	}
+	// The cluster is in the registry file, so it is a managed cluster. The
+	// list says so; this answer used to leave the mark off, so the same
+	// cluster read as managed in the list and not managed on its own page.
+	cluster.Managed = true
 
 	// v4 repos keep per-cluster addon enablement in
 	// cluster-addons/<name>.yaml, never in managed-clusters.yaml labels —
@@ -470,6 +474,10 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	if cluster == nil {
 		return nil, nil
 	}
+	// The cluster is in the registry file, so it is a managed cluster. The
+	// list says so; this answer used to leave the mark off, so the same
+	// cluster read as managed in the list and not managed on its own page.
+	cluster.Managed = true
 
 	// v4 repos keep per-cluster addon enablement in
 	// cluster-addons/<name>.yaml, never in managed-clusters.yaml labels —
