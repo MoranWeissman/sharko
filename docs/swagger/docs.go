@@ -219,7 +219,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upgrades multiple addons in a single atomic GitOps commit",
+                "description": "Upgrades several addons for all clusters in one pull request. Each addon is upgraded the same way POST /addons/{name}/upgrade does it for all clusters. Every version must exist in its chart repository; one that is not there refuses the whole request before any pull request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -244,14 +244,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Batch upgrade result",
+                        "description": "Batch upgrade pull request opened",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request: an empty list, a version the chart repository does not have (code version_not_found), or nothing to change",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -264,15 +263,22 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "An addon is not in the catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "409": {
-                        "description": "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead",
+                        "description": "The repo carries two layouts at once and has to be cleaned up first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "502": {
-                        "description": "Gateway error",
+                        "description": "Sharko could not reach the Git host or the chart repository",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -626,7 +632,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upgrades an addon to a new version globally or for a specific cluster",
+                "description": "Upgrades an addon to a new version, for all clusters or for one cluster, in one pull request. For all clusters (no \"cluster\" in the body): sets the addon's version in the catalog, removes the addon's own version pin from every cluster that has it switched on (a cluster already on a newer version is left as it is and named in warnings), and moves the settings in the addon's generated global values file that are still the old chart's defaults to the new chart's defaults (a setting somebody changed is never touched). For one cluster: sets that cluster's own version pin. The version must exist in the addon's chart repository; a version that is not there is refused before any pull request (400, code version_not_found). Send dry_run=true to get the exact files and diffs without opening a pull request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -646,7 +652,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Upgrade request with version and optional cluster",
+                        "description": "Upgrade request: version (required), cluster (optional, one cluster only), dry_run (optional), auto_merge (optional)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -658,14 +664,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Upgrade result",
+                        "description": "Upgrade pull request opened (or the dry-run preview). warnings lists anything the upgrade left on the old chart's values.",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request: no version, a version the chart repository does not have (code version_not_found), nothing to change (code nothing_to_change), or the addon is not switched on on that cluster",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -678,15 +683,22 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "The addon is not in the catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "409": {
-                        "description": "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead",
+                        "description": "The repo carries two layouts at once and has to be cleaned up first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "502": {
-                        "description": "Gateway error",
+                        "description": "Sharko could not reach the Git host or the chart repository (code chart_repo_unreadable)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -739,7 +751,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request or missing confirmation",
+                        "description": "Bad request: missing confirmation, a version the chart repository does not have (code version_not_found), nothing to change (code nothing_to_change), a cluster with no assignment file, or the addon not switched on on a chosen cluster",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -767,7 +779,7 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster",
+                        "description": "Sharko could not reach the Git host or the chart repository (code chart_repo_unreadable)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
