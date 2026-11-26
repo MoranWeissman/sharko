@@ -156,6 +156,13 @@ type PRTracker interface {
 	TrackPR(ctx context.Context, pr TrackedPR) error
 }
 
+// PRTrackLookup is an optional extra a PRTracker can have: it says whether a
+// pull request is recorded already, so a re-run of an adopt or take over
+// records only a pull request that was lost, and never overwrites one.
+type PRTrackLookup interface {
+	IsTracked(ctx context.Context, prID int) (bool, error)
+}
+
 // EventEmitter is the subset of events.EventRecorder the orchestrator needs
 // to emit a Kubernetes Warning event on a genuine operational failure (V3 E1).
 // Defined locally (not importing internal/events) to keep the orchestrator

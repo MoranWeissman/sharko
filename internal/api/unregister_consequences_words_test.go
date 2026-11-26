@@ -167,3 +167,22 @@ func TestUnregisterConsequences_SingularAndPlural(t *testing.T) {
 		t.Errorf("got %q want %q", got, want)
 	}
 }
+
+// Walk 8, L11: a removal check on a cluster nobody has ever heard of said
+// "looks straightforward" and gave a remove command for it.
+func TestUnregisterConsequences_UnknownCluster_Is404WithPlainSentence(t *testing.T) {
+	gp := newTakeoverFakeGP()
+	_, router, _ := takeoverTestServer(t, gp, []*corev1.Secret{takenOverSecret()}, fakeAppSetReader{})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, roleReq(http.MethodGet, "/api/v1/clusters/ghost-cluster/unregister/consequences", "operator", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want 404 (body=%s)", w.Code, w.Body.String())
+	}
+	want := UnregisterUnknownClusterMessage("ghost-cluster")
+	if !strings.Contains(w.Body.String(), strings.ReplaceAll(want, `"`, `\"`)) {
+		t.Fatalf("body %q does not carry the sentence %q", w.Body.String(), want)
+	}
+	if strings.Contains(w.Body.String(), "looks straightforward") {
+		t.Fatal("the old claim is back")
+	}
+}

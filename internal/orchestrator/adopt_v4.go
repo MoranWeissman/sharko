@@ -51,25 +51,33 @@ func adoptLegacyLabelKey(key string) bool {
 // internal/api's registeredClusterNames, which this mirrors for the
 // orchestrator side of the adopt door).
 func (o *Orchestrator) v4RegisteredClusterNames(ctx context.Context) ([]string, error) {
+	names, _, err := o.v4RegisteredAndJoinedClusters(ctx)
+	return names, err
+}
+
+// v4RegisteredAndJoinedClusters is v4RegisteredClusterNames plus the names of
+// the entries an adopt or take over wrote (see models.ManagedClustersSpec.
+// JoinedNames).
+func (o *Orchestrator) v4RegisteredAndJoinedClusters(ctx context.Context) (names, joined []string, err error) {
 	data, err := o.git.GetFileContent(ctx, V4ManagedClustersPath, o.gitops.BaseBranch)
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("could not read Sharko's own list of clusters from %s: %w", V4ManagedClustersPath, err)
+		return nil, nil, fmt.Errorf("could not read Sharko's own list of clusters from %s: %w", V4ManagedClustersPath, err)
 	}
 	if len(data) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	spec, err := models.LoadManagedClusters(data)
 	if err != nil {
-		return nil, fmt.Errorf("could not make sense of Sharko's own list of clusters in %s: %w", V4ManagedClustersPath, err)
+		return nil, nil, fmt.Errorf("could not make sense of Sharko's own list of clusters in %s: %w", V4ManagedClustersPath, err)
 	}
 	out := make([]string, 0, len(spec.Clusters))
 	for _, c := range spec.Clusters {
 		out = append(out, c.Name)
 	}
-	return out, nil
+	return out, spec.JoinedNames(), nil
 }
 
 // gatherAdoptPreflightInputs assembles the takeover.Inputs snapshot for one
@@ -136,11 +144,12 @@ func (o *Orchestrator) gatherAdoptPreflightInputs(ctx context.Context, clusterNa
 	}
 
 	// (d) a name clash with a cluster Sharko already has.
-	names, namesErr := o.v4RegisteredClusterNames(ctx)
+	names, joined, namesErr := o.v4RegisteredAndJoinedClusters(ctx)
 	if namesErr != nil {
 		in.RegisteredClustersError = namesErr.Error()
 	}
 	in.RegisteredClusters = names
+	in.JoinedClusters = joined
 
 	return in, nil
 }
@@ -160,6 +169,17 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 		cr.Status = "failed"
 		cr.Error = err.Error()
 		cr.Blockers = []AdoptBlocker{{ID: AdoptBlockerCannotCheck, Message: cr.Error}}
+		return cr
+	}
+	// A cluster Sharko already adopted or took over, with its entry in the
+	// list: there is nothing left to do. Say so, open nothing. (Before this a
+	// dry run said "would adopt" and a real run opened a pull request with no
+	// changed files in it: walk 9 finding 2, walk 8 L04.)
+	if in.AlreadyTakenOver && stringIn(in.RegisteredClusters, name) {
+		cr.Status = "success"
+		cr.AlreadyDone = true
+		cr.Merged = true
+		cr.Message = AdoptAlreadyDoneMessage(name)
 		return cr
 	}
 	report := takeover.Preflight(in)
@@ -188,6 +208,36 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 	if err != nil {
 		cr.Status = "failed"
 		cr.Error = err.Error()
+		return cr
+	}
+
+	// The list already has everything an adopt writes: an earlier try was cut
+	// off after its pull request merged and before Sharko took over the
+	// connection. A new pull request would have no changes in it, so finish
+	// what is left instead: take over the ArgoCD connection.
+	if build.unchanged() && !in.AlreadyTakenOver {
+		if req.DryRun {
+			cr.Status = "success"
+			cr.Message = AdoptFinishesEarlierTryMessage(name)
+			cr.DryRun = &DryRunResult{
+				EffectiveAddons: []string{},
+				FilesToWrite:    o.takeoverFilePreviews(build),
+				PRTitle:         "",
+				SecretsToCreate: []string{},
+			}
+			return cr
+		}
+		if o.argoSecretManager == nil {
+			cr.Status = "failed"
+			cr.Error = AdoptFinishesEarlierTryMessage(name)
+			return cr
+		}
+		if res := o.finishAdoptOwnership(ctx, name, cr); res != nil {
+			return *res
+		}
+		cr.Status = "success"
+		cr.Merged = true
+		cr.Message = AdoptFinishedEarlierTryMessage(name)
 		return cr
 	}
 
@@ -228,6 +278,17 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 		log.Info("Found existing open PR for v4 cluster adoption — skipping",
 			"cluster", name, "pr", existingPR.URL)
 		cr.Git = &GitResult{PRUrl: existingPR.URL, PRID: existingPR.ID, Branch: existingPR.SourceBranch}
+		// Record the pull request again if the first try was cut off before
+		// it could (walk 9, finding 1): without the record the merge never
+		// finishes the adopt.
+		if trackErr := o.retrackJoinPR(ctx, existingPR, name, fmt.Sprintf("Adopt cluster %s", name), &ClusterFollowUp{Finish: FinishAdopt}); trackErr != nil {
+			log.Warn("could not record the open adopt pull request again",
+				"cluster", name, "pr", existingPR.ID, "error", trackErr)
+			cr.Status = "partial"
+			cr.Error = trackErr.Error()
+			cr.Message = PRNotRecordedMessage("adopt", existingPR.URL)
+			return cr
+		}
 		// Put the waiting mark back in case the first try could not (S7).
 		if markErr := o.putJoinMark(ctx, AnnotationAdoptPendingPR, name, existingPR.ID, existingPR.URL, nil); markErr != nil {
 			log.Warn("could not put the adopt waiting mark back on the cluster's ArgoCD connection",
@@ -285,29 +346,8 @@ func (o *Orchestrator) adoptSingleClusterV4(ctx context.Context, name, serverURL
 	// source of truth) has actually landed would let a merge failure leave
 	// Sharko owning a connection its own records don't yet know about.
 	if o.argoSecretManager != nil && gitResult.Merged {
-		swap, swapErr := o.argoSecretManager.TakeOverClusterSecret(
-			ctx, name, true, time.Now().UTC().Format(time.RFC3339), adoptLegacyLabelKey)
-		if swapErr != nil {
-			log.Error("failed to take ownership of the ArgoCD cluster secret during v4 adoption",
-				"cluster", name, "error", swapErr)
-			cr.Status = "partial"
-			cr.Error = swapErr.Error()
-			cr.Message = "Adoption PR merged but Sharko could not take ownership of the ArgoCD connection. Nothing was deleted; fix the problem and adopt again — it is safe to repeat."
-			return cr
-		}
-		if !swap.Found {
-			cr.Status = "partial"
-			cr.Message = fmt.Sprintf(
-				"Adoption PR merged, but %s's ArgoCD connection disappeared between the check and the swap. Check the cluster still exists in ArgoCD, then adopt again.", name)
-			return cr
-		}
-		if annotErr := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationAdopted, "true"); annotErr != nil {
-			log.Error("failed to set adopted annotation on ArgoCD secret — reconciler will retry",
-				"cluster", name, "error", annotErr)
-			cr.Status = "partial"
-			cr.Error = annotErr.Error()
-			cr.Message = AdoptMarkFailedMessage
-			return cr
+		if res := o.finishAdoptOwnership(ctx, name, cr); res != nil {
+			return *res
 		}
 	}
 
@@ -338,4 +378,64 @@ func adoptWaitingForMergeMessage(prID int, prURL string) string {
 	return fmt.Sprintf(
 		"%s is open: %s. When it is merged, Sharko takes ownership of the ArgoCD connection and marks it adopted. If it is closed without merging, Sharko changes nothing on the connection.",
 		capitalizeFirst(PullRequestPhrase(prID)), prURL)
+}
+
+// finishAdoptOwnership takes over the ArgoCD connection and marks it adopted:
+// the part of an adopt that comes after the pull request has merged. nil
+// means it worked; otherwise the cluster's result, already filled in as a
+// partial one, comes back.
+func (o *Orchestrator) finishAdoptOwnership(ctx context.Context, name string, cr AdoptClusterResult) *AdoptClusterResult {
+	log := logging.LoggerFromContext(ctx)
+	swap, swapErr := o.argoSecretManager.TakeOverClusterSecret(
+		ctx, name, true, time.Now().UTC().Format(time.RFC3339), adoptLegacyLabelKey)
+	if swapErr != nil {
+		log.Error("failed to take ownership of the ArgoCD cluster secret during v4 adoption",
+			"cluster", name, "error", swapErr)
+		cr.Status = "partial"
+		cr.Error = swapErr.Error()
+		cr.Message = "Adoption PR merged but Sharko could not take ownership of the ArgoCD connection. Nothing was deleted; fix the problem and adopt again — it is safe to repeat."
+		return &cr
+	}
+	if !swap.Found {
+		cr.Status = "partial"
+		cr.Message = fmt.Sprintf(
+			"Adoption PR merged, but %s's ArgoCD connection disappeared between the check and the swap. Check the cluster still exists in ArgoCD, then adopt again.", name)
+		return &cr
+	}
+	if annotErr := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationAdopted, "true"); annotErr != nil {
+		log.Error("failed to set adopted annotation on ArgoCD secret — reconciler will retry",
+			"cluster", name, "error", annotErr)
+		cr.Status = "partial"
+		cr.Error = annotErr.Error()
+		cr.Message = AdoptMarkFailedMessage
+		return &cr
+	}
+	return nil
+}
+
+func stringIn(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// AdoptAlreadyDoneMessage is what an adopt says for a cluster Sharko has
+// already adopted. Exported so tests pin it by exact text.
+func AdoptAlreadyDoneMessage(name string) string {
+	return fmt.Sprintf("%s is already adopted. Nothing to do, and no pull request was opened.", name)
+}
+
+// AdoptFinishesEarlierTryMessage is what a dry run says when an earlier
+// adopt was cut off after its pull request merged.
+func AdoptFinishesEarlierTryMessage(name string) string {
+	return fmt.Sprintf("Sharko already has %s in its list, from an earlier adopt that did not finish. Adopting it again takes over its ArgoCD connection. No pull request is opened.", name)
+}
+
+// AdoptFinishedEarlierTryMessage is what a real adopt says after it finished
+// an earlier try that was cut off.
+func AdoptFinishedEarlierTryMessage(name string) string {
+	return fmt.Sprintf("Sharko already had %s in its list, from an earlier adopt that did not finish. It has now taken over the ArgoCD connection and marked the cluster adopted. No pull request was needed.", name)
 }

@@ -82,6 +82,22 @@ type ManagedClusterEntry struct {
 	RoleARN string `json:"roleArn,omitempty" yaml:"roleArn,omitempty"`
 }
 
+// JoinedNames returns the names of the entries that were written by an adopt or
+// a take over: they carry no credsSource and no secretPath, because those
+// doors never fetch credentials (the cluster's connection already exists in
+// ArgoCD). A cluster Sharko registered itself always records where its
+// credentials live. The difference is what lets an adopt that was cut off
+// half way be told apart from two different clusters that share a name.
+func (s ManagedClustersSpec) JoinedNames() []string {
+	var out []string
+	for _, c := range s.Clusters {
+		if c.CredsSource == "" && c.SecretPath == "" {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
 // ClusterLabels is the addon-enablement map on a managed-cluster entry. Its
 // underlying type is map[string]string, which drives the GENERATED JSON
 // Schema (cmd/schema-gen reflects it to `{type: object,

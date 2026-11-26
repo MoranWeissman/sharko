@@ -602,9 +602,20 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 
 			// Enrich with ApplicationSet status from ArgoCD (best-effort).
 			if appSetStatus, err := ac.GetApplicationSet(ctx, appSetName); err == nil {
+				// ArgoCD only fills status.applicationStatus for a
+				// progressive rollout, so the count it reports is 0 for an
+				// ordinary ApplicationSet whose app is Healthy (walk 1, L16:
+				// "0 generated app(s)" next to one running app). The apps
+				// this addon really has are the deployments that found
+				// their ArgoCD Application; the larger of the two numbers
+				// is the true one.
+				generated := appSetStatus.GeneratedApps
+				if real := countRealApplications(item.Applications); real > generated {
+					generated = real
+				}
 				info := &models.ApplicationSetStatusInfo{
 					Name:          appSetStatus.Name,
-					GeneratedApps: appSetStatus.GeneratedApps,
+					GeneratedApps: generated,
 				}
 				// B10: `message` used to be the ArgoCD ApplicationSet
 				// condition's own text, quoted whole, on the ordinary 200
@@ -633,6 +644,18 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 	}
 
 	return nil, nil
+}
+
+// countRealApplications counts the deployments that have an ArgoCD
+// Application behind them.
+func countRealApplications(deps []models.AddonDeploymentInfo) int {
+	n := 0
+	for _, d := range deps {
+		if d.ApplicationName != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // GetVersionMatrix returns a version matrix showing addon versions and

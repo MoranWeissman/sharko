@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -61,7 +62,7 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 	resp, err := s.dashboardSvc.GetStats(r.Context(), gp, ac)
 	if err != nil {
 		// Upstream call (Git provider + ArgoCD): classify.
-		writeUpstreamError(w, "dashboard_stats", err)
+		writeDashboardUpstreamError(w, r, "dashboard_stats", err)
 		return
 	}
 
@@ -138,7 +139,7 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 	if appsErr != nil {
 		// Upstream call (ArgoCD): classify so an ArgoCD timeout reads as
 		// 504 rather than 500.
-		writeUpstreamError(w, "dashboard_attention", appsErr)
+		writeDashboardUpstreamError(w, r, "dashboard_attention", appsErr)
 		return
 	}
 
@@ -231,9 +232,29 @@ func (s *Server) handleGetPullRequests(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.dashboardSvc.GetPullRequests(r.Context(), gp)
 	if err != nil {
 		// Upstream call (Git provider): classify.
-		writeUpstreamError(w, "dashboard_pull_requests", err)
+		writeDashboardUpstreamError(w, r, "dashboard_pull_requests", err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// statusClientClosedRequest is the answer written when the person has already
+// left. Nobody reads it; it keeps the request count honest instead of showing a
+// 200 with nothing in it, and it is not a server fault.
+const statusClientClosedRequest = 499
+
+// writeDashboardUpstreamError is writeUpstreamError for the dashboard reads,
+// with one difference: when the request itself was cancelled (the person
+// moved to another page while the numbers were still loading) the failure is
+// theirs leaving, not the server breaking. That used to be logged as a server
+// error with status 500 and the text "canceled" every time someone clicked
+// through pages quickly (walk 1, L20).
+func writeDashboardUpstreamError(w http.ResponseWriter, r *http.Request, op string, err error) {
+	if r.Context().Err() != nil {
+		slog.Debug("dashboard read stopped because the page was left", "op", op)
+		w.WriteHeader(statusClientClosedRequest)
+		return
+	}
+	writeUpstreamError(w, op, err)
 }

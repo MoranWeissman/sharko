@@ -443,3 +443,39 @@ func TestPreflight_AppSetThatDoesNotPickTheClusterIsNotADanger(t *testing.T) {
 		t.Fatalf("with the label: status %s, sets %v", f.Status, f.ApplicationSets)
 	}
 }
+
+// Walk 9, finding 1: an adopt cut off after its pull request merged leaves the
+// cluster in Sharko's list (written by the adopt: no credentials recorded) but
+// the connection not yet Sharko's. That is the same cluster, so the name check
+// must not call it "a different cluster".
+func TestPreflight_NameCollision_UnfinishedJoinIsNotAClash(t *testing.T) {
+	in := cleanInputs()
+	in.RegisteredClusters = []string{"prod-eu"}
+	in.JoinedClusters = []string{"prod-eu"}
+
+	r := Preflight(in)
+	f := findingByID(t, r, FindingNameCollision)
+	if f.Status != StatusOK || !r.Ready {
+		t.Fatalf("status = %q, ready = %v, want ok and ready", f.Status, r.Ready)
+	}
+	wantDetail := `Sharko already has "prod-eu" in its list, from an earlier adopt or take over that did not finish.`
+	if f.Detail != wantDetail {
+		t.Errorf("detail:\n%s\nwant:\n%s", f.Detail, wantDetail)
+	}
+	if strings.Contains(f.Detail, "different cluster") {
+		t.Errorf("the false clash sentence is back: %q", f.Detail)
+	}
+}
+
+// A cluster Sharko registered itself (it recorded credentials, so it is not in
+// JoinedClusters) with the same name is still a real clash.
+func TestPreflight_NameCollision_RegisteredClusterIsStillAClash(t *testing.T) {
+	in := cleanInputs()
+	in.RegisteredClusters = []string{"prod-eu"}
+	in.JoinedClusters = nil
+
+	f := findingByID(t, Preflight(in), FindingNameCollision)
+	if f.Status != StatusBlocked || f.Detail != `Sharko already has a different cluster called "prod-eu".` {
+		t.Fatalf("status %q detail %q, want the clash to still block", f.Status, f.Detail)
+	}
+}

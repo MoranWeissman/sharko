@@ -333,6 +333,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		// secrets backend is wired up on the active connection. Return a
 		// structured payload so the UI can render a dedicated "test
 		// unavailable" state with a path to Settings → Connections.
+		audit.Enrich(r.Context(), clusterTestAuditFields(name, false))
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":      "Cluster connectivity test requires a secrets backend (Vault / AWS Secrets Manager / file-store) on the active connection. Configure one in Settings → Connections to enable testing.",
 			"error_code": "no_secrets_backend",
@@ -369,6 +370,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 				s.emitWarning(events.ReasonAWSTokenMintFailed,
 					fmt.Sprintf("EKS token mint failed for cluster %q: Sharko has no usable AWS identity to authenticate to this cluster.", name))
 			}
+			audit.Enrich(r.Context(), clusterTestAuditFields(name, false))
 			writeStructuredError(w, http.StatusServiceUnavailable, argoErr.Code, argoErr.Detail)
 			return
 		}
@@ -437,6 +439,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		audit.Enrich(r.Context(), clusterTestAuditFields(name, false))
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -474,6 +477,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 				{Name: "Delete test secret", Status: "skipped"},
 			},
 		}
+		audit.Enrich(r.Context(), clusterTestAuditFields(name, false))
 		writeJSON(w, http.StatusOK, newTestClusterResponse(name, result))
 		return
 	}
@@ -521,17 +525,33 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	testResult := "pass"
-	if !resp.Success {
-		testResult = "fail"
-	}
-	audit.Enrich(r.Context(), audit.Fields{
-		Event:    "cluster_tested",
-		Resource: fmt.Sprintf("cluster:%s", name),
-		Detail:   fmt.Sprintf("result=%s", testResult),
-	})
+	audit.Enrich(r.Context(), clusterTestAuditFields(name, resp.Success))
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// clusterTestAuditFields describes a connection test for the audit log as a
+// test of that cluster, whatever way the test ended. Every early return of
+// handleTestCluster used to leave the entry blank, so the log fell back to the
+// route-derived name "clusters_created" (a POST on /clusters/...) and, because
+// the answer is HTTP 200 even when the cluster cannot be reached, "success".
+// A failed test is recorded as failed, and the cluster name is always there.
+//
+// The handler calls audit.Enrich with this itself, at every exit, so the audit
+// coverage check (which looks for the call inside the handler) stays honest.
+func clusterTestAuditFields(name string, ok bool) audit.Fields {
+	f := audit.Fields{
+		Event:    "cluster_tested",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	}
+	if ok {
+		f.Detail = "result=pass"
+		f.Result = "success"
+	} else {
+		f.Detail = "result=fail"
+		f.Result = "failure"
+	}
+	return f
 }
 
 // writeStructuredError emits the {"error", "error_code"} envelope used by

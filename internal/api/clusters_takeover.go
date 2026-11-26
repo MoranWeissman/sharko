@@ -232,11 +232,12 @@ func (s *Server) gatherPreflightInputs(r *http.Request, name string) (takeover.I
 	}
 
 	// (d) a name clash with a cluster Sharko already has.
-	names, namesErr := s.registeredClusterNames(r)
+	names, joined, namesErr := s.registeredClusterNames(r)
 	if namesErr != nil {
 		in.RegisteredClustersError = namesErr.Error()
 	}
 	in.RegisteredClusters = names
+	in.JoinedClusters = joined
 	in.AlreadyTakenOver = detail.ManagedBy == argosecrets.ManagedByValue
 
 	return in, nil
@@ -255,7 +256,7 @@ func (s *Server) gatherPreflightInputs(r *http.Request, name string) (takeover.I
 // that happens to share a name with one Sharko already has — two different
 // clusters, one name, and the settings of the first start being applied to
 // the second.
-func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
+func (s *Server) registeredClusterNames(r *http.Request) (names, joined []string, err error) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		// B1: the %w wrap was the leak. The sentence was Sharko's own and
@@ -264,7 +265,7 @@ func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 		// that can be net/url quoting a repository URL with the token in it.
 		// One owner for the sentence now; the reason is on the log line.
 		slog.Warn("takeover preflight: no usable Git connection for the active connection")
-		return nil, credsafe.ErrNoActiveGitConnection
+		return nil, nil, credsafe.ErrNoActiveGitConnection
 	}
 	branch := s.gitopsConfig().BaseBranch
 	if branch == "" {
@@ -274,17 +275,17 @@ func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 	if err != nil {
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
 			// No fleet record yet — Sharko genuinely has no clusters.
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("Sharko could not read its own list of clusters from %s on the %s branch: %w",
+		return nil, nil, fmt.Errorf("Sharko could not read its own list of clusters from %s on the %s branch: %w",
 			orchestrator.V4ManagedClustersPath, branch, err)
 	}
 	if len(data) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	spec, err := models.LoadManagedClusters(data)
 	if err != nil {
-		return nil, fmt.Errorf("Sharko could not make sense of its own list of clusters in %s: %w",
+		return nil, nil, fmt.Errorf("Sharko could not make sense of its own list of clusters in %s: %w",
 			orchestrator.V4ManagedClustersPath, err)
 	}
 	out := make([]string, 0, len(spec.Clusters))
@@ -292,7 +293,7 @@ func (s *Server) registeredClusterNames(r *http.Request) ([]string, error) {
 		out = append(out, c.Name)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, spec.JoinedNames(), nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -438,7 +439,12 @@ func (s *Server) handleClusterTakeover(w http.ResponseWriter, r *http.Request) {
 	// with a tier. Carrying on with an unattributed provider when it fails
 	// would open a pull request nobody's name is on (v4-wave2 review M1), so
 	// this fails hard — same stance as handleMigrateRepo.
-	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
+	//
+	// The steps of a take over belong together; closing the tab must not cut
+	// them in two (walk 9, finding 1).
+	opCtx, cancelOp := detachedWriteContext(r.Context())
+	defer cancelOp()
+	ctx, git, tokRes, err := s.GitProviderForTier(opCtx, r, audit.Tier1)
 	if err != nil {
 		writeNoActiveGitConnection(w, r)
 		return
@@ -935,6 +941,19 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 		}
 	}
 
+	// A name Sharko has no record of and ArgoCD has no connection for: say so
+	// instead of "looks straightforward" and a remove command for a cluster
+	// that is not there (walk 8, L11).
+	if s.argoSecretManager != nil {
+		d, derr := s.argoSecretManager.GetClusterSecretDetail(ctx, name)
+		if derr == nil && !d.Found && files.known && !files.addonsFile {
+			if names, _, namesErr := s.registeredClusterNames(r); namesErr == nil && !stringInList(names, name) {
+				writeError(w, http.StatusNotFound, UnregisterUnknownClusterMessage(name))
+				return
+			}
+		}
+	}
+
 	resp := UnregisterConsequencesResponse{Cluster: name}
 	resp.ConfirmationRequired = unregisterConfirmationCLI(name)
 	resp.ConfirmationAPI = unregisterConfirmationAPI(name)
@@ -1004,7 +1023,7 @@ func (s *Server) handleClusterUnregisterConsequences(w http.ResponseWriter, r *h
 			ID:          "running-applications",
 			Title:       "Nothing is deployed there through ArgoCD",
 			Detail:      "No ArgoCD Applications point at this cluster.",
-			WhatItMeans: "There are no running workloads to disturb.",
+			WhatItMeans: unregisterNoAppsMeans,
 			Severity:    "info",
 		})
 	}
@@ -1064,6 +1083,12 @@ func unregisterConfirmationAPI(name string) string {
 		"Add \"cleanup\": \"git\" to keep its ArgoCD connection.", name)
 }
 
+// unregisterNoAppsMeans is what it means that ArgoCD shows no Applications for
+// the cluster. It must not claim the cluster runs nothing: Sharko only sees
+// what ArgoCD deploys (walk 9, finding 4: the sentence said "no running
+// workloads" about a cluster that had a running one).
+const unregisterNoAppsMeans = "Sharko only sees what ArgoCD deploys. Anything that runs on the cluster in some other way is not on this list, and taking the cluster out of Sharko does not touch it."
+
 const (
 	unregisterSharkoConnectionDetail = "Sharko owns this cluster's connection, so a full removal deletes it from ArgoCD once the pull request is merged. Nothing changes on the connection before that."
 	unregisterSharkoConnectionMeans  = "ArgoCD stops being able to reach the cluster. Anything ArgoCD is deploying there goes to an unknown state, and other tools that rely on that same connection lose it too. " +
@@ -1084,6 +1109,21 @@ func unregisterRunningAppsTitle(n int) string {
 		return "1 ArgoCD Application is deployed there right now"
 	}
 	return fmt.Sprintf("%d ArgoCD Applications are deployed there right now", n)
+}
+
+// UnregisterUnknownClusterMessage is the answer for a removal check on a
+// cluster Sharko has no record of. Exported so tests pin it by exact text.
+func UnregisterUnknownClusterMessage(name string) string {
+	return fmt.Sprintf("Sharko has no cluster called %q: it is not in the list of managed clusters and ArgoCD has no connection for it. There is nothing to remove. Check the name with: sharko list-clusters", name)
+}
+
+func stringInList(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 func unregisterSummary(name string, warnCount int) string {

@@ -384,6 +384,10 @@ type AdoptClusterResult struct {
 	// are all false (EP3 dry run round R, R11).
 	Merged bool `json:"merged"`
 
+	// AlreadyDone is true when the cluster was already adopted, so nothing
+	// was written and no pull request was opened.
+	AlreadyDone bool `json:"already_done,omitempty"`
+
 	// Warnings holds plain-English advisories that do NOT fail the
 	// adoption — e.g. this cluster's ArgoCD cluster Secret turning out to
 	// be rendered by another ArgoCD Application (V2-cleanup-89.5). Empty/
