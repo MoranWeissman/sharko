@@ -5,6 +5,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { StatusBadge } from '@/components/StatusBadge'
 import { isNewerVersion } from '@/lib/utils'
+import { isAheadOfCatalog, isBehindCatalog } from '@/lib/versionDrift'
 
 // AddonVersionList — S2 (scale-walk day 7). Replaces both VersionMatrixTable
 // (a 50-column grid, "a big mess" on a real 50-cluster estate) and
@@ -25,14 +26,14 @@ interface AddonVersionGroup {
   totalCells: number
   behindCount: number
   hasUpgrade: boolean
-  rows: { clusterName: string; deployedVersion: string; health: string; behind: boolean }[]
+  rows: { clusterName: string; deployedVersion: string; health: string; behind: boolean; ahead: boolean }[]
 }
 
 function buildGroups(data: VersionMatrixResponse | null): AddonVersionGroup[] {
   const rows = data?.addons ?? []
   return rows.map((row) => {
     const cellEntries = Object.entries(row.cells || {})
-    const behindCount = cellEntries.filter(([, cell]) => cell?.drift_from_catalog).length
+    const behindCount = cellEntries.filter(([, cell]) => isBehindCatalog(cell)).length
     const hasUpgrade =
       !!row.newest_available &&
       cellEntries.some(([, cell]) => cell?.version && isNewerVersion(cell.version, row.newest_available!))
@@ -41,7 +42,8 @@ function buildGroups(data: VersionMatrixResponse | null): AddonVersionGroup[] {
         clusterName,
         deployedVersion: cell?.version || '—',
         health: cell?.health || 'Unknown',
-        behind: !!cell?.drift_from_catalog,
+        behind: isBehindCatalog(cell),
+        ahead: isAheadOfCatalog(cell),
       }))
       .sort((a, b) => a.clusterName.localeCompare(b.clusterName))
     return {
@@ -131,6 +133,11 @@ function AddonVersionRow({ group }: { group: AddonVersionGroup }) {
                       {row.behind && (
                         <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:ring-amber-700">
                           Behind catalog
+                        </span>
+                      )}
+                      {row.ahead && (
+                        <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 ring-1 ring-blue-300 dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-700">
+                          Ahead of catalog
                         </span>
                       )}
                     </span>

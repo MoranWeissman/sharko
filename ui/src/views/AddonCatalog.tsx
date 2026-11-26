@@ -36,6 +36,7 @@ import type {
   VersionMatrixResponse,
 } from '@/services/models'
 import { getCached, setCached } from '@/lib/viewCache'
+import { isBehindCatalog } from '@/lib/versionDrift'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -1337,7 +1338,7 @@ export function AddonCatalog() {
   const behindCatalogAddonCount = useMemo(() => {
     if (!matrixData) return null
     return matrixData.addons.filter((row) =>
-      Object.values(row.cells || {}).some((cell) => cell?.drift_from_catalog),
+      Object.values(row.cells || {}).some((cell) => isBehindCatalog(cell)),
     ).length
   }, [matrixData])
 

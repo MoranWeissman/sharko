@@ -8,6 +8,7 @@ import {
   type DistributionSlice,
 } from '@/components/DistributionPie';
 import type { DashboardStats, VersionMatrixResponse } from '@/services/models';
+import { isBehindCatalog } from '@/lib/versionDrift';
 
 // --- Fleet Status Strip v2 (dashboard-purpose decision, WQ-1 → WQ-2) ---
 //
@@ -50,7 +51,7 @@ export function summarizeBehindCatalog(matrix: VersionMatrixResponse | null): Be
   let behindCount = 0;
   for (const row of matrix?.addons ?? []) {
     for (const cell of Object.values(row.cells || {})) {
-      if (cell?.drift_from_catalog) behindCount++;
+      if (isBehindCatalog(cell)) behindCount++;
     }
   }
   return { behindCount };

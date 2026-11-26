@@ -230,6 +230,36 @@ function RecommendedVersions({
   )
 }
 
+/** A version with a suffix after a dash ("3.0.0-beta.6", "2.0.0-rc.1") is a
+ *  pre-release. It is never "the latest version". */
+export function isPreReleaseVersion(v: string): boolean {
+  return v.replace(/^v/, '').split('+')[0].includes('-')
+}
+
+/** Plain sentences from the server about what a change does NOT do — for an
+ *  upgrade, settings that stay on the old chart's values. Shown after a
+ *  preview and after a real upgrade, so the screen never reports a clean
+ *  upgrade while the old image keeps running. */
+function UpgradeWarnings({ warnings }: { warnings?: string[] | null }) {
+  if (!warnings || warnings.length === 0) return null
+  return (
+    <div
+      data-testid="upgrade-warnings"
+      className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/40"
+    >
+      <p className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
+        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+        Check after this upgrade
+      </p>
+      <ul className="mt-1 list-disc space-y-1 pl-6 text-sm text-amber-800 dark:text-amber-300">
+        {warnings.map((w) => (
+          <li key={w}>{w}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function UpgradeVersionList({
   addonName,
   currentVersion,
@@ -301,6 +331,15 @@ function UpgradeVersionList({
     searchQuery.length > 0 &&
     filteredVersions.length === 0 &&
     versionPattern.test(searchQuery)
+  // Something was typed that is not a version at all ("zzz") and nothing
+  // matches. The list used to go empty with no word of why.
+  const showNoMatch =
+    searchQuery.length > 0 &&
+    filteredVersions.length === 0 &&
+    !versionPattern.test(searchQuery)
+  // "LATEST" belongs to the newest RELEASED version. A beta at the top of
+  // the list is newer by number but it is not the latest version.
+  const latestStable = versions.find((v) => !isPreReleaseVersion(v.version))?.version
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
@@ -323,7 +362,7 @@ function UpgradeVersionList({
       </div>
 
       <div className="space-y-2">
-        {visibleVersions.map((v, i) => (
+        {visibleVersions.map((v) => (
           <div
             key={v.version}
             className="rounded-lg bg-[#e0f0ff] px-4 py-3 dark:bg-gray-700/50"
@@ -331,9 +370,14 @@ function UpgradeVersionList({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{v.version}</span>
-                {i === 0 && !searchQuery && (
+                {v.version === latestStable && !searchQuery && (
                   <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
                     LATEST
+                  </span>
+                )}
+                {isPreReleaseVersion(v.version) && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                    Pre-release
                   </span>
                 )}
                 {v.app_version && (
@@ -354,6 +398,12 @@ function UpgradeVersionList({
         ))}
       </div>
 
+      {showNoMatch && (
+        <p className="mt-2 text-sm text-[#2a5a7a] dark:text-gray-300">
+          No version matches "{searchQuery}".
+        </p>
+      )}
+
       {showNotFound && (
         <div className="mt-2 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-600 dark:bg-gray-900/50">
           {searchQuery === currentVersion ? (
@@ -363,7 +413,7 @@ function UpgradeVersionList({
           ) : (
             <>
               <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-                Version "{searchQuery}" not in common versions. Try analyzing it directly:
+                Version "{searchQuery}" is not in this list. If the chart repository has it, analyze it directly:
               </p>
               <button
                 type="button"
@@ -578,6 +628,36 @@ function InlineUpgradeResults({
         </div>
       </div>
 
+      {/* Settings that follow the chart with this upgrade — not conflicts */}
+      {(result.follows_default ?? []).length > 0 && (
+        <div
+          data-testid="follows-default"
+          className="mb-4 rounded-lg border border-[#6aade0] bg-white p-4 dark:border-gray-700 dark:bg-gray-900"
+        >
+          <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+            {(result.follows_default ?? []).length} setting{(result.follows_default ?? []).length !== 1 ? 's' : ''} in the global values file move to the new chart defaults
+          </p>
+          <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-400">
+            Nobody changed these, so an upgrade for all clusters updates them in the same pull request.
+          </p>
+          <div className="mt-2 space-y-1">
+            {(result.follows_default ?? []).slice(0, 8).map((f: ValueDiffEntry) => (
+              <p key={f.path} className="flex flex-wrap items-center gap-1 text-xs">
+                <code className="font-medium text-[#0a2a4a] dark:text-gray-100">{f.path}</code>
+                <code className="rounded bg-[#d6eeff] px-1 text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">{f.old_value ?? '(empty)'}</code>
+                <span className="text-[#3a6a8a]">&rarr;</span>
+                <code className="rounded bg-green-100 px-1 text-green-700 dark:bg-green-900/40 dark:text-green-400">{f.new_value ?? '(empty)'}</code>
+              </p>
+            ))}
+            {(result.follows_default ?? []).length > 8 && (
+              <p className="text-xs text-[#2a5a7a] dark:text-gray-400">
+                and {(result.follows_default ?? []).length - 8} more
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Conflicts */}
       {(result.conflicts ?? []).length > 0 && (
         <div className="mb-4 rounded-lg border-2 border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-950/30">
@@ -587,6 +667,9 @@ function InlineUpgradeResults({
               {result.conflicts.length} Conflict{result.conflicts.length !== 1 ? 's' : ''}
             </span>
           </div>
+          <p className="mb-3 text-xs text-red-800 dark:text-red-300">
+            A values file sets these, and the chart changed its own value for them. Your value stays after the upgrade. Check that it still fits the new chart.
+          </p>
           <div className="space-y-2">
             {result.conflicts.map((c: ConflictCheckEntry) => (
               <div key={`${c.path}-${c.source}`} className="rounded bg-red-100/50 px-3 py-2 text-xs dark:bg-red-900/20">
@@ -742,7 +825,7 @@ function InlineUpgradeResults({
         onClose={() => setDowngradeModalOpen(false)}
         onConfirm={handleUpgradeConfirm}
         title={`Downgrade ${addonName} to ${targetVersion}?`}
-        description={`This is a downgrade from ${currentVersion}. Helm values may not be backward-compatible. This will create a pull request with the version change.`}
+        description={`This is a downgrade from ${currentVersion}, on all clusters. Helm values may not be backward-compatible. This opens one pull request.`}
         confirmText="Confirm Downgrade"
         typeToConfirm="DOWNGRADE"
         destructive
@@ -776,14 +859,14 @@ function InlineUpgradeResults({
             <div className="flex-1">
               {result && (result.conflicts ?? []).length > 0 ? (
                 <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                  This upgrade has conflicts. Are you sure you want to upgrade to {targetVersion}?
+                  This upgrade has conflicts. Upgrade {addonName} to {targetVersion} on all clusters anyway?
                 </p>
               ) : (
                 <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                  Upgrade {addonName} to {targetVersion}?
+                  Upgrade {addonName} to {targetVersion} on all clusters?
                 </p>
               )}
-              <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">This will create a pull request with the version change.</p>
+              <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">This opens one pull request. Every cluster that has {addonName} switched on moves to {targetVersion} once it merges.</p>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"
@@ -823,9 +906,10 @@ function InlineUpgradeResults({
           <PRLifecycleProgress
             result={upgradeResult}
             autoMergeExpected={(upgradeResult?.merged ?? upgradeResult?.result?.merged) === true}
-            mergedLabel={`PR merged — ${addonName} upgraded to ${targetVersion}`}
-            openLabel={`PR open for review — ${addonName} upgrades to ${targetVersion} once it merges`}
+            mergedLabel={`PR merged — ${addonName} is set to ${targetVersion} on all clusters`}
+            openLabel={`PR open for review — ${addonName} moves to ${targetVersion} on all clusters once it merges`}
           />
+          <UpgradeWarnings warnings={upgradeResult?.warnings} />
         </div>
       )}
       {upgradeError && (
@@ -894,13 +978,15 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
   )
 }
 
-// SubsetUpgradePanel — Epic 7 Story 7.2 (v4 Wave 2 "one action, one PR"):
-// given an addon outdated on N of M clusters, let the user pick exactly
-// which of those N to move, preview every file the PR would touch, then
-// open ONE pull request that upgrades only the selected clusters.
-// Unselected clusters stay untouched. Only shown when 2+ clusters are
-// drifted from the catalog version — a single outdated cluster is better
-// served by the existing PerClusterUpgradeRow one-click upgrade above.
+// SubsetUpgradePanel — move the clusters you pick to a version, in ONE pull
+// request, and leave the catalog and every other cluster as they are.
+//
+// It lists EVERY cluster that has the addon switched on. It used to list
+// only clusters that differed from the catalog, and only when two or more
+// did — so with every cluster on the catalog version there was no way in
+// the UI to move one cluster ahead of the rest (pre-release walk 4,
+// finding 12), and a cluster that had been moved ahead was listed as
+// "behind".
 function SubsetUpgradePanel({
   addonName,
   catalogVersion,
@@ -909,13 +995,13 @@ function SubsetUpgradePanel({
 }: {
   addonName: string
   catalogVersion: string
-  clusters: { name: string; deployedVersion: string; drifted: boolean }[]
+  clusters: { name: string; gitVersion: string }[]
   onComplete?: () => void
 }) {
-  const drifted = useMemo(() => clusters.filter((c) => c.drifted), [clusters])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [targetVersion, setTargetVersion] = useState(catalogVersion)
   const [preview, setPreview] = useState<DryRunResult | null>(null)
+  const [previewWarnings, setPreviewWarnings] = useState<string[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [applying, setApplying] = useState(false)
@@ -923,17 +1009,13 @@ function SubsetUpgradePanel({
   const [result, setResult] = useState<V4GitResult | null>(null)
   const [downgradeConfirmOpen, setDowngradeConfirmOpen] = useState(false)
 
-  if (drifted.length < 2) return null
+  if (clusters.length === 0) return null
 
-  // "drifted" is deployedVersion !== catalogVersion — that includes
-  // clusters AHEAD of the catalog, not just behind. A cluster ahead of
-  // targetVersion moves BACKWARD if it's applied, so the direction has to
-  // be worked out per row (isDowngrade, shared with PerClusterUpgradeRow)
-  // rather than assumed from "drifted = behind".
-  const anyAheadOfCatalog = drifted.some((c) => isDowngrade(catalogVersion, c.deployedVersion))
+  // The direction is worked out per cluster: a cluster ahead of the target
+  // moves BACKWARD if the target is applied to it.
   const selectedHasDowngrade = Array.from(selected).some((name) => {
-    const c = drifted.find((d) => d.name === name)
-    return c ? isDowngrade(c.deployedVersion, targetVersion) : false
+    const c = clusters.find((d) => d.name === name)
+    return c ? isDowngrade(c.gitVersion, targetVersion) : false
   })
 
   const toggle = (name: string) => {
@@ -952,10 +1034,11 @@ function SubsetUpgradePanel({
     try {
       const res = await upgradeAddonClusters(addonName, {
         clusters: Array.from(selected),
-        version: targetVersion,
+        version: targetVersion.trim(),
         dry_run: true,
       })
       setPreview(res.dry_run ?? null)
+      setPreviewWarnings(res.warnings ?? [])
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Could not build a preview')
     } finally {
@@ -970,7 +1053,7 @@ function SubsetUpgradePanel({
     try {
       const res = await upgradeAddonClusters(addonName, {
         clusters: Array.from(selected),
-        version: targetVersion,
+        version: targetVersion.trim(),
         yes: true,
       })
       setResult(res)
@@ -982,9 +1065,8 @@ function SubsetUpgradePanel({
     }
   }
 
-  // Same gate the single-cluster path (PerClusterUpgradeRow) requires
-  // before a downgrade: applying a selection that would move any cluster
-  // backward needs the typed confirmation, not just a click.
+  // A selection that would move any cluster backward needs the typed
+  // confirmation, not just a click.
   const handleApplyClick = () => {
     if (selectedHasDowngrade) {
       setDowngradeConfirmOpen(true)
@@ -997,14 +1079,12 @@ function SubsetUpgradePanel({
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
-      {/* Downgrade typed-confirmation modal — same gate the single-cluster
-        * PerClusterUpgradeRow requires before applying a downgrade. */}
       <ConfirmationModal
         open={downgradeConfirmOpen}
         onClose={() => setDowngradeConfirmOpen(false)}
         onConfirm={handleApply}
         title={`Downgrade ${selected.size} cluster${selected.size === 1 ? '' : 's'}?`}
-        description={`At least one selected cluster is ahead of ${targetVersion}. Applying this moves it backward. Helm values may not be backward-compatible.`}
+        description={`Some of the chosen clusters are on a newer version than ${targetVersion} and will move backward. Helm values may not be backward-compatible.`}
         confirmText="Confirm Downgrade"
         typeToConfirm="DOWNGRADE"
         destructive
@@ -1012,12 +1092,10 @@ function SubsetUpgradePanel({
       />
 
       <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-        Upgrade multiple clusters at once
+        Upgrade chosen clusters only
       </h3>
       <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-        {anyAheadOfCatalog
-          ? `${drifted.length} of ${clusters.length} clusters are on a different version. Pick which ones move together — one pull request, one small diff per cluster.`
-          : `${drifted.length} of ${clusters.length} clusters are behind. Pick which ones move together — one pull request, one small diff per cluster.`}
+        Pick clusters and a version. One pull request moves only those clusters. The catalog version stays {catalogVersion}.
       </p>
 
       {!result && (
@@ -1025,10 +1103,10 @@ function SubsetUpgradePanel({
           <div className="mt-3 flex items-center gap-3 text-xs">
             <button
               type="button"
-              onClick={() => { setPreview(null); setSelected(new Set(drifted.map((c) => c.name))) }}
+              onClick={() => { setPreview(null); setSelected(new Set(clusters.map((c) => c.name))) }}
               className="font-medium text-teal-600 hover:underline dark:text-teal-400"
             >
-              Select all outdated
+              Select all
             </button>
             <button
               type="button"
@@ -1040,8 +1118,9 @@ function SubsetUpgradePanel({
           </div>
 
           <div className="mt-2 space-y-1.5">
-            {drifted.map((c) => {
-              const rowIsDowngrade = isDowngrade(c.deployedVersion, targetVersion)
+            {clusters.map((c) => {
+              const rowIsDowngrade = isDowngrade(c.gitVersion, targetVersion)
+              const rowIsSame = c.gitVersion === targetVersion.trim()
               return (
                 <label
                   key={c.name}
@@ -1055,9 +1134,16 @@ function SubsetUpgradePanel({
                   />
                   <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{c.name}</span>
                   <span className="font-mono text-xs text-[#5a8aaa] dark:text-gray-400">
-                    {c.deployedVersion} &rarr; {targetVersion}
+                    {rowIsSame ? c.gitVersion : <>{c.gitVersion} &rarr; {targetVersion}</>}
                   </span>
-                  {rowIsDowngrade ? (
+                  {rowIsSame ? (
+                    <span
+                      data-testid={`subset-upgrade-badge-${c.name}`}
+                      className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                    >
+                      Already on this version
+                    </span>
+                  ) : rowIsDowngrade ? (
                     <span
                       data-testid={`subset-upgrade-badge-${c.name}`}
                       className="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
@@ -1100,7 +1186,7 @@ function SubsetUpgradePanel({
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={selected.size === 0 || previewLoading || !targetVersion}
+              disabled={selected.size === 0 || previewLoading || !targetVersion.trim()}
               onClick={handlePreview}
               className="inline-flex items-center gap-1.5 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
             >
@@ -1115,7 +1201,9 @@ function SubsetUpgradePanel({
                 className="inline-flex items-center gap-1.5 rounded-md bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e] disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
               >
                 {applying && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                {applying ? 'Opening PR...' : `Upgrade ${selected.size} cluster${selected.size === 1 ? '' : 's'}`}
+                {applying
+                  ? 'Opening PR...'
+                  : `${selectedHasDowngrade ? 'Change' : 'Upgrade'} ${selected.size} cluster${selected.size === 1 ? '' : 's'}`}
               </button>
             )}
           </div>
@@ -1126,6 +1214,7 @@ function SubsetUpgradePanel({
           {preview && (
             <div className="mt-3">
               <DryRunPreview result={preview} />
+              <UpgradeWarnings warnings={previewWarnings} />
             </div>
           )}
           {applyError && (
@@ -1139,34 +1228,49 @@ function SubsetUpgradePanel({
           <PRLifecycleProgress
             result={result}
             autoMergeExpected={merged === true}
-            mergedLabel={`PR merged — ${selected.size} cluster(s) upgraded to ${targetVersion}`}
-            openLabel={`PR open for review — ${selected.size} cluster(s) upgrade to ${targetVersion} once it merges`}
+            mergedLabel={`PR merged — ${selected.size} cluster(s) set to ${targetVersion}`}
+            openLabel={`PR open for review — ${selected.size} cluster(s) move to ${targetVersion} once it merges`}
           />
+          <UpgradeWarnings warnings={result.warnings} />
         </div>
       )}
     </div>
   )
 }
 
+// PerClusterUpgradeRow — one cluster's version next to the catalog's.
+//
+// Three honest states (pre-release walk 4: a cluster that had been moved to
+// a NEWER version was shown with a red "Downgrade" badge and a "Downgrade to
+// <catalog>" button, so following the red words undid the upgrade):
+//
+//   same as the catalog   -> "Current"
+//   older than the catalog -> "Upgrade to <catalog>" (one click + Yes)
+//   newer than the catalog -> "Ahead of catalog", and no button. Going back
+//                             is a deliberate act; it lives in "Upgrade
+//                             chosen clusters only", behind typed DOWNGRADE.
 function PerClusterUpgradeRow({
   clusterName,
-  deployedVersion,
+  gitVersion,
+  runningVersion,
   catalogVersion,
-  isDrifted,
   onUpgrade,
 }: {
   clusterName: string
-  deployedVersion: string
+  /** The version Git asks for on this cluster. */
+  gitVersion: string
+  /** The version that really runs there, when Sharko knows it. */
+  runningVersion?: string
   catalogVersion: string
-  isDrifted: boolean
   onUpgrade: (cluster: string) => Promise<PRWriteResult>
 }) {
   const [state, setState] = useState<'idle' | 'confirm' | 'loading' | 'done'>('idle')
   const [upgradeResult, setUpgradeResult] = useState<PRWriteResult | null>(null)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
-  const [downgradeModalOpen, setDowngradeModalOpen] = useState(false)
 
-  const isDowngradingCluster = isDowngrade(deployedVersion, catalogVersion)
+  const differs = gitVersion !== catalogVersion && gitVersion !== 'N/A'
+  const ahead = differs && isDowngrade(gitVersion, catalogVersion)
+  const behind = differs && !ahead
 
   const handleConfirm = async () => {
     setState('loading')
@@ -1186,19 +1290,6 @@ function PerClusterUpgradeRow({
 
   return (
     <div className="rounded-lg bg-[#e0f0ff] px-4 py-2.5">
-      {/* Downgrade typed-confirmation modal */}
-      <ConfirmationModal
-        open={downgradeModalOpen}
-        onClose={() => setDowngradeModalOpen(false)}
-        onConfirm={handleConfirm}
-        title={`Downgrade ${clusterName} to ${catalogVersion}?`}
-        description={`This is a downgrade from ${deployedVersion}. Helm values may not be backward-compatible.`}
-        confirmText="Confirm Downgrade"
-        typeToConfirm="DOWNGRADE"
-        destructive
-        loading={state === 'loading'}
-      />
-
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link
@@ -1207,21 +1298,26 @@ function PerClusterUpgradeRow({
           >
             {clusterName}
           </Link>
-          <span className="font-mono text-sm text-[#1a4a6a]">{deployedVersion}</span>
-          {isDowngradingCluster && isDrifted && (
-            <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-              <AlertTriangle className="h-3 w-3" />
-              Downgrade
+          <span className="font-mono text-sm text-[#1a4a6a]">{gitVersion}</span>
+          {runningVersion && runningVersion !== gitVersion && (
+            <span data-testid={`running-version-${clusterName}`} className="text-xs text-[#3a6a8a]">
+              running {runningVersion}
+            </span>
+          )}
+          {ahead && (
+            <span
+              data-testid={`ahead-badge-${clusterName}`}
+              className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+            >
+              Ahead of catalog
             </span>
           )}
         </div>
-        {isDrifted ? (
+        {behind ? (
           state === 'done' ? (
             <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" />
-              {clusterMerged
-                ? `${isDowngradingCluster ? 'Downgrade' : 'Upgrade'} applied`
-                : `${isDowngradingCluster ? 'Downgrade' : 'Upgrade'} initiated`}
+              {clusterMerged ? 'Upgrade pull request merged' : 'Upgrade pull request opened'}
               {clusterPrUrl && (
                 <PRLink
                   url={clusterPrUrl}
@@ -1233,30 +1329,24 @@ function PerClusterUpgradeRow({
           ) : state === 'loading' ? (
             <span className="flex items-center gap-1.5 text-xs text-[#2a5a7a]">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {isDowngradingCluster ? 'Downgrading...' : 'Upgrading...'}
+              Upgrading...
             </span>
           ) : (
             <RoleGuard adminOnly>
               <button
                 type="button"
-                onClick={() => {
-                  if (isDowngradingCluster) {
-                    setDowngradeModalOpen(true)
-                  } else {
-                    setState('confirm')
-                  }
-                }}
+                onClick={() => setState('confirm')}
                 className="rounded-lg bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
               >
-                {isDowngradingCluster ? 'Downgrade' : 'Upgrade'} to {catalogVersion}
+                Upgrade to {catalogVersion}
               </button>
             </RoleGuard>
           )
-        ) : (
+        ) : ahead ? null : (
           <span className="text-sm text-green-600">✓ Current</span>
         )}
       </div>
-      {state === 'confirm' && !isDowngradingCluster && (
+      {state === 'confirm' && behind && (
         <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 dark:bg-amber-950/40">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
           <span className="text-sm text-amber-800 dark:text-amber-300">
@@ -1281,6 +1371,7 @@ function PerClusterUpgradeRow({
       {upgradeError && (
         <p className="mt-1 text-sm text-red-600 dark:text-red-400">{upgradeError}</p>
       )}
+      {state === 'done' && <UpgradeWarnings warnings={upgradeResult?.warnings} />}
     </div>
   )
 }
@@ -2227,9 +2318,13 @@ export function AddonDetail() {
                   ? isOpen
                     ? 'Add addon — PR open'
                     : 'Addon added'
-                  : isOpen
-                    ? 'Upgrade in progress'
-                    : 'Upgrade merged'
+                  : /downgrade/i.test(pr.pr_title)
+                    ? isOpen
+                      ? 'Downgrade in progress'
+                      : 'Downgrade merged'
+                    : isOpen
+                      ? 'Upgrade in progress'
+                      : 'Upgrade merged'
                 return (
                   <div
                     key={pr.pr_id}
@@ -2538,17 +2633,19 @@ export function AddonDetail() {
                 ) : (
                   <div className="space-y-2">
                     {enabledApps.map((app) => {
-                      const deployedVersion =
-                        app.deployed_version ?? app.configured_version ?? 'N/A'
-                      const isDrifted =
-                        deployedVersion !== addon.version && deployedVersion !== 'N/A'
+                      // Compare what GIT asks for with the catalog. The
+                      // version that runs is shown next to it; it lags a
+                      // merged pull request by a few minutes and must not
+                      // decide whether an Upgrade button shows.
+                      const gitVersion =
+                        app.configured_version ?? app.deployed_version ?? 'N/A'
                       return (
                         <PerClusterUpgradeRow
                           key={app.cluster_name}
                           clusterName={app.cluster_name}
-                          deployedVersion={deployedVersion}
+                          gitVersion={gitVersion}
+                          runningVersion={app.deployed_version}
                           catalogVersion={addon.version}
-                          isDrifted={isDrifted}
                           onUpgrade={(cluster) => handleUpgradeAddon(addon.version, cluster)}
                         />
                       )
@@ -2557,22 +2654,16 @@ export function AddonDetail() {
                 )}
               </div>
 
-              {/* Subset upgrade — one action, one PR (Epic 7 Story 7.2).
-                * Admin-only, like the per-cluster rows above it — a batch
-                * that can silently include a downgrade is at least as
-                * consequential as a single-cluster upgrade. */}
+              {/* Upgrade chosen clusters only — one action, one PR. Admin-only,
+                * like the per-cluster rows above it. */}
               <RoleGuard adminOnly>
                 <SubsetUpgradePanel
                   addonName={addon.addon_name}
                   catalogVersion={addon.version}
-                  clusters={enabledApps.map((app) => {
-                    const deployedVersion = app.deployed_version ?? app.configured_version ?? 'N/A'
-                    return {
-                      name: app.cluster_name,
-                      deployedVersion,
-                      drifted: deployedVersion !== addon.version && deployedVersion !== 'N/A',
-                    }
-                  })}
+                  clusters={enabledApps.map((app) => ({
+                    name: app.cluster_name,
+                    gitVersion: app.configured_version ?? app.deployed_version ?? 'N/A',
+                  }))}
                   onComplete={() => fetchAddonData(true)}
                 />
               </RoleGuard>
