@@ -20,7 +20,7 @@ The addon catalog is the source of truth for which Helm charts Sharko manages ac
 
 Adding to the catalog and enabling on a cluster are two separate operations, but enabling now requires catalog membership first — you cannot enable an addon on a cluster until it is already in the catalog. From the Marketplace, both steps can be done as one combined pull request if you want; nothing forces you to split them.
 
-![Two parallel operations — add to catalog (PR adds the addon entry) and enable on a cluster (PR sets the addon label on that cluster's values file) — both feed the ApplicationSet's cluster x values-file matrix generator, which creates the ArgoCD Application that deploys the addon.](../assets/diagrams/04-two-operation-model.drawio.svg)
+![Two parallel operations — add to catalog (PR adds the addon entry to catalog.yaml) and enable on a cluster (PR switches the addon on in that cluster's file in cluster-addons/, and Sharko puts the addon label on the cluster's connection Secret) — both feed the ApplicationSet's cluster x cluster-file matrix generator, which creates the ArgoCD Application that deploys the addon.](../assets/diagrams/04-two-operation-model.drawio.svg)
 
 > **Two words, everywhere:** this page covers the **Catalog** — your org's
 > approved list, kept in `catalog.yaml` — and enabling an addon on a
@@ -79,7 +79,7 @@ Sharko is built around a single principle: **the UI opens pull requests, it does
 # CLI: list all addons with version and deployment stats
 sharko list-addons
 
-# Include full catalog config (secrets declarations, values):
+# Add the SELF-HEAL and SYNC-OPTIONS columns:
 sharko list-addons --show-config
 ```
 
@@ -97,28 +97,45 @@ The **Version Matrix** view shows an addon × cluster grid, making it easy to se
 
 Before submitting an addon addition (or removal, or configuration change), the UI offers a **"Preview changes"** button. Clicking it shows exactly what the PR would contain: which files would be written or deleted, the actual line-by-line change inside each file (added/removed lines), the PR title, and the names of any secrets it would create. Secret values are redacted (shown as `<redacted>`) while keys and structure remain visible. This dry-run costs nothing (no branch, no commit, no PR) and gives you full transparency before confirming.
 
-This preview feature works on all addon operations: adding to the catalog, removing an addon, configuring values, and saving default addons. See [Preview Changes](clusters.md#preview-changes-before-a-pr-opens) for details, including a diff example and API usage.
+This preview feature works on all addon operations: adding to the catalog, removing an addon, turning addons on or off for a cluster, and saving default addons. See [Preview Changes](clusters.md#preview-changes-before-a-pr-opens) for details, including a diff example and API usage.
 
 ### Via CLI
 
+On a v4 repo, use `sharko add-to-catalog`. It adds the addon to `catalog.yaml`, writes the addon's global values file, and opens one pull request.
+
 ```bash
-sharko add-addon cert-manager \
-  --chart cert-manager \
-  --repo https://charts.jetstack.io \
-  --version 1.14.5
+# Copy the chart location from the Marketplace entry of the same name:
+sharko add-to-catalog cert-manager --from-marketplace --version 1.14.5
+
+# Or name the chart yourself:
+sharko add-to-catalog billing-api \
+  --repo oci://your-registry/charts \
+  --chart billing-api \
+  --version 2.4.0 \
+  --namespace billing
 ```
 
 Flags:
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--chart` | Yes | Helm chart name |
-| `--repo` | Yes | Helm repository URL — must be credential-free (see below) |
-| `--version` | Yes | Helm chart version to track |
-| `--namespace` | No | Target namespace (defaults to addon name) |
-| `--values` | No | Path to a values YAML file to use as the base |
+| `--version` | Always | Chart version. The Marketplace has no version, so you always choose one. It must exist in the chart repository. |
+| `--chart` | Unless `--from-marketplace` | Chart name inside the repository |
+| `--repo` | Unless `--from-marketplace` | `https://` or `oci://` address of the chart repository — must be credential-free (see below) |
+| `--namespace` | No | Namespace to install into |
+| `--from-marketplace` | No | Copy chart, repository, namespace and the needed-secrets list from the Marketplace entry of the same name |
+| `--enable-on <cluster>` | No | Also turn the addon on for this cluster, in the same pull request |
 
-Via UI: **Addons → Add Addon**, fill in the form.
+`sharko add-addon` is the command for the older (v3) layout. On a v4 repo it is refused with a `409`. There is no `--values` flag on either command.
+
+### Via UI
+
+There are two doors, and both end in one pull request.
+
+- **From the Marketplace:** open **Addons**, then the **Marketplace** tab, pick an addon, choose a version, and use the **Add to catalog** panel. The same panel is on the page of an addon you found through ArtifactHub search.
+- **Your own chart:** on **Addons**, click **Add addon manually**. The dialog is called **Add your own chart**. Fill in the name, the namespace (optional), the chart repository address, the chart and the version.
+
+Both forms have an optional field, **Also enable on a cluster (optional)**. It starts on **Don't enable yet**. Pick a cluster there and the one pull request adds the addon to the catalog **and** turns it on for that cluster, so the reviewer sees the whole change in one place.
 
 ### The chart repository address must be credential-free
 
@@ -170,7 +187,7 @@ cluster-addons/
 
 Repos in the older layout (v3) keep their values under a `configuration/` folder instead, with one file per cluster that holds every addon.
 
-Edit these files directly in your repo, or use the UI's values editor on the addon page (base values) or the cluster page (overrides for one cluster). The editor opens a PR for every change (`gitops.actions.enabled: true` is needed for this).
+You change these files in Git, with a pull request. The addon page (**Values** tab) and the cluster page (**Config** tab) show the files read-only. Editing them in Sharko is not in this version. Both files hold plain Helm values with the chart's own keys at the top, never wrapped under the addon's name. See [Viewing and Changing Helm Values](values-editing.md).
 
 ## Removing an Addon
 
@@ -194,32 +211,49 @@ When you switch an addon off on a cluster and the pull request is merged, ArgoCD
 
 ## Addon Secrets
 
-Some addons need API keys or credentials at runtime (e.g., Datadog, New Relic). Sharko delivers secrets directly to remote clusters using the same secrets provider configured for cluster credentials (AWS Secrets Manager or Kubernetes Secrets). No External Secrets Operator is required.
+Some addons need API keys or credentials at runtime (e.g., Datadog, New Relic). Sharko can deliver them directly to remote clusters, using the same secrets provider configured for cluster credentials (AWS Secrets Manager or Kubernetes Secrets). No External Secrets Operator is required.
 
-### Declaring Secrets in the Catalog
+A secret is delivered only when its catalog entry has a **`push:` block**. That block is what tells Sharko three things: the name of the Kubernetes Secret to create, the namespace it goes in, and where each of its values comes from in your secrets store. An entry with only a `name` and a `description` is a note for people. Sharko does not deliver anything for it, and nothing on screen says so.
 
-Secrets are declared in `catalog.yaml`, under the `secrets` field of the addon's own entry:
+### Declaring a Secret in the Catalog, step by step
 
-```yaml
-apiVersion: sharko.dev/v1
-kind: AddonCatalog
-addons:
-  datadog:
-    repoURL: https://helm.datadoghq.com
-    chart: datadog
-    namespace: datadog
-    version: "3.74.0"
-    secrets:
-      - name: Datadog API and app keys
-        description: Needed for the agent to authenticate to Datadog.
-        required_for: install
-```
+1. **Put the value in your secrets store.** Create one entry in your secrets provider for each value the addon needs. Note the path of each (for example `sharko/addons/datadog/api-key`). With **AWS Secrets Manager**, every path must start with the **prefix** set in **Settings → Secrets Provider**. A path outside the prefix is refused, and with no prefix set, every path is refused.
+2. **Add the secret to the addon's entry in `catalog.yaml`**, with a `push:` block:
 
-This declares *what* the addon needs, in plain English, and whether it's
-needed at install time or only later at runtime — Sharko blocks enabling
-an addon at install time until a matching secret has been registered.
-Registering the actual value — which provider path fills which key, in
-which namespace — is a separate step, covered next.
+    ```yaml
+    apiVersion: sharko.dev/v1
+    kind: AddonCatalog
+    addons:
+      datadog:
+        repoURL: https://helm.datadoghq.com
+        chart: datadog
+        namespace: datadog
+        version: "3.74.0"
+        secrets:
+          - name: Datadog API key
+            description: Needed for the agent to authenticate to Datadog.
+            required_for: install
+            push:
+              secretName: datadog-keys
+              namespace: datadog
+              keys:
+                api-key: sharko/addons/datadog/api-key
+    ```
+
+    | Field | Meaning |
+    |-------|---------|
+    | `name`, `description` | Plain words for the people who read the catalog. Required. |
+    | `required_for` | `install` (the chart cannot start without it) or `runtime` (needed later). Leave it out and Sharko reads it as `install`. |
+    | `push.secretName` | The name of the Kubernetes Secret Sharko creates on each cluster. |
+    | `push.namespace` | The namespace it goes in. Sharko does not create the namespace. Use the addon's own namespace, or one that already exists. |
+    | `push.keys` | One line for each key inside the Secret. The left side is the key name as the addon expects it. The right side is the path of the value in your secrets store. |
+
+    All three of `secretName`, `namespace` and `keys` are required inside `push:`.
+3. **Open the pull request and merge it.** Sharko reads the catalog from Git, so nothing happens before the merge.
+4. **Wait for the next run, or ask for one now:** `sharko refresh-secrets`. Sharko writes the Secret on every cluster that has the addon switched on. With the addon switched on for no cluster, nothing is written.
+5. **Check:** `sharko secret-status` shows the last run, or open **Secrets → Addon secrets** in the UI. Each Secret Sharko delivered is listed there, with the cluster it is on. On the cluster, `kubectl get secret datadog-keys -n datadog` shows it. The values are never shown anywhere in Sharko.
+
+If a path in the store is wrong, the run reports an error for that Secret and keeps the Secret that is already on the cluster. Fix the path in the catalog (another pull request) or in the store.
 
 ### How Reconciliation Works
 
@@ -240,8 +274,9 @@ To force an immediate reconcile after rotating a secret in your provider:
 
 ```bash
 sharko refresh-secrets               # reconcile all clusters
-sharko refresh-secrets prod-eu       # reconcile a specific cluster
 ```
+
+The command always covers every cluster. It takes no cluster name.
 
 ### Checking Secret Status
 

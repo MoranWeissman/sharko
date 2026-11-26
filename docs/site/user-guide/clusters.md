@@ -17,7 +17,7 @@ This page shows you how to register clusters with Sharko, enable addons on them,
 
 ---
 
-Clusters are the units of deployment in Sharko. Each registered cluster gets a line in `managed-clusters.yaml` and its own addon file, `cluster-addons/<name>.yaml`, in the addons repo. ArgoCD manages addon deployments for it via the ApplicationSet.
+Clusters are the units of deployment in Sharko. Each registered cluster gets a line in `managed-clusters.yaml` in the addons repo. Its addon file, `cluster-addons/<name>.yaml`, is created the first time you turn an addon on for it (a cluster you take over gets an empty one at once). ArgoCD manages addon deployments for it via the ApplicationSet. See [Addons Repository Structure](../architecture/repo-structure.md).
 
 ![Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.](../assets/screenshots/cluster-detail.png){ loading=lazy }
 <figcaption>Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.</figcaption>
@@ -79,7 +79,7 @@ When registering a cluster, the preview might show:
 +         secret_name: <redacted>
 ```
 
-This transparency feature is available on all PR-opening operations: register cluster, adopt cluster, remove cluster, un-adopt cluster, add addon, remove addon, configure addon, enable/disable addons on a cluster (Apply Changes), update cluster settings (secret path), save default addons, and save/refresh addon values (global + per-cluster).
+This transparency feature is available on all PR-opening operations: register cluster, adopt cluster, remove cluster, un-adopt cluster, add addon, remove addon, configure addon, enable/disable addons on a cluster (**Review & open PR**), update cluster settings (secret path), save default addons, and save/refresh addon values (global + per-cluster).
 
 Under the hood, this uses the API's `dry_run: true` request option, which returns a `DryRunResult` with the file paths and content diffs. See [API Walkthrough](../api/api-walkthrough.md) for examples of using `dry_run` from the command line.
 
@@ -198,12 +198,13 @@ Update which addons are enabled on a cluster:
 
 ```bash
 sharko update-cluster my-cluster \
-  --addons cert-manager,metrics-server,logging
+  --add-addon cert-manager,metrics-server \
+  --remove-addon logging
 ```
 
-This creates a PR that adds or removes addon entries from the cluster's values file.
+This creates a PR that switches those addons on or off in the cluster's addon file, `cluster-addons/my-cluster.yaml`. Every addon you name must already be in the catalog. To change one addon, `sharko enable-addon <cluster> <addon>` and `sharko disable-addon <cluster> <addon>` do the same for a single addon and can also set a version or values.
 
-Via UI: on the cluster detail page, click **Edit Addons**.
+Via UI: on the cluster detail page, in the **Addons** section, click **Add addon** to pick an addon from the catalog. Each addon in the list can be switched off, and a switched-off one shows as removing until you undo it. Then click **Review & open PR** to see exactly what the pull request will change, and **Open PR** to open it (or discard your changes).
 
 !!! note "Enabling a secret-bearing addon on a credential-less cluster"
     If the addon you're enabling declares its own secrets (see [Addon Secrets](addons.md#addon-secrets)) and this cluster has no resolvable connection credentials, the request is rejected with a `422` naming what's missing — see [Adding a Cluster](#adding-a-cluster) above. Addons with no secrets enable regardless.
@@ -225,6 +226,8 @@ sharko unadopt-cluster my-cluster -y
 ```
 
 This works the same way. It opens a pull request, and nothing changes until it is merged. After the merge, Sharko stops managing the cluster but leaves the ArgoCD connection in place. The exit code is 0 while the pull request is waiting.
+
+In the UI, an adopted cluster has an **Un-adopt** button on the **Clusters** page. It asks you to type the cluster's name before the button turns on, and **Preview changes** shows the pull request before you open it.
 
 !!! warning
     Removing a cluster from Sharko does not uninstall addons from that cluster. ArgoCD will stop managing them, but the Helm releases remain in place. Uninstall addons manually if needed.
@@ -257,7 +260,7 @@ sharko adopt my-cluster
 
 What the adopt command does:
 
-1. Checks that the cluster is in ArgoCD, and that Sharko does not manage it already.
+1. Checks that the cluster is in ArgoCD. It does not stop you from adopting a cluster that is already in `managed-clusters.yaml`. If you do, the pull request it opens has no changes. Close it. `sharko takeover-preflight` tells you whether Sharko already owns the connection.
 2. Looks for things you should read first, the same way take over does. For example, an ApplicationSet that could delete what it installed. If there are any, nothing is adopted. Sharko prints each warning with an id. Read them, then run the command again with `--acknowledge <id>`. `--yes` does not skip warnings. `--dry-run` prints them too, and says "would adopt" for each cluster that is ready.
 3. Opens a pull request that adds the cluster to `managed-clusters.yaml` and creates an empty `cluster-addons/<name>.yaml` for it. The command says "PR opened, waiting for merge" and gives the link.
 4. While the pull request is open, nothing is adopted. Sharko only puts one small mark on the ArgoCD connection, so it can find the pull request later.

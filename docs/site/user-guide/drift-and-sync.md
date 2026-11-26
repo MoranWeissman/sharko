@@ -17,7 +17,7 @@ The rest of this page focuses on **Sharko-managed clusters** — that's where th
 
 ## What is OutOfSync?
 
-For a Sharko-managed cluster, Sharko reads the cluster entry from `managed-clusters.yaml` in your GitOps repository and compares the addon labels declared there against the addon labels on the live ArgoCD cluster Secret.
+For a Sharko-managed cluster, Sharko works out which addon labels the cluster should have from Git and compares them with the addon labels on the live ArgoCD cluster Secret. On a v4 repo the source in Git is the cluster's addon file, `cluster-addons/<cluster>.yaml`: every addon with `enabled: true` should have the label `addons.sharko.dev/<addon>=enabled`. On a repo in the older layout it is the cluster's entry in `managed-clusters.yaml`.
 
 - **Synced**: the live addon labels match what Git declares (or the cluster has no addons enabled, so there's nothing to compare).
 - **OutOfSync**: one or more addon label keys were **added**, **removed**, or **changed** outside Git — for example, if someone edited the ArgoCD Secret directly via `kubectl` or the ArgoCD UI.
@@ -25,6 +25,11 @@ For a Sharko-managed cluster, Sharko reads the cluster entry from `managed-clust
 **What gets compared:** only Sharko's addon label keys (the ones under the `addons.sharko.dev/` prefix that say which addons are enabled). Ownership bookkeeping labels like `app.kubernetes.io/managed-by` are excluded from drift detection — they're Sharko internals, not part of your declared configuration.
 
 **What does NOT get compared:** Secret Data (the actual kubeconfig), annotations, or non-addon labels. Drift detection is scoped to addon labels only.
+
+**The pill shows the last check, not this second.** Sharko checks in the background on its own schedule. **Synced** and **No differences** describe the state at the last check. The page says when that check ran (the **Last sync** line). A label changed a few seconds ago may not show yet, and on a v4 repo a changed addon label is usually put back before you can look at it (see below).
+
+!!! danger "Taking an addon label off by hand uninstalls the addon"
+    The label `addons.sharko.dev/<addon>=enabled` on the cluster Secret is what tells ArgoCD to run the addon on that cluster. If you remove it (or change `enabled` to anything else) with `kubectl`, ArgoCD deletes the addon's Application and its pods almost at once. On a v4 repo Sharko puts the label back on its next check, and ArgoCD then installs the addon again from scratch, with a new pod. To turn an addon off on purpose, switch it off in Git (`sharko disable-addon`, or **Add addon** and the toggles on the cluster page), not on the Secret.
 
 ## Seeing drift in the UI
 
@@ -57,32 +62,34 @@ The **Sync** button (or the automatic reconciliation tick, if self-heal is enabl
 
 - Sync does NOT overwrite Secret Data (the kubeconfig).
 - Sync does NOT touch annotations or non-addon labels.
-- Sync does NOT block out-of-band edits at write time. This is **enforcement-by-reconcile**, not an admission webhook. If someone edits the Secret directly, that edit succeeds — Sharko detects the drift and can revert it on the next reconcile tick (if self-heal is on), but it doesn't prevent the write.
+- Sync does NOT block out-of-band edits at write time. This is **enforcement-by-reconcile**, not an admission webhook. If someone edits the Secret directly, that edit succeeds — Sharko detects the drift and reverts it on the next reconcile tick (always for addon labels on a v4 repo, otherwise if self-heal is on), but it doesn't prevent the write.
 
-Clicking **Sync** triggers an immediate reconciliation for that cluster. If you don't click Sync, Sharko checks on its own anyway — so drift is spotted and (if self-heal is on) corrected on the next check.
+Clicking **Sync** triggers an immediate reconciliation for that cluster. If you don't click Sync, Sharko checks on its own anyway — so drift is spotted and corrected on the next check (always for addon labels on a v4 repo, otherwise if self-heal is on).
 
-## Opt-in self-heal (default OFF)
+## Self-heal: what the setting does, and what it does not
 
-By default, Sharko only **detects and warns** about drift — it does NOT change the cluster automatically. The cluster stays OutOfSync until you click **Sync** or enable self-heal.
+There are two kinds of label drift, and Sharko treats them differently.
 
-You can turn on automatic self-heal via the `managed_cluster_self_heal` setting (admin-only). When ON, Sharko re-applies Git-desired addon labels on every check, on its own schedule, without you asking. This is enforcement-by-reconcile — analogous to how ArgoCD applications auto-sync when you enable that feature.
+**Addon labels on a v4 repo — always put back.** On a v4 repo, the addon labels (`addons.sharko.dev/<addon>`) are how an enabled addon reaches the cluster at all. Sharko writes them from `cluster-addons/<cluster>.yaml` after every merge, and on every check it compares them again. If the labels on the Secret differ from the file, Sharko puts them back on that same check. **The self-heal setting does not change this**: it is on even when `managed_cluster_self_heal` is off. A label that was removed, added or changed by hand is back after the next check. The cluster is **OutOfSync** only for that short time, and only if you look in that moment.
 
-**Default behavior (self-heal OFF):**
+**Any other drift — only when the setting is on.** For label drift that does not involve an addon label, and for every repo in the older layout, Sharko by default only **detects and warns**: the cluster stays **OutOfSync** until you click **Sync**. You can turn automatic correction on with the `managed_cluster_self_heal` setting (admin-only). When it is on, Sharko re-applies the Git-desired labels on every check.
+
+**Default behavior (setting off), older layout and non-addon labels:**
 
 - Sharko detects drift and reports **OutOfSync**.
 - The cluster page shows the drift diff.
 - You click **Sync** when you're ready to revert the drift.
 
-**With self-heal ON:**
+**With the setting on:**
 
 - Sharko detects drift and reports **OutOfSync** (same as above).
-- On the next reconcile tick (~30s), Sharko automatically re-applies Git-desired addon labels.
+- On the next check (~30s), Sharko automatically re-applies Git-desired addon labels.
 - The cluster returns to **Synced** without manual action.
 
 Self-heal never touches Secret Data, annotations, or non-addon labels. It only reconciles the addon label keys Sharko owns.
 
 !!! info "Self-heal is NOT an admission webhook"
-    Self-heal is enforcement-by-reconcile — an out-of-band edit to the cluster Secret succeeds at write time, and Sharko reverts it on the next reconcile tick (if self-heal is on). It does NOT block the write. An admission-webhook-based hard lock is a future consideration (V3+ backlog), not part of v3.0.0.
+    Self-heal is enforcement-by-reconcile — an out-of-band edit to the cluster Secret succeeds at write time, and Sharko reverts it on the next check. It does NOT block the write. An admission-webhook-based hard lock is a future consideration (V3+ backlog), not part of v3.0.0.
 
 ## Self-managed vs Sharko-managed summary
 
@@ -91,7 +98,7 @@ Self-heal never touches Secret Data, annotations, or non-addon labels. It only r
 | **Who created the ArgoCD cluster Secret** | You, outside Sharko. | Sharko, when you registered. |
 | **Drift detection** | N/A — Sharko already self-heals addon labels every tick. | **Synced / OutOfSync** reported in UI (v3.0.0+). |
 | **Drift diff** | N/A | Read-only diff of Git-desired vs live addon labels. |
-| **Self-heal behavior** | Always on (pre-existing behavior, unchanged in v3.0.0). Sharko re-applies addon labels every ~30s and warns after repeated fights. | **Opt-in, default OFF.** Enable via `managed_cluster_self_heal` setting. |
+| **Self-heal behavior** | Always on (pre-existing behavior, unchanged in v3.0.0). Sharko re-applies addon labels every ~30s and warns after repeated fights. | **Addon labels on a v4 repo: always put back, the setting is not asked.** Other drift, and the older layout: opt-in, default OFF. Enable via `managed_cluster_self_heal` setting. |
 | **What Sharko touches** | Only addon labels (never Data/annotations). | Only addon labels (never Data/annotations). |
 
 ## Limitations and honest framing
@@ -99,7 +106,7 @@ Self-heal never touches Secret Data, annotations, or non-addon labels. It only r
 - **Labels only.** Drift detection and self-heal apply to Sharko's addon labels only — not Secret Data (the kubeconfig itself), not annotations, not other labels.
 - **Connection Data changes are never applied automatically.** Git is the source of truth for the connection definition. Credential values are resolved from the referenced provider during reconciliation and are never stored in Git. Sharko owns and maintains the rendered ArgoCD cluster Secret; ArgoCD consumes it. But automatic sync is deliberately disabled for the sensitive fields: on the connection page, **Check again** compares the live connection details against what the Git definition, with its credential reference resolved, says they should be — read-only, no write, no self-heal. If they differ, an admin clicks **Repair connection** to deliberately apply the reviewed state: a manual write pinned to the commit shown at check time, never a background reconcile and never automatic. Only the addon labels converge on Sharko's own schedule.
 - **Ownership during self-heal: adopted clusters stay guests.** When Sharko self-heals a cluster it **owns** (Sharko created the Secret — it carries `app.kubernetes.io/managed-by: sharko`), it preserves and defensively re-applies its ownership label. When a cluster's Secret is **adopted** (another owner created it — e.g. a Helm chart or an ArgoCD Application manages that Secret, and Sharko is a guest on it), Sharko's self-heal converges only its own addon label keys and **never stamps its own ownership label** or touches the other owner's labels, annotations, or Data. Adopting a cluster does not make Sharko claim the Secret — Sharko stays a well-behaved guest and only keeps its addon labels correct.
-- **Enforcement-by-reconcile, not a hard lock.** An out-of-band edit to the cluster Secret is detected and (if self-heal is on) reverted on the next reconcile tick, but it's not blocked at write time. An admission webhook for hard locking is a V3+ backlog item, not part of v3.0.0.
+- **Enforcement-by-reconcile, not a hard lock.** An out-of-band edit to the cluster Secret is detected and reverted on the next check (always for addon labels on a v4 repo, otherwise only if self-heal is on), but it's not blocked at write time. An admission webhook for hard locking is a V3+ backlog item, not part of v3.0.0.
 - **Self-managed clusters already self-heal.** The v3.0.0 drift detection surface (OutOfSync state, drift diff, opt-in self-heal) applies to **Sharko-managed clusters** only. Self-managed clusters continue to use the pre-existing self-heal behavior (always on, with fight detection).
 
 ## What's next
