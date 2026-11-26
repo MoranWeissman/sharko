@@ -199,7 +199,15 @@ import (
 // mapping; it makes no log call. None of the four searches for credential
 // characters: values_follow_defaults.go looks at one byte for a YAML comment
 // marker in a values FILE line, never in an address.
-const wantSweptGoFiles = 455
+//
+// 457 since the fixes for the review of that work added two files.
+// internal/security/guarded_transport.go is the HTTP client for a chart
+// repository address a viewer typed: it checks every redirect and the real
+// address at connect time. internal/orchestrator/cluster_values_wrap.go
+// decides whether a per-cluster values file is wrapped under the add-on's
+// name, by asking the global values file what the chart's top settings are.
+// Neither makes a log call, and neither searches for credential characters.
+const wantSweptGoFiles = 457
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
