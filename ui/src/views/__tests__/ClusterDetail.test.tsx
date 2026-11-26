@@ -3360,7 +3360,7 @@ describe('ClusterDetail', () => {
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
       await user.click(screen.getByRole('button', { name: /^Diff$/ }));
-      expect(screen.getByText(/No differences — this secret's addon labels match Git/)).toBeInTheDocument();
+      expect(screen.getByText("No differences found at the last check — this secret's addon labels matched Git.")).toBeInTheDocument();
     });
   });
 
