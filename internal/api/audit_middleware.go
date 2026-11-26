@@ -114,6 +114,15 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			mode = inferAttributionMode(tier, user)
 		}
 
+		// A handler that said nothing about WHY it failed still gets a true
+		// answer where the status code itself says it: a refusal by role, a
+		// request limit, a service that did not answer. Anything the status
+		// cannot say honestly stays empty rather than guessed.
+		reason := fields.Reason
+		if reason == "" {
+			reason = reasonFromStatus(rec.statusCode)
+		}
+
 		s.auditLog.Add(audit.Entry{
 			Level:           level,
 			Event:           event,
@@ -124,13 +133,34 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			Source:          source,
 			Result:          result,
 			Changes:         fields.Changes,
-			Reason:          fields.Reason,
+			Reason:          reason,
 			DurationMs:      duration.Milliseconds(),
 			Tier:            tier,
 			AttributionMode: mode,
 			RequestID:       logging.RequestID(ctx),
 		})
 	})
+}
+
+// reasonFromStatus names why a request failed when the status code alone says
+// it truthfully. It never reads the response body, so nothing a backend wrote
+// can reach the audit log. 400, 404, 409, 422 and 503 are left empty on
+// purpose: each has several different causes, and a wrong sentence there would
+// be worse than none.
+func reasonFromStatus(code int) audit.Reason {
+	switch code {
+	case http.StatusForbidden:
+		return audit.ReasonNotAllowed
+	case http.StatusTooManyRequests:
+		return audit.ReasonRateLimited
+	case http.StatusBadGateway:
+		return audit.ReasonUpstream
+	case http.StatusGatewayTimeout:
+		return audit.ReasonTimeout
+	case http.StatusInternalServerError:
+		return audit.ReasonUnspecified
+	}
+	return ""
 }
 
 // detectSource infers the origin of a request from the User-Agent and auth headers.

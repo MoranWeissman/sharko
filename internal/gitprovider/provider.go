@@ -3,6 +3,10 @@ package gitprovider
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/google/go-github/v68/github"
 )
 
 // ErrFileNotFound is the canonical sentinel returned by GitProvider
@@ -92,4 +96,30 @@ type BranchRevisioner interface {
 	// points at. Implementations must return an error rather than a
 	// guessed, cached, or stale value when they cannot answer honestly.
 	GetBranchHeadSHA(ctx context.Context, branch string) (string, error)
+}
+
+// IsRateLimited reports whether err says the Git host refused the call
+// because Sharko has used up its request allowance (GitHub's hourly limit or
+// its "slow down" abuse limit). It reads the error TYPE go-github returns, so
+// it still works when the error has been wrapped with context on the way up.
+//
+// Other hosts (Azure DevOps, Gitea) have no typed error for this; they are
+// recognised by a 429 status in the wrapped text, which is the one thing every
+// host agrees on. Callers use this to say "the host is limiting Sharko, try
+// again in a moment" instead of "the connection is broken".
+func IsRateLimited(err error) bool {
+	if err == nil {
+		return false
+	}
+	var rl *github.RateLimitError
+	var abuse *github.AbuseRateLimitError
+	if errors.As(err, &rl) || errors.As(err, &abuse) {
+		return true
+	}
+	var ghErr *github.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusTooManyRequests {
+		return true
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "rate limit exceeded") || strings.Contains(low, "429 too many requests")
 }

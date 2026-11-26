@@ -32,6 +32,8 @@ import (
 //   - "no_connection"    — no active Git connection is configured.
 //   - "not_bootstrapped" — the repo IS reachable but the engine pin is
 //     genuinely absent (a real "never set up" state — the wizard should fire).
+//   - "git_rate_limited" — the Git host answered that Sharko has asked too
+//     often (GitHub's hourly limit). Nothing is broken; it clears by itself.
 //   - "connection_error" — the repo could NOT be reached or verified (e.g. a
 //     TLS/transport/auth failure). This is an environment problem, NOT a setup
 //     problem, so the UI must KEEP the user in their working app and surface
@@ -121,7 +123,12 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 		// both wrap the sentinel) so we DON'T mistake a broken connection for
 		// "the repo was never set up".
 		reason := "connection_error"
-		if errors.Is(err, gitprovider.ErrFileNotFound) {
+		if gitprovider.IsRateLimited(err) {
+			// The host answered, and said "too many requests". That is not a
+			// broken connection and not a certificate problem: it clears by
+			// itself, so the UI says exactly that.
+			reason = "git_rate_limited"
+		} else if errors.Is(err, gitprovider.ErrFileNotFound) {
 			// The repo is reachable and the engine pin is genuinely absent.
 			// That is NOT the same as "never bootstrapped" — a v3 repo has
 			// no engine pin either. Check the v3 markers before telling the
