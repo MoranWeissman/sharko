@@ -24,7 +24,7 @@ provider and keeping an eye on cost. The Helm values for AI are listed in
 | Claude (Anthropic) | API key (starts with `sk-ant-`) | The UI suggests `claude-sonnet-4-20250514` |
 | OpenAI | API key (starts with `sk-`) | The UI suggests `gpt-4o` |
 | Ollama (local) | Address only | No API key. Runs in the cluster or next to Sharko. The UI suggests `llama3.2` |
-| Custom OpenAI-compatible | API key and base address | For a gateway you run yourself |
+| Custom OpenAI-compatible (`custom-openai`) | API key and base URL | For a gateway you run yourself |
 
 No provider is picked until you pick one. The Helm default for
 `ai.provider` is empty.
@@ -42,7 +42,7 @@ settings you are typing before you save them.
 ## The "Annotate values on generate" switch
 
 This switch in Settings → AI decides whether the AI adds notes when you
-add an addon or click **Refresh from upstream**. It is on by default.
+add an addon. It is on by default once an AI provider is saved. With no provider (or after you click **Disable**), the switch shows off, because there is nothing to write the notes with.
 Turning it off stops the notes for every addon. You can also turn them off
 for one addon only (see [below](#turning-the-notes-off)).
 
@@ -59,9 +59,8 @@ files are 2 to 15 KB. That is a small request, so the cost per addon is
 very low on every provider. Check your provider's price list for real
 numbers.
 
-It runs once when you add an addon, and again each time you click
-**Refresh from upstream**. So the total cost depends on how many addons you
-have and how often you refresh them.
+It runs once when you add an addon. So the total cost depends on how many
+addons you add.
 
 If a chart's `values.yaml` is bigger than 50,000 bytes, Sharko does not
 call the AI for it at all. You get the file without AI notes. This stops
@@ -155,4 +154,4 @@ Sharko does not keep AI answers anywhere of its own. The values file in your
 Git repository is the only copy. Once an addon is added, its file lives at
 `values/global/<addon>.yaml` (in a repository with the older v3 layout, it
 is under `configuration/`), and Sharko reads it from Git after that. The AI
-is only called again when you click **Refresh from upstream**.
+is only called when you add an addon.

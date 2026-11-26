@@ -26,7 +26,7 @@ Sharko maintains one active ArgoCD connection and one active Git connection. You
 
 | Field | Description |
 |-------|-------------|
-| **Provider** | GitHub, Azure DevOps, or Gitea (see [Gitea Provider reference](../operator/gitea-provider.md) for Gitea-specific fields and limits) |
+| **Provider** | GitHub, Azure DevOps, or Gitea (see [Gitea Provider reference](../operator/gitea-provider.md) for Gitea-specific fields and limits). You pick it in the first-run wizard. **Settings → Connection** does not have a Provider field, so it cannot be changed there. |
 | **Repository URL** | The addons repo URL (e.g., `https://github.com/your-org/addons-repo`) |
 | **Personal Access Token** | PAT with `repo` read/write (GitHub), `Code (Read & Write)` (Azure DevOps), or an access token with repo read/write (Gitea) |
 
@@ -208,11 +208,11 @@ Configure the AI assistant provider.
 
 | Field | Description |
 |-------|-------------|
-| **Provider** | `openai`, `claude`, `gemini`, `ollama`, or `custom` |
-| **Model** | Model name (e.g., `gpt-4o`, `claude-3-5-sonnet`) |
+| **Provider** | `gemini`, `claude`, `openai`, `ollama`, or `custom-openai` (shown as **Custom OpenAI-compatible** on screen) |
+| **Model** | Model name. The form suggests one for each provider (for example `gpt-4o`, `claude-sonnet-4-20250514`, `gemini-2.5-flash`, `llama3.2`) |
 | **API Key** | Provider API key (not required for Ollama) |
 | **Base URL** | Custom endpoint for OpenAI-compatible providers |
 
-The AI assistant appears as a floating panel accessible from any page. It is context-aware — it knows which cluster or addon you are currently viewing.
+No provider is set up until you pick one. The AI assistant shows up as a floating panel on every page **only after a provider is saved**. With no provider, the panel does not appear anywhere and nothing on the page says why. Open **Settings → AI** to set one up (the first-run guide has the steps). When it is on, the panel is context-aware: it knows which cluster or addon you are currently viewing.
 
-Write tools (enable/disable addons, upgrade versions, sync ArgoCD apps) require admin role and explicit opt-in in the AI settings.
+The assistant can only change things when write actions are switched on for the whole install: the Helm value `gitops.actions.enabled: true` (the environment variable `GITOPS_ACTIONS_ENABLED=true`). There is no switch for this in the AI settings. With it on, a write tool (enable or disable an addon, change a catalog version, sync or refresh an ArgoCD app) needs the same role as the same action done by hand. Enabling or disabling an addon and syncing need `operator`, and a viewer is refused.

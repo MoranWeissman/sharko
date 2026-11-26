@@ -12,7 +12,7 @@ Gitea can run at any address, so Sharko cannot tell from the address alone
 that it is Gitea, the way it can for GitHub or Azure DevOps. You have to say
 so.
 
-**In the UI:** Settings → Connection → Git → **Provider: Gitea**.
+**In the UI:** pick **Gitea** as the Git provider in the first-run wizard. **Settings → Connection** does not have a Provider field, so it cannot switch a connection to Gitea later. To change the provider of an existing connection, use the API or the Helm values below.
 
 **In Helm values:** set `connection.git.provider: "gitea"` together with
 `connection.git.repoURL`. See

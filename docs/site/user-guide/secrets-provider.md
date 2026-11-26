@@ -54,7 +54,9 @@ This is by design and enforced in code. The ArgoCD provider reads from ArgoCD's 
 **What you'll see if you try:**  
 If you select `argocd` as the Secrets Provider and then try to deploy an addon that references a secret, Sharko will return this error:
 
-> argocd provider is cluster-credentials-only; configure a separate SecretProvider (aws-sm, k8s-secrets, gcp-sm, azure-kv, or vault) for addon secret values.
+> argocd provider is cluster-credentials-only; configure a separate SecretProvider (vault, aws-sm, k8s-secrets, gcp-sm, azure-kv) for addon secret values.
+
+The message lists more names than Sharko supports. Only `aws-sm` and `k8s-secrets` work for addon secret values today. `gcp-sm`, `azure-kv` and `vault` are not supported yet.
 
 **How to fix it:**  
 Configure a second Secrets Provider for addon secrets. The two can coexist — one for cluster credentials (e.g., `argocd`), another for addon secret values (e.g., `aws-sm`).

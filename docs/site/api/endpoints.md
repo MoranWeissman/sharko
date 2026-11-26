@@ -53,14 +53,14 @@ Supported filter predicates for clusters: `env:<value>`, `health:<value>`, `addo
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/tokens` | List API keys (admin only) |
+| `GET` | `/api/v1/tokens` | List API keys (any signed-in user; never shows the key values) |
 | `GET` | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |
 
 ### Audit Log
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/audit` | List audit log entries (admin only) — records all write operations with actor, timestamp, and result |
+| `GET` | `/api/v1/audit` | List audit log entries (any signed-in user) — records all write operations with actor, timestamp, and result |
 | `GET` | `/api/v1/audit?cluster=<name>` | Filter audit entries by cluster |
 | `GET` | `/api/v1/audit?addon=<name>` | Filter audit entries by addon |
 | `GET` | `/api/v1/audit?limit=<n>&before=<cursor>` | Paginate results (default `limit=100`) |
@@ -73,7 +73,7 @@ Sharko holds this activity history in memory only. It starts empty again after a
 
 ## Write Endpoints
 
-All write endpoints require the `admin` role.
+Write endpoints need the `operator` role or higher. The ones that reach past the caller's own work (removing clusters or addons, managing users, changing the AI provider) need `admin`. See [Security → Application Roles](../operator/security.md#application-roles) for the full list.
 
 ### Clusters
 

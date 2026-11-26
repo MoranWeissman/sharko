@@ -71,7 +71,7 @@ Common reasons it fails:
 curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/ai/config" | jq
 ```
 
-You get `current_provider`, a list of `available_providers` (each with `id`, `configured` and `model`) and `annotate_on_seed`. The API key is never shown. An empty `current_provider`, or `none`, means Case 1.
+You get `current_provider`, a list of `available_providers` (each with `id`, `configured` and `model`) and `annotate_on_seed`. The API key is never shown. An empty `current_provider`, or `none`, means Case 1. Read `current_provider` to see which provider is in use. Do not read `configured` or `model` in the list as a sign that a provider is set up: with nothing saved, Ollama already shows `configured: true` and `llama3.2`, and after you save one provider the other cloud entries can show that provider's model. The list does not include `custom-openai`, although the form offers it.
 
 Also look at the Helm values:
 

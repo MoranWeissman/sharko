@@ -6,7 +6,7 @@ Full reference for all `sharko` commands.
 
 ### `sharko login`
 
-Authenticate with a Sharko server. Stores the session token in `~/.sharko/config.yaml`.
+Authenticate with a Sharko server. Stores the session token in `~/.sharko/config` (a file with no extension, readable only by you).
 
 ```bash
 sharko login --server https://sharko.your-domain.com
@@ -21,14 +21,16 @@ sharko login --server https://sharko.your-domain.com --username admin --password
 | `--username <user>` | Username (prompted if not provided) |
 | `--password <pass>` | Password (prompted if not provided) |
 
+The saved token belongs to the server you logged in to. If you give another address with `--server`, the CLI does not send the token there. It tells you to log in to that server first.
+
 ### `sharko version`
 
 Show the CLI version and the server version.
 
 ```bash
 sharko version
-# CLI: v2.0.1
-# Server: v2.0.1
+# Sharko CLI: 4.0.8
+# Server: 4.0.8
 ```
 
 ---
@@ -44,6 +46,11 @@ sharko init
 ```
 
 Run once per repository. Requires an active Git connection in Settings.
+
+| Flag | Description |
+|------|-------------|
+| `--auto-merge` | Merge the bootstrap pull request automatically instead of waiting for you |
+| `--no-bootstrap` | Skip the ArgoCD bootstrap step |
 
 Init is asynchronous — the CLI prints an operation ID and streams log lines until the operation completes:
 
@@ -62,19 +69,17 @@ With auto-merge disabled (`SHARKO_CONN_GITOPS_PR_AUTO_MERGE=false`, or `connecti
 
 ### `sharko validate`
 
-Validate a catalog YAML file against the Sharko schema without pushing any changes.
+Validate the configuration files of a repo in the **older (v3) layout** without pushing any changes. It reads `configuration/addons-catalog.yaml` and `configuration/managed-clusters.yaml` (or `configuration/cluster-addons.yaml`) under the folder you give it. The argument is the **folder that holds `configuration/`**, not a file.
 
 ```bash
-sharko validate                   # validates addons-catalog.yaml in current directory
-sharko validate path/to/catalog.yaml
+sharko validate                   # looks for ./configuration/addons-catalog.yaml
+sharko validate path/to/repo      # looks for path/to/repo/configuration/...
 ```
 
-Exits 0 on valid, 1 on schema errors (printed to stderr).
+Exits 0 on valid, 1 on schema errors.
 
-> **Note:** `sharko validate` is the legacy field-presence validator over the pre-envelope YAML
-> shape. New work should use [`sharko validate-config`](#sharko-validate-config) below, which
-> validates against the committed JSON Schemas at `https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/`. The legacy
-> command is retained for back-compat through V125 and will be removed in V126.
+!!! warning "On a v4 repo this command checks nothing"
+    A v4 repo has no `configuration/` folder. `sharko validate` prints `[SKIP]` for both files and exits `0`, even if a file in the repo is broken. Use [`sharko validate-config`](#sharko-validate-config) below for a v4 repo. Run it on the repo folder to check `catalog.yaml`, `managed-clusters.yaml`, `cluster-addons/` and the YAML in the values files.
 
 ### `sharko validate-config`
 
@@ -303,6 +308,8 @@ Adopt one or more existing ArgoCD clusters into Sharko management. Opens a pull 
 sharko adopt <cluster1> [cluster2] ... [flags]
 ```
 
+`sharko adopt-cluster` is another name for the same command.
+
 | Flag | Description |
 |------|-------------|
 | `-y`, `--yes` | Skip the confirmation prompt |
@@ -345,7 +352,10 @@ sharko status
 
 ### `sharko add-addon`
 
-Add an addon to the catalog.
+Add an addon to the catalog of a repo in the **older (v3) layout**.
+
+!!! warning "Not for a v4 repo"
+    On a v4 repo, `sharko add-addon` is refused with a `409` (code `repo_layout`), because it writes a file a v4 repo does not use. Use [`sharko add-to-catalog`](#sharko-add-to-catalog) there. `add-to-catalog` does the same job (it adds the addon to `catalog.yaml` and opens a pull request) and can also turn the addon on for a cluster in the same pull request.
 
 ```bash
 sharko add-addon <name> [flags]
@@ -356,7 +366,9 @@ sharko add-addon <name> [flags]
 | `--chart <name>` | Yes | Helm chart name |
 | `--repo <url>` | Yes | Helm repository URL |
 | `--version <ver>` | Yes | Chart version |
-| `--namespace <ns>` | No | Target namespace (defaults to addon name) |
+| `--namespace <ns>` | No | Target namespace |
+
+There is no `--values` flag. The values file for an addon is written for you when the addon is added, and you change it afterwards in Git (see [Viewing and Changing Helm Values](../user-guide/values-editing.md)).
 
 Example:
 
@@ -383,6 +395,9 @@ On a repo in the new format, Sharko will not remove an addon that is still switc
 ### `sharko configure-addon`
 
 Update one or more configuration fields for an existing addon. Only the flags you pass are sent to the server.
+
+!!! note "Older (v3) layout"
+    Like `add-addon`, this command writes the old catalog file. A v4 repo refuses it with a `409` (code `repo_layout`). On a v4 repo, change the addon's entry in `catalog.yaml` with a pull request.
 
 ```bash
 sharko configure-addon <name> [flags]
@@ -489,7 +504,7 @@ sharko upgrade-clusters cert-manager --version 1.16.0 \
 
 ### `sharko list-addons`
 
-List all addons in the catalog. Use `--show-config` to include the full catalog configuration for each addon (secrets declarations, values, etc.).
+List all addons in the catalog, with chart, version, namespace and how many clusters run each one. `--show-config` adds two columns, `SELF-HEAL` and `SYNC-OPTIONS`. It does not print the addon's secrets or its values.
 
 ```bash
 sharko list-addons
@@ -645,7 +660,7 @@ sharko disable-addon <cluster> <addon> [flags]
 
 ### `sharko add-to-catalog`
 
-Add an addon to your org's catalog (`catalog.yaml`) and open a pull request. This is the approval step — nothing runs until the addon is in that file.
+Add an addon to your org's catalog (`catalog.yaml`) and open a pull request. This is the approval step — nothing runs until the addon is in that file. The pull request also writes the addon's global values file (`values/global/<name>.yaml`), a copy of the chart's own defaults.
 
 ```bash
 sharko add-to-catalog <name> [flags]
@@ -697,14 +712,14 @@ sharko connect \
 | `--name <name>` | Connection name (required) |
 | `--git-provider <provider>` | `github` or `azuredevops` (required) |
 | `--git-repo <url>` | Addons repository URL (required) |
-| `--git-token <token>` | PAT or access token (required) |
+| `--git-token <token>` | PAT or access token. The command does not require this flag. |
 | `--argocd-url <url>` | ArgoCD server URL |
 | `--argocd-token <token>` | ArgoCD API token |
 | `--argocd-namespace <ns>` | ArgoCD namespace (default: `argocd`) |
 
 ### `sharko connect list`
 
-Show the current active connection.
+List the connections Sharko has.
 
 ```bash
 sharko connect list
@@ -739,12 +754,13 @@ Use this when a cluster's ArgoCD Secret has drifted from what Sharko wrote to Gi
 
 ### `sharko refresh-secrets`
 
-Trigger an immediate secrets reconcile. Useful after rotating a secret in your provider.
+Trigger an immediate secrets reconcile for **all clusters**. Useful after changing a secret's value in your provider. The command takes no cluster name. To refresh one cluster, call `POST /api/v1/clusters/{name}/secrets/refresh`.
 
 ```bash
-sharko refresh-secrets               # reconcile all clusters
-sharko refresh-secrets prod-eu       # reconcile a specific cluster
+sharko refresh-secrets
 ```
+
+It only does something for an addon whose catalog entry has a `push:` block. See [Addon Secrets](../user-guide/addons.md#addon-secrets). With no such entry the server log says `no addons with secret definitions — nothing to reconcile`, and `secret-status` keeps showing the last real run.
 
 ### `sharko secret-status`
 
@@ -769,7 +785,7 @@ sharko token create --name <name> --role <role> [--expires-in-days <n>]
 | Flag | Description |
 |------|-------------|
 | `--name <name>` | Key name for identification (required) |
-| `--role <role>` | `admin`, `operator`, or `viewer` |
+| `--role <role>` | `admin`, `operator`, or `viewer`. **If you leave it out, the CLI makes an `admin` key.** The UI and the API default to `viewer`. Always pass `--role`. |
 | `--expires-in-days <n>` | How long the key stays usable, 1–365. Leave it out for the default of 90 days. |
 
 Output includes the plaintext key — shown once only — plus the expiry date.
@@ -822,6 +838,10 @@ sharko pr refresh <id>         # force-refresh a tracked PR's status
 sharko pr wait <id>            # wait for a PR to be merged or closed
 ```
 
+`sharko pr list` takes `--cluster <name>`, `--user <name>`, `--status open|merged|closed` and `-o table|json`.
+
+`sharko pr wait <id>` keeps checking and exits `0` when the pull request is merged, `1` when it is closed without a merge, and `2` when the wait runs out. `--timeout` sets how long it waits.
+
 ---
 
 ## User Commands
@@ -834,6 +854,10 @@ sharko user create <username>             # create a new user
 sharko user delete <username>             # delete a user
 sharko user update <username>             # update a user's role or enabled status
 ```
+
+`sharko user update` takes `--role admin|operator|viewer` and `--enabled=true|false`. Changing only the role leaves a switched-off account switched off. Pass `--enabled=true` to switch it on again.
+
+There is no command to change a user's password. An admin resets it in **Settings → Users**, or through the API.
 
 ### `sharko reset-admin`
 
@@ -870,3 +894,10 @@ sharko serve
 | `--static <path>` | Path to static files directory for the UI |
 | `--demo` | Run with mock backends for testing (no external dependencies) |
 | `--demo-clusters <n>` | Demo mode: number of clusters to generate |
+| `--demo-addons <n>` | Demo mode: number of addons to generate |
+| `--demo-scale <preset>` | Demo mode: size preset. `big` is 50 clusters and 30 addons with messy, production-like data |
+| `--demo-seed <n>` | Demo mode: random seed, so the same estate comes back each time |
+
+### `sharko completion`
+
+Print a shell completion script: `sharko completion bash`, `zsh`, `fish` or `powershell`.

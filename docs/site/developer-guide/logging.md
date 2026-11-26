@@ -70,8 +70,13 @@ Two non-negotiables:
    centralized configuration.
 
 The level is controlled by the `SHARKO_LOG_LEVEL` env var (`debug` /
-`info` / `warn` / `error`). Default is `info`. Helm sets this via
-`config.logLevel`.
+`info` / `warn` / `error`). Default is `info`. The Helm chart has no setting for it. Set it through `extraEnv`:
+
+```yaml
+extraEnv:
+  - name: SHARKO_LOG_LEVEL
+    value: "debug"
+```
 
 ---
 

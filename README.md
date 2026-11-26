@@ -187,7 +187,7 @@ The server holds the platform credentials — the ArgoCD token, the Git token, a
 | `sharko connect list` | Show current connection |
 | `sharko connect test` | Test current connection |
 | `sharko init` | Initialize the addons repo (async, streams progress) |
-| `sharko validate [path]` | Validate catalog YAML against schema |
+| `sharko validate [path]` | Validate the older-layout `configuration/` files. For a v4 repo use `sharko validate-config` |
 | `sharko add-cluster <name>` | Register a cluster |
 | `sharko add-clusters [n1,n2,...]` | Batch register multiple clusters (or `--from-provider` to find them) |
 | `sharko remove-cluster <name>` | Deregister a cluster |
@@ -195,12 +195,12 @@ The server holds the platform credentials — the ArgoCD token, the Git token, a
 | `sharko list-clusters` | List all clusters |
 | `sharko test-cluster <name>` | Test connectivity to a cluster |
 | `sharko adopt <cluster1> [cluster2] ...` | Adopt one or more discovered ArgoCD clusters |
-| `sharko add-addon <name>` | Add addon to catalog |
+| `sharko add-to-catalog <name>` | Add an addon to the catalog (opens a pull request). `add-addon` is for the older layout |
 | `sharko remove-addon <name>` | Remove addon (dry-run without `--confirm`) |
 | `sharko upgrade-addon <name>` | Upgrade an addon version |
 | `sharko upgrade-addons <addon=ver,...>` | Batch upgrade multiple addons |
 | `sharko list-addons [--show-config]` | List addons |
-| `sharko refresh-secrets [cluster]` | Trigger immediate secrets reconcile |
+| `sharko refresh-secrets` | Trigger immediate secrets reconcile (all clusters) |
 | `sharko secret-status` | Show addon-secret sync status per cluster |
 | `sharko token create` | Create an API key |
 | `sharko token list` | List API keys |

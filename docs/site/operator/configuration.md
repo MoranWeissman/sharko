@@ -244,7 +244,7 @@ own machine only.
 
 These Helm values set up the AI assistant. For what the AI features do,
 how much they cost and how to watch them, see
-[AI configuration](ai-config.md).
+[AI configuration](ai-config.md). You can also set the provider, key and model in the UI, in **Settings → AI**, with no Helm values at all. If the chart also sets the provider, model or address, the Helm value wins for that field. The key you saved in the UI is kept.
 
 | Value | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -756,6 +756,25 @@ When it is not set:
   "recommendation": "Add the following to your argocd-cm ConfigMap ..."
 }
 ```
+
+## Other chart values
+
+These chart values exist and are not described elsewhere on this page. Defaults are the chart's.
+
+| Value | Default | What it does |
+|-------|---------|--------------|
+| `connectivityCheck.enabled` | `true` | Keeps Sharko's own connectivity-check Application on a cluster that has no addons, so ArgoCD never sees an empty set. Leave it on. Sets `SHARKO_CONNECTIVITY_CHECK`. |
+| `autoRemediate.enabled` | `true` | Lets Sharko stop an ArgoCD sync that it caused with a merged pull request and that is stuck failing, and start a new one. Waits 5 minutes between tries on one app. Sets `SHARKO_AUTO_REMEDIATE`. |
+| `catalog.freshness.enabled`, `catalog.freshness.interval` | `true`, daily | The background check that looks up newer chart versions for the catalog. `interval` takes a Go duration such as `12h`. |
+| `serviceAccount.create`, `.name`, `.annotations` | `true`, empty, empty | Whether the chart makes the pod's service account, and its name and annotations (for an IAM role, for example). |
+| `nameOverride`, `fullnameOverride` | empty | Change the names the chart gives its objects. |
+| `imagePullSecrets` | empty list | Pull secrets for the Sharko image. |
+| `service.type`, `service.port` | `ClusterIP`, `80` | The Service in front of the pod. |
+| `livenessProbe`, `readinessProbe` | health check on `/api/v1/health` | See [Probes](#probes). |
+| `monitoring.prometheusRules.enabled`, `.namespace`, `.labels` | `false`, release namespace, none | Renders a `PrometheusRule` (needs the Prometheus operator). `labels` is for matching your Prometheus rule selector. |
+| `connection.git.organization`, `.project`, `.repository` | empty | The Azure DevOps names of the addons repo. For GitHub use `owner` and `repo`. |
+
+A value that is not in the chart is **not** an error: Helm ignores it without a word. If a setting seems to do nothing, check that its name is in the chart's `values.yaml`.
 
 ## Extra Environment Variables
 
