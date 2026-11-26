@@ -77,7 +77,7 @@ func TestUnadopt_UnknownCluster_Is404WithPlainSentence(t *testing.T) {
 	gp := newTakeoverFakeGP()
 	_, router, _ := takeoverTestServer(t, gp, nil, fakeAppSetReader{})
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/ghost-cluster/unadopt", "operator",
+	router.ServeHTTP(w, roleReq(http.MethodPost, "/api/v1/clusters/ghost-cluster/unadopt", "admin",
 		map[string]interface{}{"yes": true}))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("got %d, want 404 (body=%s)", w.Code, w.Body.String())

@@ -1603,6 +1603,14 @@ definitions:
         items:
           type: string
         type: array
+      already_in_catalog:
+        description: |-
+          AlreadyInCatalog names the addons that were already in catalog.yaml
+          exactly as asked. When it is set nothing was written and no pull
+          request was opened.
+        items:
+          type: string
+        type: array
       branch:
         type: string
       cluster:
@@ -1628,6 +1636,11 @@ definitions:
         type: array
       merged:
         type: boolean
+      message:
+        description: |-
+          Message is a plain sentence for the caller when there is something to
+          say that the other fields do not (today: AlreadyInCatalog).
+        type: string
       pr_id:
         type: integer
       pr_url:
@@ -1672,6 +1685,11 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult:
     properties:
+      already_done:
+        description: |-
+          AlreadyDone is true when the cluster was already adopted, so nothing
+          was written and no pull request was opened.
+        type: boolean
       blockers:
         description: |-
           Blockers lists every reason this cluster cannot be adopted yet.
@@ -4489,12 +4507,15 @@ definitions:
     properties:
       managed_cluster_self_heal:
         description: |-
-          ManagedClusterSelfHeal is false (the default) when the reconciler
-          detects drift on Sharko-managed clusters but does NOT re-apply
-          git-desired labels (drift detection only, surfaces OutOfSync state).
-          When set to true, the reconciler re-applies git-desired addon labels
-          onto drifted managed-cluster Secrets every tick (enforcement-by-
-          reconcile, same mechanism as the self-managed path).
+          ManagedClusterSelfHeal says whether Sharko puts back, on its own,
+          labels that someone changed by hand on a repo that is not in the v4
+          layout. It does NOT switch off the add-on labels of a repo in the v4
+          layout: those are always put back on its own, whatever
+          this says, because Git is the record of what runs where and the
+          label is what installs an add-on. Taking an add-on label off by hand
+          therefore uninstalls the add-on until Sharko puts the label back
+          (walk 2, finding 3: the setting and the docs said "off", Sharko put the
+          label back anyway).
         type: boolean
     type: object
   internal_api.managedSecretRow:
@@ -6544,6 +6565,11 @@ paths:
       produces:
       - application/json
       responses:
+        "200":
+          description: 'Every addon was already in the catalog as asked: nothing written,
+            no pull request (already_in_catalog and message are set)'
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddToCatalogResult'
         "201":
           description: Pull request opened
           schema:
@@ -11228,8 +11254,12 @@ paths:
       - system
   /settings/managed-cluster-self-heal:
     get:
-      description: Returns whether Sharko re-applies the labels Git declares to drifted
-        Sharko-managed clusters (V3 G3, default false — drift is recorded only)
+      description: 'Returns the managed-cluster self-heal setting (default false).
+        On a repo in the v4 layout this setting does not matter for add-on labels:
+        Sharko always puts them back on its own, because Git is the record of what
+        runs where. Taking an add-on label off by hand uninstalls the add-on until
+        Sharko puts the label back. On an older layout, false means drift is only
+        reported and true means Sharko puts the labels back.'
       produces:
       - application/json
       responses:
@@ -11250,8 +11280,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Sets whether Sharko re-applies the labels Git declares to drifted
-        Sharko-managed clusters (V3 G3). Admin only.
+      description: Sets the managed-cluster self-heal setting. It never turns off
+        the always-on put-back of add-on labels on a repo in the v4 layout; it only
+        decides whether Sharko also puts labels back on an older layout. Admin only.
       parameters:
       - description: Desired setting
         in: body

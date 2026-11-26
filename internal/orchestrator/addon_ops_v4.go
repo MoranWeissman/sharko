@@ -472,7 +472,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	// this is about; the wire FORMAT (v3 labels vs v4 ClusterAddons)
 	// is an implementation detail the tracker/dashboard don't need to
 	// know.
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s (v4)", req.Addon, req.Cluster),
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s", req.Addon, req.Cluster),
 		o.prMeta(req.AutoMerge, "addon-enable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon enable: %w", err)
@@ -578,7 +578,7 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 	// (prtracker.OpAddonDisable's value) so this lands in the dashboard's
 	// existing "Addons" bucket.
 	gitResult, err := o.commitChangesWithMeta(ctx, map[string][]byte{clusterPath: updated}, nil,
-		fmt.Sprintf("%s addon %s on cluster %s (v4)", action, req.Addon, req.Cluster),
+		fmt.Sprintf("%s addon %s on cluster %s", action, req.Addon, req.Cluster),
 		o.prMeta(req.AutoMerge, "addon-disable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %s: %w", action, err)

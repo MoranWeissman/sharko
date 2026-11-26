@@ -87,3 +87,14 @@ func TestAddToCatalog_AlreadyThere_SaysSoAndPrintsNoPullRequest(t *testing.T) {
 		}
 	}
 }
+
+// ---- walk 8 L03: validate said nothing was wrong after checking nothing ----
+
+func TestValidate_FoundNeitherFile_IsNotASilentPass(t *testing.T) {
+	dir := t.TempDir()
+	err := validateCmd.RunE(validateCmd, []string{dir})
+	want := "nothing was checked: neither configuration/addons-catalog.yaml nor configuration/managed-clusters.yaml was found. Give the folder that holds the configuration folder, not a file. For a repo in the v4 layout, use: sharko validate-config"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}

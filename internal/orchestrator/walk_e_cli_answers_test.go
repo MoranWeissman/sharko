@@ -179,3 +179,37 @@ func TestDisableAddonV4_KeepsTheFileHeader(t *testing.T) {
 		t.Fatalf("the schema line is doubled or gone:\n%s", got)
 	}
 }
+
+// ---- walk 2 finding 11: "(v4)" and brackets in the pull request title and branch ----
+
+func TestEnableAndDisableAddonV4_PullRequestTitleAndBranchCarryNoVersionTag(t *testing.T) {
+	git := newMockGitProvider()
+	orch := newV4TestOrchestrator(t, git)
+	if _, err := orch.EnableAddonV4(context.Background(), EnableAddonV4Request{
+		Cluster: "prod-eu", Addon: "metrics-server", Yes: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := orch.DisableAddonV4(context.Background(), DisableAddonV4Request{
+		Cluster: "prod-eu", Addon: "metrics-server", Yes: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(git.prs) != 2 {
+		t.Fatalf("pull requests = %d, want 2", len(git.prs))
+	}
+	wantTitles := []string{
+		"sharko: enable addon metrics-server on cluster prod-eu",
+		"sharko: disable addon metrics-server on cluster prod-eu",
+	}
+	for i, pr := range git.prs {
+		if pr.Title != wantTitles[i] {
+			t.Errorf("title %d = %q, want %q", i, pr.Title, wantTitles[i])
+		}
+		for _, bad := range []string{"(v4)", "(", ")"} {
+			if strings.Contains(pr.Title, bad) || strings.Contains(pr.SourceBranch, bad) {
+				t.Errorf("title %q or branch %q still carries %q", pr.Title, pr.SourceBranch, bad)
+			}
+		}
+	}
+}

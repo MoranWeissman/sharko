@@ -204,7 +204,7 @@ type managedClusterSelfHealResponse struct {
 	// ManagedClusterSelfHeal says whether Sharko puts back, on its own,
 	// labels that someone changed by hand on a repo that is not in the v4
 	// layout. It does NOT switch off the add-on labels of a repo in the v4
-	// layout: those are always put back (within about 30 seconds), whatever
+	// layout: those are always put back on its own, whatever
 	// this says, because Git is the record of what runs where and the
 	// label is what installs an add-on. Taking an add-on label off by hand
 	// therefore uninstalls the add-on until Sharko puts the label back
@@ -216,7 +216,7 @@ type managedClusterSelfHealResponse struct {
 // handleGetManagedClusterSelfHeal godoc
 //
 // @Summary Get managed-cluster self-heal setting
-// @Description Returns the managed-cluster self-heal setting (default false). On a repo in the v4 layout this setting does not matter for add-on labels: Sharko always puts them back within about 30 seconds, because Git is the record of what runs where. Taking an add-on label off by hand uninstalls the add-on until Sharko puts the label back. On an older layout, false means drift is only reported and true means Sharko puts the labels back.
+// @Description Returns the managed-cluster self-heal setting (default false). On a repo in the v4 layout this setting does not matter for add-on labels: Sharko always puts them back on its own, because Git is the record of what runs where. Taking an add-on label off by hand uninstalls the add-on until Sharko puts the label back. On an older layout, false means drift is only reported and true means Sharko puts the labels back.
 // @Tags system
 // @Produce json
 // @Security BearerAuth
