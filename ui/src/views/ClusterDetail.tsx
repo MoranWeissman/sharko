@@ -1,5 +1,5 @@
 import { toRepoFormat, type RepoFormat } from '@/lib/valuesFileLink';
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useContext } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
   Pencil,
   KeyRound,
   Plus,
+  Info,
   RefreshCw,
   RotateCcw,
   X,
@@ -62,7 +63,8 @@ import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
-import { RoleGuard } from '@/components/RoleGuard';
+import { RoleGuard, OPERATOR_AND_UP } from '@/components/RoleGuard';
+import { AuthContext } from '@/hooks/useAuth';
 import { useConnectionHealth, isAWSLoginMessageId, isAWSUnreachableMessageId } from '@/hooks/useConnectionHealth';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
@@ -83,6 +85,7 @@ import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { CompletedChangesPanel } from '@/components/CompletedChangesPanel';
 import { AutoMergeNote } from '@/components/AutoMergeNote';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
+import { CLUSTER_VALUES_V4_TITLE } from '@/components/ReadOnlyValues';
 import { HelperText } from '@/components/HelperText';
 import { showToast } from '@/components/ToastNotification';
 import { RowActionsMenu } from '@/components/RowActionsMenu';
@@ -279,6 +282,25 @@ export const SECRETS_PROVIDER_SETTINGS_ROUTE = '/settings?section=secrets-provid
  * prefix. It holds no login for any store, so this line does not say to fix a
  * login there (ep4 round R, R1).
  */
+/** Heading of the grey box shown when the connection checks were refused or turned away. */
+export const DIAGNOSTICS_NOT_CHECKED_HEADING = "Sharko could not check its connections just now";
+/** Label of the status-row field that says when Sharko last looked. Pinned by exact text. */
+export const DRIFT_LAST_CHECK_LABEL = 'Last checked';
+/** Note beside the Synced / Out of sync pill: the pill is the last check's answer, not a live one. */
+export function syncAsOfNote(when: string): string {
+  return `as of the last check, ${when}`;
+}
+export const DIFF_CHECKING_NOW = 'Checking now…';
+export function diffCheckedAt(when: string): string {
+  return `Checked ${when}. Labels changed since then show up at the next check.`;
+}
+export const DIFF_NO_DIFFERENCES = "No differences found at the last check — this secret's addon labels matched Git.";
+/** Diff panel, when the last check failed: it compared nothing, so "no differences" would be false. */
+export const DIFF_LAST_CHECK_FAILED =
+  "The last check failed, so Sharko does not know whether this secret's addon labels match Git.";
+/** Diff panel, when the last check was skipped (for example the Secret is not there yet). */
+export const DIFF_LAST_CHECK_SKIPPED =
+  "The last check did not compare this secret's addon labels with Git.";
 export const DIAGNOSTICS_SECRETS_FIX_SENTENCE =
   'Check your secrets store settings in Settings → Secrets Provider, then test it there.';
 /** The docs page that shows how to give Sharko an AWS login off EKS. */
@@ -467,6 +489,7 @@ export function ClusterDetail() {
   // / S1) — click-to-show, same pattern as the codebase's other
   // click-to-toggle help panels, rather than always rendering the diff.
   const [diffOpen, setDiffOpen] = useState(false);
+  const authRole = useContext(AuthContext)?.role ?? null;
 
   // Secret path editing
   const [editingSecretPath, setEditingSecretPath] = useState(false);
@@ -1279,7 +1302,7 @@ export function ClusterDetail() {
             description={notManagedDescription(name)}
             action={
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <RoleGuard adminOnly>
+                <RoleGuard roles={OPERATOR_AND_UP}>
                   <button
                     type="button"
                     data-testid="not-managed-adopt"
@@ -1288,6 +1311,8 @@ export function ClusterDetail() {
                   >
                     Adopt
                   </button>
+                </RoleGuard>
+                <RoleGuard adminOnly>
                   <button
                     type="button"
                     data-testid="not-managed-takeover"
@@ -1416,7 +1441,7 @@ CLUSTER_NOT_FOUND_DESCRIPTION
   const navSections = [
     {
       items: [
-        { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
+        { key: 'addons', label: 'Addons', badge: data ? allCount : undefined, icon: Package },
         { key: 'config', label: 'Config', icon: FileCode },
         { key: 'history', label: 'Changes', icon: Clock },
         { key: 'diagnostics', label: 'Diagnostics', icon: Activity },
@@ -1998,7 +2023,15 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 />
               </RoleGuard>
               <button
-                onClick={() => setDiffOpen((open) => !open)}
+                onClick={() => {
+                  // Opening the Diff checks again right now, so it never
+                  // shows an old answer as if it were today's. A viewer may
+                  // not start a check; their Diff says when the last one ran.
+                  if (!diffOpen && authRole !== null && OPERATOR_AND_UP.includes(authRole) && !syncingNow) {
+                    void handleSyncNow();
+                  }
+                  setDiffOpen((open) => !open);
+                }}
                 data-testid="secret-sync-diff"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
               >
@@ -2014,9 +2047,14 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${bgClass} ${textClass}`}>
                   {syncStatusLabel}
                 </span>
+                {lastRec && (
+                  <span data-testid="sync-as-of-note" className="text-[11px] text-[#5a8aaa] dark:text-gray-500">
+                    {syncAsOfNote(relativeTime(lastRec.time))}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-[10px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Last sync</span>
+                <span className="text-[10px] uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{DRIFT_LAST_CHECK_LABEL}</span>
                 {lastRec ? (
                   <span title={new Date(lastRec.time).toLocaleString()}>
                     {relativeTime(lastRec.time)}
@@ -2046,12 +2084,28 @@ CLUSTER_NOT_FOUND_DESCRIPTION
               * the codebase's other click-to-toggle help panels. */}
             {diffOpen && (
               <div className="rounded-md ring-2 ring-[#6aade0] bg-white p-3 dark:ring-gray-700 dark:bg-gray-900" data-testid="secret-sync-diff-panel">
+                {lastRec && (
+                  <p data-testid="diff-checked-at" className="mb-2 text-xs text-[#5a8aaa] dark:text-gray-500">
+                    {syncingNow ? DIFF_CHECKING_NOW : diffCheckedAt(relativeTime(lastRec.time))}
+                  </p>
+                )}
                 {!lastRec ? (
                   <p className="text-sm text-[#3a6a8a] dark:text-gray-400">Sharko hasn't checked this secret against Git yet — click Refresh to check now.</p>
+                ) : !hasDrift && lastRec.outcome !== 'succeeded' ? (
+                  // A failed or skipped check carries no list of differences.
+                  // "No list" is not "no differences": nothing was compared.
+                  <div data-testid="diff-not-compared">
+                    <p className="text-sm font-medium text-[#2a5a7a] dark:text-gray-300">
+                      {lastRec.outcome === 'failed' ? DIFF_LAST_CHECK_FAILED : DIFF_LAST_CHECK_SKIPPED}
+                    </p>
+                    {lastRec.message && (
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">{lastRec.message}</p>
+                    )}
+                  </div>
                 ) : !hasDrift ? (
                   <div className="flex items-center gap-2">
                     <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
-                    <p className="text-sm font-medium text-green-700 dark:text-green-400">No differences — this secret's addon labels match Git.</p>
+                    <p className="text-sm font-medium text-green-700 dark:text-green-400">{DIFF_NO_DIFFERENCES}</p>
                   </div>
                 ) : (
                   <div className="space-y-2.5">
@@ -2174,7 +2228,7 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 * no card chrome. */}
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Addons</h3>
-                <RoleGuard adminOnly>
+                <RoleGuard roles={OPERATOR_AND_UP}>
                   {/* V3-BUG-2 fix: show the "Add addon" button whenever the
                     * catalog is non-empty (keying off the real eagerly-fetched catalog
                     * once loaded), regardless of whether this cluster has enabled addons. */}
@@ -2194,7 +2248,7 @@ CLUSTER_NOT_FOUND_DESCRIPTION
 
               {/* Admin: enabled-addons list + searchable enable picker —
                 * sits directly under the Addons header, no separate card. */}
-              <RoleGuard adminOnly>
+              <RoleGuard roles={OPERATOR_AND_UP}>
                 {/* V3-BUG-2 fix: show "No addons in catalog." only when the real
                   * catalog (eagerly fetched) is genuinely empty. Before the catalog
                   * loads, `noCatalog` falls back to the old per-cluster logic to
@@ -2542,7 +2596,10 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 />
               )}
               {clusterValuesYaml && (
-                <YamlViewer yaml={clusterValuesYaml} title="Cluster Values" />
+                <YamlViewer
+                  yaml={clusterValuesYaml}
+                  title={repoFormat === 'v4' ? CLUSTER_VALUES_V4_TITLE : 'Cluster Values'}
+                />
               )}
               {configDiff && (
                 <ConfigOverridesPanel
@@ -2594,6 +2651,20 @@ CLUSTER_NOT_FOUND_DESCRIPTION
                 * here too, not just on the Connections settings page, since a
                 * broken global connection is often the real reason the checks
                 * below fail. */}
+              {connHealth.uncheckedMessage && !connHealth.anyFailing && (
+                <div
+                  data-testid="diag-unchecked"
+                  className="flex items-start gap-3 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800"
+                >
+                  <Info className="mt-0.5 h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+                      {DIAGNOSTICS_NOT_CHECKED_HEADING}
+                    </p>
+                    <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{connHealth.uncheckedMessage}</p>
+                  </div>
+                </div>
+              )}
               {connHealth.anyFailing && (
                 <div className="flex items-start gap-3 rounded-lg ring-2 ring-red-300 bg-red-50 p-4 dark:ring-red-800 dark:bg-red-900/20">
                   <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
@@ -3119,7 +3190,7 @@ function ComparisonRow({ addon, clusterName, argocdBaseURL, highlighted, pending
           actions belong in the actions column, not in the Issues column. */}
       <td className="px-4 py-3">
         {onStageRemove && addon.git_enabled && addon.status !== 'untracked_in_argocd' && addon.status !== 'sharko_system' && (
-          <RoleGuard adminOnly>
+          <RoleGuard roles={OPERATOR_AND_UP}>
             <RowActionsMenu
               actions={[
                 {

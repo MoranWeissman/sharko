@@ -179,8 +179,8 @@ request, not just at login.
 | Role | Who it's for | Can do |
 |------|---------------|--------|
 | `viewer` | Anyone who should be able to look, not touch | See clusters, addons, connections, pull requests, the Activity History, and metrics. Set or clear their own personal Git token. Cannot create, change, or delete anything shared. |
-| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, test connections and credential providers, edit the addon catalog, create API tokens and renew *their own* tokens, trigger the secrets reconciler, and run the first-time setup. |
-| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions that reach past the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, revoke any token, renew *someone else's* token, change AI provider settings, save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security settings (probe mode, inline credentials, self-heal). |
+| `operator` | The people who run day-to-day operations | Everything a viewer can do, plus: register/adopt/test/diagnose clusters, enable/disable addons, restart a stuck sync, create/update connections, test connections and credential providers, edit the addon catalog, create API tokens, renew and revoke *their own* tokens, trigger the secrets reconciler, and run the first-time setup. |
+| `admin` | Whoever owns the Sharko install | Everything an operator can do, plus the actions that reach past the caller's own work: delete a connection, remove or unadopt a cluster, remove an addon from the catalog, create/delete/change the role of other users, reset a user's password, revoke or renew *someone else's* token, change AI provider settings and test the AI connection (`POST /ai/test-config` and `POST /ai/test`), save dashboard layouts, edit ArgoCD resource exclusions, create/delete addon secrets, delete a pull request, refresh third-party catalog sources, and flip the security settings (probe mode, inline credentials, self-heal). |
 
 **New users and new API tokens get `viewer`** if no role is given. An admin
 has to choose `operator` or `admin` on purpose, both at `POST /api/v1/users`
@@ -196,7 +196,61 @@ permission their own account is refused.
 created (or a token renewing itself, since an API key authenticates under its
 own name); renewing anyone else's — including a token created before Sharko
 started recording who asked for it — takes an admin. Renewing keeps a live
-credential alive, so it sits on the same own/other line as revoking.
+credential alive, so it sits on the same own/other line as revoking: an
+operator can revoke a key they own, and revoking anyone else's key needs an
+admin.
+
+**Logins and keys follow the user.** Log out ends the login on the server. A
+login also ends when the user is disabled or deleted, when an admin resets the
+password, and when the role changes. When a user changes their own password,
+every other login of theirs ends; the one that made the change stays. A
+disabled user is refused on every call, and so is every API key that user
+created. The keys work again when the user is enabled again. Deleting a user
+logs them out and revokes the API keys they created. An open audit live
+stream is closed as soon as its login or key is no longer good. An API key never has more
+than the role its creator has now: when a user's role is lowered, every key
+they created works with the lower role from the next call on, and a key gets
+its own saved role back when the user's role is raised again. A key list still
+shows the role the key was created with. Changing a role never
+turns a disabled account back on. A restart of Sharko also ends every browser
+login, because logins are kept in memory.
+
+**A key and a user never share a name.** A key cannot take the name of a
+user, and a user cannot take the name of a key. The audit log and
+`GET /users/me` say when a call came from an API key (`auth_type` is
+`api_key`), and the audit page shows such a row as `NAME (API key)`. An API
+key cannot change a password.
+
+**Passwords.** A new password needs at least 12 characters and at most 72,
+and it cannot be the same as the current one. When an admin creates a user or
+resets a password, Sharko shows a temporary password once: "Share this with
+the user. They should change it after they log in, on the Account page."
+Sharko does not force the change. A reset logs the user out everywhere. A
+reset does not touch the API keys the user created: they keep working. If you
+reset a password because someone else may have used the account, also look at
+that user's keys in Settings, API Keys, and revoke the ones you do not know. After
+a user changes their own password they stay logged in where they made the
+change, and every other place where they were logged in is logged out. A
+wrong current password changes nothing and does not end the login.
+
+**Changing a user through the API.** In `PUT /api/v1/users/{username}` a part
+that is left out is kept. Sending only `role` never changes `enabled`.
+
+**What each role sees in the UI.** The buttons follow the table above. An
+operator sees **Add Cluster**, **Adopt**, **Add addon** (on the cluster page
+and in the catalog), **Add addon manually**, **Test connection**, the upgrade
+buttons and the **Remove** row action of a cluster's addon. **Take
+ownership**, **Un-adopt**, **Remove cluster**, the Settings switches, users
+and other people's keys are for admins only. A viewer sees no **Test
+connection** button. The Users page says it in one line each: Admin
+"— everything, including users, keys and settings"; Operator "— register and
+adopt clusters, turn addons on and off, add addons to the catalog. Cannot
+remove things, change settings or manage users". The user menu at the top
+right shows "Signed in as NAME (role)"; its **Account** item opens the page
+where you change your password.
+
+When a call is refused because of the role, or a request limit is reached,
+the screens say that. They do not show it as a broken connection.
 
 If Sharko meets an action it does not know, only an admin may run it. So a
 new change that someone forgot to give a role shows up as "only an admin can

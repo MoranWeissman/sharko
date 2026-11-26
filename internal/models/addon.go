@@ -222,6 +222,14 @@ type AddonValuesSchemaResponse struct {
 	// under that root. The Values tab uses this to render a migration
 	// banner with a "Migrate this file" button.
 	LegacyWrapDetected bool `json:"legacy_wrap_detected,omitempty"`
+
+	// ReadOnly is true when the values screen can only show the file: on a
+	// v4 repo Sharko does not edit values yet, the file in Git is the place
+	// to change them. ValuesFile is that file's path in the repo, FileExists
+	// whether it is there at all. All three are left out on a v3 repo.
+	ReadOnly   bool   `json:"read_only,omitempty"`
+	ValuesFile string `json:"values_file,omitempty"`
+	FileExists bool   `json:"file_exists,omitempty"`
 }
 
 // ValuesVersionMismatch is set when the catalog version differs from the
@@ -241,6 +249,17 @@ type ClusterAddonValuesResponse struct {
 	AddonName        string                 `json:"addon_name"`
 	CurrentOverrides string                 `json:"current_overrides"`
 	Schema           map[string]interface{} `json:"schema,omitempty"`
+
+	// ReadOnly, ValuesFile and FileExists: same meaning as on
+	// AddonValuesSchemaResponse. On a v4 repo CurrentOverrides is the whole
+	// file exactly as it is in Git, comments included.
+	ReadOnly   bool   `json:"read_only,omitempty"`
+	ValuesFile string `json:"values_file,omitempty"`
+	FileExists bool   `json:"file_exists,omitempty"`
+	// WrappedUnderAddonName is true when the file's only setting is a block
+	// named after the add-on (or its chart). Helm does not look inside that
+	// block, so none of the settings in it take effect.
+	WrappedUnderAddonName bool `json:"wrapped_under_addon_name,omitempty"`
 }
 
 // VersionMatrixCell holds version and health info for one addon on one cluster.
@@ -248,6 +267,11 @@ type VersionMatrixCell struct {
 	Version          string `json:"version"`            // Deployed or configured version
 	Health           string `json:"health"`             // Healthy, Degraded, Progressing, Unknown, missing, not_enabled
 	DriftFromCatalog bool   `json:"drift_from_catalog"` // True if version differs from catalog default
+	// AheadOfCatalog is true when this cluster's version is NEWER than the
+	// catalog's — a cluster that was upgraded on its own, ahead of the
+	// rest. It differs from the catalog, but it is not "behind" and must
+	// never be offered a downgrade as if it were.
+	AheadOfCatalog bool `json:"ahead_of_catalog,omitempty"`
 }
 
 // VersionMatrixRow represents one addon across all clusters.

@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -49,6 +51,38 @@ const (
 	serverFlagSetting   = "--server"
 	serverConfigSetting = "the server field in the Sharko CLI config file"
 )
+
+// OtherServerNoLoginSentence is what the CLI says when --server names a
+// different Sharko than the one the saved login was made for. The %s is the
+// address given with --server (already checked to carry no login of its own).
+const OtherServerNoLoginSentence = "you are not logged in to %s. The saved login belongs to another Sharko server and is never sent anywhere else. Run 'sharko login --server %s' first."
+
+// sameServer reports whether two server addresses are the same Sharko: same
+// scheme, same host and port, same path, ignoring upper and lower case in the
+// scheme and host and a slash at the end.
+func sameServer(a, b string) bool {
+	return normalizeServer(a) == normalizeServer(b)
+}
+
+func normalizeServer(raw string) string {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.Path, "/")
+}
+
+// loginIsForServer reports whether the saved login may be sent to the server
+// a command is about to call. With no --server the command calls the saved
+// server, which is where the login came from. With --server, the login is
+// sent only when that is the same server.
+//
+// It used to be sent to whatever --server said: a typing mistake or a
+// hostile address in a script handed the admin login to another machine.
+func loginIsForServer(savedServer string) bool {
+	return serverFlag == "" || sameServer(serverFlag, savedServer)
+}
 
 // effectiveServer returns the server URL the CLI should use for an API call,
 // or refuses it.

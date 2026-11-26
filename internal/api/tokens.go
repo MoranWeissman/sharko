@@ -85,7 +85,18 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plaintext, err := s.authStore.CreateTokenFor(r.Header.Get("X-Sharko-User"), req.Name, req.Role, req.ExpiresInDays)
+	// Who the new key belongs to. For a logged-in user that is the user. For
+	// a call made WITH an API key it is whoever that key belongs to, so a key
+	// made by a key still leads back to a person: when that person is
+	// disabled or deleted, every key in the chain stops working.
+	owner := r.Header.Get("X-Sharko-User")
+	if isAPIKeyRequest(r) {
+		if human := s.authStore.TokenCreator(owner); human != "" {
+			owner = human
+		}
+	}
+
+	plaintext, err := s.authStore.CreateTokenFor(owner, req.Name, req.Role, req.ExpiresInDays)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -215,7 +226,7 @@ func (s *Server) handleRenewToken(w http.ResponseWriter, r *http.Request) {
 // handleRevokeToken godoc
 //
 // @Summary Revoke API token
-// @Description Permanently revokes an API token by name. The token stops working immediately — there is no grace period.
+// @Description Permanently revokes an API token by name. The token stops working immediately — there is no grace period. An operator may revoke tokens they own; revoking anyone else's token requires an admin.
 // @Tags auth
 // @Produce json
 // @Security BearerAuth
@@ -227,13 +238,22 @@ func (s *Server) handleRenewToken(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} map[string]interface{} "Token not found"
 // @Router /tokens/{name} [delete]
 func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
-	if !authz.RequireWithResponse(w, r, "token.revoke-other") {
-		return
-	}
-
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "token name is required")
+		return
+	}
+
+	// The same own/other split as renew (see handleRenewToken): revoking a
+	// token you own is an operator action, revoking anybody else's takes an
+	// admin. It used to take an admin always, so an operator could create
+	// and renew a key but never take it away again, not even one that had
+	// leaked.
+	if s.authStore != nil && s.authStore.TokenOwnedBy(name, r.Header.Get("X-Sharko-User")) {
+		if !authz.RequireWithResponse(w, r, "token.revoke-own") {
+			return
+		}
+	} else if !authz.RequireWithResponse(w, r, "token.revoke-other") {
 		return
 	}
 
@@ -265,6 +285,16 @@ func tokenRefusalMessage(err error) string {
 	var expired *auth.TokenExpiredError
 	if errors.As(err, &expired) {
 		return expired.Error() + " — renew it or create a new one, then try again"
+	}
+	// Both of these matched a stored token too, so the caller holds the real
+	// secret and can be told why it is refused.
+	var ownerOff *auth.TokenOwnerDisabledError
+	if errors.As(err, &ownerOff) {
+		return ownerOff.Error()
+	}
+	var nameIsUser *auth.TokenNameIsUserError
+	if errors.As(err, &nameIsUser) {
+		return nameIsUser.Error()
 	}
 	return ""
 }

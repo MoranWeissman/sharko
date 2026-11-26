@@ -68,7 +68,7 @@ func SetClusterAddonsAddon(
 	}
 	spec.Addons[addonName] = entry
 
-	return models.SaveClusterAddons(spec)
+	return saveClusterAddonsKeepingHeader(data, spec)
 }
 
 // RemoveClusterAddonsAddon deletes addonName's entry entirely from a
@@ -88,7 +88,20 @@ func RemoveClusterAddonsAddon(data []byte, clusterName, addonName string) ([]byt
 		return nil, fmt.Errorf("addon %q not found in cluster-addons/%s.yaml", addonName, clusterName)
 	}
 	delete(spec.Addons, addonName)
-	return models.SaveClusterAddons(spec)
+	return saveClusterAddonsKeepingHeader(data, spec)
+}
+
+// saveClusterAddonsKeepingHeader renders spec and puts back the comment
+// lines that sat at the top of the file before ("# Which approved addons run
+// on <cluster>." and the line under it). Rendering alone dropped them, so the
+// first turn-off pull request removed the helpful header for good (walk 1,
+// L13; walk 2, finding 9). Same rule as the managed-clusters mutator.
+func saveClusterAddonsKeepingHeader(before []byte, spec models.ClusterAddonsSpec) ([]byte, error) {
+	out, err := models.SaveClusterAddons(spec)
+	if err != nil {
+		return nil, err
+	}
+	return keepLeadingComments(before, out), nil
 }
 
 // loadOrBootstrapClusterAddons parses an existing cluster-addons/<name>.yaml
@@ -104,4 +117,27 @@ func loadOrBootstrapClusterAddons(data []byte, clusterName string) (models.Clust
 		}, nil
 	}
 	return models.LoadClusterAddons(data)
+}
+
+// ClearClusterAddonsAddonVersion removes addonName's own version pin from a
+// cluster-addons/<cluster-name>.yaml document and leaves everything else in
+// the entry (enabled, settings) as it is. With no pin the cluster runs the
+// version catalog.yaml names — which is what an "upgrade for all clusters"
+// needs: SetClusterAddonsAddon cannot do it, because its nil version means
+// "leave the pin alone". Returns an error if the addon has no entry.
+func ClearClusterAddonsAddonVersion(data []byte, addonName string) ([]byte, error) {
+	spec, err := models.LoadClusterAddons(data)
+	if err != nil {
+		return nil, fmt.Errorf("ClearClusterAddonsAddonVersion: %w", err)
+	}
+	entry, ok := spec.Addons[addonName]
+	if !ok {
+		return nil, fmt.Errorf("ClearClusterAddonsAddonVersion: addon %q has no entry for cluster %q", addonName, spec.Cluster)
+	}
+	entry.Version = ""
+	spec.Addons[addonName] = entry
+	// The comments at the top of the file are kept, the same way turn on,
+	// turn off and remove keep them. An upgrade for all clusters used to
+	// drop them from every cluster file it took a version out of.
+	return saveClusterAddonsKeepingHeader(data, spec)
 }

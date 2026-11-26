@@ -177,7 +177,37 @@ import (
 // builds the "this cluster's secret is not there" sentence from the secret
 // names Sharko tried; it makes no log call and does not search for
 // credential characters.
-const wantSweptGoFiles = 449
+//
+// 451 since the pre-release fix round (story C) added two files in
+// internal/ai. address.go decides which addresses Sharko will call for an AI
+// provider. provider_errors.go builds Sharko's own sentence for a provider's
+// error answer and takes anything that looks like a key out of it. Neither
+// makes a log call. provider_errors.go looks for "*" in a provider's answer
+// (that is how providers mask a key), which is not one of the credential
+// characters this guard is about.
+//
+// 455 since the pre-release walk fixes (upgrades, story A) added four files.
+// internal/orchestrator/chart_version_check.go asks whether a chart version
+// exists before a pull request opens; it logs one fixed-text message with the
+// addon, chart, version and the error VALUE (never its text, and never the
+// repository address). internal/orchestrator/upgrade_all_v4.go
+// is the all-clusters upgrade on the v4 layout, and
+// internal/orchestrator/values_follow_defaults.go moves the settings a
+// generated values file copied from the old chart to the new chart's
+// defaults; neither makes a log call. internal/api/chart_version_seams.go
+// holds the two chart-repository lookups behind them and the upgrade error
+// mapping; it makes no log call. None of the four searches for credential
+// characters: values_follow_defaults.go looks at one byte for a YAML comment
+// marker in a values FILE line, never in an address.
+//
+// 457 since the fixes for the review of that work added two files.
+// internal/security/guarded_transport.go is the HTTP client for a chart
+// repository address a viewer typed: it checks every redirect and the real
+// address at connect time. internal/orchestrator/cluster_values_wrap.go
+// decides whether a per-cluster values file is wrapped under the add-on's
+// name, by asking the global values file what the chart's top settings are.
+// Neither makes a log call, and neither searches for credential characters.
+const wantSweptGoFiles = 457
 
 // logGuardSites is THE LIST. Every slog call in the swept directories that
 // touches an error or an opaque payload appears here exactly once, keyed by
@@ -334,6 +364,7 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/notifications/store.go", fn: "MarkRead", msg: "could not persist after mark read", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "NewStore", msg: "could not load persisted notifications", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "Resolve", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/notifications/store.go", fn: "ResolveExcept", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "ResolveFor", msg: "could not persist after resolve", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "extractNotifications", msg: "failed to unmarshal notifications from state", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/notifications/store.go", fn: "loadFromCMStore", msg: "could not save the notifications that were kept — the dropped ones are still stored and will be dropped again on the next start", carriers: "ident:err", verdict: "sink"},
@@ -347,10 +378,11 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/adopt.go", fn: "AdoptClusters", msg: "could not read managed-by label — refusing to adopt this cluster", carriers: "ident:labelErr", verdict: "sink"},
 	{file: "internal/orchestrator/adopt.go", fn: "adoptSingleCluster", msg: "failed to add cluster entry", carriers: "ident:addEntryErr", verdict: "sink"},
 	{file: "internal/orchestrator/adopt.go", fn: "adoptSingleCluster", msg: "failed to set adopted annotation on ArgoCD secret — reconciler will retry", carriers: "ident:annotErr", verdict: "sink"},
-	{file: "internal/orchestrator/adopt_v4.go", fn: "adoptSingleClusterV4", msg: "failed to set adopted annotation on ArgoCD secret — reconciler will retry", carriers: "ident:annotErr", verdict: "sink"},
-	{file: "internal/orchestrator/adopt_v4.go", fn: "adoptSingleClusterV4", msg: "failed to take ownership of the ArgoCD cluster secret during v4 adoption", carriers: "ident:swapErr", verdict: "sink"},
+	{file: "internal/orchestrator/adopt_v4.go", fn: "finishAdoptOwnership", msg: "failed to set adopted annotation on ArgoCD secret — reconciler will retry", carriers: "ident:annotErr", verdict: "sink"},
+	{file: "internal/orchestrator/adopt_v4.go", fn: "finishAdoptOwnership", msg: "failed to take ownership of the ArgoCD cluster secret during v4 adoption", carriers: "ident:swapErr", verdict: "sink"},
 	{file: "internal/orchestrator/ai_annotate.go", fn: "AnnotateValues", msg: "ai annotate fell through to heuristic-only", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/ai_annotate.go", fn: "AnnotateValues", msg: "ai annotate response parse failed; using heuristic only", carriers: "ident:parseErr", verdict: "sink"},
+	{file: "internal/orchestrator/chart_version_check.go", fn: "checkChartVersion", msg: "chart version check: could not read the chart repository", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: PR opened but auto-merge failed", carriers: "ident:err", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster: could not read the cluster registry — refusing to rewrite it from scratch", carriers: "ident:clusterAddonsErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "RegisterCluster dry run: could not read the cluster registry", carriers: "ident:clusterAddonsErr", verdict: "sink"},
@@ -359,6 +391,8 @@ var logGuardSites = []logGuardSite{
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "could not check cluster secret for foreign ArgoCD ownership — proceeding with registration", carriers: "ident:warnErr", verdict: "sink"},
 	{file: "internal/orchestrator/cluster.go", fn: "RegisterCluster", msg: "failed to add cluster entry to cluster-addons.yaml — continuing with values file only", carriers: "ident:addEntryErr", verdict: "sink"},
 	{file: "internal/orchestrator/git_helpers.go", fn: "commitChangesWithMeta", msg: "failed to delete branch after merge", carriers: "ident:delErr", verdict: "sink"},
+	{file: "internal/orchestrator/git_helpers.go", fn: "dropStrayBranch", msg: "could not delete a branch left over from a failed try", carriers: "ident:err", verdict: "sink"},
+	{file: "internal/orchestrator/adopt_v4.go", fn: "adoptSingleClusterV4", msg: "could not record the open adopt pull request again", carriers: "ident:trackErr", verdict: "sink"},
 	{file: "internal/orchestrator/git_helpers.go", fn: "commitChangesWithMeta", msg: "could not record a pull request in the PR tracker", carriers: "ident:trackErr", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not confirm Sharko's ownership label on the ArgoCD cluster Secret — refusing to delete it", carriers: "ident:labelErr", verdict: "sink"},
 	{file: "internal/orchestrator/remove.go", fn: "finishRemove", msg: "could not fetch credentials for remote secret cleanup", carriers: "ident:credErr", verdict: "sink"},

@@ -74,30 +74,6 @@ func (o *Orchestrator) fileAction(ctx context.Context, filePath string) string {
 	return "create"
 }
 
-// detectConflicts checks whether any of the target files have been modified on
-// the base branch since the caller last read them.  This is a best-effort,
-// defensive check — it does not block the operation but logs a warning so
-// operators can investigate unexpected concurrent modifications.
-//
-// A proper conflict will be caught by GitHub's PR merge check anyway; this
-// gives an early, human-readable signal in the server logs.
-func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]byte) {
-	log := logging.LoggerFromContext(ctx)
-	for path, localContent := range files {
-		remoteContent, err := o.git.GetFileContent(ctx, path, o.gitops.BaseBranch)
-		if err != nil {
-			// File doesn't exist yet on the base branch — no conflict possible.
-			continue
-		}
-		if string(remoteContent) != string(localContent) {
-			log.Warn("Possible write conflict detected: file has changed on base branch since read",
-				"file", path,
-				"base_branch", o.gitops.BaseBranch,
-			)
-		}
-	}
-}
-
 // prMeta is the single anti-drift constructor for PRMetadata. It REQUIRES
 // the auto-merge choice as its first parameter so a new PR-opening call
 // site physically cannot forget to thread it — the historical drift that
@@ -271,10 +247,6 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		defer o.gitMu.Unlock()
 	}
 
-	// Check for potential conflicts before creating the branch.
-	// This is a defensive log-only check; GitHub enforces the real merge guard.
-	o.detectConflicts(ctx, files)
-
 	// Generate a unique branch name.
 	sanitized := strings.ReplaceAll(operation, " ", "-")
 	sanitized = strings.ToLower(sanitized)
@@ -291,12 +263,14 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 
 	if len(files) > 0 {
 		if err := o.git.BatchCreateFiles(ctx, files, branchName, commitMsg); err != nil {
+			o.dropStrayBranch(ctx, branchName)
 			return nil, fmt.Errorf("writing files on branch %q: %w", branchName, err)
 		}
 	}
 
 	for _, path := range deletePaths {
 		if err := o.git.DeleteFile(ctx, path, branchName, commitMsg); err != nil {
+			o.dropStrayBranch(ctx, branchName)
 			return nil, fmt.Errorf("deleting file %q on branch %q: %w", path, branchName, err)
 		}
 	}
@@ -309,6 +283,7 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		// (e.g. "register cluster prod-eu"), never any secret material.
 		o.emitWarning(events.ReasonPROpenFailed,
 			fmt.Sprintf("Failed to open a pull request for operation %q: the Git provider rejected the request.", operation))
+		o.dropStrayBranch(ctx, branchName)
 		return nil, fmt.Errorf("creating pull request: %w", err)
 	}
 
@@ -411,6 +386,24 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 	}
 
 	return result, nil
+}
+
+// dropStrayBranch deletes a branch Sharko made for a try that then failed
+// before a pull request existed. Without it every cut-off or failed try left a
+// branch behind with no pull request and no message anywhere (walk 9, finding
+// 1: "a stray branch ... and no message"). Best effort: a failure here is
+// logged, never returned, because the caller is already reporting the real
+// failure.
+//
+// It runs on a context that is not cancelled, because the usual reason the try
+// failed is that the request's own context was.
+func (o *Orchestrator) dropStrayBranch(ctx context.Context, branchName string) {
+	cleanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	if err := o.git.DeleteBranch(cleanCtx, branchName); err != nil {
+		logging.LoggerFromContext(ctx).Warn("could not delete a branch left over from a failed try",
+			"branch", branchName, "error", err)
+	}
 }
 
 // ResolveAutoMerge picks the effective auto-merge decision for a single

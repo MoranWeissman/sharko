@@ -24,6 +24,8 @@ import {
   RESULT_OPTIONS,
 } from '@/views/audit/auditLabels';
 import { relativeTime } from '@/lib/time';
+import { toCSV } from '@/lib/csv';
+import { auditWho, isSystemRow } from '@/views/audit/auditWho';
 import { StatusBadge } from '@/components/StatusBadge';
 
 /** Renders the small attribution-mode icon + label for an audit entry's detail. */
@@ -250,25 +252,25 @@ export function AuditViewer() {
 
   const exportCSV = useCallback(() => {
     // CSV export of currently displayed entries
+    // Every cell goes through csvCell (quotes doubled, formula starts made
+    // safe). Only Detail and Error used to be escaped, so a quote or an "="
+    // in any other column, the Who of a failed login above all, broke the
+    // file or ran as a formula in a spreadsheet.
     const headers = ['Timestamp', 'Who', 'Event', 'Action', 'Resource', 'Result', 'Source', 'Detail', 'Error'];
-    const csvRows = [headers.join(',')];
+    const rows = displayEntries.map((e) => [
+      e.timestamp ? new Date(e.timestamp).toISOString() : '',
+      auditWho(e),
+      e.event || '',
+      e.action || '',
+      e.resource || '',
+      e.result || '',
+      e.source || '',
+      e.detail || '',
+      e.error || '',
+    ]);
+    const csvText = toCSV(headers, rows);
 
-    displayEntries.forEach((e) => {
-      const row = [
-        e.timestamp ? new Date(e.timestamp).toISOString() : '',
-        e.user || '',
-        e.event || '',
-        e.action || '',
-        e.resource || '',
-        e.result || '',
-        e.source || '',
-        (e.detail || '').replace(/"/g, '""'),
-        (e.error || '').replace(/"/g, '""'),
-      ];
-      csvRows.push(row.map((v) => `"${v}"`).join(','));
-    });
-
-    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const blob = new Blob([csvText], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -533,10 +535,10 @@ export function AuditViewer() {
                         {entry.timestamp ? relativeTime(entry.timestamp) : '—'}
                       </td>
                       <td className="px-4 py-2 text-xs font-medium text-[#0a2a4a] dark:text-gray-200">
-                        {entry.user === 'sharko' || entry.user === 'system' ? (
+                        {isSystemRow(entry) ? (
                           <span className="text-[#0a3a5a] dark:text-gray-400">{entry.user}</span>
                         ) : (
-                          <span>{entry.user || 'anonymous'}</span>
+                          <span>{auditWho(entry)}</span>
                         )}
                       </td>
                       <td className="px-4 py-2 text-xs text-[#2a5a7a] dark:text-gray-300">

@@ -333,8 +333,9 @@ func buildHTTPClientWithTimeout(insecure bool, timeout time.Duration) *http.Clie
 // Returns the response body bytes and status code.
 //
 // Server URL precedence: the global --server flag, when set, overrides the
-// saved config's server URL. The token is always taken from the saved
-// config — --server is a URL override, not a new auth context.
+// saved config's server URL. The saved token is sent ONLY to the server it
+// was made for: a --server that names another Sharko gets no token, and the
+// command stops with a message to log in there (see loginIsForServer).
 func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
 	return apiRequestWithTimeout(method, path, body, defaultRequestTimeout)
 }
@@ -368,6 +369,12 @@ func apiRequestWithTimeout(method, path string, body interface{}, timeout time.D
 	server, err := effectiveServer(cfg.Server)
 	if err != nil {
 		return nil, 0, err
+	}
+	// The saved login goes only to the server it was made for. The address
+	// printed here passed the check above, so it carries no login of its own.
+	if !loginIsForServer(cfg.Server) {
+		shown := strings.TrimRight(server, "/")
+		return nil, 0, fmt.Errorf(OtherServerNoLoginSentence, shown, shown)
 	}
 	url := server + path
 	req, err := http.NewRequest(method, url, reqBody)

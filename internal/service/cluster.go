@@ -348,6 +348,10 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 	if cluster == nil {
 		return nil, nil
 	}
+	// The cluster is in the registry file, so it is a managed cluster. The
+	// list says so; this answer used to leave the mark off, so the same
+	// cluster read as managed in the list and not managed on its own page.
+	cluster.Managed = true
 
 	// v4 repos keep per-cluster addon enablement in
 	// cluster-addons/<name>.yaml, never in managed-clusters.yaml labels —
@@ -362,6 +366,12 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 			cluster.Labels = v4ClusterLabels(v4Spec)
 		}
 	}
+
+	// The cluster was found in Sharko's own list, so it is managed. The list
+	// call says managed: true for it; this call said false, so the same
+	// cluster looked managed in one answer and not in the other (walk 2,
+	// finding 10; walk 8, L08).
+	cluster.Managed = true
 
 	// Get enabled addons for this cluster
 	addons := s.parser.GetEnabledAddons(*cluster, repoCfg.Addons)
@@ -470,6 +480,10 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	if cluster == nil {
 		return nil, nil
 	}
+	// The cluster is in the registry file, so it is a managed cluster. The
+	// list says so; this answer used to leave the mark off, so the same
+	// cluster read as managed in the list and not managed on its own page.
+	cluster.Managed = true
 
 	// v4 repos keep per-cluster addon enablement in
 	// cluster-addons/<name>.yaml, never in managed-clusters.yaml labels —
@@ -566,7 +580,10 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			// on its way onto the response (B7, B8). See safeAddonFailure.
 			comp.ArgocdSyncStatus = credsafe.SafeSyncStatus(app.SyncStatus)
 			comp.ArgocdHealthStatus = credsafe.SafeHealthStatus(app.HealthStatus)
-			comp.ArgocdDeployedVersion = app.SourceTargetRevision
+			// The version that really runs, never the one that was only
+			// asked for (pre-release walk 4: "Running 99.0.0" for a chart
+			// version that does not exist).
+			comp.ArgocdDeployedVersion = app.SyncedRevision
 			comp.ArgocdNamespace = app.DestinationNamespace
 			comp.ArgocdSourceRepoURL = credsafe.SafeRepoURL(app.SourceRepoURL)
 			comp.ArgocdDestinationServer = credsafe.SafeRepoURL(app.DestinationServer)
@@ -583,6 +600,9 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 				// token and all, on an ordinary 200 response.
 				comp.Issues = append(comp.Issues, credsafe.ArgocdSyncFailureShort)
 				comp.ArgocdOperationMessage = safeAddonFailure(app)
+			}
+			if reason := versionNotLoadedIssue(app, declaredVersionOf(comp)); reason != "" {
+				comp.Issues = append(comp.Issues, reason)
 			}
 			switch comp.Status {
 			case "healthy":
@@ -627,7 +647,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 				ArgocdApplicationName:   app.Name,
 				ArgocdSyncStatus:        credsafe.SafeSyncStatus(app.SyncStatus),
 				ArgocdHealthStatus:      credsafe.SafeHealthStatus(app.HealthStatus),
-				ArgocdDeployedVersion:   app.SourceTargetRevision,
+				ArgocdDeployedVersion:   app.SyncedRevision,
 				ArgocdNamespace:         app.DestinationNamespace,
 				ArgocdSourceRepoURL:     credsafe.SafeRepoURL(app.SourceRepoURL),
 				ArgocdDestinationServer: credsafe.SafeRepoURL(app.DestinationServer),
@@ -956,6 +976,12 @@ func (s *ClusterService) getClusterValuesV4(ctx context.Context, clusterName str
 			log.Warn("could not parse cluster values file for addon", "addon", addonName, "cluster", clusterName, "error", uErr)
 			continue
 		}
+		if val == nil {
+			// A file with only comments holds no settings. Listing it as
+			// "<addon>: null" made the page show a value that is not in the
+			// file; the per-add-on screen shows the file itself.
+			continue
+		}
 		combined[addonName] = val
 	}
 
@@ -972,6 +998,44 @@ func (s *ClusterService) getClusterValuesV4(ctx context.Context, clusterName str
 		ClusterName: clusterName,
 		ValuesYAML:  valuesYAML,
 	}, nil
+}
+
+// getClusterAddonValuesV4ReadOnly fills resp with the real content of
+// values/clusters/<cluster>/<addon>.yaml, as it is in Git, marked read-only.
+// It also says when the file is wrapped under the add-on's name, which Helm
+// ignores without a word.
+func (s *ClusterService) getClusterAddonValuesV4ReadOnly(ctx context.Context, resp *models.ClusterAddonValuesResponse, gp gitprovider.GitProvider) (*models.ClusterAddonValuesResponse, error) {
+	path, err := orchestrator.V4ClusterValuesPath(resp.ClusterName, resp.AddonName)
+	if err != nil {
+		return nil, err
+	}
+	resp.ReadOnly = true
+	resp.ValuesFile = path
+	data, err := gp.GetFileContent(ctx, path, s.branch())
+	if err != nil {
+		if isGitFileNotFound(err) {
+			return resp, nil
+		}
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	// The read worked, so the file is there, also when it has nothing in it.
+	resp.FileExists = true
+	if len(data) > 0 {
+		resp.CurrentOverrides = string(data)
+		// "Wrapped" is decided against the chart's own top settings, read
+		// from the add-on's global values file. Some charts (reloader,
+		// datadog, loki) really have a top block with their own name, and a
+		// file that uses it is correct. A global file that cannot be read
+		// means "cannot tell", and then nothing is said.
+		var globalValues []byte
+		if gPath, gErr := orchestrator.V4GlobalValuesPath(resp.AddonName); gErr == nil {
+			if g, readErr := gp.GetFileContent(ctx, gPath, s.branch()); readErr == nil {
+				globalValues = g
+			}
+		}
+		resp.WrappedUnderAddonName = orchestrator.ClusterValuesWrapped(data, globalValues, resp.AddonName)
+	}
+	return resp, nil
 }
 
 // GetClusterAddonValues extracts the YAML for one addon's section in a
@@ -993,6 +1057,10 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	resp := &models.ClusterAddonValuesResponse{
 		ClusterName: clusterName,
 		AddonName:   addonName,
+	}
+
+	if isV4Repo(ctx, gp, s.branch()) {
+		return s.getClusterAddonValuesV4ReadOnly(ctx, resp, gp)
 	}
 
 	clusterPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
@@ -1062,6 +1130,51 @@ func classifyAddonApp(app models.ArgocdApplication) (status string, syncFailing 
 
 	// 3. Existing health mapping.
 	return classifyHealth(health, ""), false
+}
+
+// versionNotLoadedIssue is the reason shown when ArgoCD cannot work out what
+// to deploy for the version Git asks for, while an older version (or
+// nothing) keeps running. Before this the row said "Error" with no reason
+// anywhere in Sharko.
+//
+// The sentence is Sharko's own and carries only the two version strings.
+// ArgoCD's own condition text is not passed on: it quotes the repository
+// address, which can carry an access token.
+func versionNotLoadedIssue(app models.ArgocdApplication, declaredVersion string) string {
+	if declaredVersion == "" || declaredVersion == app.SyncedRevision {
+		return ""
+	}
+	comparisonFailed := false
+	for _, c := range app.Conditions {
+		if c.Type == "ComparisonError" {
+			comparisonFailed = true
+			break
+		}
+	}
+	if !comparisonFailed {
+		return ""
+	}
+	return VersionNotLoadedIssue(declaredVersion, app.SyncedRevision)
+}
+
+// declaredVersionOf is the version Git asks for on this cluster — the same
+// pick the cluster page's "Declared (Git)" column makes.
+func declaredVersionOf(comp models.AddonComparisonStatus) string {
+	if comp.HasVersionOverride && comp.CustomVersion != "" {
+		return comp.CustomVersion
+	}
+	if comp.EnvironmentVersion != "" {
+		return comp.EnvironmentVersion
+	}
+	return comp.GitVersion
+}
+
+// VersionNotLoadedIssue is the sentence itself, exported so tests pin it.
+func VersionNotLoadedIssue(declaredVersion, runningVersion string) string {
+	if runningVersion == "" {
+		return fmt.Sprintf("ArgoCD could not load version %s. Check that this version exists in the chart repository. Nothing is running yet.", declaredVersion)
+	}
+	return fmt.Sprintf("ArgoCD could not load version %s. Check that this version exists in the chart repository. Version %s is still running.", declaredVersion, runningVersion)
 }
 
 // safeAddonFailure is what argocd_operation_message carries now: Sharko's own

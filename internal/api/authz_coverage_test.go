@@ -78,8 +78,12 @@ var authzAllowlist = map[string]string{
 	// comes out of the request body. They now gate on connection.test /
 	// provider.test (operator+) like any other action that reaches out with
 	// a secret. Do NOT move them back here.
-	"handleTestAI":       "AI connectivity probe (one summarize call); no persisted state",
-	"handleTestAIConfig": "AI config connectivity probe; no persisted state (also audit-exempt, same reason)",
+	//
+	// The two AI tests came out for the same reason in the pre-release fix
+	// round (2026-11-26, walk 5 S5): test-config connects to an address out
+	// of the request body, and a viewer used it to find out what answers on
+	// the cluster network. They gate on ai.test-config / ai.test (admin).
+	// Do NOT move them back here either.
 	"handleGetAISummary": "read-only analysis endpoint, POST only because it accepts a large body (also audit-exempt)",
 	"handleCheckUpgrade": "read-only version/compatibility analysis (upgradeSvc.CheckUpgrade); no persisted state",
 }

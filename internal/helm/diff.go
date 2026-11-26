@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -121,8 +122,24 @@ func flatten(prefix string, m map[string]interface{}) map[string]string {
 				result[subK] = subV
 			}
 		default:
-			result[path] = fmt.Sprintf("%v", val)
+			result[path] = formatValue(val)
 		}
 	}
 	return result
+}
+
+// formatValue renders one value for a person to read. Go's own %v prints an
+// empty YAML value as "<nil>" and a list of blocks as "[map[name:x]]" — both
+// showed up on the upgrade Analyze screen. An empty value reads "null", and
+// a list or a block reads as compact JSON.
+func formatValue(val interface{}) string {
+	switch v := val.(type) {
+	case nil:
+		return "null"
+	case []interface{}, map[string]interface{}:
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
+	}
+	return fmt.Sprintf("%v", val)
 }

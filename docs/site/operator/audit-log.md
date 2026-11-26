@@ -32,6 +32,37 @@ Each entry has `id`, `timestamp`, `event`, `user`, `action`, `resource`,
 `tier`. The fields of each API call are in the
 [API reference](../api/reference.md).
 
+### Who asked, and with what
+
+`auth_type` is `api_key` when the call was made with an API key. The Activity
+page and the CSV export show such a row as `NAME (API key)`, so a key can
+never look like a user of the same name.
+
+The Who of a failed login is cleaned before it is stored: letters, numbers,
+dot, dash and underscore are kept, everything else becomes `_`, and the name
+is cut to 63 characters. An empty name is stored as `unknown`.
+
+In the CSV export every cell is quoted and escaped. A cell that starts with
+`=`, `+`, `-` or `@` gets a single quote in front, so a spreadsheet does not
+run it as a formula.
+
+### Entries that are checks, not changes
+
+A connection test is recorded as "tested cluster connectivity", with
+`cluster:<name>` as the resource. Its result is `failed` when the test failed.
+A test that was refused because of the caller's role is recorded the same way,
+with the result `rejected`.
+A test of the AI provider is `ai_tested` or `ai_config_tested`.
+
+### Why a call failed or was refused
+
+A failed or refused entry carries a reason with a fixed sentence. Two of them:
+
+| Reason | Sentence |
+|--------|----------|
+| `rate_limited` | "A request limit was reached, either Sharko's own or the one set by a service Sharko uses, such as GitHub. Nothing was changed. Try again in a moment." |
+| `not_allowed` | "The person or key that asked is not allowed to do this, so nothing was changed." |
+
 ### The `changes` field
 
 `changes` says if the action behind the entry really changed anything.

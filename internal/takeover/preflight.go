@@ -143,6 +143,11 @@ type Inputs struct {
 	// RegisteredClusters is every cluster name Sharko already has in its
 	// own fleet record.
 	RegisteredClusters []string
+	// JoinedClusters is the part of RegisteredClusters whose entry was
+	// written by an earlier adopt or take over (no credentials recorded).
+	// Such an entry with a connection Sharko does not own yet means that
+	// earlier try did not finish: the same cluster, not a name clash.
+	JoinedClusters []string
 	// RegisteredClustersError is non-empty when that list could not be read
 	// at all. The name check then blocks instead of reporting the name as
 	// free — "I could not look" and "I looked and there is nothing" are two
@@ -518,6 +523,19 @@ func checkNameCollision(in Inputs) Finding {
 		return f
 	}
 
+	// Sharko has the name in its list, but does not own the connection. When
+	// the entry was written by an earlier adopt or take over, that try was
+	// cut off before it finished (the tab was closed, Sharko restarted):
+	// this is the same cluster, and running the adopt again finishes it.
+	// Anything else (an entry Sharko registered itself) is a real clash.
+	if in.SecretFound && containsString(in.JoinedClusters, in.Cluster) {
+		f.Status = StatusOK
+		f.Detail = fmt.Sprintf("Sharko already has %q in its list, from an earlier adopt or take over that did not finish.", in.Cluster)
+		f.WhatItMeans = "This is the same cluster, not a different one with the same name. Sharko does not own its ArgoCD connection yet, so running it again finishes the job. No new pull request is needed."
+		f.WhatToDo = "Nothing to do. Go ahead and adopt it again to finish."
+		return f
+	}
+
 	f.Status = StatusBlocked
 	f.Detail = fmt.Sprintf("Sharko already has a different cluster called %q.", in.Cluster)
 	f.WhatItMeans = "Two clusters cannot share a name. If this went ahead, Sharko's settings for the existing one would start being applied to this one."
@@ -525,4 +543,13 @@ func checkNameCollision(in Inputs) Finding {
 		"Rename one of them so the names do not clash. If the %q Sharko already has is not in use any more, remove it first — then run this check again and it will go green.",
 		in.Cluster)
 	return f
+}
+
+func containsString(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }

@@ -57,6 +57,31 @@ export function MarketplaceSearchTab() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
+  // What is already in the catalog, so a result card can say "In your
+  // catalog" (walk 1: an ArtifactHub card for the chart that was just added
+  // had no badge). Best-effort: with no answer, no card shows the badge.
+  const [catalogItems, setCatalogItems] = useState<{ names: Set<string>; charts: Set<string> }>({
+    names: new Set(),
+    charts: new Set(),
+  })
+  useEffect(() => {
+    let cancelled = false
+    Promise.resolve()
+      .then(() => api.getAddonCatalog())
+      .then((r) => {
+        if (cancelled) return
+        setCatalogItems({
+          names: new Set(r.addons.map((a) => a.addon_name.trim().toLowerCase())),
+          charts: new Set(r.addons.map((a) => catalogChartKey(a.chart, a.repo_url))),
+        })
+      })
+      .catch(() => {
+        // Non-fatal.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const inputRef = useRef<HTMLInputElement>(null)
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -256,7 +281,10 @@ export function MarketplaceSearchTab() {
               >
                 {resp.curated.map((entry) => (
                   <li key={entry.name} className="flex">
-                    <MarketplaceCard entry={entry} />
+                    <MarketplaceCard
+                      entry={entry}
+                      inCatalog={catalogItems.names.has(entry.name.trim().toLowerCase())}
+                    />
                   </li>
                 ))}
               </ul>
@@ -311,7 +339,11 @@ export function MarketplaceSearchTab() {
               >
                 {resp.artifacthub.map((pkg) => (
                   <li key={pkg.package_id} className="flex">
-                    <ArtifactHubResultCard pkg={pkg} onOpen={handleOpenExternal} />
+                    <ArtifactHubResultCard
+                      pkg={pkg}
+                      onOpen={handleOpenExternal}
+                      inCatalog={catalogItems.charts.has(catalogChartKey(pkg.name, pkg.repository.url))}
+                    />
                   </li>
                 ))}
               </ul>
@@ -329,9 +361,24 @@ export function MarketplaceSearchTab() {
 interface ArtifactHubResultCardProps {
   pkg: ArtifactHubSearchResult
   onOpen: (pkg: ArtifactHubSearchResult) => void
+  /** This chart, from this repository, is already in the catalog. */
+  inCatalog?: boolean
 }
 
-function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
+/** The word on a result card for a chart that is already in the catalog. */
+export const IN_CATALOG_BADGE = 'In your catalog'
+
+/**
+ * Key for "same chart from the same repository": the chart name and the
+ * repository address with case and a trailing slash taken off. Two charts
+ * with one name from two repositories are different charts.
+ */
+export function catalogChartKey(chart: string | undefined, repoURL: string | undefined): string {
+  const repo = (repoURL ?? '').trim().toLowerCase().replace(/\/+$/, '')
+  return `${(chart ?? '').trim().toLowerCase()}@${repo}`
+}
+
+function ArtifactHubResultCard({ pkg, onOpen, inCatalog = false }: ArtifactHubResultCardProps) {
   const repoLabel =
     pkg.repository.display_name || pkg.repository.name || 'unknown repository'
   const orgLabel =
@@ -399,6 +446,15 @@ function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
           >
             <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
             Verified by ArtifactHub
+          </span>
+        )}
+        {inCatalog && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-800 dark:bg-green-900/40 dark:text-green-300"
+            title="Already present in your catalog.yaml"
+          >
+            <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+            {IN_CATALOG_BADGE}
           </span>
         )}
         {pkg.repository.official && (

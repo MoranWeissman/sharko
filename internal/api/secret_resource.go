@@ -19,6 +19,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -501,9 +502,7 @@ func (s *Server) handleGetAddonValuesSecretResource(w http.ResponseWriter, r *ht
 	// Where the Secret lives comes from the same registered definition the
 	// row itself was built from (buildAddonValuesSecretRows) — one source
 	// of truth for "which Secret is this row about".
-	s.addonSecretDefsMu.RLock()
-	def, defined := s.addonSecretDefs[addon]
-	s.addonSecretDefsMu.RUnlock()
+	def, defined := s.addonSecretDefinitionFor(cluster, addon)
 	if !defined || def.SecretName == "" || def.Namespace == "" {
 		writeError(w, http.StatusNotFound,
 			fmt.Sprintf("Sharko has no values secret defined for addon %q, so there is nothing to show.", addon))
@@ -577,4 +576,26 @@ func containsAny(haystack string, needles []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// addonSecretDefinitionFor finds where one add-on's values Secret lives on
+// one cluster: the registered definition if there is one (demo mode), else
+// what the secrets engine read from the catalog in Git.
+func (s *Server) addonSecretDefinitionFor(cluster, addon string) (orchestrator.AddonSecretDefinition, bool) {
+	s.addonSecretDefsMu.RLock()
+	def, ok := s.addonSecretDefs[addon]
+	s.addonSecretDefsMu.RUnlock()
+	if ok {
+		return def, true
+	}
+	if lister, isLister := s.secretReconciler.(knownItemsLister); isLister {
+		for _, it := range lister.KnownItems() {
+			if it.Cluster == cluster && it.Addon == addon {
+				return orchestrator.AddonSecretDefinition{
+					AddonName: addon, SecretName: it.SecretName, Namespace: it.Namespace, Keys: it.Keys,
+				}, true
+			}
+		}
+	}
+	return orchestrator.AddonSecretDefinition{}, false
 }

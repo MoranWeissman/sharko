@@ -55,18 +55,27 @@ var ActionRequirements = map[string]Role{
 	"addon.remove-from-catalog":    RoleAdmin,
 	// Deleting a v4 catalog.yaml entry (DELETE /catalog/addons/{name}) —
 	// same tier as its v3 sibling addon.remove-from-catalog just above.
-	"catalog.remove":     RoleAdmin,
-	"user.create":        RoleAdmin,
-	"user.delete":        RoleAdmin,
-	"user.change-role":   RoleAdmin,
-	"token.revoke-other": RoleAdmin,
+	"catalog.remove":   RoleAdmin,
+	"user.create":      RoleAdmin,
+	"user.delete":      RoleAdmin,
+	"user.change-role": RoleAdmin,
+	// Resetting a user's password. It used to borrow user.change-role, so a
+	// refused reset told the caller they had tried to change a role.
+	"user.reset-password": RoleAdmin,
+	"token.revoke-other":  RoleAdmin,
 	// Renewing somebody ELSE's token. The own/other split mirrors revoke:
 	// pushing out the expiry of a token you do not own keeps a credential
 	// alive that only its owner should be able to keep alive.
-	"token.renew-other":          RoleAdmin,
-	"audit.clear":                RoleAdmin,
-	"ai.config":                  RoleAdmin,
-	"ai.provider":                RoleAdmin,
+	"token.renew-other": RoleAdmin,
+	"audit.clear":       RoleAdmin,
+	"ai.config":         RoleAdmin,
+	"ai.provider":       RoleAdmin,
+	// The two AI test calls make Sharko connect out: test-config to an
+	// address the caller names, test with the saved key. They had no role
+	// check at all, so a viewer could use the first to find out what
+	// answers on the cluster network. Same tier as saving the AI settings.
+	"ai.test-config":             RoleAdmin,
+	"ai.test":                    RoleAdmin,
 	"dashboard.save":             RoleAdmin,
 	"argocd.resource-exclusions": RoleAdmin,
 	// addon-secret.create / addon-secret.delete / addon-secret.list are

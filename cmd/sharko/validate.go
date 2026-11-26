@@ -42,12 +42,14 @@ if any validation failed.`,
 		}
 
 		allOK := true
+		checked := 0
 
 		// --- addons-catalog.yaml ---
 		catalogData, err := os.ReadFile(catalogPath)
 		if err != nil {
 			fmt.Printf("  [SKIP] %s: %v\n", catalogPath, err)
 		} else {
+			checked++
 			errs := validateCatalog(catalogData)
 			if len(errs) == 0 {
 				fmt.Printf("  [OK]  %s\n", catalogPath)
@@ -65,6 +67,7 @@ if any validation failed.`,
 		if err != nil {
 			fmt.Printf("  [SKIP] %s: %v\n", managedClustersPath, err)
 		} else {
+			checked++
 			errs := validateClusterAddons(clusterData)
 			if len(errs) == 0 {
 				fmt.Printf("  [OK]  %s\n", managedClustersPath)
@@ -80,9 +83,18 @@ if any validation failed.`,
 		if !allOK {
 			return fmt.Errorf("validation failed")
 		}
+		// Both files skipped means nothing was looked at. "No error" would then
+		// read as "all good" (walk 8, L03: exit 0 after two [SKIP] lines).
+		if checked == 0 {
+			return fmt.Errorf("%s", ValidateNothingCheckedMessage)
+		}
 		return nil
 	},
 }
+
+// ValidateNothingCheckedMessage is what validate says when it found neither
+// file. Exported so tests pin it by exact text.
+const ValidateNothingCheckedMessage = "nothing was checked: neither configuration/addons-catalog.yaml nor configuration/managed-clusters.yaml was found. Give the folder that holds the configuration folder, not a file. For a repo in the v4 layout, use: sharko validate-config"
 
 // addonsCatalogFile mirrors the structure used by the config parser.
 type addonsCatalogFile struct {

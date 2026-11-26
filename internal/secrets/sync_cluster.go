@@ -71,7 +71,7 @@ func (r *Reconciler) syncWork(ctx context.Context, w secretWork) (ItemOutcome, e
 		r.itemRecords = make(map[ItemKey]ItemRecord)
 	}
 	prev := r.itemRecords[key]
-	rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Error: errMsg, ChangedAt: prev.ChangedAt}
+	rec := ItemRecord{LastChecked: time.Now(), Outcome: outcome, Error: errMsg, ChangedAt: prev.ChangedAt, Push: w.push}
 	if outcome == ItemOutcomeCreated || outcome == ItemOutcomeUpdated {
 		rec.ChangedAt = rec.LastChecked
 	}

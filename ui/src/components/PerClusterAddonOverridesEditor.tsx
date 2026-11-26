@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
+import { ReadOnlyValues } from '@/components/ReadOnlyValues'
 import { api } from '@/services/api'
 import type {
   AddonComparisonStatus,
@@ -120,24 +121,26 @@ function PerClusterAddonOverridesEditorImpl({
 
   return (
     <div className="space-y-4">
-      {/* One short scope sentence replaces the old three-part explanation
-        * (intro paragraph + picker helper + editor subtitle, UI copy pass)
-        * — the user needs to know which cluster changes and that Save
-        * opens a PR, not three versions of the same fact. Docs link kept
-        * for anyone who wants the full guide. */}
-      <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-        These values apply only to <span className="font-mono">{clusterName}</span>. Save
-        opens a pull request.{' '}
-        <a
-          href="https://sharko.readthedocs.io/en/latest/user-guide/values-editing/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
-        >
-          Learn more
-        </a>
-        .
-      </p>
+      {/* Read-only (v4 repo): the editing sentence is inside the panel, so
+        * the "Save opens a pull request" line must not show here.
+        * It is also not shown while loading or after a failed read: until a
+        * good answer says this file can be saved from here, the page does not
+        * know that it can. */}
+      {!loading && !error && data && !data.read_only && (
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
+          These values apply only to <span className="font-mono">{clusterName}</span>. Save
+          opens a pull request.{' '}
+          <a
+            href="https://sharko.readthedocs.io/en/latest/user-guide/values-editing/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+          >
+            Learn more
+          </a>
+          .
+        </p>
+      )}
 
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
         <label htmlFor="cluster-addon-picker" className="block text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
@@ -165,7 +168,19 @@ function PerClusterAddonOverridesEditorImpl({
       )}
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      {!loading && !error && selected && (
+      {!loading && !error && selected && data?.read_only && (
+        <ReadOnlyValues
+          key={`${clusterName}/${selected}/ro`}
+          title={`${selected} overrides on ${clusterName}`}
+          path={data.values_file ?? ''}
+          exists={!!data.file_exists}
+          content={data.current_overrides}
+          wrappedUnderAddon={data.wrapped_under_addon_name ? selected : undefined}
+          fileURL={valuesFileURL(gitRepoBase, gitDefaultBranch, repoFormat, selected, clusterName)}
+        />
+      )}
+
+      {!loading && !error && selected && data && !data.read_only && (
         <ValuesEditor
           key={`${clusterName}/${selected}`}
           title={`${selected} overrides on ${clusterName}`}

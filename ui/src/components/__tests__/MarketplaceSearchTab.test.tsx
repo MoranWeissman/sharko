@@ -10,11 +10,13 @@ import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
 
 const searchMock = vi.fn()
 const reprobeMock = vi.fn()
+const catalogMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     searchCatalog: (...args: unknown[]) => searchMock(...args),
     reprobeArtifactHub: () => reprobeMock(),
+    getAddonCatalog: () => catalogMock(),
   },
 }))
 
@@ -143,5 +145,64 @@ describe('MarketplaceSearchTab', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /Retry connectivity/i }))
     await waitFor(() => expect(reprobeMock).toHaveBeenCalled())
+  })
+})
+
+// Walk 1: the ArtifactHub card for the chart that was just added had no
+// "in catalog" badge. Same chart name from ANOTHER repository must not get it.
+describe('MarketplaceSearchTab — ArtifactHub cards know what is in the catalog', () => {
+  const hit = (id: string, repoUrl: string, repoName: string) => ({
+    package_id: id,
+    name: 'reloader',
+    stars: 3,
+    repository: { kind: 0, name: repoName, url: repoUrl },
+  })
+
+  beforeEach(() => {
+    searchMock.mockReset()
+    catalogMock.mockReset()
+    searchMock.mockResolvedValue({
+      query: 'reloader',
+      curated: [],
+      artifacthub: [
+        hit('p1', 'https://stakater.github.io/stakater-charts', 'stakater'),
+        hit('p2', 'https://quenchworks.example.com/charts', 'quenchworks'),
+      ],
+    })
+    catalogMock.mockResolvedValue({
+      addons: [
+        {
+          addon_name: 'reloader',
+          chart: 'reloader',
+          repo_url: 'https://stakater.github.io/stakater-charts/',
+        },
+      ],
+    })
+  })
+
+  it('shows "In your catalog" on the card for the chart that is in the catalog, and only that card', async () => {
+    renderTab()
+    fireEvent.change(screen.getByLabelText(/Search addons by name/i), {
+      target: { value: 'reloader' },
+    })
+    await waitFor(() => expect(screen.getAllByText('In your catalog')).toHaveLength(1), {
+      timeout: 2000,
+    })
+    const badge = screen.getByText('In your catalog')
+    const card = badge.closest('button')!
+    expect(card.textContent).toContain('stakater')
+    expect(card.textContent).not.toContain('quenchworks')
+  })
+
+  it('shows no badge when the catalog cannot be read', async () => {
+    catalogMock.mockRejectedValue(new Error('down'))
+    renderTab()
+    fireEvent.change(screen.getByLabelText(/Search addons by name/i), {
+      target: { value: 'reloader' },
+    })
+    await waitFor(() => expect(screen.getAllByRole('list').length).toBeGreaterThan(0), {
+      timeout: 2000,
+    })
+    expect(screen.queryByText('In your catalog')).toBeNull()
   })
 })

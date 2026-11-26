@@ -75,6 +75,13 @@ func (e *V4SemanticValidationError) Error() string {
 // failed" default.
 var ErrV4AddonNotInCatalog = errors.New("addon not in catalog")
 
+// NothingToTurnOffMessage is the sentence for turning off an addon that is
+// neither in the catalog nor on the cluster. Exported so tests pin it by
+// exact text.
+func NothingToTurnOffMessage(addon, cluster string) string {
+	return fmt.Sprintf("%s is not in your catalog and is not turned on for %s, so there is nothing to turn off. Check the name.", addon, cluster)
+}
+
 // ErrV4ClusterNotFound marks a v4 write naming a cluster that is not
 // registered — absent from both managed-clusters.yaml (the v4 cluster
 // registry, design doc §2.4) and cluster-addons/<name>.yaml. The API layer maps
@@ -465,7 +472,7 @@ func (o *Orchestrator) EnableAddonV4(ctx context.Context, req EnableAddonV4Reque
 	// this is about; the wire FORMAT (v3 labels vs v4 ClusterAddons)
 	// is an implementation detail the tracker/dashboard don't need to
 	// know.
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s (v4)", req.Addon, req.Cluster),
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s", req.Addon, req.Cluster),
 		o.prMeta(req.AutoMerge, "addon-enable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon enable: %w", err)
@@ -516,6 +523,20 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 		return nil, fmt.Errorf("%w: cluster %q has no assignment file at %s — nothing to disable", ErrV4ClusterNotFound, req.Cluster, clusterPath)
 	}
 
+	// An addon that is neither in the catalog nor on this cluster has nothing
+	// to turn off. Enabling it is refused as "not in your catalog"; turning it
+	// off used to write "<name>: enabled: false" into the file anyway (walk 1,
+	// L12; walk 2, finding 6; walk 8, L12). An addon that is still listed in
+	// this cluster's file is always allowed to be turned off, even when it has
+	// left the catalog since.
+	if spec, loadErr := models.LoadClusterAddons(existing); loadErr == nil {
+		if _, listed := spec.Addons[req.Addon]; !listed {
+			if _, catErr := o.catalogAddonForV4(ctx, req.Addon); catErr != nil && errors.Is(catErr, ErrV4AddonNotInCatalog) {
+				return nil, fmt.Errorf("%w: %s", ErrV4AddonNotInCatalog, NothingToTurnOffMessage(req.Addon, req.Cluster))
+			}
+		}
+	}
+
 	var updated []byte
 	if req.Remove {
 		updated, err = gitops.RemoveClusterAddonsAddon(existing, req.Cluster, req.Addon)
@@ -557,7 +578,7 @@ func (o *Orchestrator) DisableAddonV4(ctx context.Context, req DisableAddonV4Req
 	// (prtracker.OpAddonDisable's value) so this lands in the dashboard's
 	// existing "Addons" bucket.
 	gitResult, err := o.commitChangesWithMeta(ctx, map[string][]byte{clusterPath: updated}, nil,
-		fmt.Sprintf("%s addon %s on cluster %s (v4)", action, req.Addon, req.Cluster),
+		fmt.Sprintf("%s addon %s on cluster %s", action, req.Addon, req.Cluster),
 		o.prMeta(req.AutoMerge, "addon-disable", title, req.Cluster, req.Addon))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %s: %w", action, err)

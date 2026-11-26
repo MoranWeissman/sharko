@@ -107,23 +107,21 @@ Two rules govern the seeder:
 1. **Existing user fields are never overwritten.** If the file already exists with real values, the seeder leaves it alone. The seeder only fills in keys that are absent.
 2. **The seeder only fires on the initial enable.** If the file already has non-placeholder values, the seeder treats it as configured and skips.
 
-The template block in the global values file is **never re-applied to existing per-cluster files** when the global file is regenerated (e.g. after a Refresh from upstream). Per-cluster overrides are yours once they exist.
+The template block in the global values file is **never re-applied to existing per-cluster files** when the global file is regenerated (e.g. when you regenerate the file). Per-cluster overrides are yours once they exist.
 
 ## When the values file gets regenerated
 
-Three triggers regenerate the global values file:
+Sharko writes the global values file when you add an addon. The in-app **Refresh from upstream** (banner and buttons) is not in this version, so there is no second trigger yet. Today the file changes in these ways:
 
 1. **Add Addon.** When you add a new addon through the marketplace (or the API), Sharko fetches the chart's upstream `values.yaml` for the version you picked, runs the smart-values pipeline, and writes the file as part of the same PR that adds the entry to `catalog.yaml`. If the chart is unreachable at add time, Sharko falls back to a minimal stub — you can run a Refresh later once connectivity is restored.
 
-2. **Refresh now (banner).** When the catalog version is ahead of the values-file version, the Values tab shows a banner with a Refresh now button. Clicking it regenerates the global file at the catalog version. See [Refreshing values from upstream](values-editing.md#refreshing-values-from-upstream).
+2. **Re-add (idempotency).** Sharko's add path skips re-writing the global values file if a file already exists for that addon. This protects hand edits if you ever delete and re-add a catalog entry.
 
-3. **Re-add (idempotency).** Sharko's add path skips re-writing the global values file if a file already exists for that addon. This protects hand edits if you ever delete and re-add a catalog entry.
-
-Manual edits via the Values tab editor land directly through the existing Tier 2 PUT endpoint — they don't go through the smart-values regenerator.
+You change the file by editing it in Git. Those edits don't go through the smart-values regenerator. See [Viewing and Changing Helm Values](values-editing.md).
 
 ## Files without the managed header
 
-Values files without a `# sharko: managed=true` header keep working unchanged: the version-mismatch banner stays suppressed (no header to compare against), and the editor renders the file as-is. To opt a hand-edited file into managed lifecycle, click **Refresh now** on the chart's Values tab once you've confirmed the upstream chart hasn't drifted; that will regenerate the file with the smart-values header.
+Values files without a `# sharko: managed=true` header keep working unchanged: Sharko treats them as hand-written and leaves them alone, and the Values tab shows the file as it is.
 
 ## API surface
 
@@ -139,8 +137,7 @@ When you have an AI provider configured in **Settings → AI**, Sharko adds a se
 The annotation pass runs in three places:
 
 - **Add Addon.** When you add a new addon, the AI annotation runs after the smart-values heuristic but before the file is committed.
-- **Refresh from upstream.** When the version-mismatch banner triggers a regeneration, AI annotation runs again on the freshly-fetched upstream values.
-- **AI annotate (manual).** A button on the Values tab lets you re-run annotation on the current chart version on demand. Useful after upgrading to a new chart version that ships new fields.
+- **Refresh from upstream.** Not in this version (the editor that held the button is read-only for now). When it returns, AI annotation will run again on the freshly-fetched upstream values.
 
 ### Secret-leak guard
 

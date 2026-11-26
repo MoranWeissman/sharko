@@ -1,16 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/lifecycleevents"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // handleAdoptClusters godoc
@@ -88,7 +92,11 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	// check" instead of claiming they are fine.
 	orch.SetApplicationSetManager(s.appSetManager)
 
-	result, err := orch.AdoptClusters(r.Context(), req)
+	// The steps of an adopt belong together; closing the tab must not cut them
+	// in two (walk 9, finding 1).
+	opCtx, cancelOp := detachedWriteContext(r.Context())
+	defer cancelOp()
+	result, err := orch.AdoptClusters(opCtx, req)
 	var needsAck *orchestrator.AdoptNeedsAcknowledgementError
 	if errors.As(err, &needsAck) {
 		// Nothing was written. Same answer take over gives for a warning
@@ -320,13 +328,22 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
 
-	result, err := orch.UnadoptCluster(r.Context(), name, req)
+	opCtx, cancelOp := detachedWriteContext(r.Context())
+	defer cancelOp()
+	result, err := orch.UnadoptCluster(opCtx, name, req)
 	if err != nil {
 		// A v4 repo is now a supported unadopt door (v4-coherence-closure
 		// lane D) — kept as a defensive mapping, coded shape like the rest
 		// of the repo-layout family.
 		if orchestrator.IsV4RepoUnsupported(err) {
 			writeCodedError(w, http.StatusConflict, CodeRepoLayout, err.Error(), nil)
+			return
+		}
+		// A name that matches no ArgoCD connection is the person's typo, not a
+		// failing upstream, and the answer must not show the namespace and
+		// Secret lookup behind it (walk 9, finding 5; walk 8, L05).
+		if apierrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, UnadoptUnknownClusterMessage(name))
 			return
 		}
 		// Check if this is a "not adopted" error.
@@ -353,6 +370,12 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 	writeJSON(w, status, result)
+}
+
+// UnadoptUnknownClusterMessage is the answer for an un-adopt of a cluster
+// Sharko cannot find. Exported so tests pin it by exact text.
+func UnadoptUnknownClusterMessage(name string) string {
+	return fmt.Sprintf("Sharko cannot find a cluster called %q in ArgoCD, so there is nothing to un-adopt. Nothing was changed. Check the name with: sharko list-clusters", name)
 }
 
 // contains is a simple string contains helper to avoid importing strings in this file.
@@ -402,4 +425,28 @@ func adoptNeedsAcknowledgementBody(e *orchestrator.AdoptNeedsAcknowledgementErro
 		Warnings:               warnings,
 		Results:                e.Results,
 	}
+}
+
+// joinWriteTimeout is how long an adopt, un-adopt or take over may run after
+// the person who asked has gone. It is far longer than any of them takes (a
+// Git write, a pull request, a mark), and short enough that a stuck Git host
+// cannot hold the work for ever.
+const joinWriteTimeout = 2 * time.Minute
+
+// detachedWriteContext returns a context that keeps everything the request
+// carries (who asked, the audit slot, the logger) but is NOT cancelled when
+// the person closes the tab or reloads the page.
+//
+// Adopt, un-adopt and take over are made of several steps that only make
+// sense together: open the pull request, put the waiting mark on the
+// connection, record the pull request so the merge finishes the job. When the
+// request context was used for all of them, closing the browser during the
+// few seconds the page says "Adopting..." cut the steps in two. The pull
+// request was opened, but the mark and the record were refused with
+// "context canceled", so nothing ever finished it (walk 9, finding 1). With
+// this context the steps run to the end whether or not anyone is still
+// watching. The audit entry is written from the same request, so the log
+// stays honest.
+func detachedWriteContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), joinWriteTimeout)
 }

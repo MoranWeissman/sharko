@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -339,6 +340,13 @@ type Server struct {
 	agentMemory      *ai.MemoryStore
 	authStore        *auth.Store
 	aiConfigStore    *config.AIConfigStore
+
+	// chartVersionCheckFn and chartDefaultsFn are the chart-repository
+	// lookups an upgrade and a catalog add make before opening a pull
+	// request (chart_version_seams.go). nil means the real, network-backed
+	// ones; a test sets them so it never reaches the network.
+	chartVersionCheckFn orchestrator.ChartVersionCheckFn
+	chartDefaultsFn     orchestrator.ChartDefaultsFn
 
 	// Write API dependencies (optional — set via SetWriteAPIDeps).
 	//
@@ -1723,6 +1731,17 @@ func maxBodySize(next http.Handler, maxBytes int64) http.Handler {
 	})
 }
 
+// The two 429 sentences, and the codes the browser reads to tell them apart.
+// They are the exact words every page shows, so they live in one place and a
+// test pins them. The own-limit one says whose limit it is: Sharko counts
+// changes per address, so people behind one proxy can reach it together.
+const (
+	SharkoRateLimitMessage   = "Sharko is getting too many requests from your address right now. Try again in a moment."
+	UpstreamRateLimitMessage = "GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment."
+	CodeSharkoRateLimit      = "sharko_rate_limit"
+	CodeUpstreamRateLimit    = "upstream_rate_limit"
+)
+
 // --- Rate limiter (shared) ---
 
 // rateLimiter is a sliding-window, per-key rate limiter.
@@ -1797,7 +1816,11 @@ func writeRateLimiter(limit int, window time.Duration, resolveIP func(*http.Requ
 					return
 				}
 				if !rl.Allow(resolveIP(r)) {
-					writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+					w.Header().Set("Retry-After", "60")
+					writeJSON(w, http.StatusTooManyRequests, errorResponse{
+						Error: SharkoRateLimitMessage,
+						Code:  CodeSharkoRateLimit,
+					})
 					return
 				}
 			}
@@ -1878,6 +1901,92 @@ func countActiveSessions() int {
 	return n
 }
 
+// endSession ends one login right now.
+func endSession(token string) {
+	sessionsMu.Lock()
+	delete(activeSessions, token)
+	sessionsMu.Unlock()
+}
+
+// endSessionsForUser ends every login of username right now, and returns how
+// many it ended. Pass the caller's own token as keep to leave that one login
+// alone (a user who just changed their own password stays logged in where
+// they did it; every other login of theirs ends). Pass "" to end them all.
+//
+// This is what makes "disable", "delete", "reset password", "change password"
+// and "change role" take hold at once. Before it, a login made earlier went on
+// working until its 24 hours ran out.
+func endSessionsForUser(username, keep string) int {
+	if username == "" {
+		return 0
+	}
+	sessionsMu.Lock()
+	defer sessionsMu.Unlock()
+	n := 0
+	for token, sess := range activeSessions {
+		if sess.Username == username && token != keep {
+			delete(activeSessions, token)
+			n++
+		}
+	}
+	return n
+}
+
+// bearerToken returns the token in the request's Authorization header, or "".
+func bearerToken(r *http.Request) string {
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == authHeader {
+		return ""
+	}
+	return token
+}
+
+// Header names the auth middleware stamps on a request it let through. A
+// client can never set them: the middleware removes whatever came in first.
+const (
+	// authKindHeader says how the caller proved who they are.
+	authKindHeader = "X-Sharko-Auth"
+	authKindAPIKey = "api_key"
+	authKindLogin  = "session"
+)
+
+// isAPIKeyRequest reports whether the caller came in with an API key.
+func isAPIKeyRequest(r *http.Request) bool {
+	return r.Header.Get(authKindHeader) == authKindAPIKey
+}
+
+// maxLoginNameInAudit is the longest user name a failed login may leave in
+// the audit log. A real user name is at most 63 characters.
+const maxLoginNameInAudit = 63
+
+// cleanLoginNameForAudit makes the name typed into a FAILED login safe to
+// keep as "Who" in the audit log. Anyone can send a login with any text in the
+// name, with no login of their own, so the text is not trusted: only the
+// characters a real user name can have are kept, every other one becomes "_",
+// and the result is cut to the length of a real user name.
+func cleanLoginNameForAudit(name string) string {
+	if name == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range name {
+		if n >= maxLoginNameInAudit {
+			break
+		}
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+		n++
+	}
+	return b.String()
+}
+
 func generateToken() string {
 	b := make([]byte, 32)
 	rand.Read(b)
@@ -1937,7 +2046,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.auditLog.Add(audit.Entry{
 			Level:    "warn",
 			Event:    "login_failed",
-			User:     req.Username,
+			User:     cleanLoginNameForAudit(req.Username),
 			Action:   "login",
 			Resource: "session",
 			Source:   "api",
@@ -2062,6 +2171,8 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		// Strip any client-supplied role header to prevent spoofing.
 		// Only the middleware sets this header (for API key auth).
 		r.Header.Del("X-Sharko-Role")
+		// Same for the header that says "this caller is an API key".
+		r.Header.Del(authKindHeader)
 
 		path := r.URL.Path
 
@@ -2157,11 +2268,18 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, stri
 	}
 	if isValidSession(token) {
 		username := getSessionUser(token)
-		r.Header.Set("X-Sharko-User", username)
-		// Look up user role from the store so authz middleware can enforce RBAC
-		if user := s.authStore.GetUser(username); user != nil {
-			r.Header.Set("X-Sharko-Role", user.Role)
+		// The user is looked up on EVERY call, not only at login. A user who
+		// was disabled or deleted after logging in is refused here, on any
+		// route, and the login is ended. It used to go on working: the role
+		// was read but "disabled" and "gone" were not.
+		user := s.authStore.GetUser(username)
+		if user == nil || !user.Enabled {
+			endSession(token)
+			return false, ""
 		}
+		r.Header.Set("X-Sharko-User", username)
+		r.Header.Set("X-Sharko-Role", user.Role)
+		r.Header.Set(authKindHeader, authKindLogin)
 		return true, ""
 	}
 
@@ -2171,6 +2289,7 @@ func (s *Server) tryAuthenticateToken(r *http.Request, token string) (bool, stri
 		if err == nil {
 			r.Header.Set("X-Sharko-User", username)
 			r.Header.Set("X-Sharko-Role", role)
+			r.Header.Set(authKindHeader, authKindAPIKey)
 			return true, ""
 		}
 		return false, tokenRefusalMessage(err)
@@ -2217,6 +2336,12 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
 	}
+	// An API key has no password. Without this an API key could try
+	// passwords for a user.
+	if isAPIKeyRequest(r) {
+		writeError(w, http.StatusForbidden, APIKeyHasNoPasswordSentence)
+		return
+	}
 
 	if err := s.authStore.UpdatePassword(username, req.CurrentPassword, req.NewPassword); err != nil {
 		// Picked by error TYPE, never by the error's words: a wrong current
@@ -2234,12 +2359,21 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every OTHER login of this user ends now. The one that made the change
+	// stays: its owner just proved they know the old password.
+	ended := endSessionsForUser(username, bearerToken(r))
+
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "password_changed",
 		Resource: "user:" + username,
+		Detail:   fmt.Sprintf("other logins ended: %d", ended),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password updated"})
 }
+
+// APIKeyHasNoPasswordSentence is the refusal an API key gets when it asks to
+// change a password.
+const APIKeyHasNoPasswordSentence = "An API key has no password to change. Log in as the user to change that user's password."
 
 // handleHashPassword godoc
 //
@@ -2664,8 +2798,17 @@ func safeStatusErrorCause(statusErr *apierrors.StatusError) string {
 func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 	slog.Error("server error", "op", op, "status", status, "error", err)
 	_, cause, hint, code := shapeError(err, http.StatusText(status))
+	headline := http.StatusText(status)
+	if status == http.StatusTooManyRequests {
+		// A service Sharko uses (GitHub most often) turned the call down for
+		// asking too often. Say that, in words a person can act on, instead
+		// of the bare "Too Many Requests" every page used to show.
+		headline = UpstreamRateLimitMessage
+		code = CodeUpstreamRateLimit
+		hint = ""
+	}
 	body := map[string]string{
-		"error": http.StatusText(status),
+		"error": headline,
 		"op":    op,
 	}
 	if cause != "" {
@@ -2748,18 +2891,33 @@ func classifyUpstreamError(err error) int {
 		return http.StatusInternalServerError
 	}
 
+	// 429 — the Git host's own typed "you asked too often" answer. Read by
+	// type first, so it is a 429 even when a wrapper hides the usual words.
+	if gitprovider.IsRateLimited(err) {
+		return http.StatusTooManyRequests
+	}
+
 	// 429 — upstream rate limit. The phrasing is normalised to lower case
 	// so we match irrespective of how the upstream surfaced it.
 	low := strings.ToLower(err.Error())
 	if strings.Contains(low, "rate limit") ||
 		strings.Contains(low, "too many requests") ||
-		strings.Contains(low, "429") {
+		statusNumber429.MatchString(low) {
 		return http.StatusTooManyRequests
 	}
 
 	// Default — opaque internal failure.
 	return http.StatusInternalServerError
 }
+
+// statusNumber429 finds "429" written as a number on its own, the way an
+// upstream writes an HTTP status ("status: 429", "replied 429", "(429)").
+//
+// It used to be a plain search for the three characters. Then any error text
+// that happened to hold them was answered as "asked too often": pull request
+// #429, a commit hash with 429 in it, port 4290, version 1.429.0. The user
+// was told to wait for a limit that was never hit.
+var statusNumber429 = regexp.MustCompile(`(^|[^0-9a-z#./_-])429($|[^0-9a-z._-])`)
 
 // writeUpstreamError classifies the error first, then funnels through
 // writeServerError so the response body stays sanitized (no leak of

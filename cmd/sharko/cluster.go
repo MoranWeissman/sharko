@@ -569,10 +569,7 @@ var listClustersCmd = &cobra.Command{
 			if len(c.Name) > nameW {
 				nameW = len(c.Name)
 			}
-			s := c.ConnectionStatus
-			if s == "" {
-				s = "unknown"
-			}
+			s := clusterStatusWord(c.ConnectionStatus)
 			if len(s) > statusW {
 				statusW = len(s)
 			}
@@ -588,10 +585,7 @@ var listClustersCmd = &cobra.Command{
 		fmt.Printf("%-*s  %-*s  %-*s  %s\n", nameW, "NAME", statusW, "STATUS", regionW, "REGION", "ADDONS")
 
 		for _, c := range resp.Clusters {
-			s := c.ConnectionStatus
-			if s == "" {
-				s = "unknown"
-			}
+			s := clusterStatusWord(c.ConnectionStatus)
 			r := c.Region
 			if r == "" {
 				r = "-"
@@ -607,6 +601,20 @@ var listClustersCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// clusterStatusWord is the STATUS word list-clusters prints. "not_in_git" is
+// the server's own name for a cluster ArgoCD knows and Sharko does not manage
+// yet; printing it as it is showed a word from inside the code for a cluster
+// that is not Sharko's (walk 9, finding 6).
+func clusterStatusWord(status string) string {
+	switch status {
+	case "":
+		return "unknown"
+	case "not_in_git":
+		return "not managed yet"
+	}
+	return status
 }
 
 // printAPIError formats and returns an error from an API error response.

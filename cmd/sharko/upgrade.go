@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -11,93 +12,96 @@ import (
 
 func init() {
 	upgradeAddonCmd.Flags().String("version", "", "Target version (required)")
-	upgradeAddonCmd.Flags().String("cluster", "", "Upgrade on a specific cluster only (per-cluster override)")
+	upgradeAddonCmd.Flags().String("cluster", "", "Upgrade on this one cluster only (the other clusters stay as they are)")
+	upgradeAddonCmd.Flags().Bool("dry-run", false, "Show the files the pull request would change, without opening it")
+	upgradeAddonCmd.Flags().Bool("auto-merge", false, "Auto-merge the PR (overrides the server default; only sent when you set this flag)")
 	upgradeAddonCmd.MarkFlagRequired("version")
 	rootCmd.AddCommand(upgradeAddonCmd)
 
+	upgradeAddonsCmd.Flags().Bool("auto-merge", false, "Auto-merge the PR (overrides the server default; only sent when you set this flag)")
 	rootCmd.AddCommand(upgradeAddonsCmd)
 }
 
+// UpgradeAddonLong is the --help text of upgrade-addon. A test pins it,
+// because it is the only place the command line says what "for all
+// clusters" changes.
+const UpgradeAddonLong = `Upgrades one addon in one pull request.
+
+Without --cluster the addon is upgraded for ALL clusters: the version in the
+catalog changes, and a cluster that had its own version for this addon goes
+back to following the catalog. A cluster that is already on a newer version
+is left as it is.
+
+With --cluster only that cluster moves. The catalog and the other clusters
+stay as they are. To move several clusters at once, use 'sharko
+upgrade-clusters'.
+
+The version must exist in the addon's chart repository. A version that is
+not there is refused and no pull request is opened.`
+
 var upgradeAddonCmd = &cobra.Command{
 	Use:   "upgrade-addon <name>",
-	Short: "Upgrade an addon version (global or per-cluster)",
+	Short: "Upgrade an addon version (all clusters, or one with --cluster)",
+	Long:  UpgradeAddonLong,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		ver, _ := cmd.Flags().GetString("version")
 		cluster, _ := cmd.Flags().GetString("cluster")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-		// The v3 route this command has always used (POST
-		// /addons/{name}/upgrade) writes the catalog/values files a v4 repo
-		// does not read. Check the repo format first so a v4 caller gets a
-		// plain-English redirect instead of a 409 from a route with no CLI
-		// command to follow up with.
-		fs, fsErr := repoFormat()
-		if fsErr == nil {
-			switch fs.Format {
-			case "v4":
-				if cluster == "" {
-					return fmt.Errorf(
-						"this repo uses the v4 format, which pins addon versions per cluster rather than globally — pick the clusters and run:\n  %s",
-						upgradeClustersCommand(name, ver, []string{"<cluster>"}))
-				}
-				fmt.Printf("Repo format is v4 — routing through 'upgrade-clusters' for cluster %s.\n", cluster)
-				return runUpgradeClusters(name, ver, []string{cluster})
-			case "mixed":
-				return fmt.Errorf("%s", fs.Message)
-			}
-		}
-
-		body := map[string]string{
+		// One route for every repo layout. The server decides what an
+		// upgrade writes; the command line used to guess the layout first
+		// and, on the current layout, refuse an all-clusters upgrade.
+		body := map[string]interface{}{
 			"version": ver,
 		}
 		if cluster != "" {
 			body["cluster"] = cluster
 		}
+		if dryRun {
+			body["dry_run"] = true
+		}
+		if cmd.Flags().Changed("auto-merge") {
+			v, _ := cmd.Flags().GetBool("auto-merge")
+			body["auto_merge"] = v
+		}
 
-		target := "globally"
+		target := "on all clusters"
 		if cluster != "" {
 			target = fmt.Sprintf("on cluster %s", cluster)
 		}
-		fmt.Printf("Upgrading addon %s to %s %s... ", name, ver, target)
+		if dryRun {
+			fmt.Printf("Dry-run: previewing upgrade of %s to %s %s...\n", name, ver, target)
+		} else {
+			fmt.Printf("Upgrading addon %s to %s %s... ", name, ver, target)
+		}
 
 		path := "/api/v1/addons/" + url.PathEscape(name) + "/upgrade"
 		respBody, status, err := apiPost(path, body)
 		if err != nil {
-			fmt.Println("failed")
+			if !dryRun {
+				fmt.Println("failed")
+			}
 			return err
 		}
-
 		if status != 200 {
-			fmt.Println("failed")
+			if !dryRun {
+				fmt.Println("failed")
+			}
 			return printAPIError(respBody, status)
 		}
-
-		fmt.Println("done")
-
-		var result struct {
-			PRUrl  string `json:"pr_url"`
-			Branch string `json:"branch"`
-			Merged bool   `json:"merged"`
+		if !dryRun {
+			fmt.Println("done")
 		}
-		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil
-		}
-		if result.PRUrl != "" {
-			fmt.Printf("  PR: %s\n", result.PRUrl)
-		}
-		if result.Merged {
-			fmt.Println("  Auto-merged: yes")
-		}
-
-		return nil
+		return printUpgradeResponse(respBody)
 	},
 }
 
 var upgradeAddonsCmd = &cobra.Command{
 	Use:   "upgrade-addons <addon=version,...>",
-	Short: "Upgrade multiple addons in one PR",
-	Long:  "Upgrade multiple addons at once. Format: cert-manager=1.15.0,metrics-server=0.7.1",
+	Short: "Upgrade multiple addons for all clusters in one PR",
+	Long:  "Upgrade multiple addons at once, each for all clusters. Format: cert-manager=1.15.0,metrics-server=0.7.1",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		upgrades := make(map[string]string)
@@ -111,29 +115,15 @@ var upgradeAddonsCmd = &cobra.Command{
 			upgrades[parts[0]] = parts[1]
 		}
 
-		// Same v3-route check as upgrade-addon: POST /addons/upgrade-batch
-		// writes the v3 catalog shape, which a v4 repo does not read.
-		fs, fsErr := repoFormat()
-		if fsErr == nil {
-			switch fs.Format {
-			case "v4":
-				var lines []string
-				for addon, version := range upgrades {
-					lines = append(lines, "  "+upgradeClustersCommand(addon, version, []string{"<cluster>"}))
-				}
-				return fmt.Errorf(
-					"this repo uses the v4 format, which pins addon versions per cluster rather than globally — there is no single batch call for that. Run one 'upgrade-clusters' per addon instead:\n%s",
-					strings.Join(lines, "\n"))
-			case "mixed":
-				return fmt.Errorf("%s", fs.Message)
-			}
-		}
-
 		body := map[string]interface{}{
 			"upgrades": upgrades,
 		}
+		if cmd.Flags().Changed("auto-merge") {
+			v, _ := cmd.Flags().GetBool("auto-merge")
+			body["auto_merge"] = v
+		}
 
-		fmt.Printf("Upgrading %d addons... ", len(upgrades))
+		fmt.Printf("Upgrading %d addons on all clusters... ", len(upgrades))
 		respBody, status, err := apiPost("/api/v1/addons/upgrade-batch", body)
 		if err != nil {
 			fmt.Println("failed")
@@ -146,50 +136,14 @@ var upgradeAddonsCmd = &cobra.Command{
 		}
 
 		fmt.Println("done")
-
-		var result struct {
-			PRUrl  string `json:"pr_url"`
-			Branch string `json:"branch"`
-			Merged bool   `json:"merged"`
-		}
-		if err := json.Unmarshal(respBody, &result); err != nil {
-			return nil
-		}
-		if result.PRUrl != "" {
-			fmt.Printf("  PR: %s\n", result.PRUrl)
-		}
-		if result.Merged {
-			fmt.Println("  Auto-merged: yes")
-		}
-
-		return nil
+		return printUpgradeResponse(respBody)
 	},
 }
 
-// runUpgradeClusters posts the v4 fleet-upgrade call for a single addon and
-// prints the result the same way upgrade-clusters does. Shared by
-// upgrade-addon's transparent v4 redirect (--cluster given, one cluster)
-// and the upgrade-clusters command itself would use the same route, but
-// keeps its own RunE for the multi-cluster, flag-driven case — this helper
-// is just for the redirect.
-func runUpgradeClusters(addon, version string, clusters []string) error {
-	body := map[string]interface{}{
-		"version":  version,
-		"clusters": clusters,
-		"yes":      true,
-	}
-	path := "/api/v1/addons/" + url.PathEscape(addon) + "/upgrade-clusters"
-	respBody, status, err := apiPost(path, body)
-	if err != nil {
-		fmt.Println("failed")
-		return err
-	}
-	if status != 200 {
-		fmt.Println("failed")
-		return printAPIError(respBody, status)
-	}
-	fmt.Println("done")
-
+// printUpgradeResponse prints what an upgrade call answered: the preview or
+// the pull request, then anything the server said the upgrade left on the
+// old chart's values, then the shared-credential note when there is one.
+func printUpgradeResponse(respBody []byte) error {
 	unwrapped, note := unwrapAttribution(respBody)
 	var result cliGitResult
 	if err := json.Unmarshal(unwrapped, &result); err != nil {
@@ -201,4 +155,20 @@ func runUpgradeClusters(addon, version string, clusters []string) error {
 		fmt.Printf("  Note: %s\n", note)
 	}
 	return nil
+}
+
+// uniqueSorted drops repeats and empty names, so a cluster named twice on
+// the command line is counted once.
+func uniqueSorted(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }

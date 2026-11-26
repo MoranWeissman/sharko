@@ -1138,6 +1138,9 @@ export interface VersionMatrixCell {
   version: string
   health: string
   drift_from_catalog: boolean
+  /** True when this cluster is on a NEWER version than the catalog. It
+   *  differs from the catalog but it is not "behind". */
+  ahead_of_catalog?: boolean
 }
 
 export interface VersionMatrixRow {
@@ -1291,6 +1294,8 @@ export interface AIConfigResponse {
   // is configured; the Save handler stamps the explicit value going
   // forward so subsequent reads are authoritative.
   annotate_on_seed?: boolean
+  /** Whether a key is saved for the current provider. The key itself is never sent. */
+  has_api_key?: boolean
 }
 
 // Secret-leak guard match (redacted, never carries the raw secret value).
@@ -1832,6 +1837,8 @@ export interface AuditEntry {
   level: string
   event: string
   user: string
+  /** 'api_key' when the call was made with an API key; `user` is then the key's name. */
+  auth_type?: string
   action: string
   resource: string
   source: string
@@ -1877,6 +1884,9 @@ export interface MeResponse {
   username: string
   role: string
   has_github_token: boolean
+  /** True when the caller came in with an API key; `username` is then the key's name. */
+  api_key?: boolean
+  auth_type?: 'api_key' | 'session'
 }
 
 /**
@@ -1888,6 +1898,11 @@ export interface AddonValuesSchemaResponse {
   addon_name: string
   current_values: string
   schema?: Record<string, unknown> | null
+  /** True on a v4 repo: Sharko shows the file and does not edit it. */
+  read_only?: boolean
+  /** Path of the file in the Git repo (set with read_only). */
+  values_file?: string
+  file_exists?: boolean
   /**
    * Present when the chart version pinned in `addons-catalog.yaml` is
    * ahead of the version stamped in the values file's smart-values header.
@@ -1918,6 +1933,13 @@ export interface ClusterAddonValuesResponse {
   addon_name: string
   current_overrides: string
   schema?: Record<string, unknown> | null
+  /** True on a v4 repo: Sharko shows the file and does not edit it. */
+  read_only?: boolean
+  /** Path of the file in the Git repo (set with read_only). */
+  values_file?: string
+  file_exists?: boolean
+  /** The file's only setting is a block named after the add-on; Helm ignores it. */
+  wrapped_under_addon_name?: boolean
 }
 
 /**
@@ -2042,6 +2064,10 @@ export interface UpgradeCheckResponse {
   removed: ValueDiffEntry[]
   changed: ValueDiffEntry[]
   conflicts: ConflictCheckEntry[]
+  /** Settings in the generated global values file that are still the old
+   *  chart's defaults and move to the new chart's defaults with an upgrade
+   *  for all clusters. Not conflicts. */
+  follows_default?: ValueDiffEntry[]
   release_notes?: string
   baseline_unavailable?: boolean
   baseline_note?: string

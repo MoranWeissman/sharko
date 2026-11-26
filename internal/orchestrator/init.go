@@ -266,8 +266,6 @@ func (o *Orchestrator) CommitBootstrapFiles(ctx context.Context, files map[strin
 		defer o.gitMu.Unlock()
 	}
 
-	o.detectConflicts(ctx, files)
-
 	branchName := fmt.Sprintf("%sinitialize-repository-%s", o.gitops.BranchPrefix, initBranchSuffix())
 
 	if err := o.git.CreateBranch(ctx, branchName, o.gitops.BaseBranch); err != nil {

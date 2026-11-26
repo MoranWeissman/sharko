@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
+import { AI_CONFIG_CHANGED_EVENT } from '@/lib/aiEvents'
 import { AIAssistant, type AIAssistantSeed } from '@/views/AIAssistant'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ToastContainer } from '@/components/ToastNotification'
@@ -195,7 +196,7 @@ export function Layout() {
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const [aiSeed, setAiSeed] = useState<AIAssistantSeed | undefined>()
   const { theme, toggleTheme } = useTheme()
-  const { logout, isAdmin } = useAuth()
+  const { logout, isAdmin, username, role } = useAuth()
 
   // -------------------------------------------------------------------------
   // AI assistant opt-in gate (V2-cleanup-55.4). THIS is where the gate lives.
@@ -218,10 +219,17 @@ export function Layout() {
   useEffect(() => {
     // Defensive — older test fixtures may not mock getAIStatus.
     if (typeof api.getAIStatus !== 'function') return
-    api
-      .getAIStatus()
-      .then((res) => setAiConfigured(!!res.enabled))
-      .catch(() => setAiConfigured(false))
+    const check = () => {
+      api
+        .getAIStatus()
+        .then((res) => setAiConfigured(!!res.enabled))
+        .catch(() => setAiConfigured(false))
+    }
+    check()
+    // Ask again when the AI settings page says something changed, so the
+    // assistant shows up or goes away without a page reload.
+    window.addEventListener(AI_CONFIG_CHANGED_EVENT, check)
+    return () => window.removeEventListener(AI_CONFIG_CHANGED_EVENT, check)
   }, [])
 
   const [appVersion, setAppVersion] = useState('')
@@ -526,6 +534,15 @@ export function Layout() {
                 align="end"
                 className="w-48 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:ring-gray-700 dark:bg-gray-800"
               >
+                {username && (
+                  <>
+                    <div data-testid="signed-in-as" className="px-2 py-1.5 text-sm text-[#0a3a5a] dark:text-gray-300">
+                      Signed in as <span className="font-semibold">{username}</span>
+                      {role ? ` (${role})` : ''}
+                    </div>
+                    <DropdownMenuSeparator className="bg-[#6aade0] dark:bg-gray-700" />
+                  </>
+                )}
                 <DropdownMenuItem
                   onSelect={() => navigate('/user')}
                   className="text-[#0a3a5a] focus:bg-[#d6eeff] dark:text-gray-300 dark:focus:bg-gray-700"
@@ -605,7 +622,9 @@ export function Layout() {
       )}
 
       {/* Floating AI Assistant — only when an AI provider is configured (opt-in gate) */}
-      {aiConfigured && <FloatingAssistant />}
+      {/* Hidden while the side panel is open: the round button sat on top of
+          the panel's Send button. */}
+      {aiConfigured && !aiPanelOpen && <FloatingAssistant />}
 
       {/* Command Palette (Cmd+K) */}
       <CommandPalette />

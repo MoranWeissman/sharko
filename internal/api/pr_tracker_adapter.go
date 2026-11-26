@@ -57,6 +57,15 @@ func (a *prTrackerAdapter) TrackPR(ctx context.Context, p orchestrator.TrackedPR
 	})
 }
 
+// IsTracked says whether the pull request is recorded in the tracker.
+func (a *prTrackerAdapter) IsTracked(ctx context.Context, prID int) (bool, error) {
+	pr, err := a.t.GetPR(ctx, prID)
+	if err != nil {
+		return false, err
+	}
+	return pr != nil, nil
+}
+
 // followUpToTracker copies the orchestrator's after-merge record onto the
 // tracker's own type. nil stays nil.
 func followUpToTracker(f *orchestrator.ClusterFollowUp) *prtracker.ClusterFollowUp {

@@ -156,6 +156,13 @@ type PRTracker interface {
 	TrackPR(ctx context.Context, pr TrackedPR) error
 }
 
+// PRTrackLookup is an optional extra a PRTracker can have: it says whether a
+// pull request is recorded already, so a re-run of an adopt or take over
+// records only a pull request that was lost, and never overwrites one.
+type PRTrackLookup interface {
+	IsTracked(ctx context.Context, prID int) (bool, error)
+}
+
 // EventEmitter is the subset of events.EventRecorder the orchestrator needs
 // to emit a Kubernetes Warning event on a genuine operational failure (V3 E1).
 // Defined locally (not importing internal/events) to keep the orchestrator
@@ -329,6 +336,18 @@ type Orchestrator struct {
 	// per-instance test seam per go-expert.md convention (default real,
 	// override in test via SetChartProbe).
 	chartProbeFn ChartProbeFunc
+
+	// chartVersionCheckFn asks the chart repository whether a version
+	// exists, before an upgrade or a catalog add opens a pull request
+	// (chart_version_check.go). Wired via SetChartVersionCheck; nil means
+	// the check is skipped.
+	chartVersionCheckFn ChartVersionCheckFn
+
+	// chartDefaultsFn downloads a chart version's own values.yaml so an
+	// upgrade can tell which settings in a seeded values file are still the
+	// old chart's defaults (values_follow_defaults.go). Wired via
+	// SetChartDefaultsFetcher; nil means that comparison is skipped.
+	chartDefaultsFn ChartDefaultsFn
 }
 
 // LatestVersionFn resolves the newest version Sharko knows for a chart.

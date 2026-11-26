@@ -1,8 +1,12 @@
 import { useState } from 'react'
 import { Lock } from 'lucide-react'
 import { api } from '@/services/api'
+import { useAuth } from '@/hooks/useAuth'
 
 export function UserInfo() {
+  // Who is logged in, as the server said at login. This page used to print
+  // "Username: admin" and "Issuer: local" for everybody.
+  const { username, role } = useAuth()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -29,7 +33,7 @@ export function UserInfo() {
     setLoading(true)
     try {
       await api.updatePassword(currentPassword, newPassword)
-      setStatus({ type: 'success', message: 'Password updated successfully. Use the new password on next login.' })
+      setStatus({ type: 'success', message: 'Password updated. You stay logged in here. Every other place where you were logged in has been logged out.' })
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
@@ -103,8 +107,8 @@ export function UserInfo() {
       {/* User Details */}
       <div className="max-w-lg rounded-lg bg-[#d0e8f8] p-6 dark:bg-gray-800">
         <div className="space-y-2 text-sm text-[#1a4a6a] dark:text-gray-400">
-          <p><span className="font-medium text-[#0a3a5a] dark:text-gray-300">Username:</span> admin</p>
-          <p><span className="font-medium text-[#0a3a5a] dark:text-gray-300">Issuer:</span> local</p>
+          <p><span className="font-medium text-[#0a3a5a] dark:text-gray-300">Username:</span> <span data-testid="user-info-username">{username || 'unknown'}</span></p>
+          <p><span className="font-medium text-[#0a3a5a] dark:text-gray-300">Role:</span> <span data-testid="user-info-role">{role || 'unknown'}</span></p>
         </div>
       </div>
     </div>

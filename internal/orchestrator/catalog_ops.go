@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -89,6 +90,13 @@ type AddToCatalogResult struct {
 	*GitResult
 	// Added names the addons written into catalog.yaml, sorted.
 	Added []string `json:"added"`
+	// AlreadyInCatalog names the addons that were already in catalog.yaml
+	// exactly as asked. When it is set nothing was written and no pull
+	// request was opened.
+	AlreadyInCatalog []string `json:"already_in_catalog,omitempty"`
+	// Message is a plain sentence for the caller when there is something to
+	// say that the other fields do not (today: AlreadyInCatalog).
+	Message string `json:"message,omitempty"`
 	// Enabled names the addons also switched on, and on which cluster.
 	// Empty when the request was catalog-only.
 	Enabled []string `json:"enabled,omitempty"`
@@ -105,6 +113,15 @@ type AddToCatalogResult struct {
 	// a durable result at that point, and DryRunResult.FilesToWrite already
 	// shows the pin in the diff.
 	ResolvedVersions map[string]string `json:"resolved_versions,omitempty"`
+}
+
+// AlreadyInCatalogMessage is what an add says when the addon is already in
+// the catalog exactly as asked. Exported so tests pin it by exact text.
+func AlreadyInCatalogMessage(names []string) string {
+	if len(names) == 1 {
+		return fmt.Sprintf("%s is already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened.", names[0])
+	}
+	return fmt.Sprintf("%s are already in your catalog, with the same chart, version and namespace. Nothing to do, and no pull request was opened.", strings.Join(names, ", "))
 }
 
 // The error sentinels below are the machine-readable half of the
@@ -203,6 +220,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	// Resolve every entry first — no git reads, no writes, so a bad
 	// request costs nothing.
 	entries := make(map[string]config.AddonCatalogEntry, len(req.Addons))
+	inputs := make(map[string]CatalogAddonInput, len(req.Addons))
 	names := make([]string, 0, len(req.Addons))
 	for _, in := range req.Addons {
 		if in.Name == "" {
@@ -223,6 +241,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 			return nil, err
 		}
 		entries[in.Name] = entry
+		inputs[in.Name] = in
 		names = append(names, in.Name)
 	}
 	sort.Strings(names)
@@ -256,6 +275,33 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	if spec.Addons == nil {
 		spec.Addons = make(map[string]config.AddonCatalogEntry)
 	}
+	// Is every entry in this request already in the catalog exactly as asked?
+	// Then there is nothing to approve: no pull request is opened (walk 1,
+	// L10: a second add of the same addon opened a pull request with no
+	// changes in it and said "added").
+	//
+	// An addon that is already in the catalog keeps every part of its entry
+	// this request did not set. The entry used to be replaced whole by one
+	// built from the request, so adding an addon a second time deleted its
+	// settings, its secrets (with the push block), its extra sources and its
+	// extra Helm values, and the compare below called that a change.
+	allAlreadyThere := true
+	// versionMoves lists the addons this request moves to another chart
+	// version, with the entry as it was. Their global values file follows.
+	versionMoves := make(map[string]config.AddonCatalogEntry)
+	for name, entry := range entries {
+		old, there := spec.Addons[name]
+		if there {
+			entry = keepUnsetCatalogFields(old, entry, inputs[name])
+			entries[name] = entry
+			if entry.Version != old.Version && entry.RepoURL == old.RepoURL && entry.Chart == old.Chart {
+				versionMoves[name] = old
+			}
+		}
+		if !there || !reflect.DeepEqual(old, entry) {
+			allAlreadyThere = false
+		}
+	}
 	for name, entry := range entries {
 		spec.Addons[name] = entry
 	}
@@ -272,6 +318,24 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		}
 	}
 
+	// Every version this request adds has to exist in its chart repository
+	// (chart_version_check.go) — on the preview as well, so a preview never
+	// passes what the real call would refuse. A repository Sharko cannot
+	// reach does NOT stop an add: Sharko may simply have no route to a
+	// repository that ArgoCD can reach, and the add never depended on that
+	// route before. It is said out loud instead.
+	var versionWarnings []string
+	for _, name := range names {
+		entry := spec.Addons[name]
+		if err := o.checkChartVersion(ctx, name, entry.RepoURL, entry.Chart, entry.Version); err != nil {
+			if errors.Is(err, ErrChartVersionLookupFailed) {
+				versionWarnings = append(versionWarnings, CatalogAddVersionNotCheckedWarning(name, entry.Version))
+				continue
+			}
+			return nil, err
+		}
+	}
+
 	catalogBody, reformatted, err := writeCatalogFile(existingCatalog, spec, entries, names)
 	if err != nil {
 		return nil, fmt.Errorf("rendering %s: %w", config.AddonCatalogPath, err)
@@ -279,7 +343,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 
 	files := map[string][]byte{config.AddonCatalogPath: catalogBody}
 
-	var warnings []string
+	warnings := versionWarnings
 	if reformatted {
 		warnings = append(warnings, CatalogRewriteNote)
 	}
@@ -302,6 +366,7 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 		content []byte
 	}
 	var globalScaffolds []valuesScaffold
+	var movedValues []valuesVersionMove
 	// gPathByName is kept around for the combo's cluster-values seeding
 	// below, so it can find each addon's global-values commit path
 	// without recomputing it — and, more importantly, so it can look at
@@ -324,6 +389,19 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 			return nil, err
 		}
 		if exists {
+			// The file is there already. It is only touched when this
+			// request moves the addon to another chart version: then the
+			// settings Sharko copied from the old chart follow the new one,
+			// the same way an upgrade does it. Without this the chart moved
+			// and the old image tag in this file kept the old image running.
+			if before, moved := versionMoves[name]; moved {
+				move := o.globalValuesAfterVersionMove(ctx, name, entries[name], before.Version, entries[name].Version)
+				warnings = append(warnings, move.warnings...)
+				if move.changed {
+					files[gPath] = move.updated
+					movedValues = append(movedValues, move)
+				}
+			}
 			continue
 		}
 		entry := entries[name]
@@ -392,6 +470,21 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 
 	title := addToCatalogTitle(names, req.EnableOnCluster)
 
+	// Nothing would change: every entry is already there as asked, no new
+	// values file is needed, and (for add-and-enable) the cluster already has
+	// the addon on. Say so and open nothing.
+	if allAlreadyThere && len(globalScaffolds) == 0 && len(clusterValuesScaffolds) == 0 &&
+		(req.EnableOnCluster == "" || bytes.Equal(existingClusterAddons, updatedClusterAddons)) {
+		return &AddToCatalogResult{
+			GitResult:        &GitResult{Warnings: warnings},
+			Added:            []string{},
+			AlreadyInCatalog: names,
+			Message:          AlreadyInCatalogMessage(names),
+			Enabled:          nil,
+			Cluster:          req.EnableOnCluster,
+		}, nil
+	}
+
 	if req.DryRun {
 		previews := []FilePreview{{
 			Path:   config.AddonCatalogPath,
@@ -403,6 +496,13 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 				Path:   s.path,
 				Action: "create",
 				Diff:   o.buildFileDiff(s.path, nil, s.content, "create"),
+			})
+		}
+		for _, m := range movedValues {
+			previews = append(previews, FilePreview{
+				Path:   m.path,
+				Action: "update",
+				Diff:   o.buildFileDiff(m.path, m.original, m.updated, "update"),
 			})
 		}
 		if req.EnableOnCluster != "" {
@@ -467,6 +567,15 @@ func (o *Orchestrator) AddToCatalog(ctx context.Context, req AddToCatalogRequest
 	}, nil
 }
 
+// chartRepoSchemeOK reports whether a chart repository address starts with a
+// scheme Helm can pull from: https, oci, or plain http (an in-house chart
+// museum). ftp://, file://, ssh:// and the like were accepted and opened a pull
+// request that could never install (walk 8, L01).
+func chartRepoSchemeOK(repo string) bool {
+	r := strings.ToLower(strings.TrimSpace(repo))
+	return strings.HasPrefix(r, "https://") || strings.HasPrefix(r, "oci://") || strings.HasPrefix(r, "http://")
+}
+
 // enabledNames returns names when a cluster was named, nil otherwise.
 func enabledNames(names []string, cluster string) []string {
 	if cluster == "" {
@@ -528,9 +637,21 @@ func (o *Orchestrator) buildCatalogEntry(ctx context.Context, in CatalogAddonInp
 		}
 	}
 
+	// A namespace the cluster would refuse must not get as far as a pull
+	// request: it would be approved in Git and then never deploy.
+	if entry.Namespace != "" && !models.IsValidNamespaceName(entry.Namespace) {
+		return config.AddonCatalogEntry{}, fmt.Errorf(
+			"%w: the namespace %q does not fit. %s", ErrCatalogRequestInvalid, entry.Namespace, models.InvalidNamespaceMessage)
+	}
+
 	if entry.RepoURL == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(
 			"%w: addon %q needs a chart repository URL (https:// or oci://)", ErrCatalogEntryIncomplete, in.Name)
+	}
+	if !chartRepoSchemeOK(entry.RepoURL) {
+		return config.AddonCatalogEntry{}, fmt.Errorf(
+			"%w: addon %q has a chart repository address that is not one Sharko can use. It must start with https:// or oci://",
+			ErrCatalogEntryIncomplete, in.Name)
 	}
 	if entry.Chart == "" {
 		return config.AddonCatalogEntry{}, fmt.Errorf(
@@ -625,6 +746,14 @@ func (o *Orchestrator) checkEnableReady(ctx context.Context, clusterName, addonN
 	return warnings, nil
 }
 
+// CatalogAddVersionNotCheckedWarning is said when an addon is added while
+// Sharko cannot reach its chart repository to confirm the version.
+func CatalogAddVersionNotCheckedWarning(addon, version string) string {
+	return fmt.Sprintf(
+		"Sharko could not reach the chart repository of %s, so it did not check that version %s exists. If the version is wrong, ArgoCD will not be able to install it.",
+		addon, version)
+}
+
 // readCatalog reads and parses the org's catalog.yaml. A file that does not
 // exist yet is NOT an error — a fresh repo has approved nothing, and the
 // first add creates the file.
@@ -645,4 +774,78 @@ func (o *Orchestrator) readCatalog(ctx context.Context) (config.AddonCatalogSpec
 		return config.AddonCatalogSpec{}, fmt.Errorf("%w: %s", ErrCatalogFileEmpty, CatalogFileEmptyMessage)
 	}
 	return config.LoadAddonCatalog(data)
+}
+
+// keepUnsetCatalogFields is what makes a second add of an addon safe. old is
+// the entry already in catalog.yaml, built is the entry made from the request
+// (with anything the Marketplace filled in), in is the request itself. Every
+// part the REQUEST did not set comes back from old; a part the request did set
+// wins.
+//
+// The Marketplace fill-ins count as "not set": they are Sharko's guess for a
+// brand-new entry and must not overwrite what the catalog already says, and
+// a second add must not quietly move the version to the newest one.
+func keepUnsetCatalogFields(old, built config.AddonCatalogEntry, in CatalogAddonInput) config.AddonCatalogEntry {
+	if in.RepoURL == "" {
+		built.RepoURL = old.RepoURL
+	}
+	if in.Chart == "" {
+		built.Chart = old.Chart
+	}
+	if in.Version == "" {
+		built.Version = old.Version
+	}
+	if in.Namespace == "" {
+		built.Namespace = old.Namespace
+	}
+	if in.Settings == nil {
+		built.Settings = old.Settings
+	}
+	if len(in.Secrets) == 0 {
+		built.Secrets = old.Secrets
+	}
+	if len(in.AdditionalSources) == 0 {
+		built.AdditionalSources = old.AdditionalSources
+	}
+	if len(in.ExtraHelmValues) == 0 {
+		built.ExtraHelmValues = old.ExtraHelmValues
+	}
+	return built
+}
+
+// valuesVersionMove is what happened to an addon's global values file when
+// its catalog version was moved by a door other than the upgrade.
+type valuesVersionMove struct {
+	path     string
+	original []byte
+	updated  []byte
+	changed  bool
+	warnings []string
+}
+
+// globalValuesAfterVersionMove runs the upgrade's "values follow the chart
+// defaults" step (followDefaultsInGlobalValues) for a version change made
+// through catalog edit or add-to-catalog. Those two doors move the chart for
+// every cluster exactly like an upgrade does, so they owe the same care: a
+// setting Sharko copied from the old chart moves to the new chart's default,
+// a setting a person changed is kept and named in a warning, and a file
+// Sharko did not write is never edited.
+func (o *Orchestrator) globalValuesAfterVersionMove(ctx context.Context, addon string, entry config.AddonCatalogEntry, oldVersion, newVersion string) valuesVersionMove {
+	gPath, err := v4GlobalValuesPath(addon)
+	if err != nil {
+		return valuesVersionMove{}
+	}
+	state := &upgradeV4State{
+		valuesOriginal: map[string][]byte{},
+		valuesCurrent:  map[string][]byte{},
+	}
+	o.followDefaultsInGlobalValues(ctx, state, addon, entry, oldVersion, newVersion)
+	move := valuesVersionMove{
+		path:     gPath,
+		original: state.valuesOriginal[gPath],
+		updated:  state.valuesCurrent[gPath],
+		warnings: state.warnings,
+	}
+	move.changed = move.updated != nil && !bytes.Equal(move.original, move.updated)
+	return move
 }

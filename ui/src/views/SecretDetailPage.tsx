@@ -90,7 +90,7 @@ export function SecretDetailPage() {
         ? 'Back to Addon secrets'
         : 'Back to Secrets'
 
-  const { data, loading, load } = useManagedSecretsData()
+  const { data, loading, load, loadError } = useManagedSecretsData()
   const [syncTarget, setSyncTarget] = useState<UnifiedRow | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<UnifiedRow | null>(null)
@@ -187,6 +187,16 @@ export function SecretDetailPage() {
       <div className="mx-auto max-w-screen-2xl space-y-4" data-testid="secret-detail-container">
         {backLink}
         <LoadingState message="Loading secret..." />
+      </div>
+    )
+  }
+
+  if (!row && data === null && loadError) {
+    // The list could not be read at all: say that, not "this secret is gone".
+    return (
+      <div className="mx-auto max-w-screen-2xl space-y-4" data-testid="secret-detail-container">
+        {backLink}
+        <p data-testid="secret-detail-load-error" className="text-sm text-[#3a6a8a] dark:text-gray-400">{loadError}</p>
       </div>
     )
   }

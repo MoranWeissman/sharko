@@ -153,6 +153,17 @@ A refused fetch still answers with HTTP 200. The reply has
 `error_code: "ssrf_blocked"`, the same way the form's other failures are
 reported.
 
+The check does not stop at the address you typed. If that address answers
+with a redirect, every address on the way is checked by the same rules, and
+Sharko follows at most five redirects. The real address is checked once more
+at the moment Sharko connects, so a host name that gives a public address
+first and an inside address a moment later is refused too. A fetch stopped on
+the way answers with `error_code: "repo_unreachable"`.
+
+If Sharko itself goes out through a proxy (`HTTP_PROXY` or `HTTPS_PROXY`), the
+proxy makes the last connection, so the check at connect time cannot see it.
+The check of the typed address and of every redirect still runs.
+
 Catalog sources in `SHARKO_CATALOG_URLS` and the catalog sources file have
 their own check for private addresses. On a home lab you can turn that one
 off with `SHARKO_CATALOG_URLS_ALLOW_PRIVATE=true`. Do not do that on a

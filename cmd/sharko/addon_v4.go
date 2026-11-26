@@ -199,9 +199,12 @@ listed with --cluster, in one pull request. Clusters left out are untouched.
 Every selected cluster must already have the addon enabled — this never
 enables an addon as a side effect of upgrading it.
 
-This is the fleet-upgrade route the UI uses, and the one 'sharko
-upgrade-addon' transparently switches to on a v4 repo when you pass
---cluster.`,
+The catalog version is not changed, so the chosen clusters can run ahead of
+the rest. To upgrade every cluster, use 'sharko upgrade-addon' without
+--cluster.
+
+The version must exist in the addon's chart repository. A version that is
+not there is refused and no pull request is opened.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		addon := args[0]
@@ -210,6 +213,9 @@ upgrade-addon' transparently switches to on a v4 repo when you pass
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		yes, _ := cmd.Flags().GetBool("yes")
 
+		// A cluster named twice is one cluster (it used to be counted twice
+		// in the line below).
+		clusters = uniqueSorted(clusters)
 		if len(clusters) == 0 {
 			return fmt.Errorf("at least one --cluster is required")
 		}
@@ -265,18 +271,6 @@ upgrade-addon' transparently switches to on a v4 repo when you pass
 		}
 		return nil
 	},
-}
-
-// upgradeClustersCommand renders the exact `sharko upgrade-clusters`
-// invocation for a given addon/version/cluster set — used by upgrade-addon
-// when it declines to run on a v4 repo without --cluster, so the operator
-// gets a copy-pasteable next step instead of a dead end.
-func upgradeClustersCommand(addon, version string, clusters []string) string {
-	parts := []string{"sharko", "upgrade-clusters", addon, "--version", version}
-	for _, c := range clusters {
-		parts = append(parts, "--cluster", c)
-	}
-	return strings.Join(parts, " ")
 }
 
 // repoIsV4 reports whether the server's active repo is in the new (v4)

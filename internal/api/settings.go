@@ -201,19 +201,22 @@ func (s *Server) handleSetAllowInlineCredentials(w http.ResponseWriter, r *http.
 // managedClusterSelfHealResponse is the response/request body shape for the
 // managed-cluster-self-heal setting endpoints (V3 G3).
 type managedClusterSelfHealResponse struct {
-	// ManagedClusterSelfHeal is false (the default) when the reconciler
-	// detects drift on Sharko-managed clusters but does NOT re-apply
-	// git-desired labels (drift detection only, surfaces OutOfSync state).
-	// When set to true, the reconciler re-applies git-desired addon labels
-	// onto drifted managed-cluster Secrets every tick (enforcement-by-
-	// reconcile, same mechanism as the self-managed path).
+	// ManagedClusterSelfHeal says whether Sharko puts back, on its own,
+	// labels that someone changed by hand on a repo that is not in the v4
+	// layout. It does NOT switch off the add-on labels of a repo in the v4
+	// layout: those are always put back on its own, whatever
+	// this says, because Git is the record of what runs where and the
+	// label is what installs an add-on. Taking an add-on label off by hand
+	// therefore uninstalls the add-on until Sharko puts the label back
+	// (walk 2, finding 3: the setting and the docs said "off", Sharko put the
+	// label back anyway).
 	ManagedClusterSelfHeal bool `json:"managed_cluster_self_heal"`
 }
 
 // handleGetManagedClusterSelfHeal godoc
 //
 // @Summary Get managed-cluster self-heal setting
-// @Description Returns whether Sharko re-applies the labels Git declares to drifted Sharko-managed clusters (V3 G3, default false — drift is recorded only)
+// @Description Returns the managed-cluster self-heal setting (default false). On a repo in the v4 layout this setting does not matter for add-on labels: Sharko always puts them back on its own, because Git is the record of what runs where. Taking an add-on label off by hand uninstalls the add-on until Sharko puts the label back. On an older layout, false means drift is only reported and true means Sharko puts the labels back.
 // @Tags system
 // @Produce json
 // @Security BearerAuth
@@ -236,7 +239,7 @@ func (s *Server) handleGetManagedClusterSelfHeal(w http.ResponseWriter, r *http.
 // handleSetManagedClusterSelfHeal godoc
 //
 // @Summary Set managed-cluster self-heal setting
-// @Description Sets whether Sharko re-applies the labels Git declares to drifted Sharko-managed clusters (V3 G3). Admin only.
+// @Description Sets the managed-cluster self-heal setting. It never turns off the always-on put-back of add-on labels on a repo in the v4 layout; it only decides whether Sharko also puts labels back on an older layout. Admin only.
 // @Tags system
 // @Accept json
 // @Produce json

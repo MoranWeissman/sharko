@@ -6,6 +6,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
 import type { APIToken } from '@/services/models'
+import { formatLastUsed } from '@/lib/time'
 
 interface UserAccount {
   username: string
@@ -28,6 +29,11 @@ const ROLE_COLORS: Record<string, string> = {
   operator: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   viewer: 'bg-[#d6eeff] text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-400',
 }
+
+/** What each role may do, as the Users page legend says it. Pinned by exact text. */
+export const ADMIN_LEGEND = '— everything, including users, keys and settings'
+export const OPERATOR_LEGEND =
+  '— register and adopt clusters, turn addons on and off, add addons to the catalog. Cannot remove things, change settings or manage users'
 
 export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
   const [users, setUsers] = useState<UserAccount[]>([])
@@ -123,7 +129,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
   }
 
   const handleResetPassword = async (username: string) => {
-    if (!confirm(`Reset password for ${username}?`)) return
+    if (!confirm(`Reset password for ${username}? They are logged out everywhere and need the new temporary password to get back in.`)) return
     setActionError(null)
     try {
       const result = await api.resetPassword(username)
@@ -134,7 +140,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
   }
 
   const handleDelete = async (username: string) => {
-    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return
+    if (!confirm(`Delete user "${username}"? This cannot be undone. They are logged out right away and the API keys they created stop working.`)) return
     setActionError(null)
     try {
       await api.deleteUser(username)
@@ -216,6 +222,9 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
 
   function formatDate(iso?: string) {
     if (!iso) return '--'
+    // The server sends year 1 for "this has never happened" (a key that was
+    // never used). It used to be shown as "Jan 1, 1".
+    if (iso.startsWith('0001-')) return 'Never'
     try {
       return new Date(iso).toLocaleDateString(undefined, {
         year: 'numeric', month: 'short', day: 'numeric',
@@ -276,7 +285,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-green-800 dark:text-green-300">Temporary Password</h3>
-              <p className="mt-1 text-sm text-green-600 dark:text-green-400">Share this with the user. They must change it on first login.</p>
+              <p className="mt-1 text-sm text-green-600 dark:text-green-400">Share this with the user. They should change it after they log in, on the Account page.</p>
               <code className="mt-2 block rounded bg-green-100 px-3 py-2 font-mono text-lg font-bold text-green-900 dark:bg-green-800 dark:text-green-100">
                 {tempPassword}
               </code>
@@ -301,12 +310,12 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
         <div className="flex items-center gap-1.5 text-xs">
           <Shield className="h-3.5 w-3.5 text-red-500" />
           <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Admin</span>
-          <span className="text-[#3a6a8a]">— full access, user management</span>
+          <span className="text-[#3a6a8a]">{ADMIN_LEGEND}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           <Wrench className="h-3.5 w-3.5 text-blue-500" />
           <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Operator</span>
-          <span className="text-[#3a6a8a]">— all except user management</span>
+          <span className="text-[#3a6a8a]">{OPERATOR_LEGEND}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           <Eye className="h-3.5 w-3.5 text-[#2a5a7a]" />
@@ -600,7 +609,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                       )}
                     </td>
                     <td className="px-5 py-3 text-[#2a5a7a] dark:text-gray-400">
-                      {formatDate(token.last_used_at)}
+                      {formatLastUsed(token.last_used_at)}
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">

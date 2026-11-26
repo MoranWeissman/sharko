@@ -85,8 +85,6 @@ func v3ValuesSurfaces() []struct {
 	}{
 		{"SetAddonValues", http.MethodPut, "/api/v1/addons/cert-manager/values", `{"values":"replicas: 1\n"}`},
 		{"SetClusterAddonValues", http.MethodPut, "/api/v1/clusters/prod-eu/addons/cert-manager/values", `{"values":"replicas: 1\n"}`},
-		{"GetAddonValuesSchema", http.MethodGet, "/api/v1/addons/cert-manager/values-schema", ""},
-		{"GetClusterAddonValues", http.MethodGet, "/api/v1/clusters/prod-eu/addons/cert-manager/values", ""},
 		{"GetAddonValuesRecentPRs", http.MethodGet, "/api/v1/addons/cert-manager/values/recent-prs", ""},
 		{"GetClusterAddonValuesRecentPRs", http.MethodGet, "/api/v1/clusters/prod-eu/addons/cert-manager/values/recent-prs", ""},
 		{"PreviewMergeAddonValues", http.MethodPost, "/api/v1/addons/cert-manager/values/preview-merge", `{}`},
@@ -126,6 +124,18 @@ func TestV3ValuesSurfaces_RefuseOnV4Repo(t *testing.T) {
 			if msg != V4EditorUnsupportedMessage {
 				t.Errorf("error = %q, want the shared plain-words message", msg)
 			}
+			// The sentence is pinned word for word, and the old wording
+			// ("ships next wave", "doesn't support the v4 layout yet") is
+			// banned: a user reads this on the screen.
+			const want = "Editing values here is not in this version. Change the values file in your Git repo instead: values/global/<add-on>.yaml for every cluster, or values/clusters/<cluster>/<add-on>.yaml for one cluster."
+			if msg != want {
+				t.Errorf("error = %q, want exactly %q", msg, want)
+			}
+			for _, banned := range []string{"next wave", "v4 layout yet", "sharko validate checks them", "doesn't support"} {
+				if strings.Contains(msg, banned) {
+					t.Errorf("error still carries the old wording %q: %q", banned, msg)
+				}
+			}
 			if len(gp.writes) != 0 {
 				t.Errorf("the refusal still wrote to git: %v", gp.writes)
 			}
@@ -149,7 +159,7 @@ func TestV3ValuesSurfaces_UnchangedOnV3Repo(t *testing.T) {
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
 
-			if strings.Contains(w.Body.String(), "v4 layout") {
+			if strings.Contains(w.Body.String(), "Editing values here is not in this version") {
 				t.Fatalf("the v4 gate fired on a v3 repo: %d %s", w.Code, w.Body.String())
 			}
 		})

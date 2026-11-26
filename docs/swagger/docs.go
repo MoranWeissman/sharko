@@ -219,7 +219,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upgrades multiple addons in a single atomic GitOps commit",
+                "description": "Upgrades several addons for all clusters in one pull request. Each addon is upgraded the same way POST /addons/{name}/upgrade does it for all clusters. Every version must exist in its chart repository; one that is not there refuses the whole request before any pull request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -244,14 +244,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Batch upgrade result",
+                        "description": "Batch upgrade pull request opened",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request: an empty list, a version the chart repository does not have (code version_not_found), or nothing to change",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -264,15 +263,22 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "An addon is not in the catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "409": {
-                        "description": "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead",
+                        "description": "The repo carries two layouts at once and has to be cleaned up first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "502": {
-                        "description": "Gateway error",
+                        "description": "Sharko could not reach the Git host or the chart repository",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -626,7 +632,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Upgrades an addon to a new version globally or for a specific cluster",
+                "description": "Upgrades an addon to a new version, for all clusters or for one cluster, in one pull request. For all clusters (no \"cluster\" in the body): sets the addon's version in the catalog, removes the addon's own version pin from every cluster that has it switched on (a cluster already on a newer version is left as it is and named in warnings), and moves the settings in the addon's generated global values file that are still the old chart's defaults to the new chart's defaults (a setting somebody changed is never touched). For one cluster: sets that cluster's own version pin. The version must exist in the addon's chart repository; a version that is not there is refused before any pull request (400, code version_not_found). Send dry_run=true to get the exact files and diffs without opening a pull request.",
                 "consumes": [
                     "application/json"
                 ],
@@ -646,7 +652,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Upgrade request with version and optional cluster",
+                        "description": "Upgrade request: version (required), cluster (optional, one cluster only), dry_run (optional), auto_merge (optional)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -658,14 +664,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Upgrade result",
+                        "description": "Upgrade pull request opened (or the dry-run preview). warnings lists anything the upgrade left on the old chart's values.",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request: no version, a version the chart repository does not have (code version_not_found), nothing to change (code nothing_to_change), or the addon is not switched on on that cluster",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -678,15 +683,22 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "404": {
+                        "description": "The addon is not in the catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "409": {
-                        "description": "The connected repo uses the v4 format — use POST /addons/{name}/upgrade-clusters instead",
+                        "description": "The repo carries two layouts at once and has to be cleaned up first",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
                     "502": {
-                        "description": "Gateway error",
+                        "description": "Sharko could not reach the Git host or the chart repository (code chart_repo_unreadable)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -739,7 +751,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request or missing confirmation",
+                        "description": "Bad request: missing confirmation, a version the chart repository does not have (code version_not_found), nothing to change (code nothing_to_change), a cluster with no assignment file, or the addon not switched on on a chosen cluster",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -767,7 +779,7 @@ const docTemplate = `{
                         }
                     },
                     "502": {
-                        "description": "Gateway error — including a cluster missing its assignment file, or the addon not enabled on a selected cluster",
+                        "description": "Sharko could not reach the Git host or the chart repository (code chart_repo_unreadable)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -912,7 +924,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the addon's current global values YAML and an optional JSON Schema (read from ` + "`" + `\u003caddon\u003e.schema.json` + "`" + ` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode.",
+                "description": "Returns the addon's current global values YAML and an optional JSON Schema (read from ` + "`" + `\u003caddon\u003e.schema.json` + "`" + ` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode. On a v4 repo it returns the real values/global/\u003caddon\u003e.yaml as it is in Git, with ` + "`" + `read_only: true` + "`" + ` and ` + "`" + `values_file` + "`" + ` set: Sharko does not edit values there yet.",
                 "produces": [
                     "application/json"
                 ],
@@ -939,13 +951,6 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "This editor reads a v3-layout values path; the connected repo uses the v4 layout",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1479,7 +1484,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tests the currently active AI provider by sending a simple prompt",
+                "description": "Tests the currently active AI provider by sending a simple prompt (admin only)",
                 "produces": [
                     "application/json"
                 ],
@@ -1490,6 +1495,20 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "Test result with status and response",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1519,7 +1538,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tests an AI provider configuration without saving it",
+                "description": "Tests an AI provider configuration without saving it (admin only). A part that is left out is taken from the saved configuration when the provider is the one in use, so \"change only the model\" can be tested without typing the key again. The answer of the provider is never passed on word for word.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1551,6 +1570,20 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1974,6 +2007,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Every addon was already in the catalog as asked: nothing written, no pull request (already_in_catalog and message are set)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddToCatalogResult"
+                        }
+                    },
                     "201": {
                         "description": "Pull request opened",
                         "schema": {
@@ -2787,7 +2826,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. ` + "`" + `current_overrides` + "`" + ` is empty when no overrides are configured for this addon yet.",
+                "description": "Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. ` + "`" + `current_overrides` + "`" + ` is empty when no overrides are configured for this addon yet. On a v4 repo it returns the real values/clusters/\u003ccluster\u003e/\u003caddon\u003e.yaml as it is in Git, with ` + "`" + `read_only: true` + "`" + `, ` + "`" + `values_file` + "`" + ` set and ` + "`" + `wrapped_under_addon_name` + "`" + ` true when the file is wrapped under the add-on name (Helm ignores a wrapped file).",
                 "produces": [
                     "application/json"
                 ],
@@ -2821,13 +2860,6 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "This editor reads a v3-layout values path; the connected repo uses the v4 layout",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -8305,7 +8337,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns whether Sharko re-applies the labels Git declares to drifted Sharko-managed clusters (V3 G3, default false — drift is recorded only)",
+                "description": "Returns the managed-cluster self-heal setting (default false). On a repo in the v4 layout this setting does not matter for add-on labels: Sharko always puts them back on its own, because Git is the record of what runs where. Taking an add-on label off by hand uninstalls the add-on until Sharko puts the label back. On an older layout, false means drift is only reported and true means Sharko puts the labels back.",
                 "produces": [
                     "application/json"
                 ],
@@ -8335,7 +8367,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets whether Sharko re-applies the labels Git declares to drifted Sharko-managed clusters (V3 G3). Admin only.",
+                "description": "Sets the managed-cluster self-heal setting. It never turns off the always-on put-back of add-on labels on a repo in the v4 layout; it only decides whether Sharko also puts labels back on an older layout. Admin only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8693,7 +8725,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Permanently revokes an API token by name. The token stops working immediately — there is no grace period.",
+                "description": "Permanently revokes an API token by name. The token stops working immediately — there is no grace period. An operator may revoke tokens they own; revoking anyone else's token requires an admin.",
                 "produces": [
                     "application/json"
                 ],
@@ -9822,6 +9854,13 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "auth_type": {
+                    "description": "AuthType says how the caller proved who they are. It is \"api_key\" when\nthe call was made with an API key: User is then the NAME OF THE KEY,\nnot a person. It is empty for a logged-in user and for Sharko's own\nbackground work. A key can never have the name of a user (the auth\nstore refuses both ways), and this mark is what lets a reader of the\nlog see at a glance that a row was a key.\n\nA string and not a bool on purpose: no field on Entry is a bool (see\nTestBreak_TheOldFlagCannotBeSetAtAll).",
+                    "type": "string",
+                    "enum": [
+                        "api_key"
+                    ]
+                },
                 "changes": {
                     "description": "Changes says whether this entry's operation ACTUALLY changed anything.\n\nWHY IT EXISTS (ruling f, 2026-08-19). The activity feed rendered\n\"\u003ctitle\u003e · \u003coutcome\u003e · No changes made\" with all three coming from\ndifferent places and nothing reconciling them — the third part was\ninvented in the browser from a static read-only flag in a title table,\nso it could never agree with reality. It said \"No changes made\" on\noperations that wrote, and stayed silent on the one case where it was\ntrue. A surface cannot render the truth it was never told, so the\ntruth now travels on the entry.\n\nWHY A STRING ENUM AND NOT A BOOL. A bool has no way to say \"this\nquestion does not apply\". A read-only check neither changed anything\nnor failed to change anything, and forcing it to answer false is\nexactly the lie being removed. A *bool could carry three states but\nnil is ambiguous between \"not applicable\" and \"nobody set it\", and a\npointer on a struct that is reflected over, serialized and stored is a\nfootgun for one bit of information. A string enum states the case\nplainly, serializes as itself, and can grow a value later without\nchanging the type.\n\nThe four cases:\n  \"\"                 unset — a writer that has not been updated, or a\n                     stored entry from before this field existed. The\n                     reader must render nothing, never \"no changes\".\n  ChangesNotApplicable  read-only. Nothing was going to change.\n  ChangesNone           an action ran and deliberately changed nothing.\n  ChangesApplied        something really changed.\n  ChangesMayBeApplied   an action stopped halfway with nothing rolled\n                     back, so changes may be out there and we cannot\n                     say for certain either way.\n\nAdd normalizes an unrecognized value to \"\" so an uninterpretable word\ncan never reach a reader; the writer-coverage test is what catches the\nwriter that produced it.\n\nThe swaggertype/enums tags are what put this field, and its three\nvalues, into the published OpenAPI spec. GET /audit used to declare\nmap[string]interface{}, so the field was real on the wire and invisible\nin the contract — a client author reading the spec had no way to learn\nit exists. TestAuditSwagger_ChangesFieldIsInTheSpec fails if that\nregresses.",
                     "type": "string",
@@ -9870,6 +9909,8 @@ const docTemplate = `{
                         "canceled",
                         "not_converged",
                         "upstream_failure",
+                        "rate_limited",
+                        "not_allowed",
                         "unspecified"
                     ]
                 },
@@ -11562,6 +11603,13 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "already_in_catalog": {
+                    "description": "AlreadyInCatalog names the addons that were already in catalog.yaml\nexactly as asked. When it is set nothing was written and no pull\nrequest was opened.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "branch": {
                     "type": "string"
                 },
@@ -11588,6 +11636,10 @@ const docTemplate = `{
                 },
                 "merged": {
                     "type": "boolean"
+                },
+                "message": {
+                    "description": "Message is a plain sentence for the caller when there is something to\nsay that the other fields do not (today: AlreadyInCatalog).",
+                    "type": "string"
                 },
                 "pr_id": {
                     "type": "integer"
@@ -11628,6 +11680,10 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult": {
             "type": "object",
             "properties": {
+                "already_done": {
+                    "description": "AlreadyDone is true when the cluster was already adopted, so nothing\nwas written and no pull request was opened.",
+                    "type": "boolean"
+                },
                 "blockers": {
                     "description": "Blockers lists every reason this cluster cannot be adopted yet.\nEmpty/omitted when nothing blocks it.",
                     "type": "array",
@@ -13661,6 +13717,10 @@ const docTemplate = `{
                 },
                 "current_provider": {
                     "type": "string"
+                },
+                "has_api_key": {
+                    "description": "HasAPIKey says whether a key is saved for the current provider. The\nkey itself is never sent back. The edit form uses this to say \"a key\nis saved, leave the field empty to keep it\".",
+                    "type": "boolean"
                 }
             }
         },
@@ -14741,7 +14801,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "managed_cluster_self_heal": {
-                    "description": "ManagedClusterSelfHeal is false (the default) when the reconciler\ndetects drift on Sharko-managed clusters but does NOT re-apply\ngit-desired labels (drift detection only, surfaces OutOfSync state).\nWhen set to true, the reconciler re-applies git-desired addon labels\nonto drifted managed-cluster Secrets every tick (enforcement-by-\nreconcile, same mechanism as the self-managed path).",
+                    "description": "ManagedClusterSelfHeal says whether Sharko puts back, on its own,\nlabels that someone changed by hand on a repo that is not in the v4\nlayout. It does NOT switch off the add-on labels of a repo in the v4\nlayout: those are always put back on its own, whatever\nthis says, because Git is the record of what runs where and the\nlabel is what installs an add-on. Taking an add-on label off by hand\ntherefore uninstalls the add-on until Sharko puts the label back\n(walk 2, finding 3: the setting and the docs said \"off\", Sharko put the\nlabel back anyway).",
                     "type": "boolean"
                 }
             }
@@ -14896,6 +14956,18 @@ const docTemplate = `{
         "internal_api.meResponse": {
             "type": "object",
             "properties": {
+                "api_key": {
+                    "description": "APIKey is true when the caller came in with an API key. Username is\nthen the name of the key, not a person.",
+                    "type": "boolean"
+                },
+                "auth_type": {
+                    "description": "AuthType is \"api_key\" or \"session\" (a login with user name and\npassword).",
+                    "type": "string",
+                    "enum": [
+                        "api_key",
+                        "session"
+                    ]
+                },
                 "has_github_token": {
                     "type": "boolean"
                 },

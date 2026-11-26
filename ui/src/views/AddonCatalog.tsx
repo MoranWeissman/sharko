@@ -1,3 +1,4 @@
+import { isValidNamespace, NAMESPACE_RULE_SENTENCE } from '@/lib/namespaceName'
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -36,11 +37,12 @@ import type {
   VersionMatrixResponse,
 } from '@/services/models'
 import { getCached, setCached } from '@/lib/viewCache'
+import { isBehindCatalog } from '@/lib/versionDrift'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import { RoleGuard } from '@/components/RoleGuard'
+import { RoleGuard, OPERATOR_AND_UP } from '@/components/RoleGuard'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
 import { VersionPicker } from '@/components/VersionPicker'
 import {
@@ -1143,7 +1145,11 @@ export function AddonCatalog() {
     [addonForm, addAddonEnableOnCluster],
   )
 
+  const addAddonNamespaceInvalid =
+    addonForm.namespace.trim().length > 0 && !isValidNamespace(addonForm.namespace.trim())
+
   const addAddonFormValid =
+    !addAddonNamespaceInvalid &&
     !!addonForm.name.trim() &&
     !!addonForm.chart.trim() &&
     !!addonForm.repo_url.trim() &&
@@ -1337,7 +1343,7 @@ export function AddonCatalog() {
   const behindCatalogAddonCount = useMemo(() => {
     if (!matrixData) return null
     return matrixData.addons.filter((row) =>
-      Object.values(row.cells || {}).some((cell) => cell?.drift_from_catalog),
+      Object.values(row.cells || {}).some((cell) => isBehindCatalog(cell)),
     ).length
   }, [matrixData])
 
@@ -1454,7 +1460,7 @@ export function AddonCatalog() {
             above does exactly the same thing, so the CTA was a redundant
             second door to the same place. "Add addon manually" stays as
             the secondary path for charts not in the Marketplace. */}
-        <RoleGuard adminOnly>
+        <RoleGuard roles={OPERATOR_AND_UP}>
           <button
             type="button"
             onClick={openAddAddon}
@@ -1537,8 +1543,14 @@ export function AddonCatalog() {
                     setAddonForm((prev) => ({ ...prev, namespace: e.target.value }))
                   }
                   placeholder="optional, defaults to addon name"
+                  aria-invalid={addAddonNamespaceInvalid || undefined}
                   className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                 />
+                {addAddonNamespaceInvalid && (
+                  <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    {NAMESPACE_RULE_SENTENCE}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -2038,7 +2050,7 @@ export function AddonCatalog() {
                   <Store className="h-4 w-4" />
                   Browse the Marketplace
                 </button>
-                <RoleGuard adminOnly>
+                <RoleGuard roles={OPERATOR_AND_UP}>
                   <button
                     type="button"
                     onClick={openAddAddon}

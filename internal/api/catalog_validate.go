@@ -140,7 +140,7 @@ func (s *Server) handleValidateCatalogChart(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	versions, err := catalogVersionsFetcher.ListVersions(ctx, normalisedRepo, chart)
+	versions, err := typedRepoFetcher.ListVersions(ctx, normalisedRepo, chart)
 	if err != nil {
 		writeJSON(w, http.StatusOK, classifyValidateError(err, normalisedRepo, chart))
 		return

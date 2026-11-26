@@ -69,6 +69,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/MoranWeissman/sharko/internal/credsafe"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
 // Reason is the category of an audit failure: what KIND of thing went wrong.
@@ -108,6 +109,14 @@ const (
 	// ReasonUpstream — the service Sharko depends on refused or failed the
 	// call, and none of the more specific answers fit.
 	ReasonUpstream Reason = "upstream_failure"
+	// ReasonRateLimited — a request limit was reached: Sharko's own limit on
+	// changes per minute, or the limit a service Sharko uses (GitHub) sets.
+	// Nothing was changed, and asking again a little later works.
+	ReasonRateLimited Reason = "rate_limited"
+	// ReasonNotAllowed — the person or key that asked is not allowed to do
+	// this. Different from ReasonPermission, where it is SHARKO that was
+	// refused by a service it called.
+	ReasonNotAllowed Reason = "not_allowed"
 	// ReasonUnspecified — a failure whose writer knows it failed and does not
 	// know what kind. This is the ONLY answer that tells a reader nothing, so
 	// reach for Classify(err) instead wherever there is an error to classify.
@@ -134,6 +143,8 @@ var safeSentences = map[Reason]string{
 	ReasonNotConverged: "Sharko wrote the change but the result still does not match what was asked for. " +
 		"The server log for this request id says what is still different.",
 	ReasonUpstream:    "The service this operation depends on refused or failed the call. The server log for this request id says which call.",
+	ReasonRateLimited: "A request limit was reached, either Sharko's own or the one set by a service Sharko uses, such as GitHub. Nothing was changed. Try again in a moment.",
+	ReasonNotAllowed:  "The person or key that asked is not allowed to do this, so nothing was changed.",
 	ReasonUnspecified: "This operation failed. The server log for this request id says what went wrong.",
 }
 
@@ -251,6 +262,12 @@ func Classify(err error) Reason {
 		return ReasonCanceled
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, os.ErrDeadlineExceeded):
 		return ReasonTimeout
+	}
+
+	// A request limit, before the Kubernetes helpers below: a limit is not a
+	// timeout, and it is the one failure where waiting a moment is the fix.
+	if gitprovider.IsRateLimited(err) {
+		return ReasonRateLimited
 	}
 
 	// Kubernetes API errors. These helpers walk the chain with errors.As and

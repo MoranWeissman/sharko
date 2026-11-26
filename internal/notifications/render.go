@@ -102,7 +102,7 @@ type Params struct {
 	// Cluster is the cluster's name, as managed-clusters.yaml spells it.
 	Cluster string
 	// Version is the version being announced: the newer one for an upgrade,
-	// the one actually running for a drift.
+	// the one Git asks for on that cluster for a drift.
 	Version string
 	// CatalogVersion is the version the catalog pins.
 	CatalogVersion string
@@ -238,7 +238,7 @@ func connectionTemplate(code Code, title string) messageTemplate {
 //	  detail "Major version change from <catalogVersion> — review for security patches"
 //	addon_version_drift
 //	  title  "Version drift: <addon> on <cluster>"
-//	  detail "Running <version>, catalog has <catalogVersion>"
+//	  detail "Set to <version>, catalog has <catalogVersion>"
 //
 // TestBoundary_TheThreeAddonMessagesAreExact pins those six sentences by their
 // literal text, and TestBoundary_TheThreeAddonMessagesStayDistinct proves a
@@ -286,7 +286,10 @@ var messageTemplates = map[Code]messageTemplate{
 		id:    func(p Params) string { return "drift-" + p.Addon + "-" + p.Cluster },
 		title: func(p Params) string { return "Version drift: " + p.Addon + " on " + p.Cluster },
 		detail: func(p Params, _ Reason) string {
-			return "Running " + p.Version + ", catalog has " + p.CatalogVersion
+			// "Set to", not "Running": the version here is the one Git
+			// asks for on that cluster. Sharko used to say "Running" for
+			// a version that was asked for and never ran.
+			return "Set to " + p.Version + ", catalog has " + p.CatalogVersion
 		},
 	},
 }

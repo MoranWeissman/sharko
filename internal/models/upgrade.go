@@ -23,7 +23,13 @@ type UpgradeCheckResponse struct {
 	Removed        []ValueDiffEntry     `json:"removed"`
 	Changed        []ValueDiffEntry     `json:"changed"`
 	Conflicts      []ConflictCheckEntry `json:"conflicts"`
-	ReleaseNotes   string               `json:"release_notes,omitempty"`
+	// FollowsDefault lists the settings in the addon's generated global
+	// values file that are still the old chart's defaults and that an
+	// upgrade for all clusters moves to the new chart's defaults. They are
+	// NOT conflicts: nobody changed them, and the upgrade keeps them in
+	// step with the chart.
+	FollowsDefault []ValueDiffEntry `json:"follows_default,omitempty"`
+	ReleaseNotes   string           `json:"release_notes,omitempty"`
 
 	// BaselineUnavailable is true when the current version is not available
 	// in the Helm repository and no suitable fallback was found.

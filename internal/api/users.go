@@ -77,16 +77,22 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The role the user really got. A request with no role makes a viewer,
+	// and the answer used to show the empty role that was sent.
+	role := req.Role
+	if created := s.authStore.GetUser(req.Username); created != nil {
+		role = created.Role
+	}
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "user_created",
 		Resource: fmt.Sprintf("user:%s", req.Username),
-		Detail:   fmt.Sprintf("role=%s", req.Role),
+		Detail:   fmt.Sprintf("role=%s", role),
 	})
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"username":      req.Username,
-		"role":          req.Role,
+		"role":          role,
 		"temp_password": tempPassword,
-		"message":       "User created. Share the temporary password — they must change it on first login.",
+		"message":       CreateUserMessage,
 	})
 }
 
@@ -126,21 +132,33 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default enabled to true if not specified
-	enabled := true
-	if req.Enabled != nil {
-		enabled = *req.Enabled
-	}
+	// A part that is left out is kept as it is saved. A request that only
+	// changes the role must never turn a disabled account back on (it used
+	// to: a missing "enabled" was read as true).
+	before := s.authStore.GetUser(username)
 
-	if err := s.authStore.UpdateUser(username, enabled, req.Role); err != nil {
+	if err := s.authStore.UpdateUserFields(username, req.Enabled, req.Role); err != nil {
 		writeError(w, userErrorStatus(err), err.Error())
 		return
 	}
 
 	user := s.authStore.GetUser(username)
+
+	// A changed role or a switched-off account ends every login of that
+	// user right away. They log in again and get the new role.
+	ended := 0
+	if before != nil && user != nil && (before.Role != user.Role || (before.Enabled && !user.Enabled)) {
+		ended = endSessionsForUser(username, "")
+	}
+
+	detail := ""
+	if user != nil {
+		detail = fmt.Sprintf("role=%s enabled=%t logins ended: %d", user.Role, user.Enabled, ended)
+	}
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "user_updated",
 		Resource: fmt.Sprintf("user:%s", username),
+		Detail:   detail,
 	})
 	writeJSON(w, http.StatusOK, user)
 }
@@ -171,15 +189,33 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authStore.DeleteUser(username); err != nil {
+		// The user may already be out of the user list (see DeleteUser), so
+		// their logins end even on this path.
+		if s.authStore.GetUser(username) == nil {
+			endSessionsForUser(username, "")
+		}
 		writeError(w, userErrorStatus(err), err.Error())
 		return
 	}
 
+	// A deleted user is cut off at once: every login ends, and every API
+	// key they created is revoked.
+	ended := endSessionsForUser(username, "")
+	revoked, revokeErr := s.authStore.RevokeTokensCreatedBy(username)
+
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "user_deleted",
 		Resource: fmt.Sprintf("user:%s", username),
+		Detail:   fmt.Sprintf("logins ended: %d, API keys revoked: %d", ended, len(revoked)),
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
+	if revokeErr != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf(UserDeletedKeysNotRevokedSentence, username))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":          "user deleted",
+		"revoked_api_keys": revoked,
+	})
 }
 
 // handleResetPassword godoc
@@ -197,7 +233,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{} "The new password could not be saved"
 // @Router /users/{username}/reset-password [post]
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
-	if !authz.RequireWithResponse(w, r, "user.change-role") {
+	if !authz.RequireWithResponse(w, r, "user.reset-password") {
 		return
 	}
 
@@ -214,9 +250,13 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The old password is gone, so every login made with it ends now.
+	ended := endSessionsForUser(username, "")
+
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "password_reset",
 		Resource: fmt.Sprintf("user:%s", username),
+		Detail:   fmt.Sprintf("logins ended: %d", ended),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{
 		"username":      username,
@@ -224,6 +264,14 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		"message":       "Password reset. Share the new temporary password.",
 	})
 }
+
+// UserDeletedKeysNotRevokedSentence is the answer when a user was deleted but
+// the API keys they created could not be revoked. The %q is the user name.
+const UserDeletedKeysNotRevokedSentence = "User %q was deleted, but the API keys they created could not be revoked. Revoke them in Settings, API Keys."
+
+// CreateUserMessage is the sentence the create-user answer carries. It used
+// to say "they must change it on first login", which Sharko does not enforce.
+const CreateUserMessage = "User created. Share the temporary password with them. They should change it after they log in, on the Account page."
 
 // userErrorStatus picks the status for an error from CreateUser,
 // UpdateUser, DeleteUser or ResetPassword: 400 when what the caller asked for

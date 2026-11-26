@@ -563,13 +563,19 @@ curl -s "${auth[@]}" -X POST "$SH/addons/keda/upgrade-clusters" \
   -d '{ "clusters": ["my-cluster"], "version": "2.18.0", "yes": true }' | jq
 ```
 
-!!! note "Older global-upgrade routes are v3-only"
-    `POST /addons/{name}/upgrade` and `POST /addons/upgrade-batch` (a
-    catalog-wide version bump, plus its multi-addon batch form) both write
-    the pre-v4 `addons-catalog.yaml` and refuse with 409 `repo_layout` on a
-    migrated repo. On v4 there is no fleet-wide version — each cluster pins
-    its own version (or follows the Catalog's default) via
-    `upgrade-clusters` above.
+To move the addon on **all** clusters instead, call `POST /addons/{name}/upgrade`. It
+changes the version in `catalog.yaml` in one pull request:
+
+```bash
+curl -s "${auth[@]}" -X POST "$SH/addons/keda/upgrade" \
+  -H "Content-Type: application/json" \
+  -d '{ "version": "2.18.0" }' | jq
+```
+
+Add `"cluster": "my-cluster"` to move one cluster only, and `"dry_run": true` to see the
+files without opening anything. `POST /addons/upgrade-batch` does the same for several
+addons at once. A version that is not in the chart repository is refused with 400 and
+the code `version_not_found` before any pull request opens.
 
 ---
 
@@ -579,57 +585,41 @@ Values are the Helm values YAML that configure an addon. There are two layers:
 the **global** defaults for an addon, and **per-cluster** overrides for one addon
 on one cluster. Both write through a PR.
 
-!!! note "Not yet on v4 repos"
-    The values-editor endpoints below all refuse with HTTP 409 on a
-    migrated (v4) repo today — "this editor doesn't support the v4 layout
-    yet". On a v4 repo, edit `values/global/<addon>.yaml` or
-    `values/clusters/<cluster>/<addon>.yaml` directly in Git instead (`sharko
-    validate-config` checks them before you commit), or set a per-cluster
-    override at enable time via the `values` field on
-    `POST /v4/clusters/{cluster}/addons/{addon}` (section 3 above). A
-    dedicated v4 values editor is planned, not shipped yet.
+!!! note "Read-only in this version"
+    On the current repo layout the two `GET` calls below return the real file
+    from Git, with `read_only: true`, `values_file` (the path) and
+    `file_exists`. The two `PUT` calls answer HTTP 409 with: "Editing values
+    here is not in this version. Change the values file in your Git repo
+    instead: values/global/<add-on>.yaml for every cluster, or
+    values/clusters/<cluster>/<add-on>.yaml for one cluster." Edit the file in
+    Git (`sharko validate-config` checks it before you commit), or give
+    per-cluster values when you turn the addon on, with the `values` field on
+    `POST /v4/clusters/{cluster}/addons/{addon}` (section 3 above).
 
 ### Get global addon values
 
-Returns the addon's current global values YAML (plus an optional JSON Schema the
-UI uses for form mode).
+Returns `values/global/<addon>.yaml` as it is in Git.
 
 ```bash
 curl -s "${auth[@]}" "$SH/addons/keda/values-schema" | jq
 ```
 
-### Set global addon values
+### Get per-cluster addon values
 
-Replaces the **full** global values file for an addon and opens a PR. The body is
-JSON with a `values` field whose string is the entire YAML file (not a diff), so
-the PR shows a clean before/after. Sharko validates that the YAML parses before
-committing.
-
-```bash
-curl -s "${auth[@]}" -X PUT "$SH/addons/keda/values" \
-  -H "Content-Type: application/json" \
-  -d '{ "values": "keda:\n  resources:\n    limits:\n      memory: 256Mi\n" }' | jq
-```
-
-There's also a `"refresh_from_upstream": true` mode that regenerates the file
-from the chart's upstream `values.yaml` at the pinned version, ignoring any
-`values` you send — see swagger for that flow.
-
-### Get per-cluster addon overrides
-
-Returns the YAML for one addon's section in one cluster's overrides file.
-`current_overrides` is empty when no overrides exist yet.
+Returns `values/clusters/<cluster>/<addon>.yaml` as it is in Git. `file_exists`
+is false when the file is not there yet. `wrapped_under_addon_name` is true
+when every setting in the file sits inside a block named after the addon; Helm
+ignores such a file, so move the settings out of that block.
 
 ```bash
 curl -s "${auth[@]}" "$SH/clusters/my-cluster/addons/keda/values" | jq
 ```
 
-### Set per-cluster addon overrides
+### Set values (older repo layout only)
 
-Replaces the overrides for one addon on one cluster and opens a PR. Here the
-`values` field is **only that addon's section** (not the whole file) — Sharko
-merges it into the cluster's overrides file, leaving other addons untouched. Send
-an empty `values` string to remove this addon's overrides entirely.
+`PUT /addons/{name}/values` and `PUT /clusters/{cluster}/addons/{name}/values`
+replace a values file through a pull request on a repo that has not moved to
+the current layout. The body is JSON with a `values` field that holds the YAML:
 
 ```bash
 curl -s "${auth[@]}" -X PUT "$SH/clusters/my-cluster/addons/keda/values" \
@@ -637,7 +627,7 @@ curl -s "${auth[@]}" -X PUT "$SH/clusters/my-cluster/addons/keda/values" \
   -d '{ "values": "replicaCount: 2\n" }' | jq
 ```
 
-A request naming an addon not in your catalog comes back as 422.
+On the current layout this answers 409 with the sentence above.
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -112,17 +113,75 @@ func (s *Server) handleAuditStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
+	// The login or key is checked when the stream opens (the auth
+	// middleware) AND again for as long as it stays open. Without the second
+	// part a user who was logged out, disabled or deleted went on getting
+	// every new audit row on a stream opened earlier, and the stream also
+	// outlived the 24 hour login limit.
+	stillAllowed := s.auditStreamCallerCheck(r)
+
 	ch, unsub := s.auditLog.Subscribe()
 	defer unsub()
+
+	recheck := time.NewTicker(auditStreamRecheckEvery)
+	defer recheck.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-recheck.C:
+			// Also close a quiet stream, not only one that has rows to send.
+			if !stillAllowed() {
+				return
+			}
 		case entry := <-ch:
+			// Checked before EVERY row, so not one row goes to a caller who
+			// is no longer allowed.
+			if !stillAllowed() {
+				return
+			}
 			data, _ := json.Marshal(entry)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
+	}
+}
+
+// auditStreamRecheckEvery is how often an open audit stream with nothing to
+// send checks that its caller is still allowed. A var so a test can shorten it.
+var auditStreamRecheckEvery = 15 * time.Second
+
+// auditStreamCallerCheck returns the check an open audit stream runs before
+// each row and on a timer: is the login or key this stream was opened with
+// still good, and is its user still enabled.
+//
+// It reads the credential the same way the auth middleware does for this
+// route: the Authorization header, or the ?token= the browser's EventSource
+// sends because it cannot set a header.
+func (s *Server) auditStreamCallerCheck(r *http.Request) func() bool {
+	// Same test-only case as the auth middleware: no users, auth off.
+	if s.authDisabledForTests && !s.authStore.HasUsers() {
+		return func() bool { return true }
+	}
+	token := bearerToken(r)
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
+	if strings.HasPrefix(token, "sharko_") {
+		stillGood, err := s.authStore.WatchToken(token)
+		if err != nil {
+			return func() bool { return false }
+		}
+		return stillGood
+	}
+	return func() bool {
+		// isValidSession covers log out, the ended logins of a disabled,
+		// deleted or re-roled user, and the login running out.
+		if token == "" || !isValidSession(token) {
+			return false
+		}
+		user := s.authStore.GetUser(getSessionUser(token))
+		return user != nil && user.Enabled
 	}
 }

@@ -47,7 +47,7 @@ Every addon name in the Issues and Progressing widgets is a link to
 Cluster Detail page, scrolls to the addon's row, and briefly highlights it. From
 there you can:
 
-* Open the values editor.
+* Look at the addon's values (read-only; you change them in Git).
 * Open the AI assistant scoped to that addon.
 * Jump to the upstream ArgoCD application page.
 
@@ -88,8 +88,8 @@ the page that owns the action:
   scrolled to that addon's row, with the deep-link highlight applied.
 * Open **Addons** in the left rail to discover new addons via the
   [Marketplace](marketplace.md), edit the catalog directly via
-  [Managing Addons](addons.md), or open a chart's Values editor via
-  [Editing Values](values-editing.md).
+  [Managing Addons](addons.md), or look at a chart's values via
+  [Viewing and Changing Values](values-editing.md).
 * Open a cluster card → cluster detail page, where per-cluster overrides and
   ArgoCD sync controls live.
 

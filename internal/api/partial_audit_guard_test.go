@@ -321,6 +321,12 @@ type auditResultSite struct {
 // audit.Entry must appear here. A missing entry fails by name; a stale entry
 // fails by name too, so this cannot rot into a decoration.
 var auditResultWriters = map[string]auditResultSite{
+	"handleTestAIConfig": {
+		file: "ai_config.go",
+		how: "SINGLE DEFINITE OUTCOME, read-only. One test call to one AI provider: it answered " +
+			"or it did not, and the handler answers 200 either way, so the status cannot say " +
+			"which. No item list, so no partial to fold.",
+	},
 	"handleBatchRegisterClusters": {
 		file: "clusters_batch.go",
 		how:  "FAN-OUT. Result comes from batchAuditOutcome → fanoutAuditOutcome. Driven by Layer 1.",

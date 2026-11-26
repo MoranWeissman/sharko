@@ -89,6 +89,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(() => {
+    // Tell the server first, so the login really ends there. Log out used
+    // to only forget the token in this browser: a copy of the token went on
+    // working for up to 24 hours. The call is not waited for and a failure
+    // changes nothing here: the browser forgets the token either way.
+    const current = getSession().token
+    if (current) {
+      void fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${current}` },
+        keepalive: true,
+      }).catch(() => {})
+    }
     clearSession()
     setSessionState(EMPTY_SESSION)
     // Clear the wizard-dismiss flag so the next login starts with a clean

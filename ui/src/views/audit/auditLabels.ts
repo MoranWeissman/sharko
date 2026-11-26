@@ -82,6 +82,8 @@ export const EVENT_LABELS: Record<string, string> = {
   // --- AI ---
   ai_config_updated: 'updated the AI configuration',
   ai_tested: 'tested the AI provider',
+  ai_config_tested: 'tested AI settings before saving',
+  ai_chat_message: 'sent a message to the AI assistant',
   ai_chat_reset: 'reset an AI chat',
   ai_annotate_run: 'ran an AI annotation',
   ai_annotate_blocked: 'was blocked from an AI annotation',

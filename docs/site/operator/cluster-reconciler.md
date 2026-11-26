@@ -176,7 +176,7 @@ Sharko keeps this only in memory. It is never written to Git, and it is
 lost when Sharko restarts. The next check, at most 30 seconds later, fills
 it in again. The field is empty when Sharko has not checked this cluster
 yet since it started, or when the registration pull request has not merged
-yet. In the UI it is the **Last sync** line in the **Managed cluster
+yet. In the UI it is the **Last checked** field in the **Managed cluster
 secret** panel on the cluster page.
 
 ### When addon labels differ from Git

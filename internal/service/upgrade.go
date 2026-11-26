@@ -370,6 +370,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 
 	// Check for conflicts with global values (skip if baseline unavailable).
 	var allConflicts []models.ConflictCheckEntry
+	var followsDefault []models.ValueDiffEntry
 
 	if !baselineUnavailable {
 		globalValuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
@@ -383,11 +384,30 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 		if globalErr != nil {
 			log.Warn("could not fetch global values", "addon", addonName, "error", globalErr)
 		} else {
+			// A file Sharko generated holds a copy of the old chart's
+			// defaults. The settings nobody changed move to the new
+			// chart's defaults with an all-clusters upgrade
+			// (orchestrator/values_follow_defaults.go), so they are not
+			// conflicts and are listed apart. Before this the screen showed
+			// a red "Conflicts Found" for the chart's own image tag.
+			followPaths := map[string]bool{}
+			if addon.IsV4 && orchestrator.ParseSmartValuesHeader(globalData).Managed {
+				moved, _ := orchestrator.PreviewFollowDefaults(globalData, []byte(oldValues), []byte(newValues))
+				for _, m := range moved {
+					followPaths[m.Path] = true
+					followsDefault = append(followsDefault, models.ValueDiffEntry{
+						Path: m.Path, Type: string(helm.DiffChanged), OldValue: m.Old, NewValue: m.New,
+					})
+				}
+			}
 			conflicts, conflictErr := helm.FindConflicts(string(globalData), oldValues, newValues)
 			if conflictErr != nil {
 				log.Warn("conflict check failed for global values", "error", conflictErr)
 			} else {
 				for _, c := range conflicts {
+					if followPaths[c.Path] {
+						continue
+					}
 					allConflicts = append(allConflicts, models.ConflictCheckEntry{
 						Path:            c.Path,
 						ConfiguredValue: c.ConfiguredValue,
@@ -421,6 +441,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 		Removed:             removedEntries,
 		Changed:             changedEntries,
 		Conflicts:           allConflicts,
+		FollowsDefault:      followsDefault,
 		ReleaseNotes:        releaseNotes,
 		BaselineUnavailable: baselineUnavailable,
 		BaselineNote:        baselineNote,
@@ -698,6 +719,21 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 	}
 
 	return rec, nil
+}
+
+// versionIsNewer reports whether version a is clearly newer than b. Two
+// versions Sharko cannot read as numbers are never "newer". A pre-release
+// ("3.0.0-beta.6") is not newer than the same numbers without the suffix.
+func versionIsNewer(a, b string) bool {
+	pa, okA := parseSemver(a)
+	pb, okB := parseSemver(b)
+	if !okA || !okB {
+		return false
+	}
+	if pa.major == pb.major && pa.minor == pb.minor && pa.patch == pb.patch {
+		return pa.pre == "" && pb.pre != ""
+	}
+	return semverGreater(pa, pb)
 }
 
 // semverGreater returns true when a > b in semver order. Prerelease tags

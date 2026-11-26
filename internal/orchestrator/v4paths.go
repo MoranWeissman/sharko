@@ -138,6 +138,12 @@ func V4GlobalValuesPath(addonName string) (string, error) {
 	return v4GlobalValuesPath(addonName)
 }
 
+// V4ClusterValuesPath is the exported form of v4ClusterValuesPath, for the
+// API-layer read of one per-cluster values file. Same validation, same error.
+func V4ClusterValuesPath(clusterName, addonName string) (string, error) {
+	return v4ClusterValuesPath(clusterName, addonName)
+}
+
 // ChartValuesFetchResult is what a ChartValuesFetcherFn returns: the
 // upstream chart values.yaml bytes, plus whatever AI annotation the
 // caller's wiring already ran on them. AddToCatalog itself makes no AI

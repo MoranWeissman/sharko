@@ -125,6 +125,7 @@ func (o *Orchestrator) EditCatalogEntry(ctx context.Context, req EditCatalogEntr
 		return nil, fmt.Errorf("%w: %s is not in your catalog — add it first", ErrV4AddonNotInCatalog, req.Name)
 	}
 
+	before := entry
 	if req.RepoURL != nil {
 		entry.RepoURL = *req.RepoURL
 	}
@@ -160,6 +161,15 @@ func (o *Orchestrator) EditCatalogEntry(ctx context.Context, req EditCatalogEntr
 	}
 	spec.Addons[req.Name] = entry
 
+	// A changed version (or a changed chart address, which changes what the
+	// version means) has to exist before the pull request opens
+	// (chart_version_check.go).
+	if entry.Version != before.Version || entry.RepoURL != before.RepoURL || entry.Chart != before.Chart {
+		if err := o.checkChartVersion(ctx, req.Name, entry.RepoURL, entry.Chart, entry.Version); err != nil {
+			return nil, err
+		}
+	}
+
 	catalogBody, reformatted, err := writeCatalogFile(
 		existingCatalog, spec,
 		map[string]config.AddonCatalogEntry{req.Name: entry},
@@ -174,17 +184,36 @@ func (o *Orchestrator) EditCatalogEntry(ctx context.Context, req EditCatalogEntr
 		warnings = append(warnings, CatalogRewriteNote)
 	}
 
+	// A changed version moves the chart for every cluster, exactly like an
+	// upgrade. So the global values file follows the new chart's defaults in
+	// the same pull request, the way the upgrade does it. Without this the
+	// chart moved and the old image tag Sharko had copied into that file kept
+	// the old image running, with nothing said.
+	var valuesMove valuesVersionMove
+	if entry.Version != before.Version && entry.RepoURL == before.RepoURL && entry.Chart == before.Chart {
+		valuesMove = o.globalValuesAfterVersionMove(ctx, req.Name, entry, before.Version, entry.Version)
+		warnings = append(warnings, valuesMove.warnings...)
+	}
+
 	title := fmt.Sprintf("Edit %s in the catalog", req.Name)
 
 	if req.DryRun {
+		previews := []FilePreview{{
+			Path:   config.AddonCatalogPath,
+			Action: "update",
+			Diff:   o.buildFileDiff(config.AddonCatalogPath, existingCatalog, catalogBody, "update"),
+		}}
+		if valuesMove.changed {
+			previews = append(previews, FilePreview{
+				Path:   valuesMove.path,
+				Action: "update",
+				Diff:   o.buildFileDiff(valuesMove.path, valuesMove.original, valuesMove.updated, "update"),
+			})
+		}
 		return &GitResult{
 			DryRun: &DryRunResult{
 				EffectiveAddons: []string{req.Name},
-				FilesToWrite: []FilePreview{{
-					Path:   config.AddonCatalogPath,
-					Action: "update",
-					Diff:   o.buildFileDiff(config.AddonCatalogPath, existingCatalog, catalogBody, "update"),
-				}},
+				FilesToWrite:    previews,
 				PRTitle:         o.gitops.CommitPrefix + " " + title,
 				SecretsToCreate: []string{},
 			},
@@ -193,6 +222,9 @@ func (o *Orchestrator) EditCatalogEntry(ctx context.Context, req EditCatalogEntr
 	}
 
 	files := map[string][]byte{config.AddonCatalogPath: catalogBody}
+	if valuesMove.changed {
+		files[valuesMove.path] = valuesMove.updated
+	}
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, strings.ToLower(title),
 		o.prMeta(req.AutoMerge, OpCodeCatalogEdit, title, "", req.Name))
 	if err != nil {

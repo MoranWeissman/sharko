@@ -140,7 +140,7 @@ func (o *Orchestrator) updateClusterAddonsV4(ctx context.Context, name string, a
 	// cluster reconciler applies the resulting addon labels to the ArgoCD
 	// cluster Secret from git once this merges.
 	gitResult, gitErr := o.commitChangesWithMeta(ctx, map[string][]byte{clusterPath: updated}, nil,
-		fmt.Sprintf("update addons for cluster %s (v4)", name),
+		fmt.Sprintf("update addons for cluster %s", name),
 		o.prMeta(autoMergeOverride, "update-cluster", fmt.Sprintf("Update addons for cluster %s", name), name, ""))
 	if gitErr != nil {
 		if gitResult != nil {

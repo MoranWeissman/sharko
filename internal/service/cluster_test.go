@@ -1275,3 +1275,49 @@ func TestClusterService_GetClusterValues_V3AndV4(t *testing.T) {
 		}
 	})
 }
+
+// Walk 2, finding 10: GET /clusters said "managed": true for a cluster and
+// GET /clusters/{name} said false for the same cluster. A cluster that is in
+// the registry file is managed, whichever call asks.
+func TestClusterService_DetailAndComparison_SayManagedForAClusterInTheRegistry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/clusters") {
+			_, _ = w.Write([]byte(`{"items":[{"name":"prod-eks","server":"https://EXAMPLE.eks.amazonaws.com","info":{"connectionState":{"status":"Successful"}}}]}`))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/applications") {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewClusterService("")
+	gp := &fakeGP{files: map[string][]byte{
+		"configuration/managed-clusters.yaml": []byte("clusters:\n  - name: prod-eks\n    labels: {}\n"),
+		"configuration/addons-catalog.yaml":   []byte("applicationsets: []"),
+	}}
+
+	list, err := svc.ListClusters(context.Background(), gp, ac)
+	if err != nil || len(list.Clusters) != 1 {
+		t.Fatalf("list failed: %v", err)
+	}
+	if !list.Clusters[0].Managed {
+		t.Fatal("the list does not say managed: true, so this test proves nothing")
+	}
+	detail, err := svc.GetClusterDetail(context.Background(), "prod-eks", gp, ac)
+	if err != nil || detail == nil {
+		t.Fatalf("detail failed: %v", err)
+	}
+	if !detail.Cluster.Managed {
+		t.Error("detail says managed: false for a cluster the list calls managed")
+	}
+	cmp, err := svc.GetClusterComparison(context.Background(), "prod-eks", gp, ac)
+	if err != nil || cmp == nil {
+		t.Fatalf("comparison failed: %v", err)
+	}
+	if !cmp.Cluster.Managed {
+		t.Error("comparison says managed: false for a cluster the list calls managed")
+	}
+}

@@ -7,7 +7,7 @@ Sharko surfaces important events through the notification bell in the top-right 
 | Type | Trigger |
 |------|---------|
 | **Upgrade available** | A newer version of a catalog addon is detected |
-| **Drift detected** | A cluster is running a different addon version than the catalog target |
+| **Drift detected** | A cluster is set to a different addon version than the catalog. The note reads "Set to <version>, catalog has <catalog version>" |
 | **Cluster disconnected** | A cluster is unreachable or its ArgoCD application is in an error state |
 | **Sync failed** | An ArgoCD application failed to sync |
 
@@ -27,18 +27,17 @@ When a newer version of an addon is available (based on Helm chart version check
 
 - Current version in the catalog
 - Latest available version
+
+A pre-release (a beta or a release candidate) is never announced as an upgrade or as a major update. Notes that stop being true go away at the next check.
 - Number of clusters that would be affected by an upgrade
 
 Click the alert to jump to the upgrade workflow. See [Upgrades](upgrades.md) for step-by-step instructions.
 
 ## Drift Alerts
 
-Drift alerts are raised when the version running on a cluster diverges from the catalog target. This can happen when:
+Drift alerts are raised when the version Git asks for on a cluster differs from the catalog version. This happens when a cluster has its own version for an addon, for example after an upgrade of chosen clusters only.
 
-- A per-cluster override was applied and then superseded by a global upgrade
-- A cluster was added after a global upgrade and inherited a stale version
-
-The alert shows which clusters are drifted and by how much. Click **Resolve** to trigger the upgrade workflow for only the drifted clusters.
+The alert names the cluster and both versions. To bring the cluster in line, upgrade the addon for all clusters, or for that cluster, on the addon's **Upgrade** tab. See [Upgrades](upgrades.md).
 
 ## Dismissing Notifications
 

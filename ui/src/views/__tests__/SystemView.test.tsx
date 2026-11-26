@@ -837,3 +837,40 @@ describe('SystemView — home-cluster identity card (WQ-3)', () => {
     expect(label.nextSibling?.textContent).toBe('—')
   })
 })
+
+// Walk 6: with GitHub's request limit used up the System page said "No
+// clusters yet" (there were three) and "network, TLS, or auth problem".
+describe('SystemView — when reads are turned away', () => {
+  it('a cluster list that cannot be read says "not checked just now", never "No clusters yet"', async () => {
+    mockAll()
+    mockedApi.getClusters.mockRejectedValue(
+      Object.assign(new Error('Too Many Requests'), { status: 429, code: 'upstream_rate_limit' }),
+    )
+    renderPage()
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(screen.getAllByText('Not checked just now')).toHaveLength(2)
+    expect(
+      screen.getAllByText('GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment.').length,
+    ).toBe(2)
+    expect(screen.queryByText('No clusters yet')).not.toBeInTheDocument()
+  })
+
+  it('an unreadable cluster list with no known reason says so plainly', async () => {
+    mockAll()
+    mockedApi.getClusters.mockRejectedValue(new Error('boom'))
+    renderPage()
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(screen.getAllByText('Sharko could not read the cluster list just now. Try again in a moment.')).toHaveLength(2)
+    expect(screen.queryByText('No clusters yet')).not.toBeInTheDocument()
+  })
+
+  it('a Git host request limit is not called a network, TLS or auth problem', async () => {
+    mockAll({ repo: { initialized: false, bootstrap_synced: false, reason: 'git_rate_limited' } })
+    renderPage()
+    await waitFor(() => expect(screen.getByText('System')).toBeInTheDocument())
+    expect(
+      screen.getAllByText("Can't check right now: the Git host says Sharko has asked too often. Nothing is broken. Try again in a moment.").length,
+    ).toBe(2)
+    expect(screen.queryByText(/network, TLS, or auth problem/)).not.toBeInTheDocument()
+  })
+})

@@ -266,6 +266,7 @@ func TestNotifications_CannotWriteToTheAuditLog(t *testing.T) {
 		"ReasonCredentials": true, "ReasonSecretValue": true, "ReasonNotFound": true,
 		"ReasonPermission": true, "ReasonUnreachable": true, "ReasonTLS": true,
 		"ReasonTimeout": true, "ReasonCanceled": true, "ReasonUpstream": true,
+		"ReasonRateLimited": true,
 	}
 
 	swept := 0

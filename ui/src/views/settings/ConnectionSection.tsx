@@ -18,6 +18,7 @@ import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { apiFailureSentence } from '@/lib/apiFailure'
 import { ErrorDetail } from '@/components/ErrorDetail'
 import { ARGOCD_TOKEN_HELP, ARGOCD_TOKEN_HELP_URL } from '@/components/argocdTokenHelp'
 
@@ -39,14 +40,24 @@ interface TestStatus {
   argocdAuth?: string
 }
 
+// 'unchecked' = the check was refused (the role may not run it) or turned away
+// by a request limit. It is not a result: the mark stays grey and a sentence
+// says why, so a healthy connection never shows a red cross.
 interface LiveStatus {
-  git: 'idle' | 'testing' | 'ok' | 'error'
-  argocd: 'idle' | 'testing' | 'ok' | 'error'
+  git: 'idle' | 'testing' | 'ok' | 'error' | 'unchecked'
+  argocd: 'idle' | 'testing' | 'ok' | 'error' | 'unchecked'
 }
 
 const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
 const inputCls =
   'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
+
+/** Settings, Connection: the Git host is limiting Sharko, so the repo was not looked at. */
+export const REPO_NOT_CHECKED_GIT_LIMIT =
+  'Sharko could not check the repository just now, because GitHub, or the Git host you use, says Sharko has asked too often. Nothing in Settings needs changing. It clears by itself.'
+/** Settings, Connection: the repo could not be read, so Sharko does not know if it is set up. */
+export const REPO_NOT_CHECKED =
+  'Sharko could not read the Git repository just now, so it does not know whether the repository is set up.'
 
 export function ConnectionSection() {
   const { connections, loading, error, refreshConnections } = useConnections()
@@ -72,6 +83,7 @@ export function ConnectionSection() {
   const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({ git: 'idle', argocd: 'idle' })
   const [justSaved, setJustSaved] = useState(false)
+  const [liveNote, setLiveNote] = useState<string | null>(null)
 
   const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; reason?: string } | null>(null)
   const [initState, setInitState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
@@ -109,6 +121,7 @@ export function ConnectionSection() {
 
   const fetchLiveStatus = useCallback(() => {
     setLiveStatus({ git: 'testing', argocd: 'testing' })
+    setLiveNote(null)
     api
       .testConnection()
       .then((res) => {
@@ -117,7 +130,15 @@ export function ConnectionSection() {
           argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
         })
       })
-      .catch(() => setLiveStatus({ git: 'error', argocd: 'error' }))
+      .catch((err: unknown) => {
+        const refused = apiFailureSentence(err)
+        if (refused) {
+          setLiveStatus({ git: 'unchecked', argocd: 'unchecked' })
+          setLiveNote(refused)
+          return
+        }
+        setLiveStatus({ git: 'error', argocd: 'error' })
+      })
   }, [])
 
   const fetchRepoStatus = useCallback(() => {
@@ -243,10 +264,34 @@ export function ConnectionSection() {
   if (loading) return <LoadingState message="Loading connection..." />
   if (error) return <ErrorState message={error} onRetry={refreshConnections} />
 
+  // "Not initialized" is only true when the server read the repo and found
+  // no Sharko files in it (reason not_bootstrapped). Every other
+  // not-initialized answer means Sharko could not look. An answer with no
+  // reason at all comes from an older server, which only ever meant "empty".
+  const showInitBox =
+    initState !== 'idle' || !repoStatus?.reason || repoStatus.reason === 'not_bootstrapped'
+
   return (
     <div className="space-y-6">
-      {/* Repo not initialized banner */}
-      {existingConn && repoStatus && !repoStatus.initialized && (
+      {/* Sharko could not look at the repo (the Git host is limiting it, or
+        * the read failed). That is not "never set up", so there is no
+        * Initialize button here: starting an init on a repo that is already
+        * set up would be wrong, and it could not run right now anyway. */}
+      {existingConn && repoStatus && !repoStatus.initialized && !showInitBox && (
+        <div
+          data-testid="repo-not-checked-note"
+          className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/30"
+        >
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            {repoStatus.reason === 'git_rate_limited' ? REPO_NOT_CHECKED_GIT_LIMIT : REPO_NOT_CHECKED}
+          </p>
+        </div>
+      )}
+
+      {/* Repo not initialized banner — only when Sharko read the repo and
+        * found it empty (or while an init started here is still running). */}
+      {existingConn && repoStatus && !repoStatus.initialized && showInitBox && (
         <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-700 dark:bg-amber-950/30">
           <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
           <div className="flex-1 min-w-0">
@@ -367,7 +412,7 @@ export function ConnectionSection() {
               {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
               {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
               {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-              {liveStatus.git === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+              {(liveStatus.git === 'idle' || liveStatus.git === 'unchecked') && <span className="text-[#3a6a8a]">—</span>}
             </span>
             <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
               <Server className="h-3.5 w-3.5" />
@@ -375,10 +420,15 @@ export function ConnectionSection() {
               {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
               {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
               {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-              {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+              {(liveStatus.argocd === 'idle' || liveStatus.argocd === 'unchecked') && <span className="text-[#3a6a8a]">—</span>}
             </span>
           </div>
         </div>
+      )}
+      {isEdit && liveNote && (
+        <p data-testid="connection-live-note" className="text-xs text-[#2a5a7a] dark:text-gray-400">
+          {liveNote}
+        </p>
       )}
 
       <form

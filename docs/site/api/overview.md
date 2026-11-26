@@ -67,10 +67,11 @@ Create API keys via the CLI (`sharko token create`) or the Settings UI.
 
 | Role | Permissions |
 |------|------------|
-| `admin` | Full read/write access, manage users, API keys, and connections |
-| `viewer` | Read-only access to clusters, addons, and health data |
+| `admin` | Everything: manage users, other people's API keys, connections, the AI provider, and the actions that remove things |
+| `operator` | Day-to-day changes: register and adopt clusters, enable and disable addons, edit the catalog, create API keys. Cannot manage users or remove clusters and addons. |
+| `viewer` | Read-only access to clusters, addons, health data, the activity history, and the list of users and API keys |
 
-Write endpoints require the `admin` role.
+Each endpoint has a minimum role. Writes need `operator` or `admin`, and a few reach past the caller's own work and need `admin`. The full table is in [Security → Application Roles](../operator/security.md#application-roles). The server checks the role on every request, and a refusal is a `403` with a message that names the action and the role you have.
 
 ## Response Format
 
@@ -96,4 +97,4 @@ Use this endpoint for liveness probes and external monitoring.
 
 ## Rate Limiting
 
-Authentication endpoints are rate-limited. Other endpoints are not currently rate-limited. See [Security](../operator/security.md#rate-limiting) for trusted proxy configuration.
+Authentication endpoints are rate-limited. Calls that change something are limited to 30 per minute per address; over that, Sharko answers HTTP 429 with the code "sharko_rate_limit", `Retry-After: 60` and "Sharko is getting too many requests from your address right now. Try again in a moment." When a Git host limits Sharko, the answer is HTTP 429 with the code "upstream_rate_limit" and "GitHub, or another service Sharko uses, says Sharko has asked too often. Try again in a moment." See [Security](../operator/security.md#rate-limiting) for trusted proxy configuration.

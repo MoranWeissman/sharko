@@ -71,7 +71,7 @@ Common reasons it fails:
 curl -s -H "Authorization: Bearer $SHARKO_TOKEN" "$SHARKO_URL/api/v1/ai/config" | jq
 ```
 
-You get `current_provider`, a list of `available_providers` (each with `id`, `configured` and `model`) and `annotate_on_seed`. The API key is never shown. An empty `current_provider`, or `none`, means Case 1.
+You get `current_provider`, a list of `available_providers` (each with `id`, `configured` and `model`) and `annotate_on_seed`. The API key is never shown. An empty `current_provider`, or `none`, means Case 1. Read `current_provider` to see which provider is in use. Only the provider in use has `configured: true` and a `model`. The list includes `custom-openai`. `has_api_key` says whether a key is saved. With AI off, `annotate_on_seed` is false.
 
 Also look at the Helm values:
 
@@ -88,11 +88,11 @@ helm -n "$SHARKO_NS" get values sharko | grep -A12 '^ai:'
 5. Click **Test AI**. It sends one short request and does not save anything. Fix what it complains about until it says **Connected**.
 6. Click **Save**.
 
-To change only the key, open **Edit** and paste the new key. Then test and save.
+To change only the key, open **Edit** and paste the new key. Then test and save. The edit form says "A key is already saved. Leave this empty to keep it."
 
 ### 3. Or set it up with the API
 
-`POST /api/v1/ai/config` replaces the whole AI setting. Always send the provider, the key and the model together. If you leave out `api_key`, the saved key is cleared. You need an admin token. Allowed `provider` values are `openai`, `claude`, `gemini`, `ollama`, `custom-openai` and `none`.
+`POST /api/v1/ai/config` saves the AI setting. When the provider in the request is the one in use, an `api_key`, `model`, `base_url` or `ollama_url` that you leave out is kept. A different provider gets nothing carried over, so send its key and model. The saved key is never carried over to another address: a request with a `base_url` or `ollama_url` that is not the saved one and with no `api_key` is refused with 400 "The saved API key is only used with the saved address. This is a different address, so type the API key again." To remove a saved key, turn AI off (provider `none`). `POST /api/v1/ai/test-config` works the same way, so you can test "change only the model" without sending the key. Both calls, and `POST /api/v1/ai/test`, need an admin token. Allowed `provider` values are `openai`, `claude`, `gemini`, `ollama`, `custom-openai` and `none`.
 
 First test the setting without saving it. Use the real key in place of `<your key>`:
 
@@ -102,7 +102,7 @@ curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" -H "Content-Type: appli
   -d '{"provider": "openai", "api_key": "<your key>", "model": "<model name>"}' | jq
 ```
 
-`"status": "ok"` means it works. `"status": "error"` comes with the provider's message. Then save it:
+`"status": "ok"` means it works. `"status": "error"` comes with Sharko's sentence for the provider's answer, for example `openai returned 401: the provider refused the API key. The provider said: "..."`. A key is never shown in it, not even masked. Then save it:
 
 ```sh
 curl -s -X POST -H "Authorization: Bearer $SHARKO_TOKEN" -H "Content-Type: application/json" \

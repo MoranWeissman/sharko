@@ -274,14 +274,23 @@ func TestReconcileV4_UnreadableAssignmentFileLandsInTheStatus(t *testing.T) {
 	}
 }
 
-// TestReconcile_NoCatalogAnywhereLandsInTheStatus is the F1 fix stated
-// plainly: a repo where neither catalog file can be read used to warn-log
-// and return BEFORE the status was written, so the API kept serving the
-// last good run and nothing anywhere said secrets had stopped being
-// pushed.
-func TestReconcile_NoCatalogAnywhereLandsInTheStatus(t *testing.T) {
+// TestReconcile_UnreadableCatalogLandsInTheStatus is the F1 fix stated
+// plainly: a repo whose catalog files CANNOT BE READ used to warn-log and
+// return BEFORE the status was written, so the API kept serving the last good
+// run and nothing anywhere said secrets had stopped being pushed.
+//
+// (A repo where neither catalog file EXISTS yet is a different thing: a fresh
+// repo with no first addon. That is not an error; see
+// TestReconcile_NoCatalogYetIsNotAnError.)
+func TestReconcile_UnreadableCatalogLandsInTheStatus(t *testing.T) {
 	r := newReconciler(
-		&v4GitReader{files: map[string][]byte{}},
+		&v4GitReader{
+			files: map[string][]byte{},
+			failPaths: map[string]error{
+				config.AddonCatalogPath: errors.New("the Git host did not answer"),
+				v3CatalogPath:           errors.New("the Git host did not answer"),
+			},
+		},
 		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
 		&mockSecretProvider{values: map[string][]byte{}},
 		fakeRemoteClientFn(fake.NewSimpleClientset()),
@@ -303,6 +312,28 @@ func TestReconcile_NoCatalogAnywhereLandsInTheStatus(t *testing.T) {
 		if !strings.Contains(errs[0], want) {
 			t.Errorf("the error should name %q so the reader knows where Sharko looked: %q", want, errs[0])
 		}
+	}
+}
+
+// TestReconcile_NoCatalogYetIsNotAnError is walk 1 L17 / walk 8 L07: a fresh
+// repo has no catalog file at all until its first addon is added. Sharko used
+// to record "could not work out which secrets to push" as an error every five
+// minutes during that time. Nothing is wrong, so nothing is reported.
+func TestReconcile_NoCatalogYetIsNotAnError(t *testing.T) {
+	r := newReconciler(
+		&v4GitReader{files: map[string][]byte{}},
+		&mockCredProvider{kubeconfig: []byte("fake-kubeconfig")},
+		&mockSecretProvider{values: map[string][]byte{}},
+		fakeRemoteClientFn(fake.NewSimpleClientset()),
+	)
+	r.reconcile()
+
+	stats := r.GetStats()
+	if stats.Errors != 0 {
+		t.Fatalf("stats = %+v, a repo with no catalog yet is not an error", stats)
+	}
+	if errs := r.GetErrors(); len(errs) != 0 {
+		t.Fatalf("errors = %v, want none", errs)
 	}
 }
 

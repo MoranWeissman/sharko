@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
@@ -213,6 +214,7 @@ func (s *Server) handleGetOrgCatalogAddon(w http.ResponseWriter, r *http.Request
 // @Security BearerAuth
 // @Param body body orchestrator.AddToCatalogRequest true "Addons to add"
 // @Success 201 {object} orchestrator.AddToCatalogResult "Pull request opened"
+// @Success 200 {object} orchestrator.AddToCatalogResult "Every addon was already in the catalog as asked: nothing written, no pull request (already_in_catalog and message are set)"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not registered (code cluster_not_found)"
@@ -286,22 +288,51 @@ func (s *Server) handleAddToCatalog(w http.ResponseWriter, r *http.Request) {
 	// none on purpose — so the server fills in the newest version it knows
 	// and that resolved pin is what lands in the pull request diff.
 	orch.SetLatestVersionResolver(s.resolveLatestChartVersion)
+	// A version that is not in the chart repository is refused before the
+	// pull request, on the preview too (chart_version_check.go).
+	s.wireChartChecks(orch)
 	// Smart-values generation (v4 smartvalues wave): AddToCatalog fetches
 	// each entry's official chart values.yaml itself, once chart+version
 	// are final (which for a from_marketplace entry only happens after
 	// the resolver above runs) — see ChartValuesFetcherFn's doc comment
 	// for why this can't be a pre-fetch at the request edge the way v3's
-	// AddAddon does it. Skip on dry-run for the same reason the v3 door
-	// skips its pre-fetch: the preview shows only paths + create/update
-	// actions, so the fetch (and the AI annotate pass below) can't change
-	// what it shows, and skipping avoids burning registry/LLM quota on a
-	// request that writes nothing.
-	if !req.DryRun {
-		orch.SetChartValuesFetcher(s.fetchChartValuesForV4Catalog)
-	}
+	// AddAddon does it.
+	//
+	// The preview (dry run) fetches too. It used to skip the fetch, so the
+	// preview showed a three-line comment stub for values/global/<addon>.yaml
+	// while the real pull request wrote the whole chart values file (421
+	// lines in the walk) — a reviewer approved one thing and merged another.
+	// Only the AI comment pass is skipped on a preview: it costs model quota
+	// and its output differs from run to run, so it could not be "exactly
+	// what the pull request writes" anyway. When AI comments are switched
+	// on, the preview says so in its warnings.
+	orch.SetChartValuesFetcher(func(fctx context.Context, addonName, repoURL, chart, version string) (orchestrator.ChartValuesFetchResult, error) {
+		return s.fetchChartValuesForV4CatalogOpts(fctx, addonName, repoURL, chart, version, req.DryRun)
+	})
 	result, err := orch.AddToCatalog(ctx, req)
 	if err != nil {
 		writeAddToCatalogError(w, err)
+		return
+	}
+	if req.DryRun {
+		if previewHasValuesFile(result) {
+			result.Warnings = append(result.Warnings, PreviewValuesFileNote)
+		}
+		if s.previewMissesAIComments(result) {
+			result.Warnings = append(result.Warnings, PreviewMissesAICommentsNote)
+		}
+	}
+
+	// Everything asked for was already in the catalog: nothing was written,
+	// so say 200 (not 201 "created") and keep the log honest.
+	if len(result.AlreadyInCatalog) > 0 {
+		audit.Enrich(ctx, audit.Fields{
+			Event:    "catalog_addons_added",
+			Resource: "catalog:" + joinNames(result.AlreadyInCatalog),
+			Detail:   "already in the catalog, nothing opened",
+			Changes:  audit.ChangesNone,
+		})
+		writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
 		return
 	}
 
@@ -388,6 +419,12 @@ func writeAddToCatalogError(w http.ResponseWriter, err error) {
 	var missing *catalog.MissingRequiredFieldError
 	var unsupportedRepo *credsafe.UnsupportedRepoURLError
 	switch {
+	case errors.Is(err, orchestrator.ErrChartVersionNotFound):
+		// The chart repository was read and does not have this version:
+		// the caller's to fix, before any pull request.
+		writeCodedError(w, http.StatusBadRequest, CodeVersionNotFound, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrChartVersionLookupFailed):
+		writeCodedError(w, http.StatusBadGateway, CodeChartRepoUnreadable, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
 		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrV4ClusterNotFound):
@@ -481,6 +518,7 @@ func (s *Server) handleEditOrgCatalogAddon(w http.ResponseWriter, r *http.Reques
 	}
 
 	orch := s.attachPRTracker(orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsConfig(), s.repoPaths, nil))
+	s.wireChartChecks(orch)
 	result, err := orch.EditCatalogEntry(ctx, req)
 	if err != nil {
 		writeEditCatalogEntryError(w, err)
@@ -508,6 +546,12 @@ func writeEditCatalogEntryError(w http.ResponseWriter, err error) {
 	var missing *catalog.MissingRequiredFieldError
 	var unsupportedRepo *credsafe.UnsupportedRepoURLError
 	switch {
+	case errors.Is(err, orchestrator.ErrChartVersionNotFound):
+		// The chart repository was read and does not have this version:
+		// the caller's to fix, before any pull request.
+		writeCodedError(w, http.StatusBadRequest, CodeVersionNotFound, err.Error(), nil)
+	case errors.Is(err, orchestrator.ErrChartVersionLookupFailed):
+		writeCodedError(w, http.StatusBadGateway, CodeChartRepoUnreadable, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrCatalogRequestInvalid):
 		writeCodedError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), nil)
 	case errors.Is(err, orchestrator.ErrV4AddonNotInCatalog):
@@ -674,4 +718,47 @@ func joinNames(names []string) string {
 		out += n
 	}
 	return out
+}
+
+// PreviewMissesAICommentsNote is the one sentence a preview carries when the
+// pull request will add AI explanations to the values file that the preview
+// itself cannot show.
+const PreviewMissesAICommentsNote = "The values file in the pull request will also carry short explanations written by the AI assistant. The preview shows the file without them."
+
+// previewMissesAIComments reports whether this preview lists a new global
+// values file AND the AI comment pass is switched on, so the real pull
+// request would add comments the preview left out.
+func (s *Server) previewMissesAIComments(result *orchestrator.AddToCatalogResult) bool {
+	if result == nil || result.GitResult == nil || result.DryRun == nil {
+		return false
+	}
+	if s.aiClient == nil || !s.aiClient.AnnotateOnSeedEnabled() {
+		return false
+	}
+	for _, f := range result.DryRun.FilesToWrite {
+		if strings.HasPrefix(f.Path, orchestrator.V4GlobalValuesDir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// PreviewValuesFileNote is the one sentence a preview carries when it lists a
+// values file. The preview leaves the comment lines out and hides values that
+// look like passwords, so that nothing secret is ever put on screen; the pull
+// request itself writes the whole file.
+const PreviewValuesFileNote = "Values files are shown here without their comment lines, and values that look like passwords are hidden. The pull request writes the whole file."
+
+// previewHasValuesFile reports whether the preview lists any file under
+// values/.
+func previewHasValuesFile(result *orchestrator.AddToCatalogResult) bool {
+	if result == nil || result.GitResult == nil || result.DryRun == nil {
+		return false
+	}
+	for _, f := range result.DryRun.FilesToWrite {
+		if strings.HasPrefix(f.Path, "values/") {
+			return true
+		}
+	}
+	return false
 }

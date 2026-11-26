@@ -41,6 +41,13 @@ const chartValuesFetchTimeout = 8 * time.Second
 // heuristic-only output (never fails the add) and gets its own audit
 // entry, same as the v3 door.
 func (s *Server) fetchChartValuesForV4Catalog(ctx context.Context, addonName, repoURL, chart, version string) (orchestrator.ChartValuesFetchResult, error) {
+	return s.fetchChartValuesForV4CatalogOpts(ctx, addonName, repoURL, chart, version, false)
+}
+
+// fetchChartValuesForV4CatalogOpts is the body of the fetcher. skipAI is set
+// for a preview: the chart download still happens (so the preview shows the
+// same file content the pull request will write), the AI comment pass does not.
+func (s *Server) fetchChartValuesForV4CatalogOpts(ctx context.Context, addonName, repoURL, chart, version string, skipAI bool) (orchestrator.ChartValuesFetchResult, error) {
 	fetchCtx, cancel := context.WithTimeout(ctx, chartValuesFetchTimeout)
 	defer cancel()
 
@@ -51,7 +58,7 @@ func (s *Server) fetchChartValuesForV4Catalog(ctx context.Context, addonName, re
 
 	result := orchestrator.ChartValuesFetchResult{UpstreamValues: []byte(raw)}
 
-	if s.aiClient == nil || !s.aiClient.AnnotateOnSeedEnabled() {
+	if skipAI || s.aiClient == nil || !s.aiClient.AnnotateOnSeedEnabled() {
 		return result, nil
 	}
 

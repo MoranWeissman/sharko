@@ -519,7 +519,8 @@ a ticket; not user-blocking enough to page.
    configured.
 
 2. **Disable the failing source temporarily** — remove it from
-   `catalog.sources` in Helm values until it recovers; document in the
+   the `SHARKO_CATALOG_URLS` list (set through `extraEnv`) or from the
+   catalog sources file in Git until it recovers; document in the
    ticket so the team remembers to re-enable.
 3. **Investigate signing cadence** — Sigstore bundle fetches that
    occasionally fail (DNS flake, transient 5xx) drive a steady-state
@@ -667,8 +668,9 @@ during business hours.
    that's not bad enough to fast-burn.
 3. **Tune handler timeouts** — if upstream is genuinely slow but
    recoverable, the handler timeout (rather than upstream itself) is
-   converting latency into errors. Adjust `config.dashboard.timeout`
-   in Helm values.
+   converting latency into errors. The chart has no value for the handler
+   timeout, so it cannot be changed from Helm. Reduce the load on the slow
+   upstream first.
 4. **Warm the cache** — read-heavy dashboard load on a Sharko whose
    caches are cold can drag p99 into error territory. Warming them
    with the

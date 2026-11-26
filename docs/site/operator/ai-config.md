@@ -24,7 +24,7 @@ provider and keeping an eye on cost. The Helm values for AI are listed in
 | Claude (Anthropic) | API key (starts with `sk-ant-`) | The UI suggests `claude-sonnet-4-20250514` |
 | OpenAI | API key (starts with `sk-`) | The UI suggests `gpt-4o` |
 | Ollama (local) | Address only | No API key. Runs in the cluster or next to Sharko. The UI suggests `llama3.2` |
-| Custom OpenAI-compatible | API key and base address | For a gateway you run yourself |
+| Custom OpenAI-compatible (`custom-openai`) | API key and base URL | For a gateway you run yourself |
 
 No provider is picked until you pick one. The Helm default for
 `ai.provider` is empty.
@@ -39,10 +39,73 @@ Use the **Test** button in Settings → AI to check that Sharko can reach the
 provider with the saved settings. **Test AI** in the form checks the
 settings you are typing before you save them.
 
+Both tests are for admins only (`POST /api/v1/ai/test` and
+`POST /api/v1/ai/test-config`). Activity History records them as
+`ai_tested` ("tested the AI provider") and `ai_config_tested` ("tested AI
+settings before saving"). A message to the assistant is recorded as
+`ai_chat_message` ("sent a message to the AI assistant"), and
+`ai_config_updated` carries `provider=NAME` in its detail.
+
+When you edit a saved provider, the form says "A key is already saved. Leave
+this empty to keep it." A key, model or address that you leave out is kept as
+long as the provider stays the same. A different provider gets nothing
+carried over. The saved key is only used with the saved address: when you
+change the address of a self-hosted provider and leave the key empty, Sharko
+does not send the saved key to the new address. Save and Test both answer
+"The saved API key is only used with the saved address. This is a different
+address, so type the API key again." To remove a saved key, turn AI off with **Disable**. After
+**Save** or **Disable** the assistant buttons appear or go away without a
+page reload.
+
+## Which addresses Sharko will call
+
+Only an admin can make Sharko call an AI address.
+
+- A self-hosted address in a private network or on localhost is allowed. A
+  self-hosted Ollama lives there.
+- Addresses starting with `169.254` or `fe80:` are never called.
+- An address must start with `http://` or `https://`.
+- An address may not hold a user name or password.
+
+What Sharko says when an address is refused:
+
+- "The address must start with http:// or https://."
+- "Take the user name and password out of the address. If the provider needs a key, put it in the API key field."
+- "Sharko does not call this address. Addresses that start with 169.254 (and fe80:) belong to the machine's own network setup, and no AI provider lives there."
+- "Enter the address of the provider first."
+
+What it says about a key before it calls anything:
+
+- "Enter an API key first."
+- "The API key has a space or a line break in it. Paste the key again, on one line."
+- "The API key is too long to be a real key. Paste the key again."
+
+## What a provider error looks like
+
+Sharko never passes a provider's answer on as it came. It writes its own
+sentence, and a key is never shown in it, not even masked. The shape is:
+
+```text
+openai returned 401: the provider refused the API key. The provider said: "..."
+```
+
+| Provider answer | Sharko says |
+| --- | --- |
+| 401 or 403 | "the provider refused the API key." (Ollama: "the server refused the request.") |
+| 404 | "the provider did not find the model or the address." (Ollama: "this address does not answer like an Ollama server, or the model is not there.") |
+| 429 | "the provider's request limit or spending limit was reached." |
+| 500 and above | "the provider had a problem of its own." |
+| Anything else | "the provider did not accept the request." |
+
+The assistant cannot read values files on the current repo layout. It says:
+"The assistant cannot read values files in this version. They are in your Git
+repo: values/global/<add-on>.yaml for every cluster, or
+values/clusters/<cluster>/<add-on>.yaml for one cluster."
+
 ## The "Annotate values on generate" switch
 
 This switch in Settings → AI decides whether the AI adds notes when you
-add an addon or click **Refresh from upstream**. It is on by default.
+add an addon. It is on by default once an AI provider is saved. With no provider (or after you click **Disable**), the switch shows off, because there is nothing to write the notes with.
 Turning it off stops the notes for every addon. You can also turn them off
 for one addon only (see [below](#turning-the-notes-off)).
 
@@ -59,9 +122,8 @@ files are 2 to 15 KB. That is a small request, so the cost per addon is
 very low on every provider. Check your provider's price list for real
 numbers.
 
-It runs once when you add an addon, and again each time you click
-**Refresh from upstream**. So the total cost depends on how many addons you
-have and how often you refresh them.
+It runs once when you add an addon. So the total cost depends on how many
+addons you add.
 
 If a chart's `values.yaml` is bigger than 50,000 bytes, Sharko does not
 call the AI for it at all. You get the file without AI notes. This stops
@@ -155,4 +217,4 @@ Sharko does not keep AI answers anywhere of its own. The values file in your
 Git repository is the only copy. Once an addon is added, its file lives at
 `values/global/<addon>.yaml` (in a repository with the older v3 layout, it
 is under `configuration/`), and Sharko reads it from Git after that. The AI
-is only called again when you click **Refresh from upstream**.
+is only called when you add an addon.

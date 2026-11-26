@@ -12,6 +12,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 )
 
 // system_managed_secrets.go — GET /api/v1/system/managed-secrets. Visibility
@@ -1083,21 +1084,45 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs r
 	}
 	s.addonSecretDefsMu.RUnlock()
 
-	if len(defs) == 0 {
-		return []addonValuesSecretRow{}
-	}
 	sort.Strings(defNames)
+
+	// The Secrets Sharko delivers are defined in the catalog in Git, and the
+	// secrets engine is the one that reads them. Without this, the page only
+	// ever listed what was registered in memory (demo mode), so a real
+	// Secret that was delivered and healthy never showed up — only a
+	// leftover one did, after its definition was gone.
+	type rowSource struct{ SecretName, Namespace string }
+	engineItems := make(map[[2]string]rowSource)
+	if lister, ok := s.secretReconciler.(knownItemsLister); ok {
+		for _, it := range lister.KnownItems() {
+			engineItems[[2]string{it.Cluster, it.Addon}] = rowSource{it.SecretName, it.Namespace}
+		}
+	}
 
 	rows := make([]addonValuesSecretRow, 0)
 	for _, c := range clusters {
 		if !c.Managed {
 			continue
 		}
+		seen := make(map[string]bool)
+		pairs := make([]string, 0, len(defNames))
 		for _, addonName := range defNames {
-			if !models.AddonLabelEnabled(c.Labels[addonName]) {
-				continue
+			if models.AddonLabelEnabled(c.Labels[addonName]) {
+				pairs = append(pairs, addonName)
+				seen[addonName] = true
 			}
-			def := defs[addonName]
+		}
+		for key := range engineItems {
+			if key[0] == c.Name && !seen[key[1]] {
+				pairs = append(pairs, key[1])
+				seen[key[1]] = true
+			}
+		}
+		for _, addonName := range pairs {
+			def, fromDefs := defs[addonName]
+			if src, ok := engineItems[[2]string{c.Name, addonName}]; ok && !fromDefs {
+				def = struct{ SecretName, Namespace string }{src.SecretName, src.Namespace}
+			}
 			state := addonValuesSecretRowState(s.secretReconciler, c.Name, addonName)
 			row := addonValuesSecretRow{
 				Cluster:         c.Name,
@@ -1141,6 +1166,14 @@ func (s *Server) buildAddonValuesSecretRows(clusters []models.Cluster, repairs r
 		return rows[i].Addon < rows[j].Addon
 	})
 	return rows
+}
+
+// knownItemsLister is what the real secrets engine offers on top of the
+// SecretReconciler interface: the list of Secrets it has a record for, with
+// the catalog's name and namespace for each. Asked for with a type check so
+// the stand-ins used in demo mode and in tests keep working unchanged.
+type knownItemsLister interface {
+	KnownItems() []secrets.KnownItem
 }
 
 // addonValuesSecretRowState derives one addon-values row's honest state

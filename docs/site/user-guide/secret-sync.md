@@ -3,7 +3,7 @@
 **Secrets** is the area of the UI where Sharko shows the Secrets it works with. One sidebar item, two subpages, each with its own URL:
 
 - **Cluster connections** (`/secrets/connections`) — Secrets Sharko uses to register clusters with Argo CD. One cluster connection Secret per cluster.
-- **Addon secrets** (`/secrets/addons`) — Secrets Sharko delivers from configured backends to addons on remote clusters. This page also shows leftover ("orphaned") Secrets whose source is gone from Git.
+- **Addon secrets** (`/secrets/addons`) — Secrets Sharko delivers from configured backends to addons on remote clusters. It lists every addon Secret Sharko delivered (the ones with a `push:` block in the catalog), the healthy ones included. This page also shows leftover ("orphaned") Secrets whose source is gone from Git.
 
 Each subpage lists one row per Secret, worst-first, and a row opens its own detail page showing what Sharko compares it against and what it found. Older links to `/secret-sync` and `/secrets` still work — they redirect into the right subpage.
 
