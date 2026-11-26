@@ -12,3 +12,16 @@ export function auditWho(entry: { user?: string; auth_type?: string }): string {
   const name = entry.user || 'anonymous'
   return entry.auth_type === 'api_key' ? `${name} ${API_KEY_MARK}` : name
 }
+
+/**
+ * isSystemRow — is this a row Sharko wrote for its own background work.
+ *
+ * The name alone does not decide it. A row made with an API key is never a
+ * system row, whatever the key is called: a key named "sharko" used to be
+ * shown in the system style with no "(API key)" mark, as if Sharko itself
+ * had done the work.
+ */
+export function isSystemRow(entry: { user?: string; auth_type?: string }): boolean {
+  if (entry.auth_type === 'api_key') return false
+  return entry.user === 'sharko' || entry.user === 'system'
+}

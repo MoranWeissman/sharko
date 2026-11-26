@@ -24,6 +24,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/credsafe"
 	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/security"
 )
 
 // catalogVersionEntry is the trimmed version shape the UI consumes. Mirroring
@@ -100,6 +101,20 @@ var (
 	// signs every user out. internal/helm's concurrency tests now hold that
 	// line under `go test -race`.
 	catalogVersionsFetcher = helm.NewFetcher()
+
+	// typedRepoFetcher is the fetcher for the two routes where ANY logged-in
+	// caller, a viewer included, types the repository address:
+	// GET /catalog/validate and GET /catalog/repo-charts.
+	//
+	// It is not catalogVersionsFetcher. Those two routes check the typed
+	// address with security.ValidateExternalURL and then used the plain
+	// fetcher, which follows a redirect to any address and looks the name up
+	// a second time. A viewer could point repo= at a public server that
+	// redirects to an inside address and read back what answered there. This
+	// fetcher's client checks every redirect and the real address at connect
+	// time, and it keeps its own index cache, so nothing it fetched is ever
+	// served from, or into, the unguarded fetcher's cache.
+	typedRepoFetcher = helm.NewFetcherWithClient(security.GuardedClient())
 )
 
 // handleListCatalogVersions godoc

@@ -206,7 +206,12 @@ password, and when the role changes. When a user changes their own password,
 every other login of theirs ends; the one that made the change stays. A
 disabled user is refused on every call, and so is every API key that user
 created. The keys work again when the user is enabled again. Deleting a user
-logs them out and revokes the API keys they created. Changing a role never
+logs them out and revokes the API keys they created. An open audit live
+stream is closed as soon as its login or key is no longer good. An API key never has more
+than the role its creator has now: when a user's role is lowered, every key
+they created works with the lower role from the next call on, and a key gets
+its own saved role back when the user's role is raised again. A key list still
+shows the role the key was created with. Changing a role never
 turns a disabled account back on. A restart of Sharko also ends every browser
 login, because logins are kept in memory.
 

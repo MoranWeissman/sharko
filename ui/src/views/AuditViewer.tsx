@@ -25,7 +25,7 @@ import {
 } from '@/views/audit/auditLabels';
 import { relativeTime } from '@/lib/time';
 import { toCSV } from '@/lib/csv';
-import { auditWho } from '@/views/audit/auditWho';
+import { auditWho, isSystemRow } from '@/views/audit/auditWho';
 import { StatusBadge } from '@/components/StatusBadge';
 
 /** Renders the small attribution-mode icon + label for an audit entry's detail. */
@@ -535,7 +535,7 @@ export function AuditViewer() {
                         {entry.timestamp ? relativeTime(entry.timestamp) : '—'}
                       </td>
                       <td className="px-4 py-2 text-xs font-medium text-[#0a2a4a] dark:text-gray-200">
-                        {entry.user === 'sharko' || entry.user === 'system' ? (
+                        {isSystemRow(entry) ? (
                           <span className="text-[#0a3a5a] dark:text-gray-400">{entry.user}</span>
                         ) : (
                           <span>{auditWho(entry)}</span>

@@ -101,6 +101,31 @@ const (
 // rule. Callers spot it with errors.Is, never by reading the error text.
 var ErrInvalidUsername error = &InputError{msg: InvalidUsernameSentence}
 
+// reservedNames are the names Sharko writes into the audit log for work
+// nobody logged in for: its own background work ("sharko", "system"), rows
+// with no caller ("anonymous"), a failed login with no name ("unknown"), and
+// the names its own helpers act under. A user or an API key with one of these
+// names would be written down, and shown on the audit page, as Sharko itself.
+var reservedNames = map[string]bool{
+	"sharko":     true,
+	"sharko-bot": true,
+	"system":     true,
+	"anonymous":  true,
+	"unknown":    true,
+	"ai-agent":   true,
+	"webhook":    true,
+}
+
+// ReservedNameSentence is the exact sentence shown when a new user or a new
+// API key asks for one of the reserved names. %q is the name.
+const ReservedNameSentence = "The name %q is kept for Sharko's own work. Pick another name."
+
+// IsReservedName reports whether name is one Sharko keeps for itself. Capital
+// letters make no difference: "Sharko" reads the same on the audit page.
+func IsReservedName(name string) bool {
+	return reservedNames[strings.ToLower(name)]
+}
+
 // InputError is an error caused by what the caller asked for: a bad user
 // name or role, a user that already exists, or a user that does not exist.
 // CreateUser, UpdateUser, DeleteUser, ResetPassword and UpdatePassword return
@@ -377,6 +402,9 @@ func (s *Store) CreateUser(username, role string) (string, error) {
 	}
 	if !usernamePattern.MatchString(username) {
 		return "", ErrInvalidUsername
+	}
+	if IsReservedName(username) {
+		return "", inputErrorf(ReservedNameSentence, username)
 	}
 	if role == "" {
 		role = "viewer"

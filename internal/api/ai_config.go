@@ -153,7 +153,11 @@ func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 	current := s.aiClient.GetConfig()
 	// A part that is left out is kept, as long as the provider stays the
 	// same. See keepSavedAIParts.
-	req = keepSavedAIParts(req, current)
+	req, refusal := keepSavedAIParts(req, current)
+	if refusal != "" {
+		writeError(w, http.StatusBadRequest, refusal)
+		return
+	}
 	if msg := checkAIAddresses(provider, req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
@@ -224,11 +228,20 @@ func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 // A request for a DIFFERENT provider gets nothing carried over: a key for one
 // provider is not a key for another. To remove a saved key, turn AI off
 // (provider "none").
-func keepSavedAIParts(req saveAIConfigRequest, saved ai.Config) saveAIConfigRequest {
+//
+// The saved key is also NOT carried over to a different ADDRESS. The key goes
+// to the address in the request, and Sharko never shows a saved key back, so
+// carrying it over let a caller have the saved key sent to any server they
+// named. A request that names another address and no key is refused with
+// AIKeyNeededForNewAddressSentence (the second return value).
+func keepSavedAIParts(req saveAIConfigRequest, saved ai.Config) (saveAIConfigRequest, string) {
 	if req.Provider == "" || req.Provider == string(ai.ProviderNone) || req.Provider != string(saved.Provider) {
-		return req
+		return req, ""
 	}
-	if req.APIKey == "" {
+	if req.APIKey == "" && saved.APIKey != "" {
+		if aiAddressChanged(req.BaseURL, saved.BaseURL) || aiAddressChanged(req.OllamaURL, saved.OllamaURL) {
+			return req, AIKeyNeededForNewAddressSentence
+		}
 		req.APIKey = saved.APIKey
 	}
 	if req.Model == "" {
@@ -244,7 +257,23 @@ func keepSavedAIParts(req saveAIConfigRequest, saved ai.Config) saveAIConfigRequ
 	if req.OllamaURL == "" {
 		req.OllamaURL = saved.OllamaURL
 	}
-	return req
+	return req, ""
+}
+
+// AIKeyNeededForNewAddressSentence is the answer to a save or test that names
+// a provider address other than the saved one and leaves the API key out.
+const AIKeyNeededForNewAddressSentence = "The saved API key is only used with the saved address. This is a different address, so type the API key again."
+
+// aiAddressChanged reports whether a request names an address that is not the
+// saved one. An address that is left out is not a change (the saved one is
+// used). The compare is on the text as typed, bar spaces around it and a
+// closing slash: anything else that differs counts as another address.
+func aiAddressChanged(typed, saved string) bool {
+	clean := func(a string) string { return strings.TrimRight(strings.TrimSpace(a), "/") }
+	if strings.TrimSpace(typed) == "" {
+		return false
+	}
+	return clean(typed) != clean(saved)
 }
 
 // checkAIAddresses checks the address a request carries for a self-hosted
@@ -337,7 +366,11 @@ func (s *Server) handleTestAIConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req = keepSavedAIParts(req, s.aiClient.GetConfig())
+	req, refusal := keepSavedAIParts(req, s.aiClient.GetConfig())
+	if refusal != "" {
+		writeError(w, http.StatusBadRequest, refusal)
+		return
+	}
 
 	// Refusals come back in the same shape as a failed test, so the form
 	// shows them next to the Test button.

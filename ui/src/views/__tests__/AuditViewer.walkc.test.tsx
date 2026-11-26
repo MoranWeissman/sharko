@@ -64,6 +64,28 @@ describe('AuditViewer — export and API key rows', () => {
     expect(screen.queryByText('bob (API key)')).not.toBeInTheDocument()
   })
 
+  it('marks a key named like Sharko itself as an API key, and leaves real system rows alone', async () => {
+    mockFetchAuditLog.mockResolvedValue({
+      entries: [
+        { id: 'k1', timestamp: '2026-11-26T09:03:00Z', level: 'info', event: 'cluster_registered',
+          user: 'sharko', auth_type: 'api_key', action: 'create', resource: 'cluster:prod', source: 'api',
+          result: 'success', duration_ms: 3 },
+        { id: 'k2', timestamp: '2026-11-26T09:04:00Z', level: 'info', event: 'cluster_registered',
+          user: 'system', auth_type: 'api_key', action: 'create', resource: 'cluster:dev', source: 'api',
+          result: 'success', duration_ms: 3 },
+        { id: 's1', timestamp: '2026-11-26T09:05:00Z', level: 'info', event: 'cluster_secret_reconciled',
+          user: 'sharko', action: 'reconcile', resource: 'cluster:stage', source: 'reconciler',
+          result: 'success', duration_ms: 3 },
+      ] as AuditEntry[],
+      count: 3,
+    })
+    render(<MemoryRouter initialEntries={['/audit']}><AuditViewer /></MemoryRouter>)
+    await waitFor(() => expect(screen.getByText('sharko (API key)')).toBeInTheDocument())
+    expect(screen.getByText('system (API key)')).toBeInTheDocument()
+    // The one real system row keeps the bare name.
+    expect(screen.getAllByText('sharko')).toHaveLength(1)
+  })
+
   it('exports every column safely', async () => {
     render(<MemoryRouter initialEntries={['/audit']}><AuditViewer /></MemoryRouter>)
     await waitFor(() => expect(screen.getByText('ci-bot (API key)')).toBeInTheDocument())

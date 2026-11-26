@@ -108,7 +108,7 @@ func (s *Server) handleListRepoCharts(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	charts, err := catalogVersionsFetcher.ListCharts(ctx, normalisedRepo)
+	charts, err := typedRepoFetcher.ListCharts(ctx, normalisedRepo)
 	if err != nil {
 		writeJSON(w, http.StatusOK, classifyRepoChartsError(err, normalisedRepo))
 		return

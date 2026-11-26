@@ -218,6 +218,11 @@ func (s *Store) CreateTokenFor(owner, name, role string, expiresInDays int) (str
 	if !usernamePattern.MatchString(name) {
 		return "", errors.New(InvalidTokenNameSentence)
 	}
+	// A key named like Sharko's own actor would be shown on the audit page
+	// as Sharko itself.
+	if IsReservedName(name) {
+		return "", fmt.Errorf(ReservedNameSentence, name)
+	}
 	if role == "" {
 		role = "viewer"
 	}
@@ -454,6 +459,14 @@ func (s *Store) AuthenticateToken(plaintext string) (username string, role strin
 		_, nameIsUser := s.users[c.name]
 		owner, ownerKnown := s.users[c.createdBy]
 		ownerDisabled := c.createdBy != "" && ownerKnown && !owner.Enabled
+		// The role the key works with is looked up now, not only when the
+		// key was made: a key never has more than its maker has today. A
+		// maker who was moved from admin to viewer used to keep admin
+		// through a key made earlier.
+		role := c.role
+		if c.createdBy != "" && ownerKnown {
+			role = LowerRole(c.role, owner.Role)
+		}
 		s.mu.RUnlock()
 		if nameIsUser {
 			return "", "", &TokenNameIsUserError{Name: c.name}
@@ -473,7 +486,7 @@ func (s *Store) AuthenticateToken(plaintext string) (username string, role strin
 			t.LastUsed = now
 		}
 		s.mu.Unlock()
-		return c.name, c.role, nil
+		return c.name, role, nil
 	}
 
 	return "", "", ErrTokenNotFound
@@ -552,4 +565,73 @@ func (s *Store) RevokeTokensCreatedBy(username string) ([]string, error) {
 	sort.Strings(names)
 	slog.Info("API tokens revoked with their creator", "created_by", username, "count", len(names))
 	return names, nil
+}
+
+// roleRank orders the three roles. An unknown role ranks lowest, so a
+// comparison with it can only ever take rights away.
+func roleRank(role string) int {
+	switch role {
+	case "admin":
+		return 3
+	case "operator":
+		return 2
+	case "viewer":
+		return 1
+	}
+	return 0
+}
+
+// LowerRole returns the weaker of two roles. It is what a key is allowed to
+// do: its own saved role, but never more than the user who made it has now.
+// When the maker's role is not one of the three known ones the answer is
+// "viewer", never the key's own role.
+func LowerRole(keyRole, makerRole string) string {
+	if roleRank(makerRole) == 0 {
+		return "viewer"
+	}
+	if roleRank(keyRole) <= roleRank(makerRole) {
+		return keyRole
+	}
+	return makerRole
+}
+
+// WatchToken is for a call that stays open (the audit live stream). It checks
+// the key once the full way, and hands back a cheap check to run again and
+// again while the call is open. That check answers false as soon as the key
+// was revoked, ran out, was made again under the same name, or the user who
+// made it was disabled.
+//
+// The cheap check does not hash anything, so it is safe to run on every row.
+func (s *Store) WatchToken(plaintext string) (stillGood func() bool, err error) {
+	name, _, err := s.AuthenticateToken(plaintext)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	t, ok := s.tokens[name]
+	hash := ""
+	if ok {
+		hash = t.Hash
+	}
+	s.mu.RUnlock()
+	if !ok {
+		return nil, ErrTokenNotFound
+	}
+	return func() bool {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		t, ok := s.tokens[name]
+		if !ok || t.Hash != hash || t.isExpiredAt(time.Now()) {
+			return false
+		}
+		if _, nameIsUser := s.users[name]; nameIsUser {
+			return false
+		}
+		if t.CreatedBy != "" {
+			if owner, known := s.users[t.CreatedBy]; known && !owner.Enabled {
+				return false
+			}
+		}
+		return true
+	}, nil
 }

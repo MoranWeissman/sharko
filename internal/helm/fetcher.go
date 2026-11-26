@@ -100,6 +100,19 @@ func NewFetcher() *Fetcher {
 	}
 }
 
+// NewFetcherWithClient is NewFetcher with the HTTP client given by the caller.
+// It is for the calls where the repository address was typed by a caller with
+// a low role: those pass security.GuardedClient(), which checks every
+// redirect and the real address at connect time. A nil client means the plain
+// one.
+func NewFetcherWithClient(client *http.Client) *Fetcher {
+	f := NewFetcher()
+	if client != nil {
+		f.client = client
+	}
+	return f
+}
+
 // getIndex fetches and caches the repo index.
 func (f *Fetcher) getIndex(ctx context.Context, repoURL string) (*repoIndex, error) {
 	// Sharko never dials an address it would not save. Every other method on
